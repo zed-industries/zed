@@ -1,8 +1,8 @@
-use crate::assemble_excerpts::assemble_excerpts;
+use crate::assemble_excerpts::assemble_excerpt_ranges;
 use anyhow::Result;
 use collections::HashMap;
 use futures::{FutureExt, StreamExt as _, channel::mpsc, future};
-use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity};
 use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToOffset as _};
 use project::{LocationLink, Project, ProjectPath};
 use smallvec::SmallVec;
@@ -13,6 +13,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use util::paths::PathStyle;
+use util::rel_path::RelPath;
 use util::{RangeExt as _, ResultExt};
 
 mod assemble_excerpts;
@@ -30,11 +32,22 @@ const IDENTIFIER_LINE_COUNT: u32 = 3;
 
 pub struct RelatedExcerptStore {
     project: WeakEntity<Project>,
-    related_files: Arc<[RelatedFile]>,
-    related_file_buffers: Vec<Entity<Buffer>>,
+    related_buffers: Vec<RelatedBuffer>,
     cache: HashMap<Identifier, Arc<CacheEntry>>,
     update_tx: mpsc::UnboundedSender<(Entity<Buffer>, Anchor)>,
     identifier_line_count: u32,
+}
+
+struct RelatedBuffer {
+    buffer: Entity<Buffer>,
+    path: Arc<Path>,
+    anchor_ranges: Vec<Range<Anchor>>,
+    cached_file: Option<CachedRelatedFile>,
+}
+
+struct CachedRelatedFile {
+    excerpts: Vec<RelatedExcerpt>,
+    buffer_version: clock::Global,
 }
 
 pub enum RelatedExcerptStoreEvent {
@@ -105,8 +118,7 @@ impl RelatedExcerptStore {
         RelatedExcerptStore {
             project: project.downgrade(),
             update_tx,
-            related_files: Vec::new().into(),
-            related_file_buffers: Vec::new(),
+            related_buffers: Vec::new(),
             cache: Default::default(),
             identifier_line_count: IDENTIFIER_LINE_COUNT,
         }
@@ -120,21 +132,64 @@ impl RelatedExcerptStore {
         self.update_tx.unbounded_send((buffer, position)).ok();
     }
 
-    pub fn related_files(&self) -> Arc<[RelatedFile]> {
-        self.related_files.clone()
+    pub fn related_files(&mut self, cx: &App) -> Vec<RelatedFile> {
+        self.related_buffers
+            .iter_mut()
+            .map(|related| related.related_file(cx))
+            .collect()
     }
 
-    pub fn related_files_with_buffers(
-        &self,
-    ) -> impl Iterator<Item = (RelatedFile, Entity<Buffer>)> {
-        self.related_files
-            .iter()
-            .cloned()
-            .zip(self.related_file_buffers.iter().cloned())
+    pub fn related_files_with_buffers(&mut self, cx: &App) -> Vec<(RelatedFile, Entity<Buffer>)> {
+        self.related_buffers
+            .iter_mut()
+            .map(|related| (related.related_file(cx), related.buffer.clone()))
+            .collect::<Vec<_>>()
     }
 
-    pub fn set_related_files(&mut self, files: Vec<RelatedFile>) {
-        self.related_files = files.into();
+    pub fn set_related_files(&mut self, files: Vec<RelatedFile>, cx: &App) {
+        self.related_buffers = files
+            .into_iter()
+            .filter_map(|file| {
+                let project = self.project.upgrade()?;
+                let project = project.read(cx);
+                let worktree = project.worktrees(cx).find(|wt| {
+                    let root_name = wt.read(cx).root_name().as_unix_str();
+                    file.path
+                        .components()
+                        .next()
+                        .is_some_and(|c| c.as_os_str() == root_name)
+                })?;
+                let worktree = worktree.read(cx);
+                let relative_path = file
+                    .path
+                    .strip_prefix(worktree.root_name().as_unix_str())
+                    .ok()?;
+                let relative_path = RelPath::new(relative_path, PathStyle::Posix).ok()?;
+                let project_path = ProjectPath {
+                    worktree_id: worktree.id(),
+                    path: relative_path.into_owned().into(),
+                };
+                let buffer = project.get_open_buffer(&project_path, cx)?;
+                let snapshot = buffer.read(cx).snapshot();
+                let anchor_ranges = file
+                    .excerpts
+                    .iter()
+                    .map(|excerpt| {
+                        let start = snapshot.anchor_before(Point::new(excerpt.row_range.start, 0));
+                        let end_row = excerpt.row_range.end;
+                        let end_col = snapshot.line_len(end_row);
+                        let end = snapshot.anchor_after(Point::new(end_row, end_col));
+                        start..end
+                    })
+                    .collect();
+                Some(RelatedBuffer {
+                    buffer,
+                    path: file.path.clone(),
+                    anchor_ranges,
+                    cached_file: None,
+                })
+            })
+            .collect();
     }
 
     async fn fetch_excerpts(
@@ -236,8 +291,7 @@ impl RelatedExcerptStore {
         }
         mean_definition_latency /= cache_miss_count.max(1) as u32;
 
-        let (new_cache, related_files, related_file_buffers) =
-            rebuild_related_files(&project, new_cache, cx).await?;
+        let (new_cache, related_buffers) = rebuild_related_files(&project, new_cache, cx).await?;
 
         if let Some(file) = &file {
             log::debug!(
@@ -249,8 +303,7 @@ impl RelatedExcerptStore {
 
         this.update(cx, |this, cx| {
             this.cache = new_cache;
-            this.related_files = related_files.into();
-            this.related_file_buffers = related_file_buffers;
+            this.related_buffers = related_buffers;
             cx.emit(RelatedExcerptStoreEvent::FinishedRefresh {
                 cache_hit_count,
                 cache_miss_count,
@@ -265,13 +318,9 @@ impl RelatedExcerptStore {
 
 async fn rebuild_related_files(
     project: &Entity<Project>,
-    new_entries: HashMap<Identifier, Arc<CacheEntry>>,
+    mut new_entries: HashMap<Identifier, Arc<CacheEntry>>,
     cx: &mut AsyncApp,
-) -> Result<(
-    HashMap<Identifier, Arc<CacheEntry>>,
-    Vec<RelatedFile>,
-    Vec<Entity<Buffer>>,
-)> {
+) -> Result<(HashMap<Identifier, Arc<CacheEntry>>, Vec<RelatedBuffer>)> {
     let mut snapshots = HashMap::default();
     let mut worktree_root_names = HashMap::default();
     for entry in new_entries.values() {
@@ -302,58 +351,108 @@ async fn rebuild_related_files(
 
     Ok(cx
         .background_spawn(async move {
-            let mut files = Vec::new();
-            let mut ranges_by_buffer = HashMap::<_, Vec<Range<Point>>>::default();
+            let mut ranges_by_buffer =
+                HashMap::<EntityId, (Entity<Buffer>, Vec<Range<Point>>)>::default();
             let mut paths_by_buffer = HashMap::default();
-            for entry in new_entries.values() {
+            for entry in new_entries.values_mut() {
                 for definition in &entry.definitions {
                     let Some(snapshot) = snapshots.get(&definition.buffer.entity_id()) else {
                         continue;
                     };
                     paths_by_buffer.insert(definition.buffer.entity_id(), definition.path.clone());
+
                     ranges_by_buffer
-                        .entry(definition.buffer.clone())
-                        .or_default()
+                        .entry(definition.buffer.entity_id())
+                        .or_insert_with(|| (definition.buffer.clone(), Vec::new()))
+                        .1
                         .push(definition.anchor_range.to_point(snapshot));
                 }
             }
 
-            for (buffer, ranges) in ranges_by_buffer {
-                let Some(snapshot) = snapshots.get(&buffer.entity_id()) else {
-                    continue;
-                };
-                let Some(project_path) = paths_by_buffer.get(&buffer.entity_id()) else {
-                    continue;
-                };
-                let excerpts = assemble_excerpts(snapshot, ranges);
-                let Some(root_name) = worktree_root_names.get(&project_path.worktree_id) else {
-                    continue;
-                };
+            let mut related_buffers: Vec<RelatedBuffer> = ranges_by_buffer
+                .into_iter()
+                .filter_map(|(entity_id, (buffer, ranges))| {
+                    let snapshot = snapshots.get(&entity_id)?;
+                    let project_path = paths_by_buffer.get(&entity_id)?;
+                    let row_ranges = assemble_excerpt_ranges(snapshot, ranges);
+                    let root_name = worktree_root_names.get(&project_path.worktree_id)?;
 
-                let path = Path::new(&format!(
-                    "{}/{}",
-                    root_name,
-                    project_path.path.as_unix_str()
-                ))
-                .into();
+                    let path: Arc<Path> = Path::new(&format!(
+                        "{}/{}",
+                        root_name,
+                        project_path.path.as_unix_str()
+                    ))
+                    .into();
 
-                files.push((
-                    buffer,
-                    RelatedFile {
+                    let anchor_ranges = row_ranges
+                        .into_iter()
+                        .map(|row_range| {
+                            let start = snapshot.anchor_before(Point::new(row_range.start, 0));
+                            let end_col = snapshot.line_len(row_range.end);
+                            let end = snapshot.anchor_after(Point::new(row_range.end, end_col));
+                            start..end
+                        })
+                        .collect();
+
+                    let mut related_buffer = RelatedBuffer {
+                        buffer,
                         path,
-                        excerpts,
-                        max_row: snapshot.max_point().row,
-                    },
-                ));
-            }
+                        anchor_ranges,
+                        cached_file: None,
+                    };
+                    related_buffer.fill_cache(snapshot);
+                    Some(related_buffer)
+                })
+                .collect();
 
-            files.sort_by_key(|(_, file)| file.path.clone());
-            let (related_buffers, related_files) = files.into_iter().unzip();
+            related_buffers.sort_by_key(|related| related.path.clone());
 
-            (new_entries, related_files, related_buffers)
+            (new_entries, related_buffers)
         })
         .await)
 }
+
+impl RelatedBuffer {
+    fn related_file(&mut self, cx: &App) -> RelatedFile {
+        let buffer = self.buffer.read(cx);
+        let path = self.path.clone();
+        let cached = if let Some(cached) = &self.cached_file
+            && buffer.version() == cached.buffer_version
+        {
+            cached
+        } else {
+            self.fill_cache(buffer)
+        };
+        let related_file = RelatedFile {
+            path,
+            excerpts: cached.excerpts.clone(),
+            max_row: buffer.max_point().row,
+        };
+        return related_file;
+    }
+
+    fn fill_cache(&mut self, buffer: &text::BufferSnapshot) -> &CachedRelatedFile {
+        let excerpts = self
+            .anchor_ranges
+            .iter()
+            .map(|range| {
+                let start = range.start.to_point(buffer);
+                let end = range.end.to_point(buffer);
+                RelatedExcerpt {
+                    row_range: start.row..end.row,
+                    text: buffer.text_for_range(start..end).collect::<String>().into(),
+                }
+            })
+            .collect::<Vec<_>>();
+        self.cached_file = Some(CachedRelatedFile {
+            excerpts: excerpts,
+            buffer_version: buffer.version().clone(),
+        });
+        self.cached_file.as_ref().unwrap()
+    }
+}
+
+use language::ToPoint as _;
 
 const MAX_TARGET_LEN: usize = 128;
 

@@ -11283,7 +11283,14 @@ impl Editor {
             .to_path_buf();
             Some(parent)
         }) {
-            window.dispatch_action(OpenTerminal { working_directory }.boxed_clone(), cx);
+            window.dispatch_action(
+                OpenTerminal {
+                    working_directory,
+                    local: false,
+                }
+                .boxed_clone(),
+                cx,
+            );
         }
     }
 
@@ -13272,13 +13279,14 @@ impl Editor {
                     trimmed_selections.push(start..end);
                 }
 
+                let is_multiline_trim = trimmed_selections.len() > 1;
                 for trimmed_range in trimmed_selections {
                     if is_first {
                         is_first = false;
-                    } else if !prev_selection_was_entire_line {
+                    } else if is_multiline_trim || !prev_selection_was_entire_line {
                         text += "\n";
                     }
-                    prev_selection_was_entire_line = is_entire_line;
+                    prev_selection_was_entire_line = is_entire_line && !is_multiline_trim;
                     let mut len = 0;
                     for chunk in buffer.text_for_range(trimmed_range.start..trimmed_range.end) {
                         text.push_str(chunk);
@@ -16365,6 +16373,119 @@ impl Editor {
                 },
             );
         }
+    }
+
+    pub fn move_to_start_of_larger_syntax_node(
+        &mut self,
+        _: &MoveToStartOfLargerSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_cursors_to_syntax_nodes(window, cx, false);
+    }
+
+    pub fn move_to_end_of_larger_syntax_node(
+        &mut self,
+        _: &MoveToEndOfLargerSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_cursors_to_syntax_nodes(window, cx, true);
+    }
+
+    fn move_cursors_to_syntax_nodes(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        move_to_end: bool,
+    ) -> bool {
+        let old_selections: Box<[_]> = self
+            .selections
+            .all::<MultiBufferOffset>(&self.display_snapshot(cx))
+            .into();
+        if old_selections.is_empty() {
+            return false;
+        }
+
+        self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = self.buffer.read(cx).snapshot(cx);
+
+        let mut any_cursor_moved = false;
+        let new_selections = old_selections
+            .iter()
+            .map(|selection| {
+                if !selection.is_empty() {
+                    return selection.clone();
+                }
+
+                let selection_pos = selection.head();
+                let old_range = selection_pos..selection_pos;
+
+                let mut new_pos = selection_pos;
+                let mut search_range = old_range;
+                while let Some((node, range)) = buffer.syntax_ancestor(search_range.clone()) {
+                    search_range = range.clone();
+                    if !node.is_named()
+                        || display_map.intersects_fold(range.start)
+                        || display_map.intersects_fold(range.end)
+                        // If cursor is already at the end of the syntax node, continue searching
+                        || (move_to_end && range.end == selection_pos)
+                        // If cursor is already at the start of the syntax node, continue searching
+                        || (!move_to_end && range.start == selection_pos)
+                    {
+                        continue;
+                    }
+
+                    // If we found a string_content node, find the largest parent that is still string_content
+                    // Enables us to skip to the end of strings without taking multiple steps inside the string
+                    let (_, final_range) = if node.kind() == "string_content" {
+                        let mut current_node = node;
+                        let mut current_range = range;
+                        while let Some((parent, parent_range)) =
+                            buffer.syntax_ancestor(current_range.clone())
+                        {
+                            if parent.kind() == "string_content" {
+                                current_node = parent;
+                                current_range = parent_range;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        (current_node, current_range)
+                    } else {
+                        (node, range)
+                    };
+
+                    new_pos = if move_to_end {
+                        final_range.end
+                    } else {
+                        final_range.start
+                    };
+
+                    break;
+                }
+
+                any_cursor_moved |= new_pos != selection_pos;
+
+                Selection {
+                    id: selection.id,
+                    start: new_pos,
+                    end: new_pos,
+                    goal: SelectionGoal::None,
+                    reversed: false,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        self.change_selections(Default::default(), window, cx, |s| {
+            s.select(new_selections);
+        });
+        self.request_autoscroll(Autoscroll::newest(), cx);
+
+        any_cursor_moved
     }
 
     fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
@@ -25583,31 +25704,37 @@ impl EditorSnapshot {
     /// This is positive if `base` is before `line`.
     fn relative_line_delta(
         &self,
-        base: DisplayRow,
-        line: DisplayRow,
+        current_selection_head: DisplayRow,
+        first_visible_row: DisplayRow,
         consider_wrapped_lines: bool,
     ) -> i64 {
-        let point = DisplayPoint::new(line, 0).to_point(self);
-        self.relative_line_delta_to_point(base, point, consider_wrapped_lines)
-    }
+        let current_selection_head = current_selection_head.as_display_point().to_point(self);
+        let first_visible_row = first_visible_row.as_display_point().to_point(self);
 
-    /// Returns the line delta from `base` to `point` in the multibuffer.
-    ///
-    /// This is positive if `base` is before `point`.
-    pub fn relative_line_delta_to_point(
-        &self,
-        base: DisplayRow,
-        point: Point,
-        consider_wrapped_lines: bool,
-    ) -> i64 {
-        let base_point = DisplayPoint::new(base, 0).to_point(self);
         if consider_wrapped_lines {
             let wrap_snapshot = self.wrap_snapshot();
-            let base_wrap_row = wrap_snapshot.make_wrap_point(base_point, Bias::Left).row();
-            let wrap_row = wrap_snapshot.make_wrap_point(point, Bias::Left).row();
+            let base_wrap_row = wrap_snapshot
+                .make_wrap_point(current_selection_head, Bias::Left)
+                .row();
+            let wrap_row = wrap_snapshot
+                .make_wrap_point(first_visible_row, Bias::Left)
+                .row();
             wrap_row.0 as i64 - base_wrap_row.0 as i64
         } else {
-            point.row as i64 - base_point.row as i64
+            let folds = if current_selection_head < first_visible_row {
+                self.folds_in_range(current_selection_head..first_visible_row)
+            } else {
+                self.folds_in_range(first_visible_row..current_selection_head)
+            };
+
+            let folded_lines = folds
+                .map(|fold| {
+                    let range = fold.range.0.to_point(self);
+                    range.end.row.saturating_sub(range.start.row)
+                })
+                .sum::<u32>() as i64;
+
+            first_visible_row.row as i64 - current_selection_head.row as i64 + folded_lines
         }
     }
 
@@ -25617,10 +25744,12 @@ impl EditorSnapshot {
     pub fn calculate_relative_line_numbers(
         &self,
         rows: &Range<DisplayRow>,
-        relative_to: DisplayRow,
+        current_selection_head: DisplayRow,
         count_wrapped_lines: bool,
     ) -> HashMap<DisplayRow, u32> {
-        let initial_offset = self.relative_line_delta(relative_to, rows.start, count_wrapped_lines);
+        let initial_offset =
+            self.relative_line_delta(current_selection_head, rows.start, count_wrapped_lines);
+        let current_selection_point = current_selection_head.as_display_point().to_point(self);
 
         self.row_infos(rows.start)
             .take(rows.len())
@@ -25631,10 +25760,23 @@ impl EditorSnapshot {
                     || (count_wrapped_lines && row_info.wrapped_buffer_row.is_some())
             })
             .enumerate()
-            .flat_map(|(i, (row, _row_info))| {
-                (row != relative_to)
-                    .then_some((row, (initial_offset + i as i64).unsigned_abs() as u32))
+            .filter(|(_, (row, row_info))| {
+                // We want to check here that
+                // - the row is not the current selection head to ensure the current
+                // line has absolute numbering
+                // - similarly, should the selection head live in a soft-wrapped line
+                // and we are not counting those, that the parent line keeps its
+                // absolute number
+                // - lastly, if we are in a deleted line, it is fine to number this
+                // relative with 0, as otherwise it would have no line number at all
+                (*row != current_selection_head
+                    && (count_wrapped_lines
+                        || row_info.buffer_row != Some(current_selection_point.row)))
+                    || row_info
+                        .diff_status
+                        .is_some_and(|status| status.is_deleted())
             })
+            .map(|(i, (row, _))| (row, (initial_offset + i as i64).unsigned_abs() as u32))
             .collect()
     }
 }

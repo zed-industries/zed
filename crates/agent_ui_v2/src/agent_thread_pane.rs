@@ -1,4 +1,5 @@
-use agent::{DbThreadMetadata, NativeAgentServer, ThreadStore};
+use acp_thread::AgentSessionInfo;
+use agent::{NativeAgentServer, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use agent_settings::AgentSettings;
@@ -89,7 +90,7 @@ impl AgentThreadPane {
 
     pub fn open_thread(
         &mut self,
-        entry: DbThreadMetadata,
+        entry: AgentSessionInfo,
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
@@ -98,7 +99,7 @@ impl AgentThreadPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let thread_id = entry.id.clone();
+        let thread_id = entry.session_id.clone();
         let resume_thread = Some(entry);
 
         let agent: Rc<dyn AgentServer> = Rc::new(NativeAgentServer::new(fs, thread_store.clone()));
@@ -110,7 +111,7 @@ impl AgentThreadPane {
                 None,
                 workspace,
                 project,
-                thread_store,
+                Some(thread_store),
                 prompt_store,
                 true,
                 window,

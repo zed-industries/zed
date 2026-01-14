@@ -1840,6 +1840,20 @@ fn previous_word_end(
     movement::saturating_left(map, point.to_display_point(map))
 }
 
+/// Checks if there's a subword boundary start between `left` and `right` characters.
+/// This detects transitions like `_b` (separator to non-separator) or `aB` (lowercase to uppercase).
+pub(crate) fn is_subword_start(left: char, right: char, separators: &str) -> bool {
+    let is_separator = |c: char| separators.contains(c);
+    (is_separator(left) && !is_separator(right)) || (left.is_lowercase() && right.is_uppercase())
+}
+
+/// Checks if there's a subword boundary end between `left` and `right` characters.
+/// This detects transitions like `a_` (non-separator to separator) or `aB` (lowercase to uppercase).
+pub(crate) fn is_subword_end(left: char, right: char, separators: &str) -> bool {
+    let is_separator = |c: char| separators.contains(c);
+    (!is_separator(left) && is_separator(right)) || (left.is_lowercase() && right.is_uppercase())
+}
+
 fn next_subword_start(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
@@ -1857,11 +1871,11 @@ fn next_subword_start(
             let right_kind = classifier.kind(right);
             let at_newline = right == '\n';
 
-            let is_word_start = (left_kind != right_kind) && !left.is_alphanumeric();
-            let is_subword_start =
-                left == '_' && right != '_' || left.is_lowercase() && right.is_uppercase();
-
-            let found = (!right.is_whitespace() && (is_word_start || is_subword_start))
+            let is_stopping_punct = |c: char| "\"'{}[]()<>".contains(c);
+            let is_word_start = (left_kind != right_kind)
+                && (!right.is_ascii_punctuation() || is_stopping_punct(right));
+            let found_subword_start = is_subword_start(left, right, "._-");
+            let found = (!right.is_whitespace() && (is_word_start || found_subword_start))
                 || at_newline && crossed_newline
                 || at_newline && left == '\n'; // Prevents skipping repeated empty lines
 
@@ -1902,13 +1916,15 @@ pub(crate) fn next_subword_end(
                     return true;
                 }
 
-                let is_word_end = (left_kind != right_kind) && !right.is_alphanumeric();
-                let is_subword_end =
-                    left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
+                let is_stopping_punct = |c: char| ".\"'{}[]()<>".contains(c);
+                let is_word_end = (left_kind != right_kind)
+                    && (!left.is_ascii_punctuation() || is_stopping_punct(left));
+                let found_subword_end = is_subword_end(left, right, "_-");
 
-                let found = !left.is_whitespace() && !at_newline && (is_word_end || is_subword_end);
+                let found =
+                    !left.is_whitespace() && !at_newline && (is_word_end || found_subword_end);
 
-                if found && (is_word_end || is_subword_end) {
+                if found {
                     need_backtrack = true;
                 }
 
@@ -1951,11 +1967,12 @@ fn previous_subword_start(
                 let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
-                let is_word_start = (left_kind != right_kind) && !left.is_alphanumeric();
-                let is_subword_start =
-                    left == '_' && right != '_' || left.is_lowercase() && right.is_uppercase();
+                let is_stopping_punct = |c: char| ".\"'{}[]()<>".contains(c);
+                let is_word_start = (left_kind != right_kind)
+                    && (is_stopping_punct(right) || !right.is_ascii_punctuation());
+                let found_subword_start = is_subword_start(left, right, "._-");
 
-                let found = (!right.is_whitespace() && (is_word_start || is_subword_start))
+                let found = (!right.is_whitespace() && (is_word_start || found_subword_start))
                     || at_newline && crossed_newline
                     || at_newline && left == '\n'; // Prevents skipping repeated empty lines
 
@@ -1998,16 +2015,17 @@ fn previous_subword_end(
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
 
-                let is_subword_end =
-                    left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
+                let is_stopping_punct = |c: char| ".;\"'{}[]()<>".contains(c);
+                let found_subword_end = is_subword_end(left, right, "_-");
 
-                if is_subword_end {
+                if found_subword_end {
                     return true;
                 }
 
                 match (left_kind, right_kind) {
                     (CharKind::Word, CharKind::Whitespace)
                     | (CharKind::Word, CharKind::Punctuation) => true,
+                    (CharKind::Punctuation, _) if is_stopping_punct(left) => true,
                     (CharKind::Whitespace, CharKind::Whitespace) => left == '\n' && right == '\n',
                     _ => false,
                 }
@@ -4770,5 +4788,213 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
         the quick brown foˇd over the lazy dog"});
         assert!(!cx.cx.forced_motion());
+    }
+
+    #[gpui::test]
+    async fn test_next_subword_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Setup custom keybindings for subword motions so we can use the bindings
+        // in `simulate_keystrokes`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "w",
+                super::NextSubwordStart {
+                    ignore_punctuation: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_state("ˇfoo.bar", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo.ˇbar", Mode::Normal);
+
+        cx.set_state("ˇfoo(bar)", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("fooˇ(bar)", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo(ˇbar)", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo(barˇ)", Mode::Normal);
+
+        cx.set_state("ˇfoo_bar_baz", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo_bar_ˇbaz", Mode::Normal);
+
+        cx.set_state("ˇfooBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("fooBarˇBaz", Mode::Normal);
+
+        cx.set_state("ˇfoo;bar", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo;ˇbar", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_next_subword_end(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Setup custom keybindings for subword motions so we can use the bindings
+        // in `simulate_keystrokes`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "e",
+                super::NextSubwordEnd {
+                    ignore_punctuation: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_state("ˇfoo.bar", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("foˇo.bar", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("fooˇ.bar", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("foo.baˇr", Mode::Normal);
+
+        cx.set_state("ˇfoo(bar)", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("foˇo(bar)", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("fooˇ(bar)", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("foo(baˇr)", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("foo(barˇ)", Mode::Normal);
+
+        cx.set_state("ˇfoo_bar_baz", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("foˇo_bar_baz", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("foo_baˇr_baz", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("foo_bar_baˇz", Mode::Normal);
+
+        cx.set_state("ˇfooBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.set_state("foˇoBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.set_state("fooBaˇrBaz", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.set_state("fooBarBaˇz", Mode::Normal);
+
+        cx.set_state("ˇfoo;bar", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.set_state("foˇo;bar", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.set_state("fooˇ;bar", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.set_state("foo;baˇr", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_previous_subword_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Setup custom keybindings for subword motions so we can use the bindings
+        // in `simulate_keystrokes`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "b",
+                super::PreviousSubwordStart {
+                    ignore_punctuation: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_state("foo.barˇ", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("foo.ˇbar", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("fooˇ.bar", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("ˇfoo.bar", Mode::Normal);
+
+        cx.set_state("foo(barˇ)", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("foo(ˇbar)", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("fooˇ(bar)", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("ˇfoo(bar)", Mode::Normal);
+
+        cx.set_state("foo_bar_bazˇ", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("foo_bar_ˇbaz", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("ˇfoo_bar_baz", Mode::Normal);
+
+        cx.set_state("fooBarBazˇ", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("fooBarˇBaz", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("ˇfooBarBaz", Mode::Normal);
+
+        cx.set_state("foo;barˇ", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("foo;ˇbar", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("ˇfoo;bar", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_previous_subword_end(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Setup custom keybindings for subword motions so we can use the bindings
+        // in `simulate_keystrokes`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "g e",
+                super::PreviousSubwordEnd {
+                    ignore_punctuation: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_state("foo.baˇr", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("fooˇ.bar", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foˇo.bar", Mode::Normal);
+
+        cx.set_state("foo(barˇ)", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foo(baˇr)", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("fooˇ(bar)", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foˇo(bar)", Mode::Normal);
+
+        cx.set_state("foo_bar_baˇz", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foo_baˇr_baz", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foˇo_bar_baz", Mode::Normal);
+
+        cx.set_state("fooBarBaˇz", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("fooBaˇrBaz", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foˇoBarBaz", Mode::Normal);
+
+        cx.set_state("foo;baˇr", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("fooˇ;bar", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foˇo;bar", Mode::Normal);
     }
 }

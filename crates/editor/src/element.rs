@@ -382,6 +382,8 @@ impl EditorElement {
         register_action(editor, window, Editor::select_next_syntax_node);
         register_action(editor, window, Editor::select_prev_syntax_node);
         register_action(editor, window, Editor::unwrap_syntax_node);
+        register_action(editor, window, Editor::move_to_start_of_larger_syntax_node);
+        register_action(editor, window, Editor::move_to_end_of_larger_syntax_node);
         register_action(editor, window, Editor::select_enclosing_symbol);
         register_action(editor, window, Editor::move_to_enclosing_bracket);
         register_action(editor, window, Editor::undo_selection);
@@ -3031,7 +3033,6 @@ impl EditorElement {
         scroll_position: gpui::Point<ScrollOffset>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
-        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         snapshot: &EditorSnapshot,
         breakpoints: HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         row_infos: &[RowInfo],
@@ -3073,7 +3074,6 @@ impl EditorElement {
                         gutter_dimensions,
                         scroll_position,
                         gutter_hitbox,
-                        display_hunks,
                         window,
                         cx,
                     );
@@ -3088,7 +3088,7 @@ impl EditorElement {
         range: Range<DisplayRow>,
         row_infos: &[RowInfo],
         cx: &App,
-    ) -> Option<DisplayRow> {
+    ) -> Option<(DisplayRow, Option<u32>)> {
         if !cx.has_flag::<DiffReviewFeatureFlag>() {
             return None;
         }
@@ -3104,25 +3104,34 @@ impl EditorElement {
         }
 
         let display_row = indicator.display_row;
+        let row_index = (display_row.0.saturating_sub(range.start.0)) as usize;
 
         // Don't show on rows with expand excerpt buttons
-        if row_infos
-            .get((display_row.0.saturating_sub(range.start.0)) as usize)
-            .is_some_and(|row_info| row_info.expand_info.is_some())
-        {
+        let row_info = row_infos.get(row_index);
+        if row_info.is_some_and(|row_info| row_info.expand_info.is_some()) {
             return None;
         }
 
-        Some(display_row)
+        let buffer_row = row_info.and_then(|info| info.buffer_row);
+        Some((display_row, buffer_row))
     }
 
-    fn diff_review_button() -> AnyElement {
-        IconButton::new("diff_review_button", ui::IconName::Plus)
-            .icon_size(ui::IconSize::XSmall)
-            .size(ui::ButtonSize::None)
-            .icon_color(ui::Color::Default)
-            .style(ui::ButtonStyle::Filled)
-            .layer(ui::ElevationIndex::Surface)
+    fn diff_review_button(width: Pixels, cx: &mut App) -> AnyElement {
+        let text_c = cx.theme().colors().text;
+        let icon_c = cx.theme().colors().icon_accent;
+
+        h_flex()
+            .id("diff_review_button")
+            .cursor_pointer()
+            .w(width - px(1.))
+            .h(relative(0.9))
+            .justify_center()
+            .rounded_sm()
+            .border_1()
+            .border_color(text_c.opacity(0.1))
+            .bg(text_c.opacity(0.15))
+            .hover(|s| s.bg(icon_c.opacity(0.4)).border_color(icon_c.opacity(0.5)))
+            .child(Icon::new(IconName::Plus).size(IconSize::Small))
             .tooltip(Tooltip::text("Add Review"))
             .into_any_element()
     }
@@ -3136,7 +3145,6 @@ impl EditorElement {
         scroll_position: gpui::Point<ScrollOffset>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
-        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         snapshot: &EditorSnapshot,
         breakpoints: &mut HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         window: &mut Window,
@@ -3229,7 +3237,6 @@ impl EditorElement {
                         gutter_dimensions,
                         scroll_position,
                         gutter_hitbox,
-                        display_hunks,
                         window,
                         cx,
                     );
@@ -3298,14 +3305,13 @@ impl EditorElement {
                     || gutter_dimensions.right_padding == px(0.);
 
                 let width = if is_wide {
-                    available_width - px(2.)
+                    available_width - px(5.)
                 } else {
-                    available_width + em_width - px(2.)
+                    available_width + em_width - px(5.)
                 };
 
                 let toggle = IconButton::new(("expand", ix), icon_name)
                     .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
-                    .selected_icon_color(Color::Custom(cx.theme().colors().editor_foreground))
                     .icon_size(IconSize::Custom(rems(editor_font_size / window.rem_size())))
                     .width(width)
                     .on_click(move |_, window, cx| {
@@ -3341,7 +3347,7 @@ impl EditorElement {
         rows: Range<DisplayRow>,
         buffer_rows: &[RowInfo],
         active_rows: &BTreeMap<DisplayRow, LineHighlightSpec>,
-        relative_line_base: Option<DisplayRow>,
+        current_selection_head: Option<DisplayRow>,
         snapshot: &EditorSnapshot,
         window: &mut Window,
         cx: &mut App,
@@ -3356,9 +3362,14 @@ impl EditorElement {
         let relative = self.editor.read(cx).relative_line_numbers(cx);
 
         let relative_line_numbers_enabled = relative.enabled();
-        let relative_rows = if relative_line_numbers_enabled && let Some(base) = relative_line_base
+        let relative_rows = if relative_line_numbers_enabled
+            && let Some(current_selection_head) = current_selection_head
         {
-            snapshot.calculate_relative_line_numbers(&rows, base, relative.wrapped())
+            snapshot.calculate_relative_line_numbers(
+                &rows,
+                current_selection_head,
+                relative.wrapped(),
+            )
         } else {
             Default::default()
         };
@@ -4381,6 +4392,7 @@ impl EditorElement {
                                         window.dispatch_action(
                                             OpenTerminal {
                                                 working_directory: parent_abs_path.clone(),
+                                                local: false,
                                             }
                                             .boxed_clone(),
                                             cx,
@@ -4770,12 +4782,13 @@ impl EditorElement {
             );
 
             let line_number = show_line_numbers.then(|| {
+                let start_display_row = start_point.to_display_point(snapshot).row();
                 let relative_number = relative_to
                     .filter(|_| relative_line_numbers != RelativeLineNumbers::Disabled)
                     .map(|base| {
-                        snapshot.relative_line_delta_to_point(
+                        snapshot.relative_line_delta(
                             base,
-                            start_point,
+                            start_display_row,
                             relative_line_numbers == RelativeLineNumbers::Wrapped,
                         )
                     });
@@ -8347,7 +8360,6 @@ fn prepaint_gutter_button(
     gutter_dimensions: &GutterDimensions,
     scroll_position: gpui::Point<ScrollOffset>,
     gutter_hitbox: &Hitbox,
-    display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -8356,28 +8368,12 @@ fn prepaint_gutter_button(
         AvailableSpace::Definite(line_height),
     );
     let indicator_size = button.layout_as_root(available_space, window, cx);
+    let git_gutter_width = EditorElement::gutter_strip_width(line_height)
+        + gutter_dimensions
+            .git_blame_entries_width
+            .unwrap_or_default();
 
-    let blame_width = gutter_dimensions.git_blame_entries_width;
-    let gutter_width = display_hunks
-        .binary_search_by(|(hunk, _)| match hunk {
-            DisplayDiffHunk::Folded { display_row } => display_row.cmp(&row),
-            DisplayDiffHunk::Unfolded {
-                display_row_range, ..
-            } => {
-                if display_row_range.end <= row {
-                    Ordering::Less
-                } else if display_row_range.start > row {
-                    Ordering::Greater
-                } else {
-                    Ordering::Equal
-                }
-            }
-        })
-        .ok()
-        .and_then(|ix| Some(display_hunks[ix].1.as_ref()?.size.width));
-    let left_offset = blame_width.max(gutter_width).unwrap_or_default();
-
-    let x = left_offset;
+    let x = git_gutter_width + px(2.);
 
     let mut y =
         Pixels::from((row.as_f64() - scroll_position.y) * ScrollPixelOffset::from(line_height));
@@ -9778,7 +9774,7 @@ impl Element for EditorElement {
                         );
 
                     // relative rows are based on newest selection, even outside the visible area
-                    let relative_row_base = self.editor.update(cx, |editor, cx| {
+                    let current_selection_head = self.editor.update(cx, |editor, cx| {
                         (editor.selections.count() != 0).then(|| {
                             let newest = editor
                                 .selections
@@ -9816,7 +9812,7 @@ impl Element for EditorElement {
                         start_row..end_row,
                         &row_infos,
                         &active_rows,
-                        relative_row_base,
+                        current_selection_head,
                         &snapshot,
                         window,
                         cx,
@@ -10151,13 +10147,18 @@ impl Element for EditorElement {
                             &text_hitbox,
                             &style,
                             relative,
-                            relative_row_base,
+                            current_selection_head,
                             window,
                             cx,
                         )
                     } else {
                         None
                     };
+                    self.editor.update(cx, |editor, _| {
+                        editor.scroll_manager.set_sticky_header_line_count(
+                            sticky_headers.as_ref().map_or(0, |h| h.lines.len()),
+                        );
+                    });
                     let indent_guides = self.layout_indent_guides(
                         content_origin,
                         text_hitbox.origin,
@@ -10397,7 +10398,6 @@ impl Element for EditorElement {
                             scroll_position,
                             &gutter_dimensions,
                             &gutter_hitbox,
-                            &display_hunks,
                             &snapshot,
                             &mut breakpoint_rows,
                             window,
@@ -10417,7 +10417,6 @@ impl Element for EditorElement {
                             scroll_position,
                             &gutter_dimensions,
                             &gutter_hitbox,
-                            &display_hunks,
                             &snapshot,
                             breakpoint_rows,
                             &row_infos,
@@ -10428,17 +10427,46 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
+                    let git_gutter_width = Self::gutter_strip_width(line_height)
+                        + gutter_dimensions
+                            .git_blame_entries_width
+                            .unwrap_or_default();
+                    let available_width = gutter_dimensions.left_padding - git_gutter_width;
+
+                    let max_line_number_length = self
+                        .editor
+                        .read(cx)
+                        .buffer()
+                        .read(cx)
+                        .snapshot(cx)
+                        .widest_line_number()
+                        .ilog10()
+                        + 1;
+
                     let diff_review_button = self
                         .should_render_diff_review_button(start_row..end_row, &row_infos, cx)
-                        .map(|display_row| {
+                        .map(|(display_row, buffer_row)| {
+                            let is_wide = max_line_number_length
+                                >= EditorSettings::get_global(cx).gutter.min_line_number_digits
+                                    as u32
+                                && buffer_row.is_some_and(|row| {
+                                    (row + 1).ilog10() + 1 == max_line_number_length
+                                })
+                                || gutter_dimensions.right_padding == px(0.);
+
+                            let button_width = if is_wide {
+                                available_width - px(6.)
+                            } else {
+                                available_width + em_width - px(6.)
+                            };
+
                             prepaint_gutter_button(
-                                Self::diff_review_button(),
+                                Self::diff_review_button(button_width, cx),
                                 display_row,
                                 line_height,
                                 &gutter_dimensions,
                                 scroll_position,
                                 &gutter_hitbox,
-                                &display_hunks,
                                 window,
                                 cx,
                             )
@@ -11965,7 +11993,7 @@ mod tests {
         editor_tests::{init_test, update_test_language_settings},
     };
     use gpui::{TestAppContext, VisualTestContext};
-    use language::language_settings;
+    use language::{Buffer, language_settings, tree_sitter_python};
     use log::info;
     use std::num::NonZeroU32;
     use util::test::sample_text;
@@ -12174,6 +12202,98 @@ mod tests {
             layouts.get(&MultiBufferRow(DELETED_LINE)).is_none(),
             "Deleted line should not have a line number"
         );
+    }
+
+    #[gpui::test]
+    async fn test_layout_line_numbers_with_folded_lines(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let python_lang = languages::language("python", tree_sitter_python::LANGUAGE.into());
+
+        let window = cx.add_window(|window, cx| {
+            let buffer = cx.new(|cx| {
+                Buffer::local(
+                    indoc::indoc! {"
+                        fn test() -> int {
+                            return 2;
+                        }
+
+                        fn another_test() -> int {
+                            # This is a very peculiar method that is hard to grasp.
+                            return 4;
+                        }
+                    "},
+                    cx,
+                )
+                .with_language(python_lang, cx)
+            });
+
+            let buffer = MultiBuffer::build_from_buffer(buffer, cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+
+        let editor = window.root(cx).unwrap();
+        let style = editor.update(cx, |editor, cx| editor.style(cx).clone());
+        let line_height = window
+            .update(cx, |_, window, _| {
+                style.text.line_height_in_pixels(window.rem_size())
+            })
+            .unwrap();
+        let element = EditorElement::new(&editor, style);
+        let snapshot = window
+            .update(cx, |editor, window, cx| {
+                editor.fold_at(MultiBufferRow(0), window, cx);
+                editor.snapshot(window, cx)
+            })
+            .unwrap();
+
+        let layouts = cx
+            .update_window(*window, |_, window, cx| {
+                element.layout_line_numbers(
+                    None,
+                    GutterDimensions {
+                        left_padding: Pixels::ZERO,
+                        right_padding: Pixels::ZERO,
+                        width: px(30.0),
+                        margin: Pixels::ZERO,
+                        git_blame_entries_width: None,
+                    },
+                    line_height,
+                    gpui::Point::default(),
+                    DisplayRow(0)..DisplayRow(6),
+                    &(0..6)
+                        .map(|row| RowInfo {
+                            buffer_row: Some(row),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>(),
+                    &BTreeMap::default(),
+                    Some(DisplayRow(3)),
+                    &snapshot,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        assert_eq!(layouts.len(), 6);
+
+        let relative_rows = window
+            .update(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                snapshot.calculate_relative_line_numbers(
+                    &(DisplayRow(0)..DisplayRow(6)),
+                    DisplayRow(3),
+                    false,
+                )
+            })
+            .unwrap();
+        assert_eq!(relative_rows[&DisplayRow(0)], 3);
+        assert_eq!(relative_rows[&DisplayRow(1)], 2);
+        assert_eq!(relative_rows[&DisplayRow(2)], 1);
+        // current line has no relative number
+        assert!(!relative_rows.contains_key(&DisplayRow(3)));
+        assert_eq!(relative_rows[&DisplayRow(4)], 1);
+        assert_eq!(relative_rows[&DisplayRow(5)], 2);
     }
 
     #[gpui::test]

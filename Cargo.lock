@@ -12,6 +12,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "buffer_diff",
+ "chrono",
  "collections",
  "editor",
  "env_logger 0.11.8",
@@ -429,6 +430,7 @@ dependencies = [
 name = "agent_ui_v2"
 version = "0.1.0"
 dependencies = [
+ "acp_thread",
  "agent",
  "agent-client-protocol",
  "agent_servers",
@@ -442,6 +444,7 @@ dependencies = [
  "fs",
  "fuzzy",
  "gpui",
+ "log",
  "menu",
  "project",
  "prompt_store",
@@ -5308,6 +5311,7 @@ name = "edit_prediction_context"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clock",
  "cloud_llm_client",
  "collections",
  "env_logger 0.11.8",
@@ -7093,6 +7097,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
+ "ztracing",
 ]
 
 [[package]]
@@ -7332,7 +7337,6 @@ dependencies = [
  "calloop",
  "calloop-wayland-source",
  "cbindgen",
- "chrono",
  "circular-buffer",
  "cocoa 0.26.0",
  "cocoa-foundation 0.2.0",
@@ -7382,7 +7386,6 @@ dependencies = [
  "refineable",
  "reqwest_client",
  "resvg",
- "scheduler",
  "schemars",
  "seahash",
  "semver",
@@ -13583,7 +13586,6 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "async-dispatcher",
- "async-task",
  "async-tungstenite",
  "base64 0.22.1",
  "client",
@@ -14366,7 +14368,6 @@ dependencies = [
  "async-task",
  "backtrace",
  "chrono",
- "flume",
  "futures 0.3.31",
  "parking_lot",
  "rand 0.9.2",
@@ -16930,6 +16931,7 @@ dependencies = [
  "git_ui",
  "gpui",
  "http_client",
+ "menu",
  "notifications",
  "pretty_assertions",
  "project",
@@ -21178,7 +21180,9 @@ dependencies = [
 name = "zeta_prompt"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "serde",
+ "strum 0.27.2",
 ]
 
 [[package]]

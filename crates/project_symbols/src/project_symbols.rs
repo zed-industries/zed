@@ -61,9 +61,10 @@ impl ProjectSymbolsDelegate {
         }
     }
 
+    // Note if you make changes to this, also change `agent_ui::completion_provider::search_symbols`
     fn filter(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         const MAX_MATCHES: usize = 100;
-        let mut visible_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
+        let mut visible_matches = cx.background_executor().block(fuzzy::match_strings(
             &self.visible_match_candidates,
             query,
             false,
@@ -72,7 +73,7 @@ impl ProjectSymbolsDelegate {
             &Default::default(),
             cx.background_executor().clone(),
         ));
-        let mut external_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
+        let mut external_matches = cx.background_executor().block(fuzzy::match_strings(
             &self.external_match_candidates,
             query,
             false,
@@ -254,7 +255,8 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             } => abs_path.to_string_lossy(),
         };
         let label = symbol.label.text.clone();
-        let path = path.to_string();
+        let line_number = symbol.range.start.0.row + 1;
+        let path = path.into_owned();
 
         let settings = ThemeSettings::get_global(cx);
 
@@ -290,7 +292,15 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         .child(LabelLike::new().child(
                             StyledText::new(label).with_default_highlights(&text_style, highlights),
                         ))
-                        .child(Label::new(path).size(LabelSize::Small).color(Color::Muted)),
+                        .child(
+                            h_flex()
+                                .child(Label::new(path).size(LabelSize::Small).color(Color::Muted))
+                                .child(
+                                    Label::new(format!(":{}", line_number))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Placeholder),
+                                ),
+                        ),
                 ),
         )
     }

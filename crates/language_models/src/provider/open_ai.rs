@@ -1419,8 +1419,8 @@ mod tests {
         // Validate that all models are supported by tiktoken-rs
         for model in Model::iter() {
             let count = cx
-                .foreground_executor()
-                .block_on(count_open_ai_tokens(
+                .executor()
+                .block(count_open_ai_tokens(
                     request.clone(),
                     model,
                     &cx.app.borrow(),

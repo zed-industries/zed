@@ -22,6 +22,7 @@ use edit_prediction::EditPredictionStore;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
 use gpui::{AppContext as _, Application};
+use zeta_prompt::ZetaVersion;
 
 use reqwest_client::ReqwestClient;
 use serde::{Deserialize, Serialize};
@@ -155,7 +156,7 @@ impl Display for Command {
                 f,
                 "format-prompt --prompt-format={}",
                 format_prompt_args
-                    .prompt_format
+                    .provider
                     .to_possible_value()
                     .unwrap()
                     .get_name()
@@ -204,22 +205,31 @@ impl Display for Command {
 
 #[derive(Debug, Args, Clone)]
 struct FormatPromptArgs {
-    #[clap(long, short('p'))]
-    prompt_format: PromptFormat,
-}
-
-#[derive(Clone, Copy, Debug, ValueEnum, Serialize, Deserialize)]
-enum PromptFormat {
-    Teacher,
-    Zeta2,
+    #[clap(long, short)]
+    provider: PredictionProvider,
+    #[clap(
+        long,
+        short,
+        help = "(only for --provider zeta2) A substring of a zeta_prompt::ZetaVersion variant to use",
+        value_parser = ZetaVersion::parse,
+        default_value_t = ZetaVersion::default(),
+    )]
+    version: ZetaVersion,
 }
 
 #[derive(Debug, Args, Clone)]
 struct PredictArgs {
-    #[clap(long)]
+    #[clap(long, short)]
     provider: PredictionProvider,
     #[clap(long, default_value_t = 1)]
     repetitions: usize,
+    #[clap(
+        long,
+        short,
+        help = "(only for --provider zeta2) A substring of a zeta_prompt::ZetaVersion variant to use",
+        value_parser = ZetaVersion::parse,
+    )]
+    version: ZetaVersion,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, ValueEnum, Serialize, Deserialize)]
@@ -514,7 +524,7 @@ fn main() {
                                     Command::FormatPrompt(args) => {
                                         run_format_prompt(
                                             example,
-                                            args.prompt_format,
+                                            args,
                                             app_state.clone(),
                                             cx.clone(),
                                         )
@@ -523,8 +533,7 @@ fn main() {
                                     Command::Predict(args) => {
                                         run_prediction(
                                             example,
-                                            Some(args.provider),
-                                            args.repetitions,
+                                            args,
                                             app_state.clone(),
                                             cx.clone(),
                                         )
