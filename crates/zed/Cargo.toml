@@ -284,3 +284,23 @@ osx_url_schemes = ["zed"]
 
 [package.metadata.cargo-machete]
 ignored = ["profiling", "zstd", "tracing"]
+
+[package.metadata.deb]
+name = "zed"
+maintainer = "Zed Team <hi@zed.dev>"
+copyright = "2024, Zed Team <hi@zed.dev>"
+license-file = ["LICENSE-GPL", "3"]
+depends = "$auto, libasound2, libfontconfig1, libwayland-client0, libx11-xcb1, libxkbcommon-x11-0, libssl3, libzstd1, libvulkan1, libgit2-1.9 | libgit2-1.8, libsqlite3-0"
+section = "editors"
+priority = "optional"
+extended-description = """\
+Zed is a high-performance, multiplayer code editor. It's written in Rust and is designed for collaboration from the ground up. Zed features a GPU-accelerated text editor, collaborative editing with real-time presence, and an extensible system for adding new features."""
+assets = [
+    ["target/debian-resources/libexec/zed-editor", "usr/libexec/", "755"],
+    ["target/debian-resources/zed", "usr/bin/", "755"],
+    ["target/debian-resources/applications/zed.desktop", "usr/share/applications/", "644"],
+    ["target/debian-resources/icons/hicolor/512x512/apps/zed.png", "usr/share/icons/hicolor/512x512/apps/", "644"],
+    ["target/debian-resources/icons/hicolor/1024x1024/apps/zed.png", "usr/share/icons/hicolor/1024x1024/apps/", "644"],
+    ["target/debian-resources/metainfo/zed.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["target/debian-resources/doc/changelog", "usr/share/doc/zed/", "644"],
+]

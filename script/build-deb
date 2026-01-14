@@ -1,0 +1,378 @@
+#!/usr/bin/env bash
+
+set -euxo pipefail
+
+# Function for displaying help info
+help_info() {
+  cat <<EOF
+Usage: ${0##*/} [channel] [options]
+Build a .deb package from the already built release binary.
+
+Arguments:
+  channel         Release channel: stable, preview, nightly, or dev (default: reads from crates/zed/RELEASE_CHANNEL)
+
+Options:
+  -h, --help     Display this help and exit.
+  --generate-licenses  Force regenerate licenses.md even if it exists
+
+Note: This script will automatically build missing binaries if needed.
+      The .deb package will be created using cargo-deb.
+
+Package naming:
+- stable: package=zed, binary=zed
+- preview/nightly/dev: package=zed-<channel>, binary=zed-<channel>
+
+This allows multiple channels to be installed side-by-side without conflicts.
+
+Examples:
+  script/build-deb stable
+  script/build-deb preview --generate-licenses
+
+The script will:
+1. Build binaries if missing (zed, cli)
+2. Generate licenses if missing or --generate-licenses is passed
+3. Determine package name and binary names based on channel
+4. Prepare .desktop file based on release channel
+5. Prepare AppStream metainfo.xml
+6. Copy resources (icons, desktop, metainfo, licenses)
+7. Create the deb package using cargo-deb
+8. For non-stable channels: rename package, binaries, and files
+
+The .deb package will be created in target/debian/
+EOF
+}
+
+# Parse all arguments
+GENERATE_LICENSES=false
+channel_arg=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            help_info
+            exit 0
+            ;;
+        --generate-licenses)
+            GENERATE_LICENSES=true
+            shift
+            ;;
+        stable|preview|nightly|dev)
+            channel_arg="$1"
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "Error: Unknown option: $1" >&2
+            help_info
+            exit 1
+            ;;
+        *)
+            echo "Error: Unknown channel or unexpected argument: $1" >&2
+            echo "Valid channels: stable, preview, nightly, dev" >&2
+            help_info
+            exit 1
+            ;;
+    esac
+done
+
+target_dir="${CARGO_TARGET_DIR:-target}"
+
+# Get release channel
+# Use argument if provided, otherwise read from file, otherwise default to 'dev'
+if [ -n "$channel_arg" ]; then
+    channel="$channel_arg"
+    echo "Using channel from argument: $channel"
+elif [ -f "crates/zed/RELEASE_CHANNEL" ]; then
+    channel=$(<crates/zed/RELEASE_CHANNEL)
+    echo "Using channel from file: $channel"
+else
+    echo "Warning: RELEASE_CHANNEL file not found, defaulting to 'dev'"
+    channel="dev"
+fi
+
+# Determine package name and binary names based on channel
+if [ "$channel" == "stable" ]; then
+    package_name="zed"
+    binary_name="zed"
+    desktop_name="zed.desktop"
+    icon_name="zed.png"
+    metainfo_name="zed.metainfo.xml"
+    doc_dir_name="zed"
+    echo "Package name: $package_name (stable channel)"
+else
+    package_name="zed-${channel}"
+    binary_name="zed-${channel}"
+    desktop_name="zed-${channel}.desktop"
+    icon_name="zed-${channel}.png"
+    metainfo_name="zed-${channel}.metainfo.xml"
+    doc_dir_name="$package_name"
+    echo "Package name: $package_name (${channel} channel)"
+fi
+
+# Get version
+version=$(script/get-crate-version zed 2>/dev/null || echo "0.0.0")
+
+echo "Building deb package for Zed ${version} (${channel} channel)"
+
+# Build missing binaries
+echo "Building binaries (this may take a while)..."
+cargo build --release --package zed --package cli
+echo "✓ Binaries built"
+
+# Generate licenses if missing or if --generate-licenses flag is passed
+if [ "$GENERATE_LICENSES" = true ] || [ ! -f "assets/licenses.md" ]; then
+    echo "Generating licenses (this may take a while)..."
+    script/generate-licenses
+    echo "✓ Licenses generated"
+else
+    echo "✓ Licenses already exist (use --generate-licenses to regenerate)"
+fi
+
+# Check if the release binary exists
+if [ ! -f "${target_dir}/release/zed" ]; then
+    echo "Error: Release binary not found at ${target_dir}/release/zed"
+    exit 1
+fi
+echo "✓ Release binary found"
+
+# Check if CLI binary exists
+if [ ! -f "${target_dir}/release/cli" ]; then
+    echo "Error: CLI binary not found at ${target_dir}/release/cli"
+    exit 1
+fi
+echo "✓ CLI binary found"
+
+# Verify licenses.md exists (should be generated above)
+if [ ! -f "assets/licenses.md" ]; then
+    echo "Error: licenses.md not found at assets/licenses.md"
+    exit 1
+fi
+echo "✓ Licenses file found"
+
+# Check if desktop template exists
+desktop_template="crates/zed/resources/zed.desktop.in"
+if [ ! -f "$desktop_template" ]; then
+    echo "Error: Desktop template not found at $desktop_template"
+    exit 1
+fi
+
+# Check if metainfo template exists
+metainfo_template="crates/zed/resources/flatpak/zed.metainfo.xml.in"
+if [ ! -f "$metainfo_template" ]; then
+    echo "Error: Metainfo template not found at $metainfo_template"
+    exit 1
+fi
+
+# Prepare desktop file based on channel
+desktop_file="${target_dir}/${desktop_name}"
+echo "✓ Desktop template found"
+
+# Set variables for desktop file and metainfo
+case "$channel" in
+    stable)
+        APP_NAME="Zed"
+        APP_ID="dev.zed.Zed"
+        BRANDING_LIGHT="#E3E4E7"
+        BRANDING_DARK="#09090B"
+        ;;
+    preview)
+        APP_NAME="Zed Preview"
+        APP_ID="dev.zed.Zed-Preview"
+        BRANDING_LIGHT="#E3E4E7"
+        BRANDING_DARK="#09090B"
+        ;;
+    nightly)
+        APP_NAME="Zed Nightly"
+        APP_ID="dev.zed.Zed-Nightly"
+        BRANDING_LIGHT="#E3E4E7"
+        BRANDING_DARK="#09090B"
+        ;;
+    *)
+        APP_NAME="Zed Dev"
+        APP_ID="dev.zed.Zed-Dev"
+        BRANDING_LIGHT="#E3E4E7"
+        BRANDING_DARK="#09090B"
+        ;;
+esac
+
+# For non-stable channels, update App_ID to use capitalised channel name
+if [ "$channel" != "stable" ]; then
+    APP_ID="dev.zed.Zed-${channel^}"
+fi
+
+export APP_NAME
+export APP_ID
+export APP_ICON="$icon_name"
+export APP_CLI="$binary_name"
+export APP_ARGS="%U"
+export DO_STARTUP_NOTIFY="true"
+export BRANDING_LIGHT
+export BRANDING_DARK
+
+# Generate desktop file
+envsubst < "$desktop_template" > "$desktop_file"
+chmod +x "$desktop_file"
+echo "✓ Desktop file generated: $desktop_file"
+
+# Generate metainfo.xml
+metainfo_file="${target_dir}/${metainfo_name}"
+envsubst < "$metainfo_template" > "$metainfo_file"
+echo "✓ Metainfo file generated: $metainfo_file"
+
+# Check if icons exist for the channel
+case "$channel" in
+    stable)
+        icon_512="crates/zed/resources/app-icon.png"
+        icon_1024="crates/zed/resources/app-icon@2x.png"
+        ;;
+    preview)
+        icon_512="crates/zed/resources/app-icon-preview.png"
+        icon_1024="crates/zed/resources/app-icon-preview@2x.png"
+        ;;
+    nightly)
+        icon_512="crates/zed/resources/app-icon-nightly.png"
+        icon_1024="crates/zed/resources/app-icon-nightly@2x.png"
+        ;;
+    *)
+        icon_512="crates/zed/resources/app-icon-dev.png"
+        icon_1024="crates/zed/resources/app-icon-dev@2x.png"
+        ;;
+esac
+
+if [ ! -f "$icon_512" ]; then
+    echo "Error: Icon not found at $icon_512"
+    exit 1
+fi
+if [ ! -f "$icon_1024" ]; then
+    echo "Error: Icon not found at $icon_1024"
+    exit 1
+fi
+echo "✓ Icons found"
+
+# Install cargo-deb if not already installed
+if ! command -v cargo-deb >/dev/null 2>&1; then
+    echo "Installing cargo-deb..."
+    cargo install cargo-deb
+fi
+echo "✓ cargo-deb found"
+
+# Create temporary working directory for package assembly
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+# Create directory structure in workdir
+pkg_root="${workdir}/pkg"
+mkdir -p "${pkg_root}/usr/bin"
+mkdir -p "${pkg_root}/usr/libexec/${binary_name}"
+mkdir -p "${pkg_root}/usr/share/applications"
+mkdir -p "${pkg_root}/usr/share/icons/hicolor/512x512/apps"
+mkdir -p "${pkg_root}/usr/share/icons/hicolor/1024x1024/apps"
+mkdir -p "${pkg_root}/usr/share/metainfo"
+mkdir -p "${pkg_root}/usr/share/doc/${doc_dir_name}"
+
+# Copy binary files
+cp "${target_dir}/release/cli" "${pkg_root}/usr/bin/${binary_name}"
+chmod 755 "${pkg_root}/usr/bin/${binary_name}"
+
+cp "${target_dir}/release/zed" "${pkg_root}/usr/libexec/${binary_name}/zed-editor"
+chmod 755 "${pkg_root}/usr/libexec/${binary_name}/zed-editor"
+
+# Copy desktop file
+cp "$desktop_file" "${pkg_root}/usr/share/applications/${desktop_name}"
+chmod 644 "${pkg_root}/usr/share/applications/${desktop_name}"
+
+# Copy icons
+cp "$icon_512" "${pkg_root}/usr/share/icons/hicolor/512x512/apps/${icon_name}"
+chmod 644 "${pkg_root}/usr/share/icons/hicolor/512x512/apps/${icon_name}"
+
+cp "$icon_1024" "${pkg_root}/usr/share/icons/hicolor/1024x1024/apps/${icon_name}"
+chmod 644 "${pkg_root}/usr/share/icons/hicolor/1024x1024/apps/${icon_name}"
+
+# Copy metainfo
+cp "$metainfo_file" "${pkg_root}/usr/share/metainfo/${metainfo_name}"
+chmod 644 "${pkg_root}/usr/share/metainfo/${metainfo_name}"
+
+# Copy licenses
+cp "assets/licenses.md" "${pkg_root}/usr/share/doc/${doc_dir_name}/changelog"
+chmod 644 "${pkg_root}/usr/share/doc/${doc_dir_name}/changelog"
+
+# Create copyright file
+cat > "${pkg_root}/usr/share/doc/${doc_dir_name}/copyright" <<EOF
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Zed
+Upstream-Contact: https://github.com/zed-industries/zed
+Source: https://github.com/zed-industries/zed
+Copyright: 2024, Zed Team <hi@zed.dev>
+License: GPL-3.0-or-later
+ This package is free software; you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation; either version 3 of the License, or
+ (at your option) any later version.
+ .
+ This package is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+ .
+ You should have received a copy of the GNU General Public License
+ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ .
+ On Debian systems, the full text of the GPL can be found in
+ /usr/share/common-licenses/GPL-3.
+EOF
+chmod 644 "${pkg_root}/usr/share/doc/${doc_dir_name}/copyright"
+
+# Create DEBIAN/control file
+mkdir -p "${pkg_root}/DEBIAN"
+cat > "${pkg_root}/DEBIAN/control" <<EOF
+Package: ${package_name}
+Version: ${version}-1
+Architecture: amd64
+Maintainer: Zed Team <hi@zed.dev>
+Section: editors
+Priority: optional
+Installed-Size: 2543640
+Depends: libasound2, libasound2t64 (>= 1.0.29), libc6 (>= 2.39), libfontconfig1, libgit2-1.9 | libgit2-1.8, libsqlite3-0, libssl3, libstdc++6 (>= 14), libvulkan1, libwayland-client0, libx11-6, libx11-xcb1, libxcb1 (>= 1.12), libxkbcommon-x11-0, libxkbcommon-x11-0 (>= 0.5.0), libxkbcommon0 (>= 0.5.0), libzstd1, zlib1g (>= 1:1.1.4)
+Description: The fast, collaborative code editor.
+ Zed is a high-performance, multiplayer code editor. It's written in Rust and is
+ designed for collaboration from the ground up. Zed features a GPU-accelerated
+ text editor, collaborative editing with real-time presence, and an extensible
+ system for adding new features.
+EOF
+chmod 644 "${pkg_root}/DEBIAN/control"
+
+# Calculate installed size (sum of file sizes in KB)
+installed_size=$(du -sk "${pkg_root}" | cut -f1)
+sed -i "s/^Installed-Size: .*/Installed-Size: ${installed_size}/" "${pkg_root}/DEBIAN/control"
+
+# Generate md5sums
+( cd "${pkg_root}" && find usr -type f -exec md5sum {} + ) > "${pkg_root}/DEBIAN/md5sums"
+chmod 644 "${pkg_root}/DEBIAN/md5sums"
+
+# Create output directory
+mkdir -p "${target_dir}/debian"
+
+# Build the package
+output_deb="${target_dir}/debian/${package_name}_${version}-1_amd64.deb"
+dpkg-deb -Zgzip -b "${pkg_root}" "$output_deb"
+
+if [ -f "$output_deb" ]; then
+    file_size=$(stat -f%z "$output_deb" 2>/dev/null || stat -c%s "$output_deb" 2>/dev/null)
+    file_size_mb=$(echo "scale=2; $file_size / 1024 / 1024" | bc 2>/dev/null || echo "unknown")
+
+    echo ""
+    echo "✓ Deb package created successfully!"
+    echo "  File: $output_deb"
+    echo "  Size: ${file_size_mb} MB"
+    echo "  Package: ${package_name}"
+    echo "  Binary: ${binary_name}"
+    echo "  App ID: ${APP_ID}"
+    echo ""
+else
+    echo ""
+    echo "Error: Failed to create deb package"
+    exit 1
+fi
