@@ -47,7 +47,7 @@ impl ProjectDropdown {
             Rc::new(RefCell::new(Vec::new()));
 
         let menu = Self::build_menu(
-            project.clone(),
+            project,
             workspace.clone(),
             initial_active_worktree_id,
             menu_shell.clone(),
@@ -295,13 +295,12 @@ impl ProjectDropdown {
         let full_path = entry.full_path.clone();
         let paths = entry.paths.clone();
         let workspace_id = entry.workspace_id;
-        let workspace_for_click = workspace.clone();
 
         let element_id = format!("remove-recent-{}", full_path);
 
         let enter_hint = enter_hint.to_string();
         let cmd_enter_hint = cmd_enter_hint.to_string();
-        let full_path_for_docs = full_path.clone();
+        let full_path_for_docs = full_path;
         let docs_aside = DocumentationAside {
             side: DocumentationSide::Right,
             render: Rc::new(move |cx| {
@@ -332,8 +331,8 @@ impl ProjectDropdown {
         menu.custom_entry_with_docs(
             {
                 let name = name.clone();
-                let menu_shell_for_delete = menu_shell.clone();
-                let recent_projects_for_delete = recent_projects.clone();
+                let menu_shell_for_delete = menu_shell;
+                let recent_projects_for_delete = recent_projects;
 
                 move |_window, _cx| {
                     let name = name.clone();
@@ -377,8 +376,8 @@ impl ProjectDropdown {
                 }
             },
             {
-                let paths = paths.clone();
-                let workspace = workspace_for_click.clone();
+                let paths = paths;
+                let workspace = workspace;
 
                 move |window, cx| {
                     let create_new_window = window.modifiers().platform;
