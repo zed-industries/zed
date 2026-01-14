@@ -192,7 +192,11 @@ impl QuickSearch {
             get_recent_query(cx),
             cx,
         );
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .modal(false)
+                .show_scrollbar(true)
+        });
 
         let subscriptions = vec![
             cx.subscribe_in(&picker, window, |_, _, _: &DismissEvent, _, cx| {
@@ -1575,9 +1579,11 @@ impl PickerDelegate for QuickSearchDelegate {
                                     ),
                                 )
                                 .child(
-                                    Label::new(search_match.line_number.to_string())
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
+                                    div().pr_2().child(
+                                        Label::new(search_match.line_number.to_string())
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
                                 ),
                         ),
                 ),
