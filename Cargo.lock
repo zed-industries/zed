@@ -9074,7 +9074,6 @@ dependencies = [
  "client",
  "collections",
  "command_palette_hooks",
- "copilot",
  "edit_prediction",
  "editor",
  "futures 0.3.31",
