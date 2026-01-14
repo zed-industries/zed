@@ -358,9 +358,6 @@ impl AgentConnection for AcpConnection {
         let default_config_options = self.default_config_options.clone();
         let cwd = cwd.to_path_buf();
         let context_server_store = project.read(cx).context_server_store().read(cx);
-        // Pass MCP server configurations to the external agent. For remote projects,
-        // the external agent runs on the remote machine and will spawn the MCP servers
-        // itself, so the paths in user settings must be valid on the remote machine.
         let mcp_servers = context_server_store
             .configured_server_ids()
             .iter()
@@ -369,10 +366,12 @@ impl AgentConnection for AcpConnection {
                 match &*configuration {
                     project::context_server_store::ContextServerConfiguration::Custom {
                         command,
+                        remote: true,
                         ..
                     }
                     | project::context_server_store::ContextServerConfiguration::Extension {
                         command,
+                        remote: true,
                         ..
                     } => Some(acp::McpServer::Stdio(
                         acp::McpServerStdio::new(id.0.to_string(), &command.path)
@@ -397,6 +396,7 @@ impl AgentConnection for AcpConnection {
                                 .collect(),
                         ),
                     )),
+                    _ => None,
                 }
             })
             .collect();
