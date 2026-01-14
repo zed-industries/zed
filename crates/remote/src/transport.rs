@@ -193,7 +193,7 @@ async fn build_remote_server_from_source(
     async fn run_cmd(command: &mut Command) -> Result<()> {
         let output = command
             .kill_on_drop(true)
-            .stderr(Stdio::inherit())
+            .stdout(Stdio::inherit())
             .output()
             .await?;
         anyhow::ensure!(

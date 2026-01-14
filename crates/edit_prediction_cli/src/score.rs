@@ -17,19 +17,12 @@ pub async fn run_scoring(
     app_state: Arc<EpAppState>,
     cx: AsyncApp,
 ) -> anyhow::Result<()> {
-    run_prediction(
-        example,
-        Some(args.provider),
-        args.repetitions,
-        app_state,
-        cx,
-    )
-    .await?;
+    run_prediction(example, args, app_state, cx).await?;
 
     let progress = Progress::global().start(Step::Score, &example.spec.name);
 
     progress.set_substatus("applying patches");
-    let original_text = &example.buffer.as_ref().unwrap().content;
+    let original_text = &example.prompt_inputs.as_ref().unwrap().content;
     let expected_texts: Vec<String> = example
         .spec
         .expected_patches

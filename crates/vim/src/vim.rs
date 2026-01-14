@@ -23,8 +23,9 @@ use crate::normal::paste::Paste as VimPaste;
 use collections::HashMap;
 use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
-    SelectionEffects, ToPoint,
+    SelectionEffects,
     actions::Paste,
+    display_map::ToDisplayPoint,
     movement::{self, FindRange},
 };
 use gpui::{
@@ -37,6 +38,7 @@ use language::{
 };
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
+use multi_buffer::ToPoint as _;
 use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
@@ -509,6 +511,7 @@ pub(crate) struct Vim {
     pub(crate) current_anchor: Option<Selection<Anchor>>,
     pub(crate) undo_modes: HashMap<TransactionId, Mode>,
     pub(crate) undo_last_line_tx: Option<TransactionId>,
+    extended_pending_selection_id: Option<usize>,
 
     selected_register: Option<char>,
     pub search: SearchState,
@@ -567,6 +570,7 @@ impl Vim {
             current_tx: None,
             undo_last_line_tx: None,
             current_anchor: None,
+            extended_pending_selection_id: None,
             undo_modes: HashMap::default(),
 
             status_label: None,
@@ -1224,17 +1228,32 @@ impl Vim {
                     s.select_anchor_ranges(vec![pos..pos])
                 }
 
-                let snapshot = s.display_snapshot();
-                if let Some(pending) = s.pending_anchor_mut()
-                    && pending.reversed
+                let mut should_extend_pending = false;
+                if !last_mode.is_visual()
                     && mode.is_visual()
-                    && !last_mode.is_visual()
+                    && let Some(pending) = s.pending_anchor()
                 {
-                    let mut end = pending.end.to_point(&snapshot.buffer_snapshot());
-                    end = snapshot
-                        .buffer_snapshot()
-                        .clip_point(end + Point::new(0, 1), Bias::Right);
-                    pending.end = snapshot.buffer_snapshot().anchor_before(end);
+                    let snapshot = s.display_snapshot();
+                    let is_empty = pending
+                        .start
+                        .cmp(&pending.end, &snapshot.buffer_snapshot())
+                        .is_eq();
+                    should_extend_pending = pending.reversed
+                        && !is_empty
+                        && vim.extended_pending_selection_id != Some(pending.id);
+                };
+
+                if should_extend_pending {
+                    let snapshot = s.display_snapshot();
+                    if let Some(pending) = s.pending_anchor_mut() {
+                        let end = pending.end.to_point(&snapshot.buffer_snapshot());
+                        let end = end.to_display_point(&snapshot);
+                        let new_end = movement::right(&snapshot, end);
+                        pending.end = snapshot
+                            .buffer_snapshot()
+                            .anchor_before(new_end.to_point(&snapshot));
+                    }
+                    vim.extended_pending_selection_id = s.pending_anchor().map(|p| p.id)
                 }
 
                 s.move_with(|map, selection| {
@@ -1246,8 +1265,10 @@ impl Vim {
                             point = map.clip_point(point, Bias::Left);
                         }
                         selection.collapse_to(point, selection.goal)
-                    } else if !last_mode.is_visual() && mode.is_visual() && selection.is_empty() {
-                        selection.end = movement::right(map, selection.start);
+                    } else if !last_mode.is_visual() && mode.is_visual() {
+                        if selection.is_empty() {
+                            selection.end = movement::right(map, selection.start);
+                        }
                     }
                 });
             })
@@ -1301,18 +1322,21 @@ impl Vim {
                         _ => CursorShape::Underline,
                     }
                 } else {
-                    cursor_shape.normal.unwrap_or(CursorShape::Block)
+                    cursor_shape.normal
                 }
             }
-            Mode::HelixNormal => cursor_shape.normal.unwrap_or(CursorShape::Block),
-            Mode::Replace => cursor_shape.replace.unwrap_or(CursorShape::Underline),
+            Mode::HelixNormal => cursor_shape.normal,
+            Mode::Replace => cursor_shape.replace,
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixSelect => {
-                cursor_shape.visual.unwrap_or(CursorShape::Block)
+                cursor_shape.visual
             }
-            Mode::Insert => cursor_shape.insert.unwrap_or({
-                let editor_settings = EditorSettings::get_global(cx);
-                editor_settings.cursor_shape.unwrap_or_default()
-            }),
+            Mode::Insert => match cursor_shape.insert {
+                InsertModeCursorShape::Explicit(shape) => shape,
+                InsertModeCursorShape::Inherit => {
+                    let editor_settings = EditorSettings::get_global(cx);
+                    editor_settings.cursor_shape.unwrap_or_default()
+                }
+            },
         }
     }
 
@@ -2026,34 +2050,65 @@ struct VimSettings {
     pub cursor_shape: CursorShapeSettings,
 }
 
+/// Cursor shape configuration for insert mode.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum InsertModeCursorShape {
+    /// Inherit cursor shape from the editor's base cursor_shape setting.
+    /// This allows users to set their preferred editor cursor and have
+    /// it automatically apply to vim insert mode.
+    Inherit,
+    /// Use an explicit cursor shape for insert mode.
+    Explicit(CursorShape),
+}
+
 /// The settings for cursor shape.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CursorShapeSettings {
     /// Cursor shape for the normal mode.
     ///
     /// Default: block
-    pub normal: Option<CursorShape>,
+    pub normal: CursorShape,
     /// Cursor shape for the replace mode.
     ///
     /// Default: underline
-    pub replace: Option<CursorShape>,
+    pub replace: CursorShape,
     /// Cursor shape for the visual mode.
     ///
     /// Default: block
-    pub visual: Option<CursorShape>,
+    pub visual: CursorShape,
     /// Cursor shape for the insert mode.
     ///
-    /// The default value follows the primary cursor_shape.
-    pub insert: Option<CursorShape>,
+    /// Default: Inherit (follows editor.cursor_shape)
+    pub insert: InsertModeCursorShape,
+}
+
+impl From<settings::VimInsertModeCursorShape> for InsertModeCursorShape {
+    fn from(shape: settings::VimInsertModeCursorShape) -> Self {
+        match shape {
+            settings::VimInsertModeCursorShape::Inherit => InsertModeCursorShape::Inherit,
+            settings::VimInsertModeCursorShape::Bar => {
+                InsertModeCursorShape::Explicit(CursorShape::Bar)
+            }
+            settings::VimInsertModeCursorShape::Block => {
+                InsertModeCursorShape::Explicit(CursorShape::Block)
+            }
+            settings::VimInsertModeCursorShape::Underline => {
+                InsertModeCursorShape::Explicit(CursorShape::Underline)
+            }
+            settings::VimInsertModeCursorShape::Hollow => {
+                InsertModeCursorShape::Explicit(CursorShape::Hollow)
+            }
+        }
+    }
 }
 
 impl From<settings::CursorShapeSettings> for CursorShapeSettings {
     fn from(settings: settings::CursorShapeSettings) -> Self {
         Self {
-            normal: settings.normal.map(Into::into),
-            replace: settings.replace.map(Into::into),
-            visual: settings.visual.map(Into::into),
-            insert: settings.insert.map(Into::into),
+            normal: settings.normal.unwrap().into(),
+            replace: settings.replace.unwrap().into(),
+            visual: settings.visual.unwrap().into(),
+            insert: settings.insert.unwrap().into(),
         }
     }
 }

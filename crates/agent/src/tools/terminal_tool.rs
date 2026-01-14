@@ -112,7 +112,7 @@ impl AgentTool for TerminalTool {
         };
 
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings("terminal", &input.command, settings);
+        let decision = decide_permission_from_settings(Self::name(), &input.command, settings);
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,
