@@ -7,7 +7,10 @@ use futures::{
     channel::{mpsc, oneshot},
     future::LocalBoxFuture,
 };
-use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGlobal};
+use gpui::{
+    App, AppContext as _, AsyncApp, BorrowAppContext, Entity, Global, SharedString, Task,
+    UpdateGlobal,
+};
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
 use schemars::{JsonSchema, json_schema};
@@ -142,6 +145,7 @@ pub struct SettingsLocation<'a> {
 }
 
 pub struct SettingsStore {
+    _a: Entity<()>,
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     default_settings: Rc<SettingsContent>,
     user_settings: Option<UserSettingsContent>,
@@ -263,10 +267,12 @@ pub struct SettingsJsonSchemaParams<'a> {
 }
 
 impl SettingsStore {
-    pub fn new(cx: &App, default_settings: &str) -> Self {
+    pub fn new(cx: &mut App, default_settings: &str) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
         let default_settings: Rc<SettingsContent> =
             parse_json_with_comments(default_settings).unwrap();
+        let _a = cx.new(|_| ());
+
         let mut this = Self {
             setting_values: Default::default(),
             default_settings: default_settings.clone(),
@@ -274,6 +280,7 @@ impl SettingsStore {
             server_settings: None,
             user_settings: None,
             extension_settings: None,
+            _a,
 
             merged_settings: default_settings,
             local_settings: BTreeMap::default(),
