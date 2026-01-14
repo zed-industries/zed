@@ -350,6 +350,8 @@ actions!(
         SelectPrevDirectory,
         /// Opens a diff view to compare two marked files.
         CompareMarkedFiles,
+        /// Opens context menu at the mouse position
+        OpenContextMenu
     ]
 );
 
@@ -1233,6 +1235,26 @@ impl ProjectPanel {
         }
 
         cx.notify();
+    }
+
+    fn open_conetxt_menu(
+        &mut self,
+        _: &OpenContextMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entry_id = if let Some(selection) = &self.state.selection {
+            selection.entry_id
+        } else if let Some(entry_id) = self.state.last_worktree_root_id {
+            entry_id
+        } else {
+            return; // No entry to show context menu for
+        };
+
+        let mouse_pos = window.mouse_position();
+        let position = point(mouse_pos.x, mouse_pos.y);
+
+        self.deploy_context_menu(position, entry_id, window, cx);
     }
 
     fn has_git_changes(&self, entry_id: ProjectEntryId) -> bool {
@@ -6293,6 +6315,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
+                .on_action(cx.listener(Self::open_conetxt_menu))
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
@@ -6643,38 +6666,6 @@ impl Render for ProjectPanel {
                                         }
                                     }),
                                 )
-                                .on_key_down(cx.listener(
-                                    |this, event: &KeyDownEvent, window, cx| {
-                                        let is_menu_key = event.keystroke.key.as_str() == "menu";
-                                        let is_shift_f10 = event.keystroke.key.as_str() == "f10"
-                                            && event.keystroke.modifiers.shift
-                                            && !event.keystroke.modifiers.control
-                                            && !event.keystroke.modifiers.alt
-                                            && !event.keystroke.modifiers.platform;
-
-                                        if is_menu_key || is_shift_f10 {
-                                            cx.stop_propagation();
-
-                                            let entry_id =
-                                                if let Some(selection) = &this.state.selection {
-                                                    selection.entry_id
-                                                } else if let Some(entry_id) =
-                                                    this.state.last_worktree_root_id
-                                                {
-                                                    entry_id
-                                                } else {
-                                                    return; // No entry to show context menu for
-                                                };
-
-                                            let mouse_pos = window.mouse_position();
-                                            let position = point(mouse_pos.x, mouse_pos.y);
-
-                                            this.deploy_context_menu(
-                                                position, entry_id, window, cx,
-                                            );
-                                        }
-                                    },
-                                ))
                                 .when(!project.is_read_only(cx), |el| {
                                     el.on_click(cx.listener(
                                         |this, event: &gpui::ClickEvent, window, cx| {
