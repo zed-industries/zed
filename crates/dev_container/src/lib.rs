@@ -15,6 +15,10 @@ fn ghcr_url() -> &'static str {
     "https://ghcr.io"
 }
 
+fn ghcr_domain() -> &'static str {
+    "ghcr.io"
+}
+
 fn devcontainer_templates_repository() -> &'static str {
     "devcontainers/templates"
 }
@@ -97,6 +101,7 @@ pub struct DevContainerFeature {
     pub version: String,
     pub name: String,
     pub options: Option<HashMap<String, TemplateOptions>>,
+    pub source_repository: Option<String>,
 }
 
 impl DevContainerFeature {
@@ -114,6 +119,7 @@ pub struct DevContainerTemplate {
     pub id: String,
     pub name: String,
     pub options: Option<HashMap<String, TemplateOptions>>,
+    pub source_repository: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -135,7 +141,17 @@ pub async fn get_templates(
     let token = get_ghcr_token(&client).await?;
     let manifest = get_latest_manifest(&token.token, &client).await?;
 
-    get_devcontainer_templates(&token.token, &manifest.layers[0].digest, &client).await
+    let mut template_response =
+        get_devcontainer_templates(&token.token, &manifest.layers[0].digest, &client).await?;
+
+    for template in &mut template_response.templates {
+        template.source_repository = Some(format!(
+            "{}/{}",
+            ghcr_domain(),
+            devcontainer_templates_repository()
+        ));
+    }
+    Ok(template_response)
 }
 
 pub async fn get_features(
@@ -144,7 +160,17 @@ pub async fn get_features(
     let token = get_ghcr_token(&client).await?;
     let manifest = get_latest_feature_manifest(&token.token, &client).await?;
 
-    get_devcontainer_features(&token.token, &manifest.layers[0].digest, &client).await
+    let mut features_response =
+        get_devcontainer_features(&token.token, &manifest.layers[0].digest, &client).await?;
+
+    for feature in &mut features_response.features {
+        feature.source_repository = Some(format!(
+            "{}/{}",
+            ghcr_domain(),
+            devcontainer_features_repository()
+        ));
+    }
+    Ok(features_response)
 }
 
 // Once we get the list of templates, and select the ID, we need to

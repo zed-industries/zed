@@ -1108,7 +1108,7 @@ impl StatefulModal for DevContainerModal {
 
                             if files
                                 .files
-                                .contains(&".devcontainer/devcontainer.json".to_string())
+                                .contains(&"./.devcontainer/devcontainer.json".to_string())
                             {
                                 workspace
                                     .update_in(cx, |workspace, window, cx| {
@@ -1189,7 +1189,7 @@ pub trait StatefulModal: ModalView + EventEmitter<DismissEvent> + Render {
 }
 
 async fn apply_dev_container_template(
-    template: TemplateEntry,
+    template_entry: TemplateEntry,
     path_to_cli: &PathBuf,
     found_in_path: bool,
     node_runtime: NodeRuntime,
@@ -1209,19 +1209,32 @@ async fn apply_dev_container_template(
         command
     };
 
+    let Ok(serialized_options) = serde_json::to_string(&template_entry.options_selected) else {
+        log::error!(
+            "Unable to serialize options for {:?}",
+            &template_entry.options_selected
+        );
+        return Err(DevContainerError::DevContainerParseFailed);
+    };
+
     command.arg("templates");
     command.arg("apply");
     command.arg("--workspace-folder");
     command.arg(path.display().to_string());
     command.arg("--template-id");
     command.arg(format!(
-        "ghcr.io/devcontainers/templates/{}",
-        template.template.id
-    )); // TODO
+        "{}/{}",
+        template_entry
+            .template
+            .source_repository
+            .as_ref()
+            .unwrap_or(&String::from("")),
+        template_entry.template.id
+    ));
     command.arg("--template-args");
-    command.arg(template_args_to_json(template.options_selected));
+    command.arg(serialized_options);
     command.arg("--features");
-    command.arg(template_features_to_json(template.features_selected));
+    command.arg(template_features_to_json(template_entry.features_selected));
     log::debug!("Running full devcontainer apply command: {:?}", command);
 
     match command.output().await {
@@ -1262,20 +1275,16 @@ fn template_features_to_json(features_selected: HashMap<String, DevContainerFeat
             map.insert(
                 "id",
                 format!(
-                    "ghcr.io/devcontainers/features/{}:{}",
+                    "{}/{}:{}",
+                    v.source_repository.as_ref().unwrap_or(&String::from("")),
                     v.id,
                     v.major_version()
                 ),
             );
             map
-        }) // TODO
+        })
         .collect::<Vec<HashMap<&str, String>>>();
     serde_json::to_string(&things).unwrap()
-}
-
-fn template_args_to_json(option_selected: HashMap<String, String>) -> String {
-    // TODO this should probably be inlined, I'm wrong
-    serde_json::to_string(&option_selected).unwrap()
 }
 
 #[cfg(test)]
