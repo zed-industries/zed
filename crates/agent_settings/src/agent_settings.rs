@@ -870,4 +870,131 @@ mod tests {
         assert!(!permissions.tools.contains_key("edit_file"));
         assert!(!permissions.tools.contains_key("fetch"));
     }
+
+    #[test]
+    fn test_always_allow_pattern_only_matches_specified_commands() {
+        // Reproduces user-reported bug: when always_allow has pattern "^echo\s",
+        // only "echo hello" should be allowed, not "git status".
+        //
+        // User config:
+        //   always_allow_tool_actions: false
+        //   tool_permissions.tools.terminal.always_allow: [{ pattern: "^echo\\s" }]
+        let json = json!({
+            "tools": {
+                "terminal": {
+                    "always_allow": [
+                        { "pattern": "^echo\\s" }
+                    ]
+                }
+            }
+        });
+
+        let content: ToolPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+
+        let terminal = permissions.tools.get("terminal").unwrap();
+
+        // Verify the pattern was compiled
+        assert_eq!(
+            terminal.always_allow.len(),
+            1,
+            "Should have one always_allow pattern"
+        );
+
+        // Verify the pattern matches "echo hello"
+        assert!(
+            terminal.always_allow[0].is_match("echo hello"),
+            "Pattern ^echo\\s should match 'echo hello'"
+        );
+
+        // Verify the pattern does NOT match "git status"
+        assert!(
+            !terminal.always_allow[0].is_match("git status"),
+            "Pattern ^echo\\s should NOT match 'git status'"
+        );
+
+        // Verify the pattern does NOT match "echoHello" (no space)
+        assert!(
+            !terminal.always_allow[0].is_match("echoHello"),
+            "Pattern ^echo\\s should NOT match 'echoHello' (requires whitespace)"
+        );
+
+        // Verify default_mode is Confirm (the default)
+        assert_eq!(
+            terminal.default_mode,
+            settings::ToolPermissionMode::Confirm,
+            "default_mode should be Confirm when not specified"
+        );
+    }
+
+    #[test]
+    fn test_user_always_allow_extends_defaults_not_replaces() {
+        // This test documents the current behavior: user settings EXTEND defaults
+        // rather than REPLACE them. This is because always_allow uses ExtendingVec.
+        //
+        // User reported bug: they set only "^echo\s" in always_allow, but "git status"
+        // was still being auto-allowed because the defaults include "^git\s+(status|...)".
+        //
+        // This is the designed behavior of ExtendingVec, but may not be what users expect.
+
+        // First, verify the defaults include git status pattern
+        let default_json = include_str!("../../../assets/settings/default.json");
+        let value: serde_json::Value = serde_json_lenient::from_str(default_json).unwrap();
+        let default_tool_permissions = value["agent"]["tool_permissions"].clone();
+        let default_content: ToolPermissionsContent =
+            serde_json::from_value(default_tool_permissions).unwrap();
+        let default_permissions = compile_tool_permissions(Some(default_content));
+
+        let default_terminal = default_permissions.tools.get("terminal").unwrap();
+        assert!(
+            default_terminal
+                .always_allow
+                .iter()
+                .any(|r| r.is_match("git status")),
+            "Default settings should allow 'git status'"
+        );
+
+        // Now test what happens with user-only settings (no defaults merged)
+        // This simulates what the user EXPECTED to happen
+        let user_only_json = json!({
+            "tools": {
+                "terminal": {
+                    "always_allow": [
+                        { "pattern": "^echo\\s" }
+                    ]
+                }
+            }
+        });
+        let user_only_content: ToolPermissionsContent =
+            serde_json::from_value(user_only_json).unwrap();
+        let user_only_permissions = compile_tool_permissions(Some(user_only_content));
+
+        let user_only_terminal = user_only_permissions.tools.get("terminal").unwrap();
+
+        // With user-only settings (no merge), git status should NOT be allowed
+        assert!(
+            !user_only_terminal
+                .always_allow
+                .iter()
+                .any(|r| r.is_match("git status")),
+            "User-only settings should NOT allow 'git status'"
+        );
+        assert!(
+            user_only_terminal
+                .always_allow
+                .iter()
+                .any(|r| r.is_match("echo hello")),
+            "User-only settings should allow 'echo hello'"
+        );
+
+        // NOTE: The actual bug occurs because ExtendingVec merges user + defaults,
+        // so in practice the user's always_allow gets COMBINED with the defaults,
+        // resulting in both "echo hello" AND "git status" being allowed.
+        //
+        // To fix this, users would need a way to REPLACE defaults rather than extend.
+        // Options include:
+        // 1. A "replace_defaults: true" flag in tool_permissions
+        // 2. Using a different type than ExtendingVec for always_allow
+        // 3. Documenting that users must use always_confirm to override default allows
+    }
 }

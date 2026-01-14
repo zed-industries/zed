@@ -652,4 +652,55 @@ mod tests {
         let decision = decide_permission("mcp:my-server:terminal", "", &permissions, false);
         assert_eq!(decision, ToolPermissionDecision::Allow);
     }
+
+    #[test]
+    fn test_non_matching_command_requires_confirmation() {
+        // Reproduces bug: when a tool has always_allow patterns configured,
+        // commands that DON'T match those patterns should still require
+        // confirmation (fall through to default_mode), not be auto-allowed.
+        //
+        // User config:
+        //   always_allow_tool_actions: false
+        //   tool_permissions.tools.terminal.always_allow: [{ pattern: "^echo\\s" }]
+        //
+        // Expected behavior:
+        //   - "echo hello" matches pattern → Allow
+        //   - "git status" does NOT match pattern → Confirm (default_mode)
+        let mut tools = collections::HashMap::default();
+        tools.insert(
+            Arc::from("terminal"),
+            ToolRules {
+                default_mode: ToolPermissionMode::Confirm,
+                always_allow: vec![CompiledRegex::new("^echo\\s", false).unwrap()],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        let permissions = ToolPermissions { tools };
+
+        // Command that matches the pattern should be allowed
+        let decision = decide_permission("terminal", "echo hello", &permissions, false);
+        assert_eq!(
+            decision,
+            ToolPermissionDecision::Allow,
+            "echo hello should be auto-allowed because it matches ^echo\\s"
+        );
+
+        // Command that does NOT match the pattern should require confirmation
+        let decision = decide_permission("terminal", "git status", &permissions, false);
+        assert_eq!(
+            decision,
+            ToolPermissionDecision::Confirm,
+            "git status should require confirmation because it doesn't match any always_allow pattern"
+        );
+
+        // Another non-matching command
+        let decision = decide_permission("terminal", "rm -rf /", &permissions, false);
+        assert_eq!(
+            decision,
+            ToolPermissionDecision::Confirm,
+            "rm -rf / should require confirmation because it doesn't match any always_allow pattern"
+        );
+    }
 }
