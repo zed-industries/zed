@@ -7,6 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::acp::AcpThreadHistory;
 use crate::context::load_context;
 use crate::mention_set::MentionSet;
 use crate::{
@@ -264,6 +265,7 @@ impl InlineAssistant {
 
         let prompt_store = agent_panel.prompt_store().as_ref().cloned();
         let thread_store = agent_panel.thread_store().clone();
+        let history = agent_panel.history().downgrade();
 
         let handle_assist =
             |window: &mut Window, cx: &mut Context<Workspace>| match inline_assist_target {
@@ -275,6 +277,7 @@ impl InlineAssistant {
                             workspace.project().downgrade(),
                             thread_store,
                             prompt_store,
+                            history,
                             action.prompt.clone(),
                             window,
                             cx,
@@ -289,6 +292,7 @@ impl InlineAssistant {
                             workspace.project().downgrade(),
                             thread_store,
                             prompt_store,
+                            history,
                             action.prompt.clone(),
                             window,
                             cx,
@@ -470,6 +474,7 @@ impl InlineAssistant {
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: WeakEntity<AcpThreadHistory>,
         initial_prompt: Option<String>,
         window: &mut Window,
         codegen_ranges: &[Range<Anchor>],
@@ -516,6 +521,7 @@ impl InlineAssistant {
                     self.fs.clone(),
                     thread_store.clone(),
                     prompt_store.clone(),
+                    history.clone(),
                     project.clone(),
                     workspace.clone(),
                     window,
@@ -607,6 +613,7 @@ impl InlineAssistant {
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: WeakEntity<AcpThreadHistory>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -625,6 +632,7 @@ impl InlineAssistant {
             project,
             thread_store,
             prompt_store,
+            history,
             initial_prompt,
             window,
             &codegen_ranges,
@@ -650,6 +658,7 @@ impl InlineAssistant {
         workspace: Entity<Workspace>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: WeakEntity<AcpThreadHistory>,
         window: &mut Window,
         cx: &mut App,
     ) -> InlineAssistId {
@@ -669,6 +678,7 @@ impl InlineAssistant {
                 project,
                 thread_store,
                 prompt_store,
+                history,
                 Some(initial_prompt),
                 window,
                 &[range],
@@ -1937,16 +1947,13 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         let prompt_store = PromptStore::global(cx);
         window.spawn(cx, async move |cx| {
             let workspace = workspace.upgrade().context("workspace was released")?;
-            let thread_store = cx.update(|_window, cx| {
-                anyhow::Ok(
-                    workspace
-                        .read(cx)
-                        .panel::<AgentPanel>(cx)
-                        .context("missing agent panel")?
-                        .read(cx)
-                        .thread_store()
-                        .clone(),
-                )
+            let (thread_store, history) = cx.update(|_window, cx| {
+                let panel = workspace
+                    .read(cx)
+                    .panel::<AgentPanel>(cx)
+                    .context("missing agent panel")?
+                    .read(cx);
+                anyhow::Ok((panel.thread_store().clone(), panel.history().downgrade()))
             })??;
             let editor = editor.upgrade().context("editor was released")?;
             let range = editor
@@ -1992,6 +1999,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                     workspace,
                     thread_store,
                     prompt_store,
+                    history,
                     window,
                     cx,
                 );
@@ -2114,7 +2122,7 @@ pub mod test {
 
         setup(cx);
 
-        let (_editor, buffer) = cx.update(|window, cx| {
+        let (_editor, buffer, _history) = cx.update(|window, cx| {
             let buffer = cx.new(|cx| Buffer::local("", cx));
             let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
             let editor = cx.new(|cx| Editor::for_multibuffer(multibuffer, None, window, cx));
@@ -2131,6 +2139,7 @@ pub mod test {
             });
 
             let thread_store = cx.new(|cx| ThreadStore::new(cx));
+            let history = cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx));
 
             // Add editor to workspace
             workspace.update(cx, |workspace, cx| {
@@ -2146,6 +2155,7 @@ pub mod test {
                         project.downgrade(),
                         thread_store,
                         None,
+                        history.downgrade(),
                         Some(prompt),
                         window,
                         cx,
@@ -2155,7 +2165,7 @@ pub mod test {
                 inline_assistant.start_assist(assist_id, window, cx);
             });
 
-            (editor, buffer)
+            (editor, buffer, history)
         });
 
         cx.run_until_parked();

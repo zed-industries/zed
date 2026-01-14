@@ -1,7 +1,7 @@
 use acp_thread::{
-    AcpThread, AcpThreadEvent, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
-    AgentThreadEntry, AssistantMessage, AssistantMessageChunk, AuthRequired, LoadError, MentionUri,
-    RetryStatus, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
+    AcpThread, AcpThreadEvent, AgentSessionInfo, AgentThreadEntry, AssistantMessage,
+    AssistantMessageChunk, AuthRequired, LoadError, MentionUri, RetryStatus, ThreadStatus,
+    ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry};
@@ -61,6 +61,7 @@ use zed_actions::assistant::OpenRulesLibrary;
 
 use super::config_options::ConfigOptionsView;
 use super::entry_view_state::EntryViewState;
+use super::thread_history::AcpThreadHistory;
 use crate::acp::AcpModelSelectorPopover;
 use crate::acp::ModeSelector;
 use crate::acp::entry_view_state::{EntryViewEvent, ViewEvent};
@@ -317,11 +318,9 @@ pub struct AcpThreadView {
     /// Default is the last option (index pointing to "Only this time").
     selected_permission_granularity: HashMap<acp::ToolCallId, usize>,
     login: Option<task::SpawnInTerminal>,
-    session_list: Option<Rc<dyn AgentSessionList>>,
-    session_list_state: Rc<RefCell<Option<Rc<dyn AgentSessionList>>>>,
     recent_history_entries: Vec<AgentSessionInfo>,
-    _recent_history_task: Task<()>,
-    _recent_history_watch_task: Option<Task<()>>,
+    history: Entity<AcpThreadHistory>,
+    _history_subscription: Subscription,
     hovered_recent_history_item: Option<usize>,
     entry_view_state: Entity<EntryViewState>,
     message_editor: Entity<MessageEditor>,
@@ -406,13 +405,13 @@ impl AcpThreadView {
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: Entity<AcpThreadHistory>,
         track_load_event: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![]));
-        let session_list_state = Rc::new(RefCell::new(None));
 
         let agent_server_store = project.read(cx).agent_server_store().clone();
         let agent_display_name = agent_server_store
@@ -427,7 +426,7 @@ impl AcpThreadView {
                 workspace.clone(),
                 project.downgrade(),
                 thread_store.clone(),
-                session_list_state.clone(),
+                history.downgrade(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
                 available_commands.clone(),
@@ -453,7 +452,7 @@ impl AcpThreadView {
                 workspace.clone(),
                 project.downgrade(),
                 thread_store.clone(),
-                session_list_state.clone(),
+                history.downgrade(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
                 available_commands.clone(),
@@ -487,6 +486,11 @@ impl AcpThreadView {
         let show_codex_windows_warning = cfg!(windows)
             && project.read(cx).is_local()
             && agent.clone().downcast::<agent_servers::Codex>().is_some();
+
+        let recent_history_entries = history.read(cx).get_recent_sessions(3);
+        let history_subscription = cx.observe(&history, |this, history, cx| {
+            this.update_recent_history_from_cache(&history, cx);
+        });
 
         Self {
             agent: agent.clone(),
@@ -531,11 +535,9 @@ impl AcpThreadView {
             available_commands,
             editor_expanded: false,
             should_be_following: false,
-            session_list: None,
-            session_list_state,
-            recent_history_entries: Vec::new(),
-            _recent_history_task: Task::ready(()),
-            _recent_history_watch_task: None,
+            recent_history_entries,
+            history,
+            _history_subscription: history_subscription,
             hovered_recent_history_item: None,
             is_loading_contents: false,
             _subscriptions: subscriptions,
@@ -570,11 +572,7 @@ impl AcpThreadView {
         self.available_commands.replace(vec![]);
         self.new_server_version_available.take();
         self.message_queue.clear();
-        self.session_list = None;
-        *self.session_list_state.borrow_mut() = None;
         self.recent_history_entries.clear();
-        self._recent_history_watch_task = None;
-        self._recent_history_task = Task::ready(());
         self.turn_tokens = None;
         self.last_turn_tokens = None;
         self.turn_started_at = None;
@@ -714,7 +712,9 @@ impl AcpThreadView {
                         let connection = thread.read(cx).connection().clone();
                         let session_id = thread.read(cx).session_id().clone();
                         let session_list = connection.session_list(cx);
-                        this.set_session_list(session_list, cx);
+                        this.history.update(cx, |history, cx| {
+                            history.set_session_list(session_list, cx);
+                        });
 
                         // Check for config options first
                         // Config options take precedence over legacy mode/model selectors
@@ -968,10 +968,6 @@ impl AcpThreadView {
         }
     }
 
-    pub(crate) fn session_list(&self) -> Option<Rc<dyn AgentSessionList>> {
-        self.session_list.clone()
-    }
-
     pub fn mode_selector(&self) -> Option<&Entity<ModeSelector>> {
         match &self.thread_state {
             ThreadState::Ready { mode_selector, .. } => mode_selector.as_ref(),
@@ -1074,12 +1070,13 @@ impl AcpThreadView {
             return;
         }
 
-        let Some(thread) = self.as_native_thread(cx) else {
+        let Some(thread) = self.thread() else {
             return;
         };
+
         let Some(session_list) = self
-            .session_list
-            .clone()
+            .as_native_connection(cx)
+            .and_then(|connection| connection.session_list(cx))
             .and_then(|list| list.downcast::<NativeAgentSessionList>())
         else {
             return;
@@ -1087,7 +1084,7 @@ impl AcpThreadView {
         let thread_store = session_list.thread_store().clone();
 
         let client = self.project.read(cx).client();
-        let session_id = thread.read(cx).id().clone();
+        let session_id = thread.read(cx).session_id().clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let response = client
@@ -4499,59 +4496,18 @@ impl AcpThreadView {
         )
     }
 
-    fn set_session_list(
+    fn update_recent_history_from_cache(
         &mut self,
-        session_list: Option<Rc<dyn AgentSessionList>>,
+        history: &Entity<AcpThreadHistory>,
         cx: &mut Context<Self>,
     ) {
-        if let (Some(current), Some(next)) = (&self.session_list, &session_list)
-            && Rc::ptr_eq(current, next)
-        {
-            return;
-        }
-
-        self.session_list = session_list.clone();
-        *self.session_list_state.borrow_mut() = session_list;
-        self.recent_history_entries.clear();
+        self.recent_history_entries = history.read(cx).get_recent_sessions(3);
         self.hovered_recent_history_item = None;
-        self.refresh_recent_history(cx);
-
-        self._recent_history_watch_task = self.session_list.as_ref().and_then(|session_list| {
-            let mut rx = session_list.watch(cx)?;
-            Some(cx.spawn(async move |this, cx| {
-                while let Ok(()) = rx.recv().await {
-                    this.update(cx, |this, cx| {
-                        this.refresh_recent_history(cx);
-                    })
-                    .ok();
-                }
-            }))
-        });
-    }
-
-    fn refresh_recent_history(&mut self, cx: &mut Context<Self>) {
-        let Some(session_list) = self.session_list.clone() else {
-            return;
-        };
-
-        let task = session_list.list_sessions(AgentSessionListRequest::default(), cx);
-        self._recent_history_task = cx.spawn(async move |this, cx| match task.await {
-            Ok(response) => {
-                this.update(cx, |this, cx| {
-                    this.recent_history_entries = response.sessions.into_iter().take(3).collect();
-                    this.hovered_recent_history_item = None;
-                    cx.notify();
-                })
-                .ok();
-            }
-            Err(error) => {
-                log::error!("Failed to load recent session history: {error:#}");
-            }
-        });
+        cx.notify();
     }
 
     fn render_recent_history(&self, cx: &mut Context<Self>) -> AnyElement {
-        let render_history = self.session_list.is_some() && !self.recent_history_entries.is_empty();
+        let render_history = !self.recent_history_entries.is_empty();
 
         v_flex()
             .size_full()
@@ -7558,10 +7514,9 @@ impl AcpThreadView {
     }
 
     pub fn delete_history_entry(&mut self, entry: AgentSessionInfo, cx: &mut Context<Self>) {
-        let Some(session_list) = self.session_list.as_ref() else {
-            return;
-        };
-        let task = session_list.delete_session(&entry.session_id, cx);
+        let task = self.history.update(cx, |history, cx| {
+            history.delete_session(&entry.session_id, cx)
+        });
         task.detach_and_log_err(cx);
     }
 
@@ -7990,7 +7945,9 @@ fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use acp_thread::{AgentSessionListResponse, StubAgentConnection};
+    use acp_thread::{
+        AgentSessionList, AgentSessionListRequest, AgentSessionListResponse, StubAgentConnection,
+    };
     use action_log::ActionLog;
     use agent::ToolPermissionContext;
     use agent_client_protocol::SessionId;
@@ -8071,21 +8028,52 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn test_recent_history_refreshes_when_session_list_swapped(cx: &mut TestAppContext) {
+    async fn test_recent_history_refreshes_when_history_cache_updated(cx: &mut TestAppContext) {
         init_test(cx);
-
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
 
         let session_a = AgentSessionInfo::new(SessionId::new("session-a"));
         let session_b = AgentSessionInfo::new(SessionId::new("session-b"));
 
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        // Create history without an initial session list - it will be set after connection
+        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
+
+        let thread_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                AcpThreadView::new(
+                    Rc::new(StubAgentServer::default_response()),
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project,
+                    Some(thread_store),
+                    None,
+                    history.clone(),
+                    false,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        // Wait for connection to establish
+        cx.run_until_parked();
+
+        // Initially empty because StubAgentConnection.session_list() returns None
+        thread_view.read_with(cx, |view, _cx| {
+            assert_eq!(view.recent_history_entries.len(), 0);
+        });
+
+        // Now set the session list - this simulates external agents providing their history
         let list_a: Rc<dyn AgentSessionList> =
             Rc::new(StubSessionList::new(vec![session_a.clone()]));
-        let list_b: Rc<dyn AgentSessionList> =
-            Rc::new(StubSessionList::new(vec![session_b.clone()]));
-
-        thread_view.update(cx, |view, cx| {
-            view.set_session_list(Some(list_a.clone()), cx);
+        history.update(cx, |history, cx| {
+            history.set_session_list(Some(list_a), cx);
         });
         cx.run_until_parked();
 
@@ -8095,14 +8083,13 @@ pub(crate) mod tests {
                 view.recent_history_entries[0].session_id,
                 session_a.session_id
             );
-
-            let session_list = view.session_list_state.borrow();
-            let session_list = session_list.as_ref().expect("session list should be set");
-            assert!(Rc::ptr_eq(session_list, &list_a));
         });
 
-        thread_view.update(cx, |view, cx| {
-            view.set_session_list(Some(list_b.clone()), cx);
+        // Update to a different session list
+        let list_b: Rc<dyn AgentSessionList> =
+            Rc::new(StubSessionList::new(vec![session_b.clone()]));
+        history.update(cx, |history, cx| {
+            history.set_session_list(Some(list_b), cx);
         });
         cx.run_until_parked();
 
@@ -8112,10 +8099,6 @@ pub(crate) mod tests {
                 view.recent_history_entries[0].session_id,
                 session_b.session_id
             );
-
-            let session_list = view.session_list_state.borrow();
-            let session_list = session_list.as_ref().expect("session list should be set");
-            assert!(Rc::ptr_eq(session_list, &list_b));
         });
     }
 
@@ -8350,6 +8333,7 @@ pub(crate) mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -8361,6 +8345,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
+                    history,
                     false,
                     window,
                     cx,
@@ -8640,6 +8625,7 @@ pub(crate) mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
 
         let connection = Rc::new(StubAgentConnection::new());
         let thread_view = cx.update(|window, cx| {
@@ -8652,6 +8638,7 @@ pub(crate) mod tests {
                     project.clone(),
                     Some(thread_store.clone()),
                     None,
+                    history,
                     false,
                     window,
                     cx,
