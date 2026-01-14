@@ -1627,20 +1627,37 @@ impl TextThreadEditor {
                 return;
             };
 
-            // Build creases for all comments
+            // Build creases for all comments, grouping by code snippet
+            // so each snippet appears once with all its comments
             let snapshot = buffer.read(cx).snapshot(cx);
-            let mut all_creases = Vec::new();
+
+            // Group comments by their point range (code snippet)
+            let mut comments_by_range: std::collections::BTreeMap<
+                (rope::Point, rope::Point),
+                Vec<String>,
+            > = std::collections::BTreeMap::new();
 
             for comment in comments {
-                let point_range = comment.anchor_range.start.to_point(&snapshot)
-                    ..comment.anchor_range.end.to_point(&snapshot);
+                let start = comment.anchor_range.start.to_point(&snapshot);
+                let end = comment.anchor_range.end.to_point(&snapshot);
+                comments_by_range
+                    .entry((start, end))
+                    .or_default()
+                    .push(comment.comment);
+            }
+
+            // Build one crease per unique code snippet with all its comments
+            let mut all_creases = Vec::new();
+            for ((start, end), comment_texts) in comments_by_range {
+                let point_range = start..end;
 
                 let mut creases =
                     selections_creases(vec![point_range.clone()], snapshot.clone(), cx);
 
-                // Prepend user's comment to the code
+                // Append all comments after the code snippet
                 for (code_text, crease_title) in &mut creases {
-                    *code_text = format!("{}\n\n{}", comment.comment, code_text);
+                    let comments_section = comment_texts.join("\n\n");
+                    *code_text = format!("{}\n\n{}", code_text, comments_section);
                     *crease_title = format!("Review: {}", crease_title);
                 }
 
