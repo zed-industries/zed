@@ -1,5 +1,6 @@
 use super::*;
 use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelList, UserMessageId};
+use action_log::ActionLog;
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
 use anyhow::Result;
@@ -5177,6 +5178,232 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
         "summary should contain subagent's response: {}",
         output.summary
     );
+}
+
+#[gpui::test]
+async fn test_subagent_serialization_and_replay(cx: &mut TestAppContext) {
+    // This test verifies that subagent thread data is properly serialized
+    // and can be reconstructed via SubagentOutput serialization/deserialization.
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+    // Create a SerializedAcpThread directly to test serialization roundtrip
+    let serialized = acp_thread::SerializedAcpThread {
+        title: "Test Subagent".to_string(),
+        session_id: "test-session-123".to_string(),
+        entries: vec![
+            acp_thread::SerializedAgentThreadEntry::UserMessage {
+                id: Some("msg-1".to_string()),
+                content: "Find all TODOs in the codebase".to_string(),
+                indented: false,
+            },
+            acp_thread::SerializedAgentThreadEntry::AssistantMessage {
+                chunks: vec![acp_thread::SerializedAssistantChunk::Message {
+                    markdown: "I found 3 TODOs across 2 files.".to_string(),
+                }],
+                indented: false,
+            },
+            acp_thread::SerializedAgentThreadEntry::ToolCall {
+                id: "tool-1".to_string(),
+                tool_name: Some("read_file".to_string()),
+                label: "Reading src/main.rs".to_string(),
+                kind: acp_thread::SerializedToolKind::Read,
+                status: acp_thread::SerializedToolCallStatus::Completed,
+                content: vec![acp_thread::SerializedToolCallContent::Markdown(
+                    "File contents here".to_string(),
+                )],
+                raw_input: Some(json!({"path": "src/main.rs"})),
+                raw_output: Some(json!("file contents")),
+            },
+        ],
+    };
+
+    // Create SubagentOutput with serialized thread
+    let output = crate::SubagentOutput {
+        summary: "Found 3 TODOs across 2 files".to_string(),
+        subagent_threads: vec![crate::SubagentThreadData {
+            label: "Test Subagent".to_string(),
+            thread: serialized,
+        }],
+    };
+
+    // Serialize to JSON (simulating what gets stored in tool result)
+    let output_json = serde_json::to_value(&output).unwrap();
+
+    // Deserialize back (simulating replay)
+    let restored_output: crate::SubagentOutput = serde_json::from_value(output_json).unwrap();
+
+    assert_eq!(restored_output.summary, "Found 3 TODOs across 2 files");
+    assert_eq!(restored_output.subagent_threads.len(), 1);
+    assert_eq!(restored_output.subagent_threads[0].label, "Test Subagent");
+    assert_eq!(restored_output.subagent_threads[0].thread.entries.len(), 3);
+
+    // Verify entries were preserved
+    let thread_data = &restored_output.subagent_threads[0].thread;
+    match &thread_data.entries[0] {
+        acp_thread::SerializedAgentThreadEntry::UserMessage { content, .. } => {
+            assert!(content.contains("TODOs"));
+        }
+        _ => panic!("Expected UserMessage"),
+    }
+    match &thread_data.entries[1] {
+        acp_thread::SerializedAgentThreadEntry::AssistantMessage { chunks, .. } => {
+            assert_eq!(chunks.len(), 1);
+        }
+        _ => panic!("Expected AssistantMessage"),
+    }
+    match &thread_data.entries[2] {
+        acp_thread::SerializedAgentThreadEntry::ToolCall { tool_name, .. } => {
+            assert_eq!(tool_name.as_deref(), Some("read_file"));
+        }
+        _ => panic!("Expected ToolCall"),
+    }
+
+    // Now test reconstruction via from_serialized
+    let action_log = cx.new(|_| ActionLog::new(project.clone()));
+    let reconstructed_thread = cx.new(|cx| {
+        acp_thread::AcpThread::from_serialized(
+            restored_output.subagent_threads[0].thread.clone(),
+            project.clone(),
+            action_log,
+            cx,
+        )
+    });
+
+    // Verify the reconstructed thread has the correct content
+    reconstructed_thread.read_with(cx, |thread, cx| {
+        assert_eq!(thread.title().as_ref(), "Test Subagent");
+        assert_eq!(thread.entries().len(), 3);
+
+        let markdown = thread.to_markdown(cx);
+        assert!(
+            markdown.contains("TODOs") && markdown.contains("main.rs"),
+            "Reconstructed thread should contain original content: {}",
+            markdown
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_nested_subagent_serialization(cx: &mut TestAppContext) {
+    // This test verifies that nested subagent threads (subagent within subagent)
+    // are properly serialized and can be reconstructed.
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+    // Create a nested subagent structure: parent -> subagent -> nested subagent
+    let nested_subagent = acp_thread::SerializedAcpThread {
+        title: "Nested Subagent".to_string(),
+        session_id: "nested-session".to_string(),
+        entries: vec![acp_thread::SerializedAgentThreadEntry::AssistantMessage {
+            chunks: vec![acp_thread::SerializedAssistantChunk::Message {
+                markdown: "I'm the deeply nested subagent".to_string(),
+            }],
+            indented: false,
+        }],
+    };
+
+    let subagent_with_nested = acp_thread::SerializedAcpThread {
+        title: "Parent Subagent".to_string(),
+        session_id: "parent-subagent-session".to_string(),
+        entries: vec![
+            acp_thread::SerializedAgentThreadEntry::UserMessage {
+                id: None,
+                content: "Spawn a nested subagent".to_string(),
+                indented: false,
+            },
+            acp_thread::SerializedAgentThreadEntry::ToolCall {
+                id: "nested-tool-call".to_string(),
+                tool_name: Some("subagent".to_string()),
+                label: "Nested Subagent".to_string(),
+                kind: acp_thread::SerializedToolKind::Other,
+                status: acp_thread::SerializedToolCallStatus::Completed,
+                content: vec![acp_thread::SerializedToolCallContent::SubagentThread(
+                    Box::new(nested_subagent),
+                )],
+                raw_input: None,
+                raw_output: None,
+            },
+        ],
+    };
+
+    // Create SubagentOutput with nested structure
+    let output = crate::SubagentOutput {
+        summary: "Task completed with nested subagent".to_string(),
+        subagent_threads: vec![crate::SubagentThreadData {
+            label: "Parent Subagent".to_string(),
+            thread: subagent_with_nested,
+        }],
+    };
+
+    // Serialize to JSON
+    let output_json = serde_json::to_string(&output).unwrap();
+
+    // Deserialize back
+    let restored: crate::SubagentOutput = serde_json::from_str(&output_json).unwrap();
+
+    // Verify the nested structure was preserved
+    assert_eq!(restored.subagent_threads.len(), 1);
+    let parent_thread = &restored.subagent_threads[0].thread;
+    assert_eq!(parent_thread.title, "Parent Subagent");
+    assert_eq!(parent_thread.entries.len(), 2);
+
+    // Check the nested subagent tool call
+    match &parent_thread.entries[1] {
+        acp_thread::SerializedAgentThreadEntry::ToolCall { content, .. } => {
+            assert_eq!(content.len(), 1);
+            match &content[0] {
+                acp_thread::SerializedToolCallContent::SubagentThread(nested) => {
+                    assert_eq!(nested.title, "Nested Subagent");
+                    assert_eq!(nested.entries.len(), 1);
+                }
+                _ => panic!("Expected SubagentThread content"),
+            }
+        }
+        _ => panic!("Expected ToolCall entry"),
+    }
+
+    // Test reconstruction of the nested structure
+    let action_log = cx.new(|_| ActionLog::new(project.clone()));
+    let reconstructed = cx.new(|cx| {
+        acp_thread::AcpThread::from_serialized(
+            restored.subagent_threads[0].thread.clone(),
+            project.clone(),
+            action_log,
+            cx,
+        )
+    });
+
+    // Verify the reconstructed thread
+    reconstructed.read_with(cx, |thread, cx| {
+        assert_eq!(thread.title().as_ref(), "Parent Subagent");
+        assert_eq!(thread.entries().len(), 2);
+
+        // The nested subagent should be reconstructed as a SubagentThread content
+        if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = &thread.entries()[1] {
+            let subagent_threads: Vec<_> = tool_call
+                .content
+                .iter()
+                .filter_map(|c| c.subagent_thread())
+                .collect();
+            assert_eq!(
+                subagent_threads.len(),
+                1,
+                "Should have one nested subagent thread"
+            );
+
+            let nested_thread = subagent_threads[0].read(cx);
+            assert_eq!(nested_thread.title().as_ref(), "Nested Subagent");
+        } else {
+            panic!("Expected ToolCall entry");
+        }
+    });
 }
 
 #[gpui::test]
