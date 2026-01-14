@@ -19,7 +19,7 @@ use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use project::trusted_worktrees;
 use release_channel::ReleaseChannel;
 use remote::{
-    ConnectionIdentifier, DockerConnectionOptions, RemoteClient, RemoteConnection,
+    ConnectionIdentifier, DockerConnectionOptions, Interactive, RemoteClient, RemoteConnection,
     RemoteConnectionOptions, RemotePlatform, SshConnectionOptions,
 };
 use semver::Version;
@@ -891,6 +891,7 @@ async fn path_exists(connection: &Arc<dyn RemoteConnection>, path: &Path) -> boo
         &Default::default(),
         None,
         None,
+        Interactive::No,
     ) else {
         return false;
     };
