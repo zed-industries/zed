@@ -10,6 +10,32 @@ use crate::{
     ScrollbarSettingsContent, ShowIndentGuides, serialize_optional_f32_with_two_decimal_places,
 };
 
+/// When to scan content of linked directories.
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanSymlinksSetting {
+    /// Always scan symlinked directories
+    Always,
+    /// Only scan symlinked directories when they've been expanded in the workspace
+    Expanded,
+    /// Never scan symlinked directories
+    #[default]
+    Never,
+}
+
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorkspaceSettingsContent {
@@ -103,6 +129,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub close_on_file_delete: Option<bool>,
+    /// When to scan content of linked directories.
+    ///
+    /// Default: never
+    pub scan_symlinks: Option<ScanSymlinksSetting>,
     /// Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
     ///
     /// Default: false

@@ -149,6 +149,15 @@
   "restore_on_file_reopen": true,
   // Whether to automatically close files that have been deleted on disk.
   "close_on_file_delete": false,
+  // When to scan content of linked directories.
+  // May take 3 values:
+  //  1. Always scan symlinked directories:
+  //         "scan_symlinks": "always"
+  //  2. Only scan symlinked directories when they've been expanded in the workspace:
+  //         "scan_symlinks": "expanded"
+  //  3. Never scan symlinked directories:
+  //         "scan_symlinks": "never"
+  "scan_symlinks": "never",
   // Relative size of the drop target in the editor that will open dropped file as a split pane (0-0.5)
   // E.g. 0.25 == If you drop onto the top/bottom quarter of the pane a new vertical split will be used
   //              If you drop onto the left/right quarter of the pane a new horizontal split will be used

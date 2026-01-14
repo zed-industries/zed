@@ -2709,7 +2709,7 @@ impl LocalSnapshot {
         for entry in self.entries_by_path.cursor::<()>(()) {
             if entry.is_file() {
                 assert_eq!(files.next().unwrap().inode, entry.inode);
-                if (!entry.is_ignored && !entry.is_external) || entry.is_always_included {
+                if !entry.is_ignored || entry.is_always_included {
                     assert_eq!(visible_files.next().unwrap().inode, entry.inode);
                 }
             }
@@ -2780,12 +2780,88 @@ impl LocalSnapshot {
 }
 
 impl BackgroundScannerState {
-    fn should_scan_directory(&self, entry: &Entry) -> bool {
+    fn should_scan_directory(&self, entry: &Entry, scan_symlinks: settings::ScanSymlinksSetting, parent_being_scanned: Option<ProjectEntryId>) -> bool {
+        use settings::ScanSymlinksSetting;
+
+        // Helper to check if external parent is scanned or being scanned
+        // Only checks external parents, not regular directories
+        let has_scanned_external_parent = || {
+            // First check if any ancestor directory that is ALSO external has been scanned
+            for parent_path in entry.path.ancestors().skip(1) {
+                if let Some(parent_entry) = self.snapshot.entry_for_path(parent_path) {
+                    if parent_entry.is_external && self.scanned_dirs.contains(&parent_entry.id) {
+                        return true;
+                    }
+                }
+            }
+
+            // Check if immediate external parent is being scanned right now
+            if let Some(parent_id) = parent_being_scanned {
+                if let Some(parent_path) = entry.path.parent() {
+                    if let Some(parent_entry) = self.snapshot.entry_for_path(parent_path) {
+                        if parent_entry.is_external && parent_entry.id == parent_id {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            false
+        };
+
+        // Handle external directories (symlinks pointing outside the worktree) based on scan_symlinks setting
+        if entry.is_external {
+            match scan_symlinks {
+                ScanSymlinksSetting::Never => {
+                    // Never scan external directories, except for special directories
+                    return entry.path.file_name() == Some(DOT_GIT)
+                        || entry.path.file_name() == Some(local_settings_folder_name())
+                        || entry.path.file_name() == Some(local_vscode_folder_name())
+                        || self
+                            .paths_to_scan
+                            .iter()
+                            .any(|p| p.starts_with(&entry.path))
+                        || self
+                            .path_prefixes_to_scan
+                            .iter()
+                            .any(|p| entry.path.starts_with(p));
+                }
+                ScanSymlinksSetting::Expanded => {
+                    // Only scan external directories that have been expanded, or are children of other expanded external directories
+                    if !self.scanned_dirs.contains(&entry.id) && !has_scanned_external_parent() {
+                        return entry.path.file_name() == Some(DOT_GIT)
+                            || entry.path.file_name() == Some(local_settings_folder_name())
+                            || entry.path.file_name() == Some(local_vscode_folder_name())
+                            || self
+                                .paths_to_scan
+                                .iter()
+                                .any(|p| p.starts_with(&entry.path))
+                            || self
+                                .path_prefixes_to_scan
+                                .iter()
+                                .any(|p| entry.path.starts_with(p));
+                    }
+                    // Parent external directory is scanned or being scanned, so scan this directory too
+                    // Treat it like the Always case by falling through
+                }
+                ScanSymlinksSetting::Always => {
+                    // Fall through to regular scanning logic
+                }
+            }
+        }
+
+        // Regular scanning logic for non-external directories or when scan_symlinks is Always
+        // For Expanded mode with external dirs, we only reach here if the external parent is scanned
+        let should_scan_external = entry.is_external &&
+            (scan_symlinks == ScanSymlinksSetting::Always ||
+             (scan_symlinks == ScanSymlinksSetting::Expanded && (self.scanned_dirs.contains(&entry.id) || has_scanned_external_parent())));
+
         (self.scanning_enabled && !entry.is_external && (!entry.is_ignored || entry.is_always_included))
+            || (should_scan_external && (!entry.is_ignored || entry.is_always_included))
             || entry.path.file_name() == Some(DOT_GIT)
             || entry.path.file_name() == Some(local_settings_folder_name())
             || entry.path.file_name() == Some(local_vscode_folder_name())
-            || self.scanned_dirs.contains(&entry.id) // If we've ever scanned it, keep scanning
+            || self.scanned_dirs.contains(&entry.id)
             || self
                 .paths_to_scan
                 .iter()
@@ -3378,8 +3454,7 @@ pub struct Entry {
     /// symlink.
     ///
     /// We only scan entries outside of the worktree once the symlinked
-    /// directory is expanded. External entries are treated like gitignored
-    /// entries in that they are not included in searches.
+    /// directory is expanded.
     pub is_external: bool,
 
     /// Whether this entry is considered to be a `.env` file.
@@ -3584,8 +3659,7 @@ impl sum_tree::Item for Entry {
     type Summary = EntrySummary;
 
     fn summary(&self, _cx: ()) -> Self::Summary {
-        let non_ignored_count = if (self.is_ignored || self.is_external) && !self.is_always_included
-        {
+        let non_ignored_count = if self.is_ignored && !self.is_always_included {
             0
         } else {
             1
@@ -4256,6 +4330,28 @@ impl BackgroundScanner {
             let mut state = self.state.lock().await;
             let root_path = state.snapshot.abs_path.clone();
             for path in paths {
+                // Check if the path itself is a directory that should be scanned
+                if let Some(entry) = state.snapshot.entry_for_path(path) {
+                    if entry.is_dir() && entry.kind != EntryKind::UnloadedDir {
+                        // This is an already-loaded directory being explicitly refreshed.
+                        // Rescan it if it should be scanned according to the current settings.
+                        if state.should_scan_directory(&entry, self.settings.scan_symlinks, None) {
+                            let abs_path = root_path.join(path.as_std_path());
+                            state
+                                .enqueue_scan_dir(
+                                    abs_path.into(),
+                                    &entry,
+                                    &scan_job_tx,
+                                    self.fs.as_ref(),
+                                )
+                                .await;
+                            state.paths_to_scan.insert(path.clone());
+                            continue;
+                        }
+                    }
+                }
+
+                // Check ancestors for unloaded directories
                 for ancestor in path.ancestors() {
                     if let Some(entry) = state.snapshot.entry_for_path(ancestor)
                         && entry.kind == EntryKind::UnloadedDir
@@ -4575,7 +4671,8 @@ impl BackgroundScanner {
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
             if entry.is_dir() {
-                if state.should_scan_directory(entry) {
+                let parent_id = state.snapshot.entry_for_path(&job.path).map(|e| e.id);
+                if state.should_scan_directory(entry, self.settings.scan_symlinks, parent_id) {
                     job_ix += 1;
                 } else {
                     log::debug!("defer scanning directory {:?}", entry.path);
@@ -4693,7 +4790,7 @@ impl BackgroundScanner {
                     fs_entry.is_hidden = self.settings.is_path_hidden(path);
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
-                        if state.should_scan_directory(&fs_entry)
+                        if state.should_scan_directory(&fs_entry, self.settings.scan_symlinks, None)
                             || (fs_entry.path.is_empty()
                                 && abs_path.file_name() == Some(OsStr::new(DOT_GIT)))
                         {
@@ -4984,7 +5081,7 @@ impl BackgroundScanner {
                 // Scan any directories that were previously ignored and weren't previously scanned.
                 if was_ignored && !entry.is_ignored && entry.kind.is_unloaded() {
                     let state = self.state.lock().await;
-                    if state.should_scan_directory(&entry) {
+                    if state.should_scan_directory(&entry, self.settings.scan_symlinks, None) {
                         state
                             .enqueue_scan_dir(
                                 abs_path.clone(),

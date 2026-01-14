@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::Context as _;
-use settings::{RegisterSetting, Settings};
+use settings::{RegisterSetting, ScanSymlinksSetting, Settings};
 use util::{
     ResultExt,
     paths::{PathMatcher, PathStyle},
@@ -21,6 +21,7 @@ pub struct WorktreeSettings {
     pub private_files: PathMatcher,
     pub hidden_files: PathMatcher,
     pub read_only_files: PathMatcher,
+    pub scan_symlinks: ScanSymlinksSetting,
 }
 
 impl WorktreeSettings {
@@ -64,6 +65,7 @@ impl Settings for WorktreeSettings {
         let private_files = worktree.private_files.unwrap().0;
         let hidden_files = worktree.hidden_files.unwrap();
         let read_only_files = worktree.read_only_files.unwrap_or_default();
+        let scan_symlinks = content.workspace.scan_symlinks.unwrap();
         let parsed_file_scan_inclusions: Vec<String> = file_scan_inclusions
             .iter()
             .flat_map(|glob| {
@@ -97,6 +99,7 @@ impl Settings for WorktreeSettings {
             read_only_files: path_matchers(read_only_files, "read_only_files")
                 .log_err()
                 .unwrap_or_default(),
+            scan_symlinks,
         }
     }
 }
@@ -126,6 +129,7 @@ mod tests {
                 PathStyle::local(),
             )
             .unwrap(),
+            scan_symlinks: ScanSymlinksSetting::Never,
         }
     }
 
