@@ -60,6 +60,62 @@ use ui::App;
 use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
 
+/// Global used during reconstruction to provide project access.
+/// This is a workaround since we need project access in nested contexts.
+struct ReconstructionProject(Entity<Project>);
+impl gpui::Global for ReconstructionProject {}
+
+/// A no-op connection used for reconstructed threads that are display-only.
+struct NoOpConnection;
+
+impl AgentConnection for NoOpConnection {
+    fn telemetry_id(&self) -> SharedString {
+        "reconstructed".into()
+    }
+
+    fn new_thread(
+        self: Rc<Self>,
+        _project: Entity<Project>,
+        _cwd: &std::path::Path,
+        _cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        Task::ready(Err(anyhow!(
+            "Reconstructed threads cannot create new threads"
+        )))
+    }
+
+    fn auth_methods(&self) -> &[acp::AuthMethod] {
+        &[]
+    }
+
+    fn authenticate(&self, _method: acp::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Err(anyhow!("Reconstructed threads cannot authenticate")))
+    }
+
+    fn prompt(
+        &self,
+        _user_message_id: Option<UserMessageId>,
+        _params: acp::PromptRequest,
+        _cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
+        Task::ready(Err(anyhow!("Reconstructed threads cannot prompt")))
+    }
+
+    fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+
+    fn truncate(
+        &self,
+        _session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn AgentSessionTruncate>> {
+        None
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {
+        self
+    }
+}
+
 #[derive(Debug)]
 pub struct UserMessage {
     pub id: Option<UserMessageId>,
@@ -119,6 +175,23 @@ pub enum AssistantMessageChunk {
 }
 
 impl AssistantMessageChunk {
+    /// Reconstruct a chunk from serialized data.
+    pub fn from_serialized(
+        chunk: SerializedAssistantChunk,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) -> Self {
+        match chunk {
+            SerializedAssistantChunk::Message { markdown } => Self::Message {
+                block: ContentBlock::new(markdown.into(), language_registry, path_style, cx),
+            },
+            SerializedAssistantChunk::Thought { markdown } => Self::Thought {
+                block: ContentBlock::new(markdown.into(), language_registry, path_style, cx),
+            },
+        }
+    }
+
     /// Serialize this chunk for persistence.
     pub fn to_serialized(&self, cx: &App) -> SerializedAssistantChunk {
         match self {
@@ -160,6 +233,79 @@ pub enum AgentThreadEntry {
 }
 
 impl AgentThreadEntry {
+    /// Reconstruct an entry from serialized data.
+    pub fn from_serialized(
+        entry: SerializedAgentThreadEntry,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) -> Option<Self> {
+        match entry {
+            SerializedAgentThreadEntry::UserMessage {
+                id: _,
+                content,
+                indented,
+            } => Some(Self::UserMessage(UserMessage {
+                id: None,
+                content: ContentBlock::new(content.into(), language_registry, path_style, cx),
+                chunks: Vec::new(),
+                checkpoint: None,
+                indented,
+            })),
+            SerializedAgentThreadEntry::AssistantMessage { chunks, indented } => {
+                Some(Self::AssistantMessage(AssistantMessage {
+                    chunks: chunks
+                        .into_iter()
+                        .map(|chunk| {
+                            AssistantMessageChunk::from_serialized(
+                                chunk,
+                                language_registry,
+                                path_style,
+                                cx,
+                            )
+                        })
+                        .collect(),
+                    indented,
+                }))
+            }
+            SerializedAgentThreadEntry::ToolCall {
+                id,
+                tool_name,
+                label,
+                kind,
+                status,
+                content,
+                raw_input,
+                raw_output,
+            } => {
+                let raw_input_markdown = raw_input
+                    .as_ref()
+                    .and_then(|input| markdown_for_raw_output(input, language_registry, cx));
+
+                Some(Self::ToolCall(ToolCall {
+                    id: acp::ToolCallId::new(id),
+                    label: cx.new(|cx| {
+                        Markdown::new(label.into(), Some(language_registry.clone()), None, cx)
+                    }),
+                    kind: kind.into(),
+                    content: content
+                        .into_iter()
+                        .filter_map(|c| {
+                            ToolCallContent::from_serialized(c, language_registry, path_style, cx)
+                        })
+                        .collect(),
+                    status: status.into(),
+                    locations: Vec::new(),
+                    resolved_locations: Vec::new(),
+                    raw_input,
+                    raw_input_markdown,
+                    raw_output,
+                    tool_name: tool_name.map(|n| n.into()),
+                }))
+            }
+        }
+    }
+
     /// Serialize this entry for persistence.
     pub fn to_serialized(&self, cx: &App) -> SerializedAgentThreadEntry {
         match self {
@@ -847,6 +993,50 @@ impl ToolCallContent {
         }
     }
 
+    /// Reconstruct content from serialized data.
+    pub fn from_serialized(
+        content: SerializedToolCallContent,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) -> Option<Self> {
+        match content {
+            SerializedToolCallContent::Markdown(markdown) => Some(Self::ContentBlock(
+                ContentBlock::new(markdown.into(), language_registry, path_style, cx),
+            )),
+            SerializedToolCallContent::Diff {
+                path,
+                old_text,
+                new_text,
+            } => Some(Self::Diff(cx.new(|cx| {
+                Diff::finalized(path, old_text, new_text, language_registry.clone(), cx)
+            }))),
+            SerializedToolCallContent::Terminal {
+                id: _,
+                command,
+                output,
+            } => {
+                // Terminals can't be fully reconstructed, so we convert to markdown
+                let markdown = format!("```\n{}\n```\nOutput:\n```\n{}\n```", command, output);
+                Some(Self::ContentBlock(ContentBlock::new(
+                    markdown.into(),
+                    language_registry,
+                    path_style,
+                    cx,
+                )))
+            }
+            SerializedToolCallContent::SubagentThread(thread) => {
+                let project = cx
+                    .try_global::<ReconstructionProject>()
+                    .map(|p| p.0.clone())?;
+                let action_log = cx.new(|_| ActionLog::new(project.clone()));
+                Some(Self::SubagentThread(cx.new(|cx| {
+                    AcpThread::from_serialized(*thread, project, action_log, cx)
+                })))
+            }
+        }
+    }
+
     pub fn image(&self) -> Option<&Arc<gpui::Image>> {
         match self {
             Self::ContentBlock(content) => content.image(),
@@ -1274,6 +1464,47 @@ impl AcpThread {
             token_usage: None,
             prompt_capabilities,
             _observe_prompt_capabilities: task,
+            terminals: HashMap::default(),
+            pending_terminal_output: HashMap::default(),
+            pending_terminal_exit: HashMap::default(),
+        }
+    }
+
+    /// Create an AcpThread from serialized data for display purposes.
+    /// This reconstructs the visual state of a thread without an active connection.
+    pub fn from_serialized(
+        data: SerializedAcpThread,
+        project: Entity<Project>,
+        action_log: Entity<ActionLog>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let language_registry = project.read(cx).languages().clone();
+        let path_style = project.read(cx).path_style(cx);
+
+        // Set global for nested subagent reconstruction
+        cx.set_global(ReconstructionProject(project.clone()));
+
+        let entries = data
+            .entries
+            .into_iter()
+            .filter_map(|entry| {
+                AgentThreadEntry::from_serialized(entry, &language_registry, path_style, cx)
+            })
+            .collect();
+
+        Self {
+            action_log,
+            shared_buffers: Default::default(),
+            entries,
+            plan: Default::default(),
+            title: data.title.into(),
+            project,
+            send_task: None,
+            connection: Rc::new(NoOpConnection),
+            session_id: acp::SessionId::new(data.session_id),
+            token_usage: None,
+            prompt_capabilities: acp::PromptCapabilities::new(),
+            _observe_prompt_capabilities: Task::ready(Ok(())),
             terminals: HashMap::default(),
             pending_terminal_output: HashMap::default(),
             pending_terminal_exit: HashMap::default(),
