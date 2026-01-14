@@ -41,6 +41,7 @@ visual-tests = [
     "image_viewer/test-support",
     "clock/test-support",
     "acp_thread/test-support",
+    "action_log/test-support",
     "agent_ui/test-support",
     "db/test-support",
     "agent/test-support",

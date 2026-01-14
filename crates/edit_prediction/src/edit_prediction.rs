@@ -2055,7 +2055,9 @@ impl EditPredictionStore {
     {
         let http_client = client.http_client();
 
-        let mut token = if require_auth {
+        let mut token = if let Ok(custom_token) = std::env::var("ZED_PREDICT_EDITS_TOKEN") {
+            Some(custom_token)
+        } else if require_auth {
             Some(llm_token.acquire(&client).await?)
         } else {
             llm_token.acquire(&client).await.ok()

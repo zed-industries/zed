@@ -1,4 +1,5 @@
 use super::*;
+use agent_settings::AgentSettings;
 use anyhow::Result;
 use gpui::{App, SharedString, Task};
 use std::future;
@@ -124,9 +125,27 @@ impl AgentTool for ToolRequiringPermission {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let authorize = event_stream.authorize("Authorize?", cx);
+        let settings = AgentSettings::get_global(cx);
+        let decision = decide_permission_from_settings(Self::name(), "", settings);
+
+        let authorize = match decision {
+            ToolPermissionDecision::Allow => None,
+            ToolPermissionDecision::Deny(reason) => {
+                return Task::ready(Err(anyhow::anyhow!("{}", reason)));
+            }
+            ToolPermissionDecision::Confirm => {
+                let context = crate::ToolPermissionContext {
+                    tool_name: "tool_requiring_permission".to_string(),
+                    input_value: String::new(),
+                };
+                Some(event_stream.authorize("Authorize?", context, cx))
+            }
+        };
+
         cx.foreground_executor().spawn(async move {
-            authorize.await?;
+            if let Some(authorize) = authorize {
+                authorize.await?;
+            }
             Ok("Allowed".to_string())
         })
     }

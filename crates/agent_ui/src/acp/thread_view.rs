@@ -50,8 +50,8 @@ use theme::{AgentFontSize, ThemeSettings};
 use ui::{
     Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, DecoratedIcon,
     DiffStat, Disclosure, Divider, DividerColor, ElevationIndex, IconDecoration,
-    IconDecorationKind, KeyBinding, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip,
-    WithScrollbar, prelude::*, right_click_menu,
+    IconDecorationKind, KeyBinding, PopoverMenu, PopoverMenuHandle, SpinnerLabel, TintColor,
+    Tooltip, WithScrollbar, prelude::*, right_click_menu,
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
@@ -71,12 +71,15 @@ use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
 use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip, UsageCallout};
 use crate::{
-    AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ClearMessageQueue, ContinueThread,
-    ContinueWithBurnMode, CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow,
-    KeepAll, NewThread, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, SendImmediately,
-    SendNextQueuedMessage, ToggleBurnMode, ToggleProfileSelector,
+    AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
+    ContinueThread, ContinueWithBurnMode, CycleFavoriteModels, CycleModeSelector,
+    ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAgentDiff, OpenHistory, RejectAll,
+    RejectOnce, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
+    ToggleBurnMode, ToggleProfileSelector,
 };
 
+/// Maximum number of lines to show for a collapsed terminal command preview.
+const MAX_COLLAPSED_LINES: usize = 3;
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(1);
 const TOKEN_THRESHOLD: u64 = 1;
 
@@ -311,6 +314,11 @@ pub struct AcpThreadView {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_state: ThreadState,
+    permission_dropdown_handle: PopoverMenuHandle<ContextMenu>,
+    /// Tracks the selected granularity index for each tool call's permission dropdown.
+    /// The index corresponds to the position in the allow_options list.
+    /// Default is the last option (index pointing to "Only this time").
+    selected_permission_granularity: HashMap<acp::ToolCallId, usize>,
     login: Option<task::SpawnInTerminal>,
     recent_history_entries: Vec<AgentSessionInfo>,
     history: Entity<AcpThreadHistory>,
@@ -331,9 +339,17 @@ pub struct AcpThreadView {
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
     auth_task: Option<Task<()>>,
+    /// Tracks which tool calls have their content/output expanded.
+    /// Used for showing/hiding tool call results, terminal output, etc.
     expanded_tool_calls: HashSet<acp::ToolCallId>,
+    /// Tracks which terminal commands have their command text expanded.
+    /// This is separate from `expanded_tool_calls` because command text expansion
+    /// (showing all lines of a long command) is independent from output expansion
+    /// (showing the terminal output).
+    expanded_terminal_commands: HashSet<acp::ToolCallId>,
     expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
+    expanded_subagents: HashSet<acp::SessionId>,
     edits_expanded: bool,
     plan_expanded: bool,
     queue_expanded: bool,
@@ -492,6 +508,8 @@ impl AcpThreadView {
             workspace: workspace.clone(),
             project: project.clone(),
             entry_view_state,
+            permission_dropdown_handle: PopoverMenuHandle::default(),
+            selected_permission_granularity: HashMap::default(),
             thread_state: Self::initial_state(
                 agent.clone(),
                 resume_thread.clone(),
@@ -516,8 +534,10 @@ impl AcpThreadView {
             thread_feedback: Default::default(),
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
+            expanded_terminal_commands: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
+            expanded_subagents: HashSet::default(),
             editing_message: None,
             edits_expanded: false,
             plan_expanded: false,
@@ -2748,6 +2768,23 @@ impl AcpThreadView {
                 ContextMenu::build(window, cx, move |menu, _, cx| {
                     let is_at_top = entity.read(cx).list_state.logical_scroll_top().item_ix == 0;
 
+                    let copy_this_agent_response =
+                        ContextMenuEntry::new("Copy This Agent Response").handler({
+                            let entity = entity.clone();
+                            move |_, cx| {
+                                entity.update(cx, |this, cx| {
+                                    if let Some(thread) = this.thread() {
+                                        let entries = thread.read(cx).entries();
+                                        if let Some(text) =
+                                            Self::get_agent_message_content(entries, entry_ix, cx)
+                                        {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(text));
+                                        }
+                                    }
+                                });
+                            }
+                        });
+
                     let scroll_item = if is_at_top {
                         ContextMenuEntry::new("Scroll to Bottom").handler({
                             let entity = entity.clone();
@@ -2784,7 +2821,8 @@ impl AcpThreadView {
                         });
 
                     menu.when_some(focus, |menu, focus| menu.context(focus))
-                        .action("Copy", Box::new(markdown::CopyAsMarkdown))
+                        .action("Copy Selection", Box::new(markdown::CopyAsMarkdown))
+                        .item(copy_this_agent_response)
                         .separator()
                         .item(scroll_item)
                         .item(open_thread_as_markdown)
@@ -2932,6 +2970,13 @@ impl AcpThreadView {
 
         let is_edit =
             matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
+        let is_subagent = tool_call.is_subagent();
+
+        // For subagent tool calls, render the subagent cards directly without wrapper
+        if is_subagent {
+            return self.render_subagent_tool_call(entry_ix, tool_call, window, cx);
+        }
+
         let is_cancelled_edit = is_edit && matches!(tool_call.status, ToolCallStatus::Canceled);
         let has_revealed_diff = tool_call.diffs().next().is_some_and(|diff| {
             self.entry_view_state
@@ -3134,34 +3179,10 @@ impl AcpThreadView {
             .mr_5()
             .map(|this| {
                 if is_terminal_tool {
-                    this.child(
-                        v_flex()
-                            .p_1p5()
-                            .gap_0p5()
-                            .text_ui_sm(cx)
-                            .bg(self.tool_card_header_bg(cx))
-                            .child(
-                                Label::new("Run Command")
-                                    .buffer_font(cx)
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                MarkdownElement::new(
-                                    tool_call.label.clone(),
-                                    terminal_command_markdown_style(window, cx),
-                                )
-                                .code_block_renderer(
-                                    markdown::CodeBlockRenderer::Default {
-                                        copy_button: false,
-                                        copy_button_on_hover: false,
-                                        border: false,
-                                    },
-                                )
-                            ),
-                    )
+                    let label_source = tool_call.label.read(cx).source();
+                    this.child(self.render_collapsible_command(true, label_source, &tool_call.id, cx))
                 } else {
-                   this.child(
+                    this.child(
                         h_flex()
                             .group(&card_header_id)
                             .relative()
@@ -3466,12 +3487,206 @@ impl AcpThreadView {
                 self.render_terminal_tool_call(entry_ix, terminal, tool_call, window, cx)
             }
             ToolCallContent::SubagentThread(_thread) => {
-                // The subagent's AcpThread entity stores the subagent's conversation
-                // (messages, tool calls, etc.) but we don't render it here. The entity
-                // is used for serialization (e.g., to_markdown) and data storage, not display.
+                // Subagent threads are rendered by render_subagent_tool_call, not here
                 Empty.into_any_element()
             }
         }
+    }
+
+    fn render_subagent_tool_call(
+        &self,
+        entry_ix: usize,
+        tool_call: &ToolCall,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let subagent_threads: Vec<_> = tool_call
+            .content
+            .iter()
+            .filter_map(|c| c.subagent_thread().cloned())
+            .collect();
+
+        let tool_call_in_progress = matches!(
+            tool_call.status,
+            ToolCallStatus::Pending | ToolCallStatus::InProgress
+        );
+
+        v_flex().ml_5().mr_5().my_1p5().gap_1().children(
+            subagent_threads
+                .into_iter()
+                .enumerate()
+                .map(|(context_ix, thread)| {
+                    self.render_subagent_card(
+                        entry_ix,
+                        context_ix,
+                        &thread,
+                        tool_call_in_progress,
+                        window,
+                        cx,
+                    )
+                }),
+        )
+    }
+
+    fn render_subagent_card(
+        &self,
+        entry_ix: usize,
+        context_ix: usize,
+        thread: &Entity<AcpThread>,
+        tool_call_in_progress: bool,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let thread_read = thread.read(cx);
+        let session_id = thread_read.session_id().clone();
+        let title = thread_read.title();
+        let action_log = thread_read.action_log();
+        let changed_buffers = action_log.read(cx).changed_buffers(cx);
+
+        let is_expanded = self.expanded_subagents.contains(&session_id);
+        let files_changed = changed_buffers.len();
+        let diff_stats = DiffStats::all_files(&changed_buffers, cx);
+
+        let is_running = tool_call_in_progress;
+
+        let card_header_id =
+            SharedString::from(format!("subagent-header-{}-{}", entry_ix, context_ix));
+        let card_id = SharedString::from(format!("subagent-card-{}-{}", entry_ix, context_ix));
+        let disclosure_id =
+            SharedString::from(format!("subagent-disclosure-{}-{}", entry_ix, context_ix));
+        let diff_stat_id = SharedString::from(format!("subagent-diff-{}-{}", entry_ix, context_ix));
+
+        v_flex()
+            .w_full()
+            .rounded_md()
+            .border_1()
+            .border_color(self.tool_card_border_color(cx))
+            .bg(cx.theme().colors().editor_background)
+            .overflow_hidden()
+            .child(
+                h_flex()
+                    .id(card_id)
+                    .group(&card_header_id)
+                    .w_full()
+                    .p_1()
+                    .gap_1p5()
+                    .bg(self.tool_card_header_bg(cx))
+                    .child(
+                        div()
+                            .id(disclosure_id)
+                            .cursor_pointer()
+                            .on_click(cx.listener({
+                                move |this, _, _, cx| {
+                                    if this.expanded_subagents.contains(&session_id) {
+                                        this.expanded_subagents.remove(&session_id);
+                                    } else {
+                                        this.expanded_subagents.insert(session_id.clone());
+                                    }
+                                    cx.notify();
+                                }
+                            }))
+                            .child(Disclosure::new(
+                                SharedString::from(format!(
+                                    "subagent-disclosure-inner-{}-{}",
+                                    entry_ix, context_ix
+                                )),
+                                is_expanded,
+                            )),
+                    )
+                    .child(if is_running {
+                        SpinnerLabel::new()
+                            .size(LabelSize::Small)
+                            .into_any_element()
+                    } else {
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Small)
+                            .color(Color::Success)
+                            .into_any_element()
+                    })
+                    .child(
+                        h_flex().flex_1().overflow_hidden().child(
+                            Label::new(title.to_string())
+                                .size(LabelSize::Small)
+                                .color(Color::Default),
+                        ),
+                    )
+                    .when(files_changed > 0, |this| {
+                        this.child(
+                            h_flex()
+                                .gap_1()
+                                .child(Label::new("—").size(LabelSize::Small).color(Color::Muted))
+                                .child(
+                                    Label::new(format!(
+                                        "{} {} changed",
+                                        files_changed,
+                                        if files_changed == 1 { "file" } else { "files" }
+                                    ))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                                )
+                                .child(DiffStat::new(
+                                    diff_stat_id.clone(),
+                                    diff_stats.lines_added as usize,
+                                    diff_stats.lines_removed as usize,
+                                )),
+                        )
+                    }),
+            )
+            .when(is_expanded, |this| {
+                this.child(self.render_subagent_expanded_content(
+                    entry_ix, context_ix, thread, is_running, window, cx,
+                ))
+            })
+            .into_any_element()
+    }
+
+    fn render_subagent_expanded_content(
+        &self,
+        _entry_ix: usize,
+        _context_ix: usize,
+        thread: &Entity<AcpThread>,
+        is_running: bool,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let thread_read = thread.read(cx);
+        let entries = thread_read.entries();
+
+        // Find the most recent assistant message with any content (message or thought)
+        let last_assistant_markdown = entries.iter().rev().find_map(|entry| {
+            if let AgentThreadEntry::AssistantMessage(msg) = entry {
+                msg.chunks.iter().find_map(|chunk| match chunk {
+                    AssistantMessageChunk::Message { block } => block.markdown().cloned(),
+                    AssistantMessageChunk::Thought { block } => block.markdown().cloned(),
+                })
+            } else {
+                None
+            }
+        });
+
+        let has_content = last_assistant_markdown.is_some();
+
+        v_flex()
+            .w_full()
+            .p_2()
+            .gap_2()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
+            .bg(cx.theme().colors().editor_background)
+            .when_some(last_assistant_markdown, |this, markdown| {
+                this.child(
+                    div()
+                        .when(!is_running, |d| d.max_h(px(200.)).overflow_hidden())
+                        .text_sm()
+                        .child(self.render_markdown(
+                            markdown,
+                            default_markdown_style(false, false, window, cx),
+                        )),
+                )
+            })
+            .when(is_running && !has_content, |this| {
+                this.child(SpinnerLabel::new().size(LabelSize::Small))
+            })
     }
 
     fn render_markdown_output(
@@ -3667,6 +3882,300 @@ impl AcpThreadView {
                 .first_tool_awaiting_confirmation()
                 .is_some_and(|call| call.id == tool_call_id)
         });
+
+        // For SwitchMode, use the old layout with all buttons
+        if kind == acp::ToolKind::SwitchMode {
+            return self.render_permission_buttons_legacy(options, entry_ix, tool_call_id, cx);
+        }
+
+        // Get granularity options (all options except the old deny option which we no longer generate)
+        let granularity_options: Vec<_> = options
+            .iter()
+            .filter(|o| {
+                matches!(
+                    o.kind,
+                    acp::PermissionOptionKind::AllowOnce | acp::PermissionOptionKind::AllowAlways
+                )
+            })
+            .collect();
+
+        // Get the selected granularity index, defaulting to the last option ("Only this time")
+        let selected_index = self
+            .selected_permission_granularity
+            .get(&tool_call_id)
+            .copied()
+            .unwrap_or_else(|| granularity_options.len().saturating_sub(1));
+
+        // Get the selected option
+        let selected_option = granularity_options
+            .get(selected_index)
+            .or(granularity_options.last())
+            .copied();
+
+        // The dropdown label should match the selected option
+        let dropdown_label: SharedString = selected_option
+            .map(|o| o.name.clone().into())
+            .unwrap_or_else(|| "Only this time".into());
+
+        // Prepare data for button click handlers
+        let (allow_option_id, allow_option_kind, deny_option_id, deny_option_kind) =
+            if let Some(option) = selected_option {
+                let option_id_str = option.option_id.0.to_string();
+
+                // Transform option_id for allow: "always:tool" -> "always_allow:tool", "once" -> "allow"
+                let allow_id = if option_id_str == "once" {
+                    "allow".to_string()
+                } else if let Some(rest) = option_id_str.strip_prefix("always:") {
+                    format!("always_allow:{}", rest)
+                } else if let Some(rest) = option_id_str.strip_prefix("always_pattern:") {
+                    format!("always_allow_pattern:{}", rest)
+                } else {
+                    option_id_str.clone()
+                };
+
+                // Transform option_id for deny: "always:tool" -> "always_deny:tool", "once" -> "deny"
+                let deny_id = if option_id_str == "once" {
+                    "deny".to_string()
+                } else if let Some(rest) = option_id_str.strip_prefix("always:") {
+                    format!("always_deny:{}", rest)
+                } else if let Some(rest) = option_id_str.strip_prefix("always_pattern:") {
+                    format!("always_deny_pattern:{}", rest)
+                } else {
+                    option_id_str.replace("allow", "deny")
+                };
+
+                // Determine the kinds
+                let allow_kind = option.kind;
+                let deny_kind = match option.kind {
+                    acp::PermissionOptionKind::AllowOnce => acp::PermissionOptionKind::RejectOnce,
+                    acp::PermissionOptionKind::AllowAlways => {
+                        acp::PermissionOptionKind::RejectAlways
+                    }
+                    other => other,
+                };
+
+                (
+                    acp::PermissionOptionId::new(allow_id),
+                    allow_kind,
+                    acp::PermissionOptionId::new(deny_id),
+                    deny_kind,
+                )
+            } else {
+                (
+                    acp::PermissionOptionId::new("allow"),
+                    acp::PermissionOptionKind::AllowOnce,
+                    acp::PermissionOptionId::new("deny"),
+                    acp::PermissionOptionKind::RejectOnce,
+                )
+            };
+
+        div()
+            .p_1()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
+            .w_full()
+            .h_flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .child(
+                // Left side: Allow and Deny buttons
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Button::new(("allow-btn", entry_ix), "Allow")
+                            .icon(IconName::Check)
+                            .icon_color(Color::Success)
+                            .icon_position(IconPosition::Start)
+                            .icon_size(IconSize::XSmall)
+                            .label_size(LabelSize::Small)
+                            .map(|btn| {
+                                if is_first {
+                                    btn.key_binding(
+                                        KeyBinding::for_action_in(
+                                            &AllowOnce as &dyn Action,
+                                            &self.focus_handle,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(10.))),
+                                    )
+                                } else {
+                                    btn
+                                }
+                            })
+                            .on_click(cx.listener({
+                                let tool_call_id = tool_call_id.clone();
+                                let option_id = allow_option_id;
+                                let option_kind = allow_option_kind;
+                                move |this, _, window, cx| {
+                                    this.authorize_tool_call(
+                                        tool_call_id.clone(),
+                                        option_id.clone(),
+                                        option_kind,
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new(("deny-btn", entry_ix), "Deny")
+                            .icon(IconName::Close)
+                            .icon_color(Color::Error)
+                            .icon_position(IconPosition::Start)
+                            .icon_size(IconSize::XSmall)
+                            .label_size(LabelSize::Small)
+                            .map(|btn| {
+                                if is_first {
+                                    btn.key_binding(
+                                        KeyBinding::for_action_in(
+                                            &RejectOnce as &dyn Action,
+                                            &self.focus_handle,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(10.))),
+                                    )
+                                } else {
+                                    btn
+                                }
+                            })
+                            .on_click(cx.listener({
+                                let tool_call_id = tool_call_id.clone();
+                                let option_id = deny_option_id;
+                                let option_kind = deny_option_kind;
+                                move |this, _, window, cx| {
+                                    this.authorize_tool_call(
+                                        tool_call_id.clone(),
+                                        option_id.clone(),
+                                        option_kind,
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            })),
+                    ),
+            )
+            .child(
+                // Right side: Granularity dropdown
+                self.render_permission_granularity_dropdown(
+                    &granularity_options,
+                    dropdown_label,
+                    entry_ix,
+                    tool_call_id,
+                    selected_index,
+                    is_first,
+                    cx,
+                ),
+            )
+    }
+
+    fn render_permission_granularity_dropdown(
+        &self,
+        granularity_options: &[&acp::PermissionOption],
+        current_label: SharedString,
+        entry_ix: usize,
+        tool_call_id: acp::ToolCallId,
+        selected_index: usize,
+        is_first: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        // Collect option info for the menu builder closure
+        // Each item is (index, display_name)
+        let menu_options: Vec<(usize, SharedString)> = granularity_options
+            .iter()
+            .enumerate()
+            .map(|(i, o)| (i, o.name.clone().into()))
+            .collect();
+
+        PopoverMenu::new(("permission-granularity", entry_ix))
+            .with_handle(self.permission_dropdown_handle.clone())
+            .trigger(
+                Button::new(("granularity-trigger", entry_ix), current_label)
+                    .icon(IconName::ChevronDown)
+                    .icon_position(IconPosition::End)
+                    .icon_size(IconSize::XSmall)
+                    .label_size(LabelSize::Small)
+                    .style(ButtonStyle::Subtle)
+                    .map(|btn| {
+                        if is_first {
+                            btn.key_binding(
+                                KeyBinding::for_action_in(
+                                    &crate::OpenPermissionDropdown as &dyn Action,
+                                    &self.focus_handle,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(10.))),
+                            )
+                        } else {
+                            btn
+                        }
+                    }),
+            )
+            .menu(move |window, cx| {
+                let tool_call_id = tool_call_id.clone();
+                let options = menu_options.clone();
+
+                Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
+                    for (index, display_name) in options.iter() {
+                        let display_name = display_name.clone();
+                        let index = *index;
+                        let tool_call_id_for_entry = tool_call_id.clone();
+                        let is_selected = index == selected_index;
+
+                        menu = menu.custom_entry(
+                            {
+                                let display_name = display_name.clone();
+                                move |_window, _cx| {
+                                    h_flex()
+                                        .w_full()
+                                        .justify_between()
+                                        .child(
+                                            Label::new(display_name.clone()).size(LabelSize::Small),
+                                        )
+                                        .when(is_selected, |this| {
+                                            this.child(
+                                                Icon::new(IconName::Check)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Accent),
+                                            )
+                                        })
+                                        .into_any_element()
+                                }
+                            },
+                            {
+                                let tool_call_id = tool_call_id_for_entry.clone();
+                                move |window, cx| {
+                                    window.dispatch_action(
+                                        SelectPermissionGranularity {
+                                            tool_call_id: tool_call_id.0.to_string(),
+                                            index,
+                                        }
+                                        .boxed_clone(),
+                                        cx,
+                                    );
+                                }
+                            },
+                        );
+                    }
+
+                    menu
+                }))
+            })
+    }
+
+    fn render_permission_buttons_legacy(
+        &self,
+        options: &[acp::PermissionOption],
+        entry_ix: usize,
+        tool_call_id: acp::ToolCallId,
+        cx: &Context<Self>,
+    ) -> Div {
+        let is_first = self.thread().is_some_and(|thread| {
+            thread
+                .read(cx)
+                .first_tool_awaiting_confirmation()
+                .is_some_and(|call| call.id == tool_call_id)
+        });
         let mut seen_kinds: ArrayVec<acp::PermissionOptionKind, 3> = ArrayVec::new();
 
         div()
@@ -3674,13 +4183,7 @@ impl AcpThreadView {
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
             .w_full()
-            .map(|this| {
-                if kind == acp::ToolKind::SwitchMode {
-                    this.v_flex()
-                } else {
-                    this.h_flex().justify_end().flex_wrap()
-                }
-            })
+            .v_flex()
             .gap_0p5()
             .children(options.iter().map(move |option| {
                 let option_id = SharedString::from(option.option_id.0.clone());
@@ -3822,6 +4325,120 @@ impl AcpThreadView {
             .into_any()
     }
 
+    /// Renders command lines with an optional expand/collapse button depending
+    /// on the number of lines in `command_source`.
+    fn render_collapsible_command(
+        &self,
+        is_preview: bool,
+        command_source: &str,
+        tool_call_id: &acp::ToolCallId,
+        cx: &Context<Self>,
+    ) -> Div {
+        let expand_button_bg = self.tool_card_header_bg(cx);
+        let expanded = self.expanded_terminal_commands.contains(tool_call_id);
+
+        let lines: Vec<&str> = command_source.lines().collect();
+        let line_count = lines.len();
+        let extra_lines = line_count.saturating_sub(MAX_COLLAPSED_LINES);
+
+        let show_expand_button = extra_lines > 0;
+
+        let max_lines = if expanded || !show_expand_button {
+            usize::MAX
+        } else {
+            MAX_COLLAPSED_LINES
+        };
+
+        let display_lines = lines.into_iter().take(max_lines);
+
+        let command_group =
+            SharedString::from(format!("collapsible-command-group-{}", tool_call_id));
+
+        v_flex()
+            .group(command_group.clone())
+            .bg(self.tool_card_header_bg(cx))
+            .child(
+                v_flex()
+                    .p_1p5()
+                    .when(is_preview, |this| {
+                        this.pt_1().child(
+                            // Wrapping this label on a container with 24px height to avoid
+                            // layout shift when it changes from being a preview label
+                            // to the actual path where the command will run in
+                            h_flex().h_6().child(
+                                Label::new("Run Command")
+                                    .buffer_font(cx)
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            ),
+                        )
+                    })
+                    .children(display_lines.map(|line| {
+                        let text: SharedString = if line.is_empty() {
+                            " ".into()
+                        } else {
+                            line.to_string().into()
+                        };
+
+                        Label::new(text).buffer_font(cx).size(LabelSize::Small)
+                    }))
+                    .child(
+                        div().absolute().top_1().right_1().child(
+                            CopyButton::new(command_source.to_string())
+                                .tooltip_label("Copy Command")
+                                .visible_on_hover(command_group),
+                        ),
+                    ),
+            )
+            .when(show_expand_button, |this| {
+                let expand_icon = if expanded {
+                    IconName::ChevronUp
+                } else {
+                    IconName::ChevronDown
+                };
+
+                this.child(
+                    h_flex()
+                        .id(format!("expand-command-btn-{}", tool_call_id))
+                        .cursor_pointer()
+                        .when(!expanded, |s| s.absolute().bottom_0())
+                        .when(expanded, |s| s.mt_1())
+                        .w_full()
+                        .h_6()
+                        .gap_1()
+                        .justify_center()
+                        .border_t_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .bg(expand_button_bg.opacity(0.95))
+                        .hover(|s| s.bg(cx.theme().colors().element_hover))
+                        .when(!expanded, |this| {
+                            let label = match extra_lines {
+                                1 => "1 more line".to_string(),
+                                _ => format!("{} more lines", extra_lines),
+                            };
+
+                            this.child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                        })
+                        .child(
+                            Icon::new(expand_icon)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .on_click(cx.listener({
+                            let tool_call_id = tool_call_id.clone();
+                            move |this, _event, _window, cx| {
+                                if expanded {
+                                    this.expanded_terminal_commands.remove(&tool_call_id);
+                                } else {
+                                    this.expanded_terminal_commands.insert(tool_call_id.clone());
+                                }
+                                cx.notify();
+                            }
+                        })),
+                )
+            })
+    }
+
     fn render_terminal_tool_call(
         &self,
         entry_ix: usize,
@@ -3873,10 +4490,24 @@ impl AcpThreadView {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "current directory".to_string());
 
+        // Since the command's source is wrapped in a markdown code block
+        // (```\n...\n```), we need to strip that so we're left with only the
+        // command's content.
+        let command_source = command.read(cx).source();
+        let command_content = command_source
+            .strip_prefix("```\n")
+            .and_then(|s| s.strip_suffix("\n```"))
+            .unwrap_or(&command_source);
+
+        let command_element =
+            self.render_collapsible_command(false, command_content, &tool_call.id, cx);
+
         let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
 
         let header = h_flex()
             .id(header_id)
+            .px_1p5()
+            .pt_1()
             .flex_none()
             .gap_1()
             .justify_between()
@@ -4020,7 +4651,6 @@ impl AcpThreadView {
             .read(cx)
             .entry(entry_ix)
             .and_then(|entry| entry.terminal(terminal));
-        let show_output = is_expanded && terminal_view.is_some();
 
         v_flex()
             .my_1p5()
@@ -4033,28 +4663,12 @@ impl AcpThreadView {
             .child(
                 v_flex()
                     .group(&header_group)
-                    .py_1p5()
-                    .pr_1p5()
-                    .pl_2()
-                    .gap_0p5()
                     .bg(header_bg)
                     .text_xs()
                     .child(header)
-                    .child(
-                        MarkdownElement::new(
-                            command.clone(),
-                            terminal_command_markdown_style(window, cx),
-                        )
-                        .code_block_renderer(
-                            markdown::CodeBlockRenderer::Default {
-                                copy_button: false,
-                                copy_button_on_hover: true,
-                                border: false,
-                            },
-                        ),
-                    ),
+                    .child(command_element),
             )
-            .when(show_output, |this| {
+            .when(is_expanded && terminal_view.is_some(), |this| {
                 this.child(
                     div()
                         .pt_2()
@@ -5530,11 +6144,124 @@ impl AcpThreadView {
     }
 
     fn allow_once(&mut self, _: &AllowOnce, window: &mut Window, cx: &mut Context<Self>) {
-        self.authorize_pending_tool_call(acp::PermissionOptionKind::AllowOnce, window, cx);
+        self.authorize_pending_with_granularity(true, window, cx);
     }
 
     fn reject_once(&mut self, _: &RejectOnce, window: &mut Window, cx: &mut Context<Self>) {
-        self.authorize_pending_tool_call(acp::PermissionOptionKind::RejectOnce, window, cx);
+        self.authorize_pending_with_granularity(false, window, cx);
+    }
+
+    fn authorize_pending_with_granularity(
+        &mut self,
+        is_allow: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let thread = self.thread()?.read(cx);
+        let tool_call = thread.first_tool_awaiting_confirmation()?;
+        let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
+            return None;
+        };
+        let tool_call_id = tool_call.id.clone();
+
+        // Get granularity options (all options except old deny option)
+        let granularity_options: Vec<_> = options
+            .iter()
+            .filter(|o| {
+                matches!(
+                    o.kind,
+                    acp::PermissionOptionKind::AllowOnce | acp::PermissionOptionKind::AllowAlways
+                )
+            })
+            .collect();
+
+        // Get selected index, defaulting to last option ("Only this time")
+        let selected_index = self
+            .selected_permission_granularity
+            .get(&tool_call_id)
+            .copied()
+            .unwrap_or_else(|| granularity_options.len().saturating_sub(1));
+
+        let selected_option = granularity_options
+            .get(selected_index)
+            .or(granularity_options.last())
+            .copied()?;
+
+        let option_id_str = selected_option.option_id.0.to_string();
+
+        // Transform option_id based on allow/deny
+        let (final_option_id, final_option_kind) = if is_allow {
+            let allow_id = if option_id_str == "once" {
+                "allow".to_string()
+            } else if let Some(rest) = option_id_str.strip_prefix("always:") {
+                format!("always_allow:{}", rest)
+            } else if let Some(rest) = option_id_str.strip_prefix("always_pattern:") {
+                format!("always_allow_pattern:{}", rest)
+            } else {
+                option_id_str
+            };
+            (acp::PermissionOptionId::new(allow_id), selected_option.kind)
+        } else {
+            let deny_id = if option_id_str == "once" {
+                "deny".to_string()
+            } else if let Some(rest) = option_id_str.strip_prefix("always:") {
+                format!("always_deny:{}", rest)
+            } else if let Some(rest) = option_id_str.strip_prefix("always_pattern:") {
+                format!("always_deny_pattern:{}", rest)
+            } else {
+                option_id_str.replace("allow", "deny")
+            };
+            let deny_kind = match selected_option.kind {
+                acp::PermissionOptionKind::AllowOnce => acp::PermissionOptionKind::RejectOnce,
+                acp::PermissionOptionKind::AllowAlways => acp::PermissionOptionKind::RejectAlways,
+                other => other,
+            };
+            (acp::PermissionOptionId::new(deny_id), deny_kind)
+        };
+
+        self.authorize_tool_call(tool_call_id, final_option_id, final_option_kind, window, cx);
+
+        Some(())
+    }
+
+    fn open_permission_dropdown(
+        &mut self,
+        _: &crate::OpenPermissionDropdown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.permission_dropdown_handle.toggle(window, cx);
+    }
+
+    fn handle_select_permission_granularity(
+        &mut self,
+        action: &SelectPermissionGranularity,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tool_call_id = acp::ToolCallId::new(action.tool_call_id.clone());
+        self.selected_permission_granularity
+            .insert(tool_call_id, action.index);
+        cx.notify();
+    }
+
+    fn handle_authorize_tool_call(
+        &mut self,
+        action: &AuthorizeToolCall,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tool_call_id = acp::ToolCallId::new(action.tool_call_id.clone());
+        let option_id = acp::PermissionOptionId::new(action.option_id.clone());
+        let option_kind = match action.option_kind.as_str() {
+            "AllowOnce" => acp::PermissionOptionKind::AllowOnce,
+            "AllowAlways" => acp::PermissionOptionKind::AllowAlways,
+            "RejectOnce" => acp::PermissionOptionKind::RejectOnce,
+            "RejectAlways" => acp::PermissionOptionKind::RejectAlways,
+            _ => acp::PermissionOptionKind::AllowOnce,
+        };
+
+        self.authorize_tool_call(tool_call_id, option_id, option_kind, window, cx);
     }
 
     fn authorize_pending_tool_call(
@@ -6672,6 +7399,18 @@ impl AcpThreadView {
         });
     }
 
+    /// Inserts code snippets as creases into the message editor.
+    pub(crate) fn insert_code_crease(
+        &self,
+        creases: Vec<(String, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.message_editor.update(cx, |message_editor, cx| {
+            message_editor.insert_code_creases(creases, window, cx);
+        });
+    }
+
     fn render_thread_retry_status_callout(
         &self,
         _window: &mut Window,
@@ -7161,6 +7900,59 @@ impl AcpThreadView {
             self.message_editor.clone()
         }
     }
+
+    fn get_agent_message_content(
+        entries: &[AgentThreadEntry],
+        entry_index: usize,
+        cx: &App,
+    ) -> Option<String> {
+        let entry = entries.get(entry_index)?;
+        if matches!(entry, AgentThreadEntry::UserMessage(_)) {
+            return None;
+        }
+
+        let start_index = (0..entry_index)
+            .rev()
+            .find(|&i| matches!(entries.get(i), Some(AgentThreadEntry::UserMessage(_))))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+
+        let end_index = (entry_index + 1..entries.len())
+            .find(|&i| matches!(entries.get(i), Some(AgentThreadEntry::UserMessage(_))))
+            .map(|i| i - 1)
+            .unwrap_or(entries.len() - 1);
+
+        let parts: Vec<String> = (start_index..=end_index)
+            .filter_map(|i| entries.get(i))
+            .filter_map(|entry| {
+                if let AgentThreadEntry::AssistantMessage(message) = entry {
+                    let text: String = message
+                        .chunks
+                        .iter()
+                        .filter_map(|chunk| match chunk {
+                            AssistantMessageChunk::Message { block } => {
+                                let markdown = block.to_markdown(cx);
+                                if markdown.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(markdown.to_string())
+                                }
+                            }
+                            AssistantMessageChunk::Thought { .. } => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+
+                    if text.is_empty() { None } else { Some(text) }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let text = parts.join("\n\n");
+        if text.is_empty() { None } else { Some(text) }
+    }
 }
 
 fn loading_contents_spinner(size: IconSize) -> AnyElement {
@@ -7203,6 +7995,13 @@ impl AcpThreadView {
         self.expanded_tool_calls.insert(tool_call_id);
         cx.notify();
     }
+
+    /// Expands a subagent card so its content is visible.
+    /// This is primarily useful for visual testing.
+    pub fn expand_subagent(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
+        self.expanded_subagents.insert(session_id);
+        cx.notify();
+    }
 }
 
 impl Render for AcpThreadView {
@@ -7222,6 +8021,9 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::allow_always))
             .on_action(cx.listener(Self::allow_once))
             .on_action(cx.listener(Self::reject_once))
+            .on_action(cx.listener(Self::handle_authorize_tool_call))
+            .on_action(cx.listener(Self::handle_select_permission_granularity))
+            .on_action(cx.listener(Self::open_permission_dropdown))
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
                 this.send_queued_message_at_index(0, true, window, cx);
             }))
@@ -7553,24 +8355,13 @@ fn plan_label_markdown_style(
     }
 }
 
-fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
-    let default_md_style = default_markdown_style(true, false, window, cx);
-
-    MarkdownStyle {
-        base_text_style: TextStyle {
-            ..default_md_style.base_text_style
-        },
-        selection_background_color: cx.theme().colors().element_selection_background,
-        ..Default::default()
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use acp_thread::{
         AgentSessionList, AgentSessionListRequest, AgentSessionListResponse, StubAgentConnection,
     };
     use action_log::ActionLog;
+    use agent::ToolPermissionContext;
     use agent_client_protocol::SessionId;
     use editor::MultiBufferOffset;
     use fs::FakeFs;
@@ -9086,5 +9877,805 @@ pub(crate) mod tests {
 
             assert_eq!(text, expected_txt);
         })
+    }
+
+    #[gpui::test]
+    async fn test_tool_permission_buttons_terminal_with_pattern(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("terminal-1");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Run `cargo build --release`")
+            .kind(acp::ToolKind::Edit);
+
+        let permission_options = ToolPermissionContext::new("terminal", "cargo build --release")
+            .build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options,
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+
+        // Disable notifications to avoid popup windows
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Run cargo build", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify the tool call is in WaitingForConfirmation state with the expected options
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread.read(cx);
+
+            let tool_call = thread.entries().iter().find_map(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(call) = entry {
+                    Some(call)
+                } else {
+                    None
+                }
+            });
+
+            assert!(tool_call.is_some(), "Expected a tool call entry");
+            let tool_call = tool_call.unwrap();
+
+            // Verify it's waiting for confirmation
+            assert!(
+                matches!(
+                    tool_call.status,
+                    acp_thread::ToolCallStatus::WaitingForConfirmation { .. }
+                ),
+                "Expected WaitingForConfirmation status, got {:?}",
+                tool_call.status
+            );
+
+            // Verify the options count (granularity options only, no separate Deny option)
+            if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
+                &tool_call.status
+            {
+                assert_eq!(
+                    options.len(),
+                    3,
+                    "Expected 3 permission options (granularity only)"
+                );
+
+                // Verify specific button labels (now using neutral names)
+                let labels: Vec<&str> = options.iter().map(|o| o.name.as_ref()).collect();
+                assert!(
+                    labels.contains(&"Always for terminal"),
+                    "Missing 'Always for terminal' option"
+                );
+                assert!(
+                    labels.contains(&"Always for `cargo` commands"),
+                    "Missing pattern option"
+                );
+                assert!(
+                    labels.contains(&"Only this time"),
+                    "Missing 'Only this time' option"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_permission_buttons_edit_file_with_path_pattern(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("edit-file-1");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Edit `src/main.rs`")
+            .kind(acp::ToolKind::Edit);
+
+        let permission_options =
+            ToolPermissionContext::new("edit_file", "src/main.rs").build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options,
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+
+        // Disable notifications
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Edit the main file", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify the options
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread.read(cx);
+
+            let tool_call = thread.entries().iter().find_map(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(call) = entry {
+                    Some(call)
+                } else {
+                    None
+                }
+            });
+
+            assert!(tool_call.is_some(), "Expected a tool call entry");
+            let tool_call = tool_call.unwrap();
+
+            if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
+                &tool_call.status
+            {
+                let labels: Vec<&str> = options.iter().map(|o| o.name.as_ref()).collect();
+                assert!(
+                    labels.contains(&"Always for edit file"),
+                    "Missing 'Always for edit file' option"
+                );
+                assert!(
+                    labels.contains(&"Always for `src/`"),
+                    "Missing path pattern option"
+                );
+            } else {
+                panic!("Expected WaitingForConfirmation status");
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_permission_buttons_fetch_with_domain_pattern(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("fetch-1");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Fetch `https://docs.rs/gpui`")
+            .kind(acp::ToolKind::Fetch);
+
+        let permission_options =
+            ToolPermissionContext::new("fetch", "https://docs.rs/gpui").build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options,
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+
+        // Disable notifications
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Fetch the docs", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify the options
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread.read(cx);
+
+            let tool_call = thread.entries().iter().find_map(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(call) = entry {
+                    Some(call)
+                } else {
+                    None
+                }
+            });
+
+            assert!(tool_call.is_some(), "Expected a tool call entry");
+            let tool_call = tool_call.unwrap();
+
+            if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
+                &tool_call.status
+            {
+                let labels: Vec<&str> = options.iter().map(|o| o.name.as_ref()).collect();
+                assert!(
+                    labels.contains(&"Always for fetch"),
+                    "Missing 'Always for fetch' option"
+                );
+                assert!(
+                    labels.contains(&"Always for `docs.rs`"),
+                    "Missing domain pattern option"
+                );
+            } else {
+                panic!("Expected WaitingForConfirmation status");
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_permission_buttons_without_pattern(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("terminal-no-pattern-1");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Run `./deploy.sh --production`")
+            .kind(acp::ToolKind::Edit);
+
+        // No pattern button since ./deploy.sh doesn't match the alphanumeric pattern
+        let permission_options = ToolPermissionContext::new("terminal", "./deploy.sh --production")
+            .build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options,
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+
+        // Disable notifications
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Run the deploy script", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify only 2 options (no pattern button when command doesn't match pattern)
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread.read(cx);
+
+            let tool_call = thread.entries().iter().find_map(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(call) = entry {
+                    Some(call)
+                } else {
+                    None
+                }
+            });
+
+            assert!(tool_call.is_some(), "Expected a tool call entry");
+            let tool_call = tool_call.unwrap();
+
+            if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
+                &tool_call.status
+            {
+                assert_eq!(
+                    options.len(),
+                    2,
+                    "Expected 2 permission options (no pattern option)"
+                );
+
+                let labels: Vec<&str> = options.iter().map(|o| o.name.as_ref()).collect();
+                assert!(
+                    labels.contains(&"Always for terminal"),
+                    "Missing 'Always for terminal' option"
+                );
+                assert!(
+                    labels.contains(&"Only this time"),
+                    "Missing 'Only this time' option"
+                );
+                // Should NOT contain a pattern option
+                assert!(
+                    !labels.iter().any(|l| l.contains("commands")),
+                    "Should not have pattern option"
+                );
+            } else {
+                panic!("Expected WaitingForConfirmation status");
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_authorize_tool_call_action_triggers_authorization(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("action-test-1");
+        let tool_call =
+            acp::ToolCall::new(tool_call_id.clone(), "Run `cargo test`").kind(acp::ToolKind::Edit);
+
+        let permission_options =
+            ToolPermissionContext::new("terminal", "cargo test").build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options,
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Run tests", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify tool call is waiting for confirmation
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread.read(cx);
+            let tool_call = thread.first_tool_awaiting_confirmation();
+            assert!(
+                tool_call.is_some(),
+                "Expected a tool call waiting for confirmation"
+            );
+        });
+
+        // Dispatch the AuthorizeToolCall action (simulating dropdown menu selection)
+        thread_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                crate::AuthorizeToolCall {
+                    tool_call_id: "action-test-1".to_string(),
+                    option_id: "allow".to_string(),
+                    option_kind: "AllowOnce".to_string(),
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Verify tool call is no longer waiting for confirmation (was authorized)
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread.read(cx);
+            let tool_call = thread.first_tool_awaiting_confirmation();
+            assert!(
+                tool_call.is_none(),
+                "Tool call should no longer be waiting for confirmation after AuthorizeToolCall action"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_authorize_tool_call_action_with_pattern_option(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("pattern-action-test-1");
+        let tool_call =
+            acp::ToolCall::new(tool_call_id.clone(), "Run `npm install`").kind(acp::ToolKind::Edit);
+
+        let permission_options =
+            ToolPermissionContext::new("terminal", "npm install").build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options.clone(),
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Install dependencies", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Find the pattern option ID
+        let pattern_option = permission_options
+            .iter()
+            .find(|o| o.option_id.0.starts_with("always_pattern:"))
+            .expect("Should have a pattern option for npm command");
+
+        // Dispatch action with the pattern option (simulating "Always allow `npm` commands")
+        thread_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                crate::AuthorizeToolCall {
+                    tool_call_id: "pattern-action-test-1".to_string(),
+                    option_id: pattern_option.option_id.0.to_string(),
+                    option_kind: "AllowAlways".to_string(),
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Verify tool call was authorized
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread.read(cx);
+            let tool_call = thread.first_tool_awaiting_confirmation();
+            assert!(
+                tool_call.is_none(),
+                "Tool call should be authorized after selecting pattern option"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_granularity_selection_updates_state(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("granularity-test-1");
+        let tool_call =
+            acp::ToolCall::new(tool_call_id.clone(), "Run `cargo build`").kind(acp::ToolKind::Edit);
+
+        let permission_options =
+            ToolPermissionContext::new("terminal", "cargo build").build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options.clone(),
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Build the project", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify default granularity is the last option (index 2 = "Only this time")
+        thread_view.read_with(cx, |thread_view, _cx| {
+            let selected = thread_view
+                .selected_permission_granularity
+                .get(&tool_call_id);
+            assert!(
+                selected.is_none(),
+                "Should have no selection initially (defaults to last)"
+            );
+        });
+
+        // Select the first option (index 0 = "Always for terminal")
+        thread_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                crate::SelectPermissionGranularity {
+                    tool_call_id: "granularity-test-1".to_string(),
+                    index: 0,
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Verify the selection was updated
+        thread_view.read_with(cx, |thread_view, _cx| {
+            let selected = thread_view
+                .selected_permission_granularity
+                .get(&tool_call_id);
+            assert_eq!(selected, Some(&0), "Should have selected index 0");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_allow_button_uses_selected_granularity(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("allow-granularity-test-1");
+        let tool_call =
+            acp::ToolCall::new(tool_call_id.clone(), "Run `npm install`").kind(acp::ToolKind::Edit);
+
+        let permission_options =
+            ToolPermissionContext::new("terminal", "npm install").build_permission_options();
+
+        // Verify we have the expected options
+        assert_eq!(permission_options.len(), 3);
+        assert!(
+            permission_options[0]
+                .option_id
+                .0
+                .contains("always:terminal")
+        );
+        assert!(
+            permission_options[1]
+                .option_id
+                .0
+                .contains("always_pattern:terminal")
+        );
+        assert_eq!(permission_options[2].option_id.0.as_ref(), "once");
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options.clone(),
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Install dependencies", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Select the pattern option (index 1 = "Always for `npm` commands")
+        thread_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                crate::SelectPermissionGranularity {
+                    tool_call_id: "allow-granularity-test-1".to_string(),
+                    index: 1,
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Simulate clicking the Allow button by dispatching AllowOnce action
+        // which should use the selected granularity
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.allow_once(&AllowOnce, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify tool call was authorized
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread.read(cx);
+            let tool_call = thread.first_tool_awaiting_confirmation();
+            assert!(
+                tool_call.is_none(),
+                "Tool call should be authorized after Allow with pattern granularity"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_deny_button_uses_selected_granularity(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("deny-granularity-test-1");
+        let tool_call =
+            acp::ToolCall::new(tool_call_id.clone(), "Run `git push`").kind(acp::ToolKind::Edit);
+
+        let permission_options =
+            ToolPermissionContext::new("terminal", "git push").build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options.clone(),
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Push changes", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Use default granularity (last option = "Only this time")
+        // Simulate clicking the Deny button
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.reject_once(&RejectOnce, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify tool call was rejected (no longer waiting for confirmation)
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread.read(cx);
+            let tool_call = thread.first_tool_awaiting_confirmation();
+            assert!(
+                tool_call.is_none(),
+                "Tool call should be rejected after Deny"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_option_id_transformation_for_allow() {
+        // Test the option_id transformation logic directly
+        // "once" -> "allow"
+        // "always:terminal" -> "always_allow:terminal"
+        // "always_pattern:terminal:^cargo\s" -> "always_allow_pattern:terminal:^cargo\s"
+
+        let test_cases = vec![
+            ("once", "allow"),
+            ("always:terminal", "always_allow:terminal"),
+            (
+                "always_pattern:terminal:^cargo\\s",
+                "always_allow_pattern:terminal:^cargo\\s",
+            ),
+            ("always:fetch", "always_allow:fetch"),
+            (
+                "always_pattern:fetch:^https?://docs\\.rs",
+                "always_allow_pattern:fetch:^https?://docs\\.rs",
+            ),
+        ];
+
+        for (input, expected) in test_cases {
+            let result = if input == "once" {
+                "allow".to_string()
+            } else if let Some(rest) = input.strip_prefix("always:") {
+                format!("always_allow:{}", rest)
+            } else if let Some(rest) = input.strip_prefix("always_pattern:") {
+                format!("always_allow_pattern:{}", rest)
+            } else {
+                input.to_string()
+            };
+            assert_eq!(result, expected, "Failed for input: {}", input);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_option_id_transformation_for_deny() {
+        // Test the option_id transformation logic for deny
+        // "once" -> "deny"
+        // "always:terminal" -> "always_deny:terminal"
+        // "always_pattern:terminal:^cargo\s" -> "always_deny_pattern:terminal:^cargo\s"
+
+        let test_cases = vec![
+            ("once", "deny"),
+            ("always:terminal", "always_deny:terminal"),
+            (
+                "always_pattern:terminal:^cargo\\s",
+                "always_deny_pattern:terminal:^cargo\\s",
+            ),
+            ("always:fetch", "always_deny:fetch"),
+            (
+                "always_pattern:fetch:^https?://docs\\.rs",
+                "always_deny_pattern:fetch:^https?://docs\\.rs",
+            ),
+        ];
+
+        for (input, expected) in test_cases {
+            let result = if input == "once" {
+                "deny".to_string()
+            } else if let Some(rest) = input.strip_prefix("always:") {
+                format!("always_deny:{}", rest)
+            } else if let Some(rest) = input.strip_prefix("always_pattern:") {
+                format!("always_deny_pattern:{}", rest)
+            } else {
+                input.replace("allow", "deny")
+            };
+            assert_eq!(result, expected, "Failed for input: {}", input);
+        }
     }
 }

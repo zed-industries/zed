@@ -227,7 +227,13 @@ pub enum ContextServerSettingsContent {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
         enabled: bool,
-
+        /// Whether to run the context server on the remote server when using remote development.
+        ///
+        /// If this is false, the context server will always run on the local machine.
+        ///
+        /// Default: false
+        #[serde(default)]
+        remote: bool,
         #[serde(flatten)]
         command: ContextServerCommand,
     },
@@ -247,6 +253,13 @@ pub enum ContextServerSettingsContent {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
         enabled: bool,
+        /// Whether to run the context server on the remote server when using remote development.
+        ///
+        /// If this is false, the context server will always run on the local machine.
+        ///
+        /// Default: false
+        #[serde(default)]
+        remote: bool,
         /// The settings for this context server specified by the extension.
         ///
         /// Consult the documentation for the context server to see what settings
