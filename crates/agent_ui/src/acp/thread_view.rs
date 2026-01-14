@@ -27,9 +27,10 @@ use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
     CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
-    ListOffset, ListState, ObjectFit, PlatformDisplay, SharedString, StyleRefinement, Subscription,
-    Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
-    ease_in_out, img, linear_color_stop, linear_gradient, list, point, pulsating_between,
+    ListOffset, ListState, ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyleRefinement,
+    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window,
+    WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient, list, point,
+    pulsating_between,
 };
 use language::Buffer;
 
@@ -350,6 +351,7 @@ pub struct AcpThreadView {
     expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     expanded_subagents: HashSet<acp::SessionId>,
+    subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     edits_expanded: bool,
     plan_expanded: bool,
     queue_expanded: bool,
@@ -538,6 +540,7 @@ impl AcpThreadView {
             expanded_tool_call_raw_inputs: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             expanded_subagents: HashSet::default(),
+            subagent_scroll_handles: RefCell::new(HashMap::default()),
             editing_message: None,
             edits_expanded: false,
             plan_expanded: false,
@@ -3647,6 +3650,7 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let thread_read = thread.read(cx);
+        let session_id = thread_read.session_id().clone();
         let entries = thread_read.entries();
 
         // Find the most recent agent message with any content (message or thought)
@@ -3661,23 +3665,34 @@ impl AcpThreadView {
             }
         });
 
+        let scroll_handle = self
+            .subagent_scroll_handles
+            .borrow_mut()
+            .entry(session_id.clone())
+            .or_default()
+            .clone();
+
+        scroll_handle.scroll_to_bottom();
+
         div()
-            .id("subagents_content")
             .w_full()
-            .p_2()
             .max_h_56()
-            .overflow_y_scroll()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
-            .bg(cx.theme().colors().editor_background)
-            .when_some(last_assistant_markdown, |this, markdown| {
-                this.child(
-                    self.render_markdown(
-                        markdown,
-                        default_markdown_style(false, false, window, cx),
-                    ),
-                )
-            })
+            .bg(cx.theme().colors().panel_background)
+            .child(
+                div()
+                    .id(format!("subagent-content-{}", session_id))
+                    .size_full()
+                    .p_2()
+                    .track_scroll(&scroll_handle)
+                    .when_some(last_assistant_markdown, |this, markdown| {
+                        this.child(self.render_markdown(
+                            markdown,
+                            default_markdown_style(false, false, window, cx),
+                        ))
+                    }),
+            )
     }
 
     fn render_markdown_output(
