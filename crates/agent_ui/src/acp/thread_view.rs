@@ -6112,7 +6112,11 @@ impl AcpThreadView {
                                     .color(Color::Muted),
                             )
                             .child(token_label(input, "input-tokens-label"))
-                            .child(Label::new("/").size(LabelSize::Small).color(separator_color))
+                            .child(
+                                Label::new("/")
+                                    .size(LabelSize::Small)
+                                    .color(separator_color),
+                            )
                             .child(
                                 Label::new(input_max)
                                     .size(LabelSize::Small)
@@ -6128,7 +6132,11 @@ impl AcpThreadView {
                                     .color(Color::Muted),
                             )
                             .child(token_label(output, "output-tokens-label"))
-                            .child(Label::new("/").size(LabelSize::Small).color(separator_color))
+                            .child(
+                                Label::new("/")
+                                    .size(LabelSize::Small)
+                                    .color(separator_color),
+                            )
                             .child(
                                 Label::new(output_max)
                                     .size(LabelSize::Small)
@@ -6146,7 +6154,11 @@ impl AcpThreadView {
                     .gap_0p5()
                     .mr_1p5()
                     .child(token_label(used, "used-tokens-label"))
-                    .child(Label::new("/").size(LabelSize::Small).color(separator_color))
+                    .child(
+                        Label::new("/")
+                            .size(LabelSize::Small)
+                            .color(separator_color),
+                    )
                     .child(Label::new(max).size(LabelSize::Small).color(Color::Muted)),
             )
         }
