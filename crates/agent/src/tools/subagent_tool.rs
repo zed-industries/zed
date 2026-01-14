@@ -201,15 +201,6 @@ impl AgentTool for SubagentTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        eprintln!(
-            "[SUBAGENT] run() called with {} subagents",
-            input.subagents.len()
-        );
-        eprintln!(
-            "[SUBAGENT] current_depth: {}, MAX_SUBAGENT_DEPTH: {}",
-            self.current_depth, MAX_SUBAGENT_DEPTH
-        );
-
         if self.current_depth >= MAX_SUBAGENT_DEPTH {
             return Task::ready(Err(anyhow!(
                 "Maximum subagent depth ({}) reached",
@@ -218,28 +209,19 @@ impl AgentTool for SubagentTool {
         }
 
         if let Err(e) = self.validate_subagents(&input.subagents) {
-            eprintln!("[SUBAGENT] validate_subagents failed: {:?}", e);
             return Task::ready(Err(e));
         }
-        eprintln!("[SUBAGENT] subagents validation passed");
 
         let Some(parent_thread) = self.parent_thread.upgrade() else {
-            eprintln!("[SUBAGENT] Parent thread no longer exists!");
             return Task::ready(Err(anyhow!(
                 "Parent thread no longer exists (subagent depth={})",
                 self.current_depth + 1
             )));
         };
-        eprintln!("[SUBAGENT] Parent thread exists");
 
         let running_count = parent_thread.read(cx).running_subagent_count();
         let available_slots = MAX_PARALLEL_SUBAGENTS.saturating_sub(running_count);
-        eprintln!(
-            "[SUBAGENT] running_count: {}, available_slots: {}",
-            running_count, available_slots
-        );
         if available_slots == 0 {
-            eprintln!("[SUBAGENT] Max parallel subagents reached!");
             return Task::ready(Err(anyhow!(
                 "Maximum parallel subagents ({}) reached. Wait for existing subagents to complete.",
                 MAX_PARALLEL_SUBAGENTS
@@ -257,10 +239,8 @@ impl AgentTool for SubagentTool {
 
         let parent_model = parent_thread.read(cx).model().cloned();
         let Some(model) = parent_model else {
-            eprintln!("[SUBAGENT] No model configured!");
             return Task::ready(Err(anyhow!("No model configured")));
         };
-        eprintln!("[SUBAGENT] Model configured: {:?}", model.name());
 
         let parent_thread_id = parent_thread.read(cx).id().clone();
         let project = self.project.clone();
@@ -300,12 +280,6 @@ impl AgentTool for SubagentTool {
                         parent_tools.clone()
                     };
 
-                eprintln!(
-                    "[SUBAGENT] Spawning subagent '{}' with tools: {:?}",
-                    config.label,
-                    subagent_tools.keys().collect::<Vec<_>>()
-                );
-
                 let project = project.clone();
                 let project_context = project_context.clone();
                 let context_server_registry = context_server_registry.clone();
@@ -320,7 +294,6 @@ impl AgentTool for SubagentTool {
                     let timeout_ms = config.timeout_ms;
 
                     async move |cx| {
-                        eprintln!("[SUBAGENT '{}'] Creating subagent thread...", label);
                         let subagent_thread: Entity<Thread> = cx.new(|cx| {
                             Thread::new_subagent(
                                 project.clone(),
@@ -361,7 +334,6 @@ impl AgentTool for SubagentTool {
                             });
                         }
 
-                        eprintln!("[SUBAGENT '{}'] Running subagent...", label);
                         let result = run_subagent(
                             &subagent_thread,
                             &acp_thread,
@@ -376,12 +348,6 @@ impl AgentTool for SubagentTool {
                                 thread.unregister_running_subagent(&subagent_weak);
                             });
                         }
-
-                        eprintln!(
-                            "[SUBAGENT '{}'] Completed with result len: {:?}",
-                            label,
-                            result.as_ref().map(|s| s.len())
-                        );
 
                         (label, result)
                     }
@@ -416,22 +382,12 @@ async fn run_subagent(
     timeout_ms: Option<u64>,
     cx: &mut AsyncApp,
 ) -> Result<String> {
-    eprintln!(
-        "[SUBAGENT run_subagent] Starting with task_prompt len: {}",
-        task_prompt.len()
-    );
-    eprintln!("[SUBAGENT run_subagent] timeout_ms: {:?}", timeout_ms);
-
-    eprintln!("[SUBAGENT run_subagent] Submitting user message...");
     let mut events_rx =
         subagent_thread.update(cx, |thread, cx| thread.submit_user_message(task_prompt, cx))?;
-    eprintln!("[SUBAGENT run_subagent] User message submitted, got events_rx");
 
     let acp_thread_weak = acp_thread.downgrade();
 
-    eprintln!("[SUBAGENT run_subagent] Starting event forwarding loop...");
     let timed_out = if let Some(timeout) = timeout_ms {
-        eprintln!("[SUBAGENT run_subagent] Using timeout: {}ms", timeout);
         forward_events_with_timeout(
             &mut events_rx,
             &acp_thread_weak,
@@ -440,42 +396,24 @@ async fn run_subagent(
         )
         .await
     } else {
-        eprintln!("[SUBAGENT run_subagent] No timeout, forwarding until stop");
         forward_events_until_stop(&mut events_rx, &acp_thread_weak, cx).await;
         false
     };
-    eprintln!(
-        "[SUBAGENT run_subagent] Event forwarding complete, timed_out: {}",
-        timed_out
-    );
 
     let should_interrupt =
         timed_out || check_context_low(subagent_thread, CONTEXT_LOW_THRESHOLD, cx);
-    eprintln!(
-        "[SUBAGENT run_subagent] should_interrupt: {}",
-        should_interrupt
-    );
 
     if should_interrupt {
-        eprintln!("[SUBAGENT run_subagent] Interrupting for summary...");
         let mut summary_rx =
             subagent_thread.update(cx, |thread, cx| thread.interrupt_for_summary(cx))?;
         forward_events_until_stop(&mut summary_rx, &acp_thread_weak, cx).await;
-        eprintln!("[SUBAGENT run_subagent] Summary interrupt complete");
     } else {
-        eprintln!("[SUBAGENT run_subagent] Requesting final summary...");
         let mut summary_rx =
             subagent_thread.update(cx, |thread, cx| thread.request_final_summary(cx))?;
         forward_events_until_stop(&mut summary_rx, &acp_thread_weak, cx).await;
-        eprintln!("[SUBAGENT run_subagent] Final summary complete");
     }
 
-    let result = extract_last_message(subagent_thread, cx);
-    eprintln!(
-        "[SUBAGENT run_subagent] Extracted last message, len: {}",
-        result.len()
-    );
-    Ok(result)
+    Ok(extract_last_message(subagent_thread, cx))
 }
 
 async fn forward_events_until_stop(
