@@ -140,8 +140,9 @@ pub fn handle_schema_request(
                 return Task::ready(Ok(cached));
             }
 
-            let schema = settings::KeymapFile::get_action_schema_by_name(&action_name);
             let mut generator = settings::KeymapFile::action_schema_generator();
+            let schema =
+                settings::KeymapFile::get_action_schema_by_name(&action_name, &mut generator);
             let json = serde_json::to_string(
                 &root_schema_from_action_schema(schema, &mut generator).to_value(),
             )

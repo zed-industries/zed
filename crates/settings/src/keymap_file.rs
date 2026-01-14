@@ -514,16 +514,17 @@ impl KeymapFile {
         )
     }
 
-    pub fn get_action_schema_by_name(action_name: &str) -> Option<schemars::Schema> {
-        let mut generator = Self::action_schema_generator();
-
+    pub fn get_action_schema_by_name(
+        action_name: &str,
+        generator: &mut schemars::SchemaGenerator,
+    ) -> Option<schemars::Schema> {
         for action_data in generate_list_of_all_registered_actions() {
             if action_data.name == action_name {
-                return (action_data.json_schema)(&mut generator);
+                return (action_data.json_schema)(generator);
             }
             for &alias in action_data.deprecated_aliases {
                 if alias == action_name {
-                    return (action_data.json_schema)(&mut generator);
+                    return (action_data.json_schema)(generator);
                 }
             }
         }
