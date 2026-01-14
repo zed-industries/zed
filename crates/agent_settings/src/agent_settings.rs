@@ -3,7 +3,7 @@ mod agent_profile;
 use std::sync::Arc;
 
 use agent_client_protocol::ModelId;
-use collections::{HashMap, HashSet, IndexMap};
+use collections::{HashSet, IndexMap};
 use gpui::{App, Pixels, px};
 use language_model::LanguageModel;
 use project::DisableAiSettings;
@@ -49,7 +49,6 @@ pub struct AgentSettings {
     pub expand_terminal_card: bool,
     pub use_modifier_to_send: bool,
     pub message_editor_min_lines: usize,
-    pub slash_commands: HashMap<String, String>,
 }
 
 impl AgentSettings {
@@ -194,7 +193,6 @@ impl Settings for AgentSettings {
             expand_terminal_card: agent.expand_terminal_card.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
-            slash_commands: agent.slash_commands.unwrap_or_default(),
         }
     }
 }

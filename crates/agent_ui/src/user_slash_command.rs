@@ -4,6 +4,35 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// An error that occurred while loading a command file.
+#[derive(Debug, Clone)]
+pub struct CommandLoadError {
+    /// The path to the file that failed to load
+    pub path: PathBuf,
+    /// A description of the error
+    pub message: String,
+}
+
+impl std::fmt::Display for CommandLoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Failed to load {}: {}",
+            self.path.display(),
+            self.message
+        )
+    }
+}
+
+/// Result of loading commands, including any errors encountered.
+#[derive(Debug, Default)]
+pub struct CommandLoadResult {
+    /// Successfully loaded commands
+    pub commands: Vec<UserSlashCommand>,
+    /// Errors encountered while loading commands
+    pub errors: Vec<CommandLoadError>,
+}
+
 /// The scope of a user-defined slash command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandScope {
@@ -16,11 +45,13 @@ pub enum CommandScope {
 /// A user-defined slash command loaded from a markdown file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UserSlashCommand {
-    /// The command name (filename without .md extension)
+    /// The command name for invocation.
+    /// For commands in subdirectories, this is prefixed: "namespace:name" (e.g., "frontend:component")
+    /// For commands in the root, this is just the filename without .md extension.
     pub name: Arc<str>,
     /// The template content from the file
     pub template: Arc<str>,
-    /// The namespace (subdirectory path, if any)
+    /// The namespace (subdirectory path, if any), used for description display
     pub namespace: Option<Arc<str>>,
     /// The full path to the command file
     pub path: PathBuf,
@@ -68,7 +99,7 @@ pub fn project_commands_dir(worktree_root: &Path) -> PathBuf {
 /// Loads all user slash commands from the user commands directory.
 /// Commands are markdown files in `config_dir()/commands/`.
 /// Subdirectories create namespaces.
-pub fn load_user_commands() -> Result<Vec<UserSlashCommand>> {
+pub fn load_user_commands() -> CommandLoadResult {
     let commands_path = user_commands_dir();
     load_commands_from_path(&commands_path, CommandScope::User)
 }
@@ -76,79 +107,98 @@ pub fn load_user_commands() -> Result<Vec<UserSlashCommand>> {
 /// Loads all project slash commands from a worktree root.
 /// Commands are markdown files in `.zed/commands/`.
 /// Subdirectories create namespaces.
-pub fn load_project_commands(worktree_root: &Path) -> Result<Vec<UserSlashCommand>> {
+pub fn load_project_commands(worktree_root: &Path) -> CommandLoadResult {
     let commands_path = project_commands_dir(worktree_root);
     load_commands_from_path(&commands_path, CommandScope::Project)
 }
 
 /// Loads all commands (both project and user) for given worktree roots.
 /// Project commands take precedence over user commands with the same name.
-pub fn load_all_commands(worktree_roots: &[PathBuf]) -> Result<Vec<UserSlashCommand>> {
-    let mut commands = Vec::new();
+/// Returns both successfully loaded commands and any errors encountered.
+pub fn load_all_commands(worktree_roots: &[PathBuf]) -> CommandLoadResult {
+    let mut result = CommandLoadResult::default();
     let mut seen_names = std::collections::HashSet::new();
 
     // Load project commands first (they take precedence)
     for root in worktree_roots {
-        if let Ok(project_commands) = load_project_commands(root) {
-            for cmd in project_commands {
-                if seen_names.insert(cmd.name.to_string()) {
-                    commands.push(cmd);
-                }
+        let project_result = load_project_commands(root);
+        result.errors.extend(project_result.errors);
+        for cmd in project_result.commands {
+            if seen_names.insert(cmd.name.to_string()) {
+                result.commands.push(cmd);
             }
         }
     }
 
     // Load user commands (skip if name already exists from project)
-    if let Ok(user_commands) = load_user_commands() {
-        for cmd in user_commands {
-            if seen_names.insert(cmd.name.to_string()) {
-                commands.push(cmd);
-            }
+    let user_result = load_user_commands();
+    result.errors.extend(user_result.errors);
+    for cmd in user_result.commands {
+        if seen_names.insert(cmd.name.to_string()) {
+            result.commands.push(cmd);
         }
     }
 
-    Ok(commands)
+    result
 }
 
-fn load_commands_from_path(
-    commands_path: &Path,
-    scope: CommandScope,
-) -> Result<Vec<UserSlashCommand>> {
+fn load_commands_from_path(commands_path: &Path, scope: CommandScope) -> CommandLoadResult {
+    let mut result = CommandLoadResult::default();
+
     if !commands_path.exists() {
-        return Ok(Vec::new());
+        return result;
     }
 
-    let mut commands = Vec::new();
-    load_commands_from_dir(commands_path, commands_path, scope, &mut commands)?;
-    Ok(commands)
+    load_commands_from_dir(commands_path, commands_path, scope, &mut result);
+    result
 }
 
 fn load_commands_from_dir(
     base_path: &Path,
     current_path: &Path,
     scope: CommandScope,
-    commands: &mut Vec<UserSlashCommand>,
-) -> Result<()> {
+    result: &mut CommandLoadResult,
+) {
     let entries = match std::fs::read_dir(current_path) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e.into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => {
+            result.errors.push(CommandLoadError {
+                path: current_path.to_path_buf(),
+                message: format!("Failed to read directory: {}", e),
+            });
+            return;
+        }
     };
 
     for entry in entries {
-        let entry = entry?;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                result.errors.push(CommandLoadError {
+                    path: current_path.to_path_buf(),
+                    message: format!("Failed to read directory entry: {}", e),
+                });
+                continue;
+            }
+        };
         let path = entry.path();
 
         if path.is_dir() {
-            load_commands_from_dir(base_path, &path, scope, commands)?;
+            load_commands_from_dir(base_path, &path, scope, result);
         } else if path.extension().is_some_and(|ext| ext == "md") {
-            if let Some(command) = load_command_file(base_path, &path, scope)? {
-                commands.push(command);
+            match load_command_file(base_path, &path, scope) {
+                Ok(Some(command)) => result.commands.push(command),
+                Ok(None) => {} // Empty file, skip silently
+                Err(e) => {
+                    result.errors.push(CommandLoadError {
+                        path: path.clone(),
+                        message: e.to_string(),
+                    });
+                }
             }
         }
     }
-
-    Ok(())
 }
 
 fn load_command_file(
@@ -156,7 +206,7 @@ fn load_command_file(
     file_path: &Path,
     scope: CommandScope,
 ) -> Result<Option<UserSlashCommand>> {
-    let name = match file_path.file_stem() {
+    let base_name = match file_path.file_stem() {
         Some(stem) => stem.to_string_lossy().into_owned(),
         None => return Ok(None),
     };
@@ -173,13 +223,18 @@ fn load_command_file(
         .map(|rel| {
             rel.to_string_lossy()
                 .replace(std::path::MAIN_SEPARATOR, "/")
-                .into()
         });
+
+    // Build the full command name: "namespace:basename" or just "basename"
+    let name = match &namespace {
+        Some(ns) => format!("{}:{}", ns.replace('/', ":"), base_name),
+        None => base_name,
+    };
 
     Ok(Some(UserSlashCommand {
         name: name.into(),
         template: template.into(),
-        namespace,
+        namespace: namespace.map(|s| s.into()),
         path: file_path.to_path_buf(),
         scope,
     }))
@@ -884,7 +939,7 @@ mod tests {
         assert_eq!(cmd.description(), "(user)");
 
         let cmd = UserSlashCommand {
-            name: "test".into(),
+            name: "frontend:test".into(),
             template: "test".into(),
             namespace: Some("frontend".into()),
             path: PathBuf::from("/frontend/test.md"),
@@ -893,7 +948,7 @@ mod tests {
         assert_eq!(cmd.description(), "(user:frontend)");
 
         let cmd = UserSlashCommand {
-            name: "test".into(),
+            name: "tools:git:test".into(),
             template: "test".into(),
             namespace: Some("tools/git".into()),
             path: PathBuf::from("/tools/git/test.md"),
@@ -911,7 +966,7 @@ mod tests {
         assert_eq!(cmd.description(), "(project)");
 
         let cmd = UserSlashCommand {
-            name: "test".into(),
+            name: "frontend:test".into(),
             template: "test".into(),
             namespace: Some("frontend".into()),
             path: PathBuf::from("/frontend/test.md"),
@@ -1000,7 +1055,8 @@ mod tests {
             super::load_command_file(commands_dir, &component_path, CommandScope::User).unwrap();
         assert!(result.is_some());
         let cmd = result.unwrap();
-        assert_eq!(cmd.name.as_ref(), "component");
+        // Command name should be prefixed with namespace
+        assert_eq!(cmd.name.as_ref(), "frontend:component");
         assert_eq!(cmd.template.as_ref(), "Create a React component: $1");
         assert_eq!(cmd.namespace.as_ref().map(|s| s.as_ref()), Some("frontend"));
     }
@@ -1020,7 +1076,8 @@ mod tests {
             super::load_command_file(commands_dir, &commit_path, CommandScope::User).unwrap();
         assert!(result.is_some());
         let cmd = result.unwrap();
-        assert_eq!(cmd.name.as_ref(), "commit");
+        // Nested namespace uses : separator
+        assert_eq!(cmd.name.as_ref(), "tools:git:commit");
         assert_eq!(
             cmd.namespace.as_ref().map(|s| s.as_ref()),
             Some("tools/git")
@@ -1055,25 +1112,22 @@ mod tests {
         std::fs::create_dir_all(&frontend_dir).unwrap();
         std::fs::write(frontend_dir.join("component.md"), "Component: $1").unwrap();
 
-        let mut commands = Vec::new();
-        super::load_commands_from_dir(
-            commands_dir,
-            commands_dir,
-            CommandScope::User,
-            &mut commands,
-        )
-        .unwrap();
+        let mut result = CommandLoadResult::default();
+        super::load_commands_from_dir(commands_dir, commands_dir, CommandScope::User, &mut result);
 
-        assert_eq!(commands.len(), 3);
+        assert!(result.errors.is_empty());
+        assert_eq!(result.commands.len(), 3);
 
-        let names: Vec<&str> = commands.iter().map(|c| c.name.as_ref()).collect();
+        let names: Vec<&str> = result.commands.iter().map(|c| c.name.as_ref()).collect();
         assert!(names.contains(&"greet"));
         assert!(names.contains(&"review"));
-        assert!(names.contains(&"component"));
+        // Namespaced command has prefix
+        assert!(names.contains(&"frontend:component"));
 
-        let component_cmd = commands
+        let component_cmd = result
+            .commands
             .iter()
-            .find(|c| c.name.as_ref() == "component")
+            .find(|c| c.name.as_ref() == "frontend:component")
             .unwrap();
         assert_eq!(
             component_cmd.namespace.as_ref().map(|s| s.as_ref()),
@@ -1086,15 +1140,10 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let nonexistent = temp_dir.path().join("does_not_exist");
 
-        let mut commands = Vec::new();
-        let result = super::load_commands_from_dir(
-            &nonexistent,
-            &nonexistent,
-            CommandScope::User,
-            &mut commands,
-        );
-        assert!(result.is_ok());
-        assert!(commands.is_empty());
+        let mut result = CommandLoadResult::default();
+        super::load_commands_from_dir(&nonexistent, &nonexistent, CommandScope::User, &mut result);
+        assert!(result.errors.is_empty());
+        assert!(result.commands.is_empty());
     }
 
     #[test]
@@ -1107,11 +1156,12 @@ mod tests {
         std::fs::create_dir_all(&commands_dir).unwrap();
         std::fs::write(commands_dir.join("build.md"), "Build the project").unwrap();
 
-        let commands = super::load_project_commands(worktree_root).unwrap();
-        assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].name.as_ref(), "build");
-        assert_eq!(commands[0].scope, CommandScope::Project);
-        assert_eq!(commands[0].description(), "(project)");
+        let result = super::load_project_commands(worktree_root);
+        assert!(result.errors.is_empty());
+        assert_eq!(result.commands.len(), 1);
+        assert_eq!(result.commands[0].name.as_ref(), "build");
+        assert_eq!(result.commands[0].scope, CommandScope::Project);
+        assert_eq!(result.commands[0].description(), "(project)");
     }
 
     #[test]
@@ -1128,16 +1178,30 @@ mod tests {
 
         // Create user command directory (we can't easily test this without mocking config_dir)
         // But we can test that project commands are loaded with correct scope
-        let commands = super::load_all_commands(std::slice::from_ref(&project_root)).unwrap();
+        let result = super::load_all_commands(std::slice::from_ref(&project_root));
+
+        assert!(result.errors.is_empty());
 
         // Should have both project commands
-        assert!(commands.iter().any(|c| c.name.as_ref() == "review"));
-        assert!(commands.iter().any(|c| c.name.as_ref() == "build"));
+        assert!(result.commands.iter().any(|c| c.name.as_ref() == "review"));
+        assert!(result.commands.iter().any(|c| c.name.as_ref() == "build"));
 
         // All should be project scope
-        for cmd in &commands {
+        for cmd in &result.commands {
             assert_eq!(cmd.scope, CommandScope::Project);
         }
+    }
+
+    #[test]
+    fn test_command_load_error_display() {
+        let error = CommandLoadError {
+            path: PathBuf::from("/path/to/command.md"),
+            message: "Permission denied".to_string(),
+        };
+        assert_eq!(
+            error.to_string(),
+            "Failed to load /path/to/command.md: Permission denied"
+        );
     }
 
     #[test]

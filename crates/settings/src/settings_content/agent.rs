@@ -119,19 +119,6 @@ pub struct AgentSettingsContent {
     ///
     /// Default: 4
     pub message_editor_min_lines: Option<usize>,
-    /// User-defined slash commands that expand into templated text.
-    ///
-    /// Each key is the command name (without the leading `/`), and the value is the template.
-    /// Templates can use `$1`, `$2`, etc. as placeholders for arguments.
-    ///
-    /// Example:
-    /// ```json
-    /// {
-    ///   "review": "Please review this code for correctness and style. Focus on: $1",
-    ///   "explain": "Explain this code at a $1 level"
-    /// }
-    /// ```
-    pub slash_commands: Option<HashMap<String, String>>,
 }
 
 impl AgentSettingsContent {

@@ -598,18 +598,22 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 .unwrap_or_default();
 
             // Load file-based commands (project commands take precedence over user commands)
-            if let Ok(user_commands) = crate::user_slash_command::load_all_commands(&worktree_roots)
-            {
-                for cmd in user_commands {
-                    commands.push(AvailableCommand {
-                        name: cmd.name.clone(),
-                        description: cmd.description().into(),
-                        requires_argument: cmd.requires_arguments(),
-                        source: CommandSource::UserDefined {
-                            template: cmd.template.clone(),
-                        },
-                    });
-                }
+            let load_result = crate::user_slash_command::load_all_commands(&worktree_roots);
+
+            // Log any errors encountered while loading commands
+            for error in &load_result.errors {
+                log::warn!("Failed to load slash command: {}", error);
+            }
+
+            for cmd in load_result.commands {
+                commands.push(AvailableCommand {
+                    name: cmd.name.clone(),
+                    description: cmd.description().into(),
+                    requires_argument: cmd.requires_arguments(),
+                    source: CommandSource::UserDefined {
+                        template: cmd.template.clone(),
+                    },
+                });
             }
         }
 

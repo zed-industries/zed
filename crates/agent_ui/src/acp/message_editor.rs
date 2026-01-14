@@ -402,10 +402,14 @@ impl MessageEditor {
                 })
                 .unwrap_or_default();
 
-            user_slash_command::load_all_commands(&worktree_roots)
-                .ok()
-                .map(|cmds| user_slash_command::commands_to_map(&cmds))
-                .unwrap_or_default()
+            let load_result = user_slash_command::load_all_commands(&worktree_roots);
+
+            // Log any errors encountered while loading commands
+            for error in &load_result.errors {
+                log::warn!("Failed to load slash command: {}", error);
+            }
+
+            user_slash_command::commands_to_map(&load_result.commands)
         } else {
             collections::HashMap::default()
         };
