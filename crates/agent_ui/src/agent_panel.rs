@@ -1,4 +1,4 @@
-use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
+use std::{cmp::Ordering, ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 use acp_thread::{AcpThread, AgentSessionInfo};
 use agent::{ContextServerRegistry, ThreadStore};
@@ -46,8 +46,8 @@ use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, Corner, DismissEvent,
-    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels, Subscription,
-    Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
+    Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{ConfigurationError, LanguageModelRegistry};
@@ -58,8 +58,9 @@ use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    Callout, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu, PopoverMenuHandle,
-    ProgressBar, Tab, Tooltip, prelude::*, utils::WithRemSize,
+    Callout, ContextMenu, ContextMenuEntry, IconButtonShape, KeyBinding, PopoverMenu,
+    PopoverMenuHandle, ProgressBar, Tab, TabBar, TabPosition, Tooltip, prelude::*,
+    utils::WithRemSize,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -216,6 +217,39 @@ pub fn init(cx: &mut App) {
 enum HistoryKind {
     AgentThreads,
     TextThreads,
+}
+
+enum ThreadTab {
+    ExternalAgentThread {
+        thread_view: Entity<AcpThreadView>,
+    },
+    TextThread {
+        text_thread_editor: Entity<TextThreadEditor>,
+        title_editor: Entity<Editor>,
+        buffer_search_bar: Entity<BufferSearchBar>,
+        _subscriptions: Vec<gpui::Subscription>,
+    },
+}
+
+impl ThreadTab {
+    fn title(&self, cx: &App) -> SharedString {
+        match self {
+            ThreadTab::ExternalAgentThread { thread_view } => {
+                let view = thread_view.read(cx);
+                // Пытаемся получить реальное название из AcpThread
+                if let Some(thread) = view.thread() {
+                    thread.read(cx).title()
+                } else {
+                    // Если потока еще нет, используем название из view
+                    view.title(cx)
+                }
+            }
+            ThreadTab::TextThread { text_thread_editor, .. } => {
+                text_thread_editor.read(cx).title(cx).to_string().into()
+            }
+        }
+    }
+
 }
 
 enum ActiveView {
@@ -430,6 +464,8 @@ pub struct AgentPanel {
     configuration: Option<Entity<AgentConfiguration>>,
     configuration_subscription: Option<Subscription>,
     history_subscription: Option<Subscription>,
+    threads: Vec<ThreadTab>,
+    active_thread_index: usize,
     active_view: ActiveView,
     previous_view: Option<ActiveView>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -576,16 +612,23 @@ impl AgentPanel {
         .detach();
 
         let panel_type = AgentSettings::get_global(cx).default_view;
-        let active_view = match panel_type {
-            DefaultView::Thread => ActiveView::native_agent(
-                fs.clone(),
-                prompt_store.clone(),
-                thread_store.clone(),
-                project.clone(),
-                workspace.clone(),
-                window,
-                cx,
-            ),
+        let initial_thread = match panel_type {
+            DefaultView::Thread => ThreadTab::ExternalAgentThread {
+                thread_view: cx.new(|cx| {
+                    crate::acp::AcpThreadView::new(
+                        ExternalAgent::NativeAgent.server(fs.clone(), thread_store.clone()),
+                        None,
+                        None,
+                        workspace.clone(),
+                        project.clone(),
+                        Some(thread_store.clone()),
+                        prompt_store.clone(),
+                        false,
+                        window,
+                        cx,
+                    )
+                }),
+            },
             DefaultView::TextThread => {
                 let context = text_thread_store.update(cx, |store, cx| store.create(cx));
                 let lsp_adapter_delegate = make_lsp_adapter_delegate(&project.clone(), cx).unwrap();
@@ -602,8 +645,92 @@ impl AgentPanel {
                     editor.insert_default_prompt(window, cx);
                     editor
                 });
-                ActiveView::text_thread(text_thread_editor, language_registry.clone(), window, cx)
+                let title = text_thread_editor.read(cx).title(cx).to_string();
+                let editor = cx.new(|cx| {
+                    let mut editor = Editor::single_line(window, cx);
+                    editor.set_text(title, window, cx);
+                    editor
+                });
+                let mut suppress_first_edit = true;
+                let subscriptions = vec![
+                    window.subscribe(&editor, cx, {
+                        let text_thread_editor = text_thread_editor.clone();
+                        move |editor, event, window, cx| match event {
+                            EditorEvent::BufferEdited => {
+                                if suppress_first_edit {
+                                    suppress_first_edit = false;
+                                    return;
+                                }
+                                let new_summary = editor.read(cx).text(cx);
+                                text_thread_editor.update(cx, |text_thread_editor, cx| {
+                                    text_thread_editor
+                                        .text_thread()
+                                        .update(cx, |text_thread, cx| {
+                                            text_thread.set_custom_summary(new_summary, cx);
+                                        })
+                                })
+                            }
+                            EditorEvent::Blurred => {
+                                if editor.read(cx).text(cx).is_empty() {
+                                    let summary = text_thread_editor
+                                        .read(cx)
+                                        .text_thread()
+                                        .read(cx)
+                                        .summary()
+                                        .or_default();
+                                    editor.update(cx, |editor, cx| {
+                                        editor.set_text(summary, window, cx);
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }),
+                    window.subscribe(&text_thread_editor.read(cx).text_thread().clone(), cx, {
+                        let editor = editor.clone();
+                        move |text_thread, event, window, cx| match event {
+                            TextThreadEvent::SummaryGenerated => {
+                                let summary = text_thread.read(cx).summary().or_default();
+                                editor.update(cx, |editor, cx| {
+                                    editor.set_text(summary, window, cx);
+                                })
+                            }
+                            TextThreadEvent::PathChanged { .. } => {}
+                            _ => {}
+                        }
+                    }),
+                ];
+                let buffer_search_bar =
+                    cx.new(|cx| BufferSearchBar::new(Some(language_registry.clone()), window, cx));
+                buffer_search_bar.update(cx, |buffer_search_bar, cx| {
+                    buffer_search_bar.set_active_pane_item(Some(&text_thread_editor), window, cx)
+                });
+                ThreadTab::TextThread {
+                    text_thread_editor,
+                    title_editor: editor,
+                    buffer_search_bar,
+                    _subscriptions: subscriptions,
+                }
             }
+        };
+
+        let active_view = match &initial_thread {
+            ThreadTab::ExternalAgentThread { thread_view } => {
+                ActiveView::ExternalAgentThread {
+                    thread_view: thread_view.clone(),
+                }
+            }
+            ThreadTab::TextThread {
+                text_thread_editor,
+                title_editor,
+                buffer_search_bar,
+                _subscriptions: _,
+            } => ActiveView::TextThread {
+                text_thread_editor: text_thread_editor.clone(),
+                title_editor: title_editor.clone(),
+                buffer_search_bar: buffer_search_bar.clone(),
+                _subscriptions: vec![],
+            },
         };
 
         let weak_panel = cx.entity().downgrade();
@@ -674,6 +801,8 @@ impl AgentPanel {
         };
 
         let mut panel = Self {
+            threads: vec![initial_thread],
+            active_thread_index: 0,
             active_view,
             workspace,
             user_store,
@@ -835,13 +964,85 @@ impl AgentPanel {
             self.serialize(cx);
         }
 
+        let title = text_thread_editor.read(cx).title(cx).to_string();
+        let title_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(title, window, cx);
+            editor
+        });
+
+        let mut suppress_first_edit = true;
+        let subscriptions = vec![
+            window.subscribe(&title_editor, cx, {
+                let text_thread_editor = text_thread_editor.clone();
+                move |editor, event, window, cx| match event {
+                    EditorEvent::BufferEdited => {
+                        if suppress_first_edit {
+                            suppress_first_edit = false;
+                            return;
+                        }
+                        let new_summary = editor.read(cx).text(cx);
+                        text_thread_editor.update(cx, |text_thread_editor, cx| {
+                            text_thread_editor
+                                .text_thread()
+                                .update(cx, |text_thread, cx| {
+                                    text_thread.set_custom_summary(new_summary, cx);
+                                })
+                        })
+                    }
+                    EditorEvent::Blurred => {
+                        if editor.read(cx).text(cx).is_empty() {
+                            let summary = text_thread_editor
+                                .read(cx)
+                                .text_thread()
+                                .read(cx)
+                                .summary()
+                                .or_default();
+                            editor.update(cx, |editor, cx| {
+                                editor.set_text(summary, window, cx);
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }),
+            window.subscribe(&text_thread_editor.read(cx).text_thread().clone(), cx, {
+                let title_editor = title_editor.clone();
+                move |text_thread, event, window, cx| match event {
+                    TextThreadEvent::SummaryGenerated => {
+                        let summary = text_thread.read(cx).summary().or_default();
+                        title_editor.update(cx, |editor, cx| {
+                            editor.set_text(summary, window, cx);
+                        })
+                    }
+                    TextThreadEvent::PathChanged { .. } => {}
+                    _ => {}
+                }
+            }),
+        ];
+
+        let buffer_search_bar =
+            cx.new(|cx| BufferSearchBar::new(Some(self.language_registry.clone()), window, cx));
+        buffer_search_bar.update(cx, |buffer_search_bar, cx| {
+            buffer_search_bar.set_active_pane_item(Some(&text_thread_editor), window, cx)
+        });
+
+        let new_thread = ThreadTab::TextThread {
+            text_thread_editor: text_thread_editor.clone(),
+            title_editor: title_editor.clone(),
+            buffer_search_bar: buffer_search_bar.clone(),
+            _subscriptions: subscriptions,
+        };
+        self.threads.push(new_thread);
+        self.active_thread_index = self.threads.len() - 1;
+
         self.set_active_view(
-            ActiveView::text_thread(
-                text_thread_editor.clone(),
-                self.language_registry.clone(),
-                window,
-                cx,
-            ),
+            ActiveView::TextThread {
+                text_thread_editor: text_thread_editor.clone(),
+                title_editor,
+                buffer_search_bar,
+                _subscriptions: vec![],
+            },
             true,
             window,
             cx,
@@ -1019,7 +1220,7 @@ impl AgentPanel {
         let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project.clone(), cx)
             .log_err()
             .flatten();
-        let editor = cx.new(|cx| {
+        let text_thread_editor = cx.new(|cx| {
             TextThreadEditor::for_text_thread(
                 text_thread,
                 self.fs.clone(),
@@ -1036,8 +1237,85 @@ impl AgentPanel {
             self.serialize(cx);
         }
 
+        let title = text_thread_editor.read(cx).title(cx).to_string();
+        let title_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(title, window, cx);
+            editor
+        });
+
+        let mut suppress_first_edit = true;
+        let subscriptions = vec![
+            window.subscribe(&title_editor, cx, {
+                let text_thread_editor = text_thread_editor.clone();
+                move |editor, event, window, cx| match event {
+                    EditorEvent::BufferEdited => {
+                        if suppress_first_edit {
+                            suppress_first_edit = false;
+                            return;
+                        }
+                        let new_summary = editor.read(cx).text(cx);
+                        text_thread_editor.update(cx, |text_thread_editor, cx| {
+                            text_thread_editor
+                                .text_thread()
+                                .update(cx, |text_thread, cx| {
+                                    text_thread.set_custom_summary(new_summary, cx);
+                                })
+                        })
+                    }
+                    EditorEvent::Blurred => {
+                        if editor.read(cx).text(cx).is_empty() {
+                            let summary = text_thread_editor
+                                .read(cx)
+                                .text_thread()
+                                .read(cx)
+                                .summary()
+                                .or_default();
+                            editor.update(cx, |editor, cx| {
+                                editor.set_text(summary, window, cx);
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }),
+            window.subscribe(&text_thread_editor.read(cx).text_thread().clone(), cx, {
+                let title_editor = title_editor.clone();
+                move |text_thread, event, window, cx| match event {
+                    TextThreadEvent::SummaryGenerated => {
+                        let summary = text_thread.read(cx).summary().or_default();
+                        title_editor.update(cx, |editor, cx| {
+                            editor.set_text(summary, window, cx);
+                        })
+                    }
+                    TextThreadEvent::PathChanged { .. } => {}
+                    _ => {}
+                }
+            }),
+        ];
+
+        let buffer_search_bar =
+            cx.new(|cx| BufferSearchBar::new(Some(self.language_registry.clone()), window, cx));
+        buffer_search_bar.update(cx, |buffer_search_bar, cx| {
+            buffer_search_bar.set_active_pane_item(Some(&text_thread_editor), window, cx)
+        });
+
+        let new_thread = ThreadTab::TextThread {
+            text_thread_editor: text_thread_editor.clone(),
+            title_editor: title_editor.clone(),
+            buffer_search_bar: buffer_search_bar.clone(),
+            _subscriptions: subscriptions,
+        };
+        self.threads.push(new_thread);
+        self.active_thread_index = self.threads.len() - 1;
+
         self.set_active_view(
-            ActiveView::text_thread(editor, self.language_registry.clone(), window, cx),
+            ActiveView::TextThread {
+                text_thread_editor,
+                title_editor,
+                buffer_search_bar,
+                _subscriptions: vec![],
+            },
             true,
             window,
             cx,
@@ -1573,8 +1851,16 @@ impl AgentPanel {
             }
         }));
 
+        let new_thread = ThreadTab::ExternalAgentThread { thread_view };
+        self.threads.push(new_thread);
+        self.active_thread_index = self.threads.len() - 1;
         self.set_active_view(
-            ActiveView::ExternalAgentThread { thread_view },
+            ActiveView::ExternalAgentThread {
+                thread_view: match &self.threads[self.active_thread_index] {
+                    ThreadTab::ExternalAgentThread { thread_view } => thread_view.clone(),
+                    _ => unreachable!(),
+                },
+            },
             !loading,
             window,
             cx,
@@ -2048,6 +2334,114 @@ impl AgentPanel {
                     menu.clone()
                 }
             })
+    }
+
+    fn render_thread_tabs(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+
+        if self.threads.is_empty() {
+            return div().into_any();
+        }
+
+        let tabs: Vec<_> = self
+            .threads
+            .iter()
+            .enumerate()
+            .map(|(index, thread)| {
+                let is_active = index == self.active_thread_index;
+                let title = thread.title(cx);
+                let is_first = index == 0;
+                let is_last = index == self.threads.len() - 1;
+
+                let close_button = IconButton::new(format!("close_thread_tab_{}", index), IconName::Close)
+                    .shape(IconButtonShape::Square)
+                    .icon_color(Color::Muted)
+                    .size(ButtonSize::None)
+                    .icon_size(IconSize::Small)
+                    .on_click({
+                        let thread_index = index;
+                        cx.listener(move |this, _, window, cx| {
+                            if this.threads.len() > 1 {
+                                this.threads.remove(thread_index);
+                                if this.active_thread_index >= this.threads.len() {
+                                    this.active_thread_index = this.threads.len().saturating_sub(1);
+                                }
+                                if !this.threads.is_empty() {
+                                    let active_view = match &this.threads[this.active_thread_index] {
+                                        ThreadTab::ExternalAgentThread { thread_view } => {
+                                            ActiveView::ExternalAgentThread {
+                                                thread_view: thread_view.clone(),
+                                            }
+                                        }
+                                        ThreadTab::TextThread {
+                                            text_thread_editor,
+                                            title_editor,
+                                            buffer_search_bar,
+                                            _subscriptions: _,
+                                        } => ActiveView::TextThread {
+                                            text_thread_editor: text_thread_editor.clone(),
+                                            title_editor: title_editor.clone(),
+                                            buffer_search_bar: buffer_search_bar.clone(),
+                                            _subscriptions: vec![],
+                                        },
+                                    };
+                                    this.set_active_view(active_view, true, window, cx);
+                                } else {
+                                    // Если потоков не осталось, переключаемся на History или Configuration
+                                    if matches!(this.active_view, ActiveView::History { .. } | ActiveView::Configuration) {
+                                        // Уже на History/Configuration, ничего не делаем
+                                    } else {
+                                        this.open_history(window, cx);
+                                    }
+                                }
+                            }
+                        })
+                    });
+
+                Tab::new(format!("agent_thread_tab_{}", index))
+                    .toggle_state(is_active)
+                    .position(if is_first {
+                        TabPosition::First
+                    } else if is_last {
+                        TabPosition::Last
+                    } else {
+                        TabPosition::Middle(if index < self.active_thread_index {
+                            Ordering::Less
+                        } else if index > self.active_thread_index {
+                            Ordering::Greater
+                        } else {
+                            Ordering::Equal
+                        })
+                    })
+                    .end_slot(close_button)
+                    .child(title)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if this.active_thread_index != index {
+                            this.active_thread_index = index;
+                            let active_view = match &this.threads[index] {
+                                ThreadTab::ExternalAgentThread { thread_view } => {
+                                    ActiveView::ExternalAgentThread {
+                                        thread_view: thread_view.clone(),
+                                    }
+                                }
+                                ThreadTab::TextThread {
+                                    text_thread_editor,
+                                    title_editor,
+                                    buffer_search_bar,
+                                    _subscriptions: _,
+                                } => ActiveView::TextThread {
+                                    text_thread_editor: text_thread_editor.clone(),
+                                    title_editor: title_editor.clone(),
+                                    buffer_search_bar: buffer_search_bar.clone(),
+                                    _subscriptions: vec![],
+                                },
+                            };
+                            this.set_active_view(active_view, true, window, cx);
+                        }
+                    }))
+            })
+            .collect();
+
+        TabBar::new("agent_thread_tabs").children(tabs).into_any_element()
     }
 
     fn render_toolbar_back_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2865,6 +3259,9 @@ impl Render for AgentPanel {
                 }
             }))
             .child(self.render_toolbar(window, cx))
+            .when(!self.threads.is_empty(), |this| {
+                this.child(self.render_thread_tabs(window, cx))
+            })
             .children(self.render_workspace_trust_message(cx))
             .children(self.render_onboarding(window, cx))
             .map(|parent| match &self.active_view {
