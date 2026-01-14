@@ -398,25 +398,7 @@ impl ContextServerStore {
             context_server_factory,
         };
         if maintain_server_loop {
-            // TODO: For remote projects, there's a potential race condition where
-            // GetContextServerCommand is sent before the headless server receives
-            // UpdateUserSettings. The proper fix would be to have the headless server
-            // signal when settings are ready, or have the RPC handler wait for settings.
-            // For now, we use a delay as a workaround.
-            if matches!(this.state, ContextServerStoreState::Remote { .. }) {
-                cx.spawn(async move |this, cx| {
-                    cx.background_executor()
-                        .timer(std::time::Duration::from_secs(1))
-                        .await;
-                    this.update(cx, |this, cx| {
-                        this.available_context_servers_changed(cx);
-                    })
-                    .log_err();
-                })
-                .detach();
-            } else {
-                this.available_context_servers_changed(cx);
-            }
+            this.available_context_servers_changed(cx);
         }
         this
     }
