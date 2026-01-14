@@ -234,6 +234,8 @@ pub struct NativeAgent {
     thread_store: Entity<ThreadStore>,
     /// Shared project context for all threads
     project_context: Entity<ProjectContext>,
+    /// Full skills data (not just summaries) for tool use
+    skills: Arc<Vec<Skill>>,
     project_context_needs_refresh: watch::Sender<()>,
     _maintain_project_context: Task<Result<()>>,
     context_server_registry: Entity<ContextServerRegistry>,
@@ -258,7 +260,7 @@ impl NativeAgent {
     ) -> Result<Entity<NativeAgent>> {
         log::debug!("Creating new NativeAgent");
 
-        let project_context = cx
+        let (project_context, skills) = cx
             .update(|cx| {
                 Self::build_project_context(&project, prompt_store.as_ref(), fs.clone(), cx)
             })
@@ -294,6 +296,7 @@ impl NativeAgent {
                 sessions: HashMap::default(),
                 thread_store,
                 project_context: cx.new(|_| project_context),
+                skills: Arc::new(skills),
                 project_context_needs_refresh: project_context_needs_refresh_tx,
                 _maintain_project_context: cx.spawn(async move |this, cx| {
                     Self::maintain_project_context(this, project_context_needs_refresh_rx, cx).await
@@ -383,7 +386,7 @@ impl NativeAgent {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         while needs_refresh.changed().await.is_ok() {
-            let project_context = this
+            let (project_context, skills) = this
                 .update(cx, |this, cx| {
                     Self::build_project_context(
                         &this.project,
@@ -395,6 +398,7 @@ impl NativeAgent {
                 .await;
             this.update(cx, |this, cx| {
                 this.project_context = cx.new(|_| project_context);
+                this.skills = Arc::new(skills);
             })?;
         }
 
@@ -406,7 +410,7 @@ impl NativeAgent {
         prompt_store: Option<&Entity<PromptStore>>,
         fs: Arc<dyn Fs>,
         cx: &mut App,
-    ) -> Task<ProjectContext> {
+    ) -> Task<(ProjectContext, Vec<Skill>)> {
         let worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
         let worktree_tasks = worktrees
             .iter()
@@ -496,7 +500,9 @@ impl NativeAgent {
             let (skills, _skill_errors) =
                 merge_skills(global_skills, project_skills_results.into_iter().flatten());
 
-            ProjectContext::new(worktrees, default_user_rules, skills)
+            let project_context =
+                ProjectContext::new(worktrees, default_user_rules, skills.clone());
+            (project_context, skills)
         })
     }
 
@@ -792,6 +798,7 @@ impl NativeAgent {
                         db_thread,
                         this.project.clone(),
                         this.project_context.clone(),
+                        this.skills.clone(),
                         this.context_server_registry.clone(),
                         this.templates.clone(),
                         cx,
@@ -1251,6 +1258,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                     Thread::new(
                         project.clone(),
                         agent.project_context.clone(),
+                        agent.skills.clone(),
                         agent.context_server_registry.clone(),
                         agent.templates.clone(),
                         default_model,
