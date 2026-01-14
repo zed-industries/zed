@@ -10,6 +10,7 @@ use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, MultiBufferOffset, ToOffset};
 use settings::Settings;
 use std::ops::Range;
+use std::time::Duration;
 use text::Rope;
 use theme::ThemeSettings;
 use ui::{
