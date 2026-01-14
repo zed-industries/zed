@@ -392,18 +392,24 @@ impl MessageEditor {
     pub fn contents(
         &self,
         full_mention_content: bool,
+        cached_user_commands: Option<
+            collections::HashMap<String, user_slash_command::UserSlashCommand>,
+        >,
         cx: &mut Context<Self>,
     ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
         // Check for unsupported slash commands before spawning async task
         let text = self.editor.read(cx).text(cx);
         let available_commands = self.available_commands.borrow().clone();
 
-        // Load file-based user commands if feature flag is enabled
-        let user_commands = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-            // Get worktree roots for project commands
-            let worktree_roots: Vec<std::path::PathBuf> = self
-                .workspace
-                .upgrade()
+        // Use cached commands if provided, otherwise prepare for async loading
+        let (cached_commands, fs, worktree_roots) = if let Some(cached) = cached_user_commands {
+            (Some(cached), None, Vec::new())
+        } else if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+            let workspace = self.workspace.upgrade();
+            let fs = workspace
+                .as_ref()
+                .map(|w| w.read(cx).project().read(cx).fs().clone());
+            let roots: Vec<std::path::PathBuf> = workspace
                 .map(|workspace| {
                     workspace
                         .read(cx)
@@ -412,39 +418,12 @@ impl MessageEditor {
                         .collect()
                 })
                 .unwrap_or_default();
-
-            let load_result = user_slash_command::load_all_commands(&worktree_roots);
-
-            // Log any errors encountered while loading commands
-            for error in &load_result.errors {
-                log::warn!("Failed to load slash command: {}", error);
-            }
-
-            user_slash_command::commands_to_map(&load_result.commands)
+            (None, fs, roots)
         } else {
-            collections::HashMap::default()
+            (None, None, Vec::new())
         };
 
-        // Check if this is a user-defined slash command and expand it
-        if let Ok(Some(expanded)) =
-            user_slash_command::try_expand_from_commands(&text, &user_commands)
-        {
-            return Task::ready(Ok((vec![expanded.into()], Vec::new())));
-        }
-
-        // If expansion failed (e.g., missing arguments), return the error
-        if let Err(err) = user_slash_command::try_expand_from_commands(&text, &user_commands) {
-            return Task::ready(Err(err));
-        }
-
-        if let Err(err) = Self::validate_slash_commands(
-            &text,
-            &available_commands,
-            &user_commands,
-            &self.agent_name,
-        ) {
-            return Task::ready(Err(err));
-        }
+        let agent_name = self.agent_name.clone();
 
         let contents = self
             .mention_set
@@ -453,6 +432,44 @@ impl MessageEditor {
         let supports_embedded_context = self.prompt_capabilities.borrow().embedded_context;
 
         cx.spawn(async move |_, cx| {
+            // Use cached commands or load asynchronously
+            let user_commands = if let Some(cached) = cached_commands {
+                cached
+            } else if let Some(fs) = fs {
+                let load_result =
+                    user_slash_command::load_all_commands_async(&fs, &worktree_roots).await;
+
+                // Log any errors encountered while loading commands
+                for error in &load_result.errors {
+                    log::warn!("Failed to load slash command: {}", error);
+                }
+
+                user_slash_command::commands_to_map(&load_result.commands)
+            } else {
+                collections::HashMap::default()
+            };
+
+            // Check if this is a user-defined slash command and expand it
+            if let Ok(Some(expanded)) =
+                user_slash_command::try_expand_from_commands(&text, &user_commands)
+            {
+                return Ok((vec![expanded.into()], Vec::new()));
+            }
+
+            // If expansion failed (e.g., missing arguments), return the error
+            if let Err(err) = user_slash_command::try_expand_from_commands(&text, &user_commands) {
+                return Err(err);
+            }
+
+            if let Err(err) = Self::validate_slash_commands(
+                &text,
+                &available_commands,
+                &user_commands,
+                &agent_name,
+            ) {
+                return Err(err);
+            }
+
             let contents = contents.await?;
             let mut all_tracked_buffers = Vec::new();
 
@@ -1241,7 +1258,9 @@ mod tests {
         });
 
         let (content, _) = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .update(cx, |message_editor, cx| {
+                message_editor.contents(false, None, cx)
+            })
             .await
             .unwrap();
 
@@ -1305,7 +1324,9 @@ mod tests {
         });
 
         let contents_result = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .update(cx, |message_editor, cx| {
+                message_editor.contents(false, None, cx)
+            })
             .await;
 
         // Should fail because available_commands is empty (no commands supported)
@@ -1323,7 +1344,9 @@ mod tests {
         });
 
         let contents_result = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .update(cx, |message_editor, cx| {
+                message_editor.contents(false, None, cx)
+            })
             .await;
 
         assert!(contents_result.is_err());
@@ -1338,7 +1361,9 @@ mod tests {
         });
 
         let contents_result = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .update(cx, |message_editor, cx| {
+                message_editor.contents(false, None, cx)
+            })
             .await;
 
         // Should succeed because /help is in available_commands
@@ -1350,7 +1375,9 @@ mod tests {
         });
 
         let (content, _) = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .update(cx, |message_editor, cx| {
+                message_editor.contents(false, None, cx)
+            })
             .await
             .unwrap();
 
@@ -1368,7 +1395,9 @@ mod tests {
 
         // The @ mention functionality should not be affected
         let (content, _) = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .update(cx, |message_editor, cx| {
+                message_editor.contents(false, None, cx)
+            })
             .await
             .unwrap();
 
@@ -2527,7 +2556,9 @@ mod tests {
         });
 
         let (content, _) = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .update(cx, |message_editor, cx| {
+                message_editor.contents(false, None, cx)
+            })
             .await
             .unwrap();
 
@@ -2605,7 +2636,7 @@ mod tests {
         });
 
         let content = message_editor
-            .update(cx, |editor, cx| editor.contents(false, cx))
+            .update(cx, |editor, cx| editor.contents(false, None, cx))
             .await
             .unwrap()
             .0;
@@ -2632,7 +2663,7 @@ mod tests {
         });
 
         let content = message_editor
-            .update(cx, |editor, cx| editor.contents(false, cx))
+            .update(cx, |editor, cx| editor.contents(false, None, cx))
             .await
             .unwrap()
             .0;

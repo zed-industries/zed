@@ -20,7 +20,10 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
-use feature_flags::{AgentSharingFeatureFlag, AgentV2FeatureFlag, FeatureFlagAppExt as _, UserSlashCommandsFeatureFlag};
+use feature_flags::{
+    AgentSharingFeatureFlag, AgentV2FeatureFlag, FeatureFlagAppExt as _,
+    UserSlashCommandsFeatureFlag,
+};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -68,7 +71,9 @@ use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
 use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip, UsageCallout};
-use crate::user_slash_command::CommandLoadError;
+use crate::user_slash_command::{
+    CommandLoadError, SlashCommandRegistry, SlashCommandRegistryEvent,
+};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ClearMessageQueue, ContinueThread,
     ContinueWithBurnMode, CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow,
@@ -330,6 +335,7 @@ pub struct AcpThreadView {
     thread_error_markdown: Option<Entity<Markdown>>,
     command_load_errors: Vec<CommandLoadError>,
     command_load_errors_dismissed: bool,
+    slash_command_registry: Option<Entity<SlashCommandRegistry>>,
     token_limit_callout_dismissed: bool,
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
@@ -483,17 +489,28 @@ impl AcpThreadView {
             && project.read(cx).is_local()
             && agent.clone().downcast::<agent_servers::Codex>().is_some();
 
-        // Load user-defined slash commands and capture any errors for display
-        let command_load_errors = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+        // Create SlashCommandRegistry to cache user-defined slash commands and watch for changes
+        let slash_command_registry = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+            let fs = project.read(cx).fs().clone();
             let worktree_roots: Vec<std::path::PathBuf> = project
                 .read(cx)
                 .visible_worktrees(cx)
                 .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
                 .collect();
-            let load_result = crate::user_slash_command::load_all_commands(&worktree_roots);
-            load_result.errors
+            let registry = cx.new(|cx| SlashCommandRegistry::new(fs, worktree_roots, cx));
+
+            // Subscribe to registry changes to update error display
+            cx.subscribe(&registry, |this, registry, event, cx| match event {
+                SlashCommandRegistryEvent::CommandsChanged => {
+                    this.command_load_errors = registry.read(cx).errors().to_vec();
+                    cx.notify();
+                }
+            })
+            .detach();
+
+            Some(registry)
         } else {
-            Vec::new()
+            None
         };
 
         Self {
@@ -522,8 +539,9 @@ impl AcpThreadView {
             thread_retry_status: None,
             thread_error: None,
             thread_error_markdown: None,
-            command_load_errors,
+            command_load_errors: Vec::new(),
             command_load_errors_dismissed: false,
+            slash_command_registry,
             token_limit_callout_dismissed: false,
             thread_feedback: Default::default(),
             auth_task: None,
@@ -1435,8 +1453,9 @@ impl AcpThreadView {
                 .is_some_and(|profile| profile.tools.is_empty())
         });
 
+        let cached_commands = self.cached_slash_commands(cx);
         let contents = message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents(full_mention_content, cx)
+            message_editor.contents(full_mention_content, Some(cached_commands), cx)
         });
 
         self.thread_error.take();
@@ -1597,8 +1616,9 @@ impl AcpThreadView {
                 .is_some_and(|profile| profile.tools.is_empty())
         });
 
+        let cached_commands = self.cached_slash_commands(cx);
         let contents = self.message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents(full_mention_content, cx)
+            message_editor.contents(full_mention_content, Some(cached_commands), cx)
         });
 
         let message_editor = self.message_editor.clone();
@@ -6757,6 +6777,17 @@ impl AcpThreadView {
     fn clear_command_load_errors(&mut self, cx: &mut Context<Self>) {
         self.command_load_errors_dismissed = true;
         cx.notify();
+    }
+
+    /// Returns the cached slash commands from the registry, if available.
+    pub fn cached_slash_commands(
+        &self,
+        cx: &App,
+    ) -> collections::HashMap<String, crate::user_slash_command::UserSlashCommand> {
+        self.slash_command_registry
+            .as_ref()
+            .map(|registry| registry.read(cx).commands().clone())
+            .unwrap_or_default()
     }
 
     fn render_thread_error(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {

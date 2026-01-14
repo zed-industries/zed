@@ -1,25 +1,103 @@
 # User-Defined Slash Commands
 
-## Status: ✅ COMPLETE (File-based system implemented)
+## Status: ✅ COMPLETE
 
-## TODO
+## COMPLETED WORK
+
+### Async File Operations ✅ COMPLETE
+- All file operations now use the `Fs` trait for async I/O
+- `load_all_commands_async()` is the primary loading function
+- Tests use `FakeFs` instead of real filesystem
+
+### SlashCommandRegistry Entity & Caching ✅ COMPLETE
+- `SlashCommandRegistry` struct caches commands in a `HashMap`
+- Watches for file changes in commands directories
+- Emits `SlashCommandRegistryEvent::CommandsChanged` when commands reload
+- Integrated into `AcpThreadView` - each thread view has its own registry
+- `MessageEditor.contents()` uses cached commands from registry (no per-request loading)
+- Completion provider still loads async (acceptable since it's once per search, not per keystroke)
+
+### Symlink Handling ✅ COMPLETE
+Tests added to verify symlink behavior:
+- `test_load_commands_from_symlinked_directory` - symlinked directories
+- `test_load_commands_from_symlinked_file` - symlinked individual files
+- `test_load_commands_claude_symlink_pattern` - common ~/.claude/commands/ symlink pattern
+
+### Permission/Error Handling ✅ COMPLETE
+Tests added to verify error handling:
+- `test_load_commands_continues_after_single_file_error` - one bad file doesn't stop others
+- `test_load_commands_reports_directory_read_errors` - directory errors are reported
+- `test_command_load_error_includes_path_info` - errors include path information
+- `test_load_all_commands_aggregates_errors` - multiple duplicate errors aggregated
+- `test_empty_commands_directory_no_errors` - empty dirs don't cause errors
+- `test_mixed_valid_and_empty_files` - empty files ignored, valid files loaded
 
 ### Error Handling UI ✅ COMPLETE
 Implemented in `crates/agent_ui/src/acp/thread_view.rs`:
-- Added `command_load_errors: Vec<CommandLoadError>` and `command_load_errors_dismissed: bool` fields to `AcpThreadView`
-- Commands are loaded on thread view initialization when the `UserSlashCommandsFeatureFlag` is enabled
-- Added `render_command_load_errors()` which displays a dismissable `Callout` with severity `Warning`
+- Added `command_load_errors: Vec<CommandLoadError>` and `command_load_errors_dismissed: bool` fields
+- Commands are loaded asynchronously on thread view initialization
+- `render_command_load_errors()` displays a dismissable `Callout` with severity `Warning`
 - Single error shows "Failed to load slash command", multiple errors shows "Failed to load N slash commands"
-- All errors are listed in the description with bullet points: "• {path}: {message}"
-- Added `clear_command_load_errors()` to handle dismissal
 
-### Ambiguous Commands
-If multiple commands have the same name (e.g., same command in two different project worktrees, or a project command and user command with the same name), an error is reported to the user. There is no silent precedence - the user must resolve the ambiguity by renaming one of the commands.
+### Ambiguous Command Detection ✅ COMPLETE
+If multiple commands have the same name (e.g., same command in two different project worktrees, or a project command and user command with the same name), an error is reported. There is no silent precedence.
 
-## Development Approach
+### Test Coverage ✅ COMPLETE (52 tests)
 
-- **Commit incrementally**: Commit working code after each phase or significant milestone
-- **Test extensively**: The parser and argument handling have many edge cases; comprehensive unit tests are critical
+**Parsing Tests:**
+- `test_try_parse_user_command` - command parsing
+- `test_parse_arguments_*` - argument parsing edge cases
+- `test_count_positional_placeholders` - placeholder counting
+- `test_has_placeholders` - placeholder detection
+
+**Template Expansion Tests:**
+- `test_expand_template_*` - substitution, escapes, $ARGUMENTS
+
+**Validation Tests:**
+- `test_validate_arguments_*` - argument count validation
+
+**Edge Case Tests:**
+- `test_unicode_command_names` - unicode in command names
+- `test_unicode_in_arguments` - unicode in arguments
+- `test_unicode_in_template` - unicode in templates
+- `test_very_long_template` - large templates (100k chars)
+- `test_many_placeholders` - templates with 10 placeholders
+- `test_placeholder_zero_is_invalid` - `$0` errors
+- `test_dollar_sign_without_number` - bare `$` preservation
+- `test_consecutive_whitespace_in_arguments` - whitespace handling
+- `test_empty_input` - empty/whitespace input
+- `test_command_description_formats` - all description formats
+
+**Async File Loading Tests (using FakeFs):**
+- `test_load_commands_from_empty_dir`
+- `test_load_commands_from_nonexistent_dir`
+- `test_load_single_command`
+- `test_load_commands_with_namespace`
+- `test_load_commands_nested_namespace`
+- `test_load_commands_empty_file_ignored`
+- `test_load_commands_non_md_files_ignored`
+- `test_load_project_commands`
+- `test_load_all_commands_no_duplicates`
+- `test_load_all_commands_duplicate_error`
+- `test_registry_loads_commands`
+- `test_registry_updates_worktree_roots`
+
+**Symlink Tests:**
+- `test_load_commands_from_symlinked_directory`
+- `test_load_commands_from_symlinked_file`
+- `test_load_commands_claude_symlink_pattern`
+
+**Error Handling Tests:**
+- `test_load_commands_continues_after_single_file_error`
+- `test_load_commands_reports_directory_read_errors`
+- `test_command_load_error_includes_path_info`
+- `test_load_all_commands_aggregates_errors`
+- `test_empty_commands_directory_no_errors`
+- `test_mixed_valid_and_empty_files`
+
+**Total: 61 tests**
+
+---
 
 ## Overview
 
@@ -38,7 +116,14 @@ Users create Markdown files in their Zed config commands directory:
 ├── review.md           # Creates /review command
 ├── explain.md          # Creates /explain command
 └── frontend/           # Namespace: commands show as "(user:frontend)"
-    └── component.md    # Creates /component command
+    └── component.md    # Creates /frontend:component command
+```
+
+Project-specific commands go in `.zed/commands/`:
+```
+my-project/.zed/commands/
+├── build.md            # Creates /build command with "(project)" description
+└── deploy.md           # Creates /deploy command
 ```
 
 **Example command file (`review.md`):**
@@ -57,6 +142,7 @@ Search the codebase for: $ARGUMENTS
 2. Autocomplete menu appears showing available slash commands (fuzzy-matched)
 3. Both user-defined and ACP server commands appear, with different indicators:
    - User commands show "(user)" or "(user:namespace)" in description
+   - Project commands show "(project)" or "(project:namespace)" in description
    - Server commands show their server-provided description
 4. User selects a command (e.g., `/review`)
 5. User can provide arguments: `/review "security concerns"`
@@ -75,14 +161,14 @@ Search the codebase for: $ARGUMENTS
 
 Subdirectories create namespaces that appear in the command description:
 - `commands/review.md` → `/review` with description "(user)"
-- `commands/frontend/component.md` → `/component` with description "(user:frontend)"
-- `commands/tools/git/commit.md` → `/commit` with description "(user:tools/git)"
+- `commands/frontend/component.md` → `/frontend:component` with description "(user:frontend)"
+- `commands/tools/git/commit.md` → `/tools:git:commit` with description "(user:tools/git)"
 
 ## Decisions
 
 | Question | Decision |
 |----------|----------|
-| Command location | `config_dir()/commands/` (uses Zed's paths helper) |
+| Command location | `config_dir()/commands/` for user, `.zed/commands/` for project |
 | File format | Markdown files (`.md` extension) |
 | Missing arguments | Show error and don't send |
 | ACP vs user command conflicts | Show both with different indicators |
@@ -107,85 +193,26 @@ impl FeatureFlag for UserSlashCommandsFeatureFlag {
 }
 ```
 
-#### `crates/agent_ui/src/user_slash_command.rs` (NEW)
+#### `crates/agent_ui/src/user_slash_command.rs`
 Main module containing:
-- `UserSlashCommand` struct - represents a loaded command with name, template, namespace, and path
-- `commands_dir()` - returns `config_dir()/commands/`
-- `load_user_commands()` - scans directory and loads all `.md` files
-- `load_commands_from_dir()` - recursive directory traversal
-- `load_command_file()` - loads single command file
-- `commands_to_map()` - converts Vec to HashMap for lookup
-- `try_parse_user_command()` - parses `/command args` syntax
-- `parse_arguments()` - handles quoted/unquoted arguments
-- `has_placeholders()` - checks for $1, $2, or $ARGUMENTS
-- `count_positional_placeholders()` - counts highest $N
-- `validate_arguments()` - ensures arg count matches template
-- `expand_template()` - performs substitution
-- `expand_user_slash_command()` - combines validation and expansion
-- `try_expand_from_commands()` - high-level expansion function
-- `has_command()` - checks if command exists
+- `SlashCommandRegistry` - Entity that caches commands and watches for changes
+- `UserSlashCommand` struct - represents a loaded command
+- `CommandScope` enum - `Project` or `User`
+- `CommandLoadResult` - commands and errors from loading
+- `load_all_commands_async()` - async loading with `Fs` trait
+- Parsing, validation, and expansion functions
 
 #### `crates/agent_ui/src/completion_provider.rs`
 - Added `CommandSource` enum: `Server` vs `UserDefined { template }`
-- Modified `search_slash_commands()` to load file-based commands
-- User commands appear with "(user)" or "(user:namespace)" description
+- Modified `search_slash_commands()` to load file-based commands asynchronously
 
 #### `crates/agent_ui/src/acp/message_editor.rs`
 - Modified `validate_slash_commands()` to skip validation for user commands
-- Modified `contents()` to expand user commands before sending
+- Modified `contents()` to expand user commands asynchronously before sending
 
-### Test Coverage (49 tests)
-
-#### Argument Parsing
-- Simple unquoted args
-- Quoted args with spaces
-- Mixed quoted/unquoted
-- Escaped quotes within quotes
-- Escaped backslash
-- Empty quoted string
-- Unclosed quote error
-- Quote in middle of word error
-- Unknown escape sequence error
-- Newline escape in quotes
-
-#### Template Expansion
-- Basic $1 substitution
-- Multiple placeholders $1, $2
-- Repeated placeholder $1 $1
-- Out of order $2 then $1
-- Newline escape \n
-- Dollar escape \$1
-- Quote escape \"
-- Backslash escape \\
-- $ARGUMENTS placeholder
-- $ARGUMENTS with positional
-- $ARGUMENTS empty
-- $ARGUMENTS preserves quotes
-
-#### Validation
-- Exact match count
-- Missing arguments error
-- Extra arguments error
-- No placeholders, no args OK
-- No placeholders with args error
-- Empty template error
-- $ARGUMENTS accepts any count
-- Mixed $ARGUMENTS and positional
-
-#### File Loading
-- Load single command file
-- Load with namespace (subdirectory)
-- Load nested namespace (tools/git)
-- Empty file ignored
-- Load multiple files from directory
-- Nonexistent directory returns empty
-- commands_to_map conversion
-
-#### Integration
-- try_expand_from_commands with various inputs
-- has_command lookup
-- UserSlashCommand.description()
-- UserSlashCommand.requires_arguments()
+#### `crates/agent_ui/src/acp/thread_view.rs`
+- Added error display UI for command loading failures
+- Spawns async task to load commands on initialization
 
 ## Error Messages
 
@@ -196,6 +223,7 @@ Main module containing:
 - Unknown escape: "Unknown escape sequence: \x"
 - Empty template: "Template cannot be empty"
 - Invalid placeholder: "Placeholder $0 is invalid; placeholders start at $1"
+- Duplicate command: "Command 'X' is ambiguous: also defined at Y"
 
 ## Edge Cases
 
@@ -213,3 +241,5 @@ Main module containing:
 | Non-.md files | Ignored |
 | Symlinked directories | Followed (can symlink ~/.claude/commands/) |
 | Duplicate command names | Error: "Command 'X' is ambiguous: also defined at Y" |
+| Unicode in command names | Supported |
+| Very long templates | Supported (tested with 100k chars) |

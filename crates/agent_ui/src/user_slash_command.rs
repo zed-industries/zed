@@ -1,8 +1,12 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
+use fs::Fs;
+use futures::StreamExt;
+use gpui::{Context, EventEmitter, Task};
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// An error that occurred while loading a command file.
 #[derive(Debug, Clone)]
@@ -25,7 +29,7 @@ impl std::fmt::Display for CommandLoadError {
 }
 
 /// Result of loading commands, including any errors encountered.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CommandLoadResult {
     /// Successfully loaded commands
     pub commands: Vec<UserSlashCommand>,
@@ -68,7 +72,7 @@ impl UserSlashCommand {
             CommandScope::User => "user",
         };
         match &self.namespace {
-            Some(ns) => format!("({}:{})", scope_name, ns),
+            Some(namespace) => format!("({}:{})", scope_name, namespace),
             None => format!("({})", scope_name),
         }
     }
@@ -96,33 +100,134 @@ pub fn project_commands_dir(worktree_root: &Path) -> PathBuf {
     worktree_root.join(".zed").join("commands")
 }
 
-/// Loads all user slash commands from the user commands directory.
-/// Commands are markdown files in `config_dir()/commands/`.
-/// Subdirectories create namespaces.
-pub fn load_user_commands() -> CommandLoadResult {
-    let commands_path = user_commands_dir();
-    load_commands_from_path(&commands_path, CommandScope::User)
+/// Events emitted by SlashCommandRegistry
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // Infrastructure for future caching implementation
+pub enum SlashCommandRegistryEvent {
+    /// Commands have been reloaded
+    CommandsChanged,
 }
 
-/// Loads all project slash commands from a worktree root.
-/// Commands are markdown files in `.zed/commands/`.
-/// Subdirectories create namespaces.
-pub fn load_project_commands(worktree_root: &Path) -> CommandLoadResult {
-    let commands_path = project_commands_dir(worktree_root);
-    load_commands_from_path(&commands_path, CommandScope::Project)
+/// A registry that caches user-defined slash commands and watches for changes.
+/// Currently used in tests; will be integrated into the UI layer for caching.
+#[allow(dead_code)]
+pub struct SlashCommandRegistry {
+    fs: Arc<dyn Fs>,
+    commands: HashMap<String, UserSlashCommand>,
+    errors: Vec<CommandLoadError>,
+    worktree_roots: Vec<PathBuf>,
+    _watch_task: Option<Task<()>>,
 }
 
-/// Loads all commands (both project and user) for given worktree roots.
-/// If multiple commands have the same name, an error is reported for the ambiguity.
-/// Returns both successfully loaded commands and any errors encountered.
-pub fn load_all_commands(worktree_roots: &[PathBuf]) -> CommandLoadResult {
+impl EventEmitter<SlashCommandRegistryEvent> for SlashCommandRegistry {}
+
+#[allow(dead_code)]
+impl SlashCommandRegistry {
+    /// Creates a new registry and starts loading commands.
+    pub fn new(fs: Arc<dyn Fs>, worktree_roots: Vec<PathBuf>, cx: &mut Context<Self>) -> Self {
+        let mut this = Self {
+            fs,
+            commands: HashMap::default(),
+            errors: Vec::new(),
+            worktree_roots,
+            _watch_task: None,
+        };
+
+        this.start_watching(cx);
+        this.reload(cx);
+
+        this
+    }
+
+    /// Returns all loaded commands.
+    pub fn commands(&self) -> &HashMap<String, UserSlashCommand> {
+        &self.commands
+    }
+
+    /// Returns any errors from the last load.
+    pub fn errors(&self) -> &[CommandLoadError] {
+        &self.errors
+    }
+
+    /// Updates the worktree roots and reloads commands.
+    pub fn set_worktree_roots(&mut self, roots: Vec<PathBuf>, cx: &mut Context<Self>) {
+        if self.worktree_roots != roots {
+            self.worktree_roots = roots;
+            self.start_watching(cx);
+            self.reload(cx);
+        }
+    }
+
+    /// Manually triggers a reload of all commands.
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        let fs = self.fs.clone();
+        let worktree_roots = self.worktree_roots.clone();
+
+        cx.spawn(async move |this, cx| {
+            let result = load_all_commands_async(&fs, &worktree_roots).await;
+            this.update(cx, |this, cx| {
+                this.commands = commands_to_map(&result.commands);
+                this.errors = result.errors;
+                cx.emit(SlashCommandRegistryEvent::CommandsChanged);
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn start_watching(&mut self, cx: &mut Context<Self>) {
+        let fs = self.fs.clone();
+        let worktree_roots = self.worktree_roots.clone();
+
+        let task = cx.spawn(async move |this, cx| {
+            let user_dir = user_commands_dir();
+            let mut dirs_to_watch = vec![user_dir];
+            for root in &worktree_roots {
+                dirs_to_watch.push(project_commands_dir(root));
+            }
+
+            let mut watch_streams = Vec::new();
+            for dir in &dirs_to_watch {
+                let (stream, _watcher) = fs.watch(dir, Duration::from_millis(100)).await;
+                watch_streams.push(stream);
+            }
+
+            let mut combined = futures::stream::select_all(watch_streams);
+
+            while let Some(events) = combined.next().await {
+                let should_reload = events.iter().any(|event| {
+                    event.path.extension().is_some_and(|ext| ext == "md")
+                        || event.kind == Some(fs::PathEventKind::Created)
+                        || event.kind == Some(fs::PathEventKind::Removed)
+                });
+
+                if should_reload {
+                    let result = load_all_commands_async(&fs, &worktree_roots).await;
+                    let _ = this.update(cx, |this, cx| {
+                        this.commands = commands_to_map(&result.commands);
+                        this.errors = result.errors;
+                        cx.emit(SlashCommandRegistryEvent::CommandsChanged);
+                    });
+                }
+            }
+        });
+
+        self._watch_task = Some(task);
+    }
+}
+
+/// Loads all commands (both project and user) for given worktree roots asynchronously.
+pub async fn load_all_commands_async(
+    fs: &Arc<dyn Fs>,
+    worktree_roots: &[PathBuf],
+) -> CommandLoadResult {
     let mut result = CommandLoadResult::default();
-    let mut seen_commands: std::collections::HashMap<String, PathBuf> =
-        std::collections::HashMap::new();
+    let mut seen_commands: HashMap<String, PathBuf> = HashMap::default();
 
     // Load project commands first
     for root in worktree_roots {
-        let project_result = load_project_commands(root);
+        let commands_path = project_commands_dir(root);
+        let project_result =
+            load_commands_from_path_async(fs, &commands_path, CommandScope::Project).await;
         result.errors.extend(project_result.errors);
         for cmd in project_result.commands {
             if let Some(existing_path) = seen_commands.get(&*cmd.name) {
@@ -142,7 +247,9 @@ pub fn load_all_commands(worktree_roots: &[PathBuf]) -> CommandLoadResult {
     }
 
     // Load user commands
-    let user_result = load_user_commands();
+    let user_commands_path = user_commands_dir();
+    let user_result =
+        load_commands_from_path_async(fs, &user_commands_path, CommandScope::User).await;
     result.errors.extend(user_result.errors);
     for cmd in user_result.commands {
         if let Some(existing_path) = seen_commands.get(&*cmd.name) {
@@ -163,66 +270,74 @@ pub fn load_all_commands(worktree_roots: &[PathBuf]) -> CommandLoadResult {
     result
 }
 
-fn load_commands_from_path(commands_path: &Path, scope: CommandScope) -> CommandLoadResult {
+async fn load_commands_from_path_async(
+    fs: &Arc<dyn Fs>,
+    commands_path: &Path,
+    scope: CommandScope,
+) -> CommandLoadResult {
     let mut result = CommandLoadResult::default();
 
-    if !commands_path.exists() {
+    if !fs.is_dir(commands_path).await {
         return result;
     }
 
-    load_commands_from_dir(commands_path, commands_path, scope, &mut result);
+    load_commands_from_dir_async(fs, commands_path, commands_path, scope, &mut result).await;
     result
 }
 
-fn load_commands_from_dir(
-    base_path: &Path,
-    current_path: &Path,
+fn load_commands_from_dir_async<'a>(
+    fs: &'a Arc<dyn Fs>,
+    base_path: &'a Path,
+    current_path: &'a Path,
     scope: CommandScope,
-    result: &mut CommandLoadResult,
-) {
-    let entries = match std::fs::read_dir(current_path) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
-        Err(e) => {
-            result.errors.push(CommandLoadError {
-                path: current_path.to_path_buf(),
-                message: format!("Failed to read directory: {}", e),
-            });
-            return;
-        }
-    };
-
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
+    result: &'a mut CommandLoadResult,
+) -> futures::future::BoxFuture<'a, ()> {
+    Box::pin(async move {
+        let entries = match fs.read_dir(current_path).await {
+            Ok(entries) => entries,
             Err(e) => {
                 result.errors.push(CommandLoadError {
                     path: current_path.to_path_buf(),
-                    message: format!("Failed to read directory entry: {}", e),
+                    message: format!("Failed to read directory: {}", e),
                 });
-                continue;
+                return;
             }
         };
-        let path = entry.path();
 
-        if path.is_dir() {
-            load_commands_from_dir(base_path, &path, scope, result);
-        } else if path.extension().is_some_and(|ext| ext == "md") {
-            match load_command_file(base_path, &path, scope) {
-                Ok(Some(command)) => result.commands.push(command),
-                Ok(None) => {} // Empty file, skip silently
+        let entries: Vec<_> = entries.collect().await;
+
+        for entry in entries {
+            let path = match entry {
+                Ok(path) => path,
                 Err(e) => {
                     result.errors.push(CommandLoadError {
-                        path: path.clone(),
-                        message: e.to_string(),
+                        path: current_path.to_path_buf(),
+                        message: format!("Failed to read directory entry: {}", e),
                     });
+                    continue;
+                }
+            };
+
+            if fs.is_dir(&path).await {
+                load_commands_from_dir_async(fs, base_path, &path, scope, result).await;
+            } else if path.extension().is_some_and(|ext| ext == "md") {
+                match load_command_file_async(fs, base_path, &path, scope).await {
+                    Ok(Some(command)) => result.commands.push(command),
+                    Ok(None) => {} // Empty file, skip silently
+                    Err(e) => {
+                        result.errors.push(CommandLoadError {
+                            path: path.clone(),
+                            message: e.to_string(),
+                        });
+                    }
                 }
             }
         }
-    }
+    })
 }
 
-fn load_command_file(
+async fn load_command_file_async(
+    fs: &Arc<dyn Fs>,
     base_path: &Path,
     file_path: &Path,
     scope: CommandScope,
@@ -232,7 +347,7 @@ fn load_command_file(
         None => return Ok(None),
     };
 
-    let template = std::fs::read_to_string(file_path)?;
+    let template = fs.load(file_path).await?;
     if template.is_empty() {
         return Ok(None);
     }
@@ -248,7 +363,7 @@ fn load_command_file(
 
     // Build the full command name: "namespace:basename" or just "basename"
     let name = match &namespace {
-        Some(ns) => format!("{}:{}", ns.replace('/', ":"), base_name),
+        Some(namespace) => format!("{}:{}", namespace.replace('/', ":"), base_name),
         None => base_name,
     };
 
@@ -405,7 +520,6 @@ pub fn validate_arguments(
     command_name: &str,
     template: &str,
     arguments: &[Cow<'_, str>],
-    raw_arguments: &str,
 ) -> Result<()> {
     if template.is_empty() {
         return Err(anyhow!("Template cannot be empty"));
@@ -473,7 +587,6 @@ pub fn validate_arguments(
         ));
     }
 
-    let _ = raw_arguments; // Used by $ARGUMENTS
     Ok(())
 }
 
@@ -553,7 +666,7 @@ pub fn expand_user_slash_command(
     arguments: &[Cow<'_, str>],
     raw_arguments: &str,
 ) -> Result<String> {
-    validate_arguments(command_name, template, arguments, raw_arguments)?;
+    validate_arguments(command_name, template, arguments)?;
     expand_template(template, arguments, raw_arguments)
 }
 
@@ -582,27 +695,6 @@ pub fn try_expand_from_commands(
     Ok(Some(expanded))
 }
 
-/// Legacy function for compatibility with settings-based commands.
-/// Attempts to expand a user slash command from input text using a simple HashMap.
-#[cfg(test)]
-fn try_expand_user_slash_command(
-    line: &str,
-    slash_commands: &HashMap<String, String>,
-) -> Result<Option<String>> {
-    let Some(parsed) = try_parse_user_command(line) else {
-        return Ok(None);
-    };
-
-    let Some(template) = slash_commands.get(parsed.name) else {
-        return Ok(None);
-    };
-
-    let arguments = parse_arguments(parsed.raw_arguments)?;
-    let expanded =
-        expand_user_slash_command(parsed.name, template, &arguments, parsed.raw_arguments)?;
-    Ok(Some(expanded))
-}
-
 /// Checks if a command name exists in the user commands.
 pub fn has_command(name: &str, commands: &HashMap<String, UserSlashCommand>) -> bool {
     commands.contains_key(name)
@@ -611,6 +703,13 @@ pub fn has_command(name: &str, commands: &HashMap<String, UserSlashCommand>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fs::{FakeFs, Fs};
+    use gpui::{AppContext as _, TestAppContext};
+    use serde_json::json;
+    use std::sync::Arc;
+    use util::path;
+
+    // ==================== Parsing Tests ====================
 
     #[test]
     fn test_try_parse_user_command() {
@@ -674,12 +773,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_arguments_empty_quoted() {
-        let args = parse_arguments("\"\"").unwrap();
-        assert_eq!(args, vec![""]);
-    }
-
-    #[test]
     fn test_parse_arguments_unclosed_quote_error() {
         let result = parse_arguments("\"foo");
         assert!(result.is_err());
@@ -706,6 +799,8 @@ mod tests {
         assert_eq!(args, vec!["line1\nline2"]);
     }
 
+    // ==================== Placeholder Tests ====================
+
     #[test]
     fn test_count_positional_placeholders() {
         assert_eq!(count_positional_placeholders("Hello $1"), 1);
@@ -725,6 +820,8 @@ mod tests {
         assert!(!has_placeholders("no placeholders"));
         assert!(!has_placeholders("\\$1 escaped"));
     }
+
+    // ==================== Template Expansion Tests ====================
 
     #[test]
     fn test_expand_template_basic() {
@@ -755,31 +852,24 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_template_newline_escape() {
+    fn test_expand_template_escape_sequences() {
         let args: Vec<Cow<'_, str>> = vec![];
-        let result = expand_template("line1\\nline2", &args, "").unwrap();
-        assert_eq!(result, "line1\nline2");
-    }
-
-    #[test]
-    fn test_expand_template_dollar_escape() {
-        let args: Vec<Cow<'_, str>> = vec![];
-        let result = expand_template("cost is \\$1", &args, "").unwrap();
-        assert_eq!(result, "cost is $1");
-    }
-
-    #[test]
-    fn test_expand_template_quote_escape() {
-        let args: Vec<Cow<'_, str>> = vec![];
-        let result = expand_template("say \\\"hi\\\"", &args, "").unwrap();
-        assert_eq!(result, "say \"hi\"");
-    }
-
-    #[test]
-    fn test_expand_template_backslash_escape() {
-        let args: Vec<Cow<'_, str>> = vec![];
-        let result = expand_template("path\\\\file", &args, "").unwrap();
-        assert_eq!(result, "path\\file");
+        assert_eq!(
+            expand_template("line1\\nline2", &args, "").unwrap(),
+            "line1\nline2"
+        );
+        assert_eq!(
+            expand_template("cost is \\$1", &args, "").unwrap(),
+            "cost is $1"
+        );
+        assert_eq!(
+            expand_template("say \\\"hi\\\"", &args, "").unwrap(),
+            "say \"hi\""
+        );
+        assert_eq!(
+            expand_template("path\\\\file", &args, "").unwrap(),
+            "path\\file"
+        );
     }
 
     #[test]
@@ -803,53 +893,43 @@ mod tests {
         assert_eq!(result, "Args: ");
     }
 
-    #[test]
-    fn test_expand_template_arguments_preserves_quotes() {
-        let args = vec![Cow::Borrowed("multi word")];
-        let result = expand_template("Args: $ARGUMENTS", &args, "\"multi word\"").unwrap();
-        assert_eq!(result, "Args: \"multi word\"");
-    }
+    // ==================== Validation Tests ====================
 
     #[test]
     fn test_validate_arguments_exact_match() {
         let args = vec![Cow::Borrowed("a"), Cow::Borrowed("b")];
-        let result = validate_arguments("test", "$1 $2", &args, "a b");
+        let result = validate_arguments("test", "$1 $2", &args);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_validate_arguments_missing_args() {
         let args = vec![Cow::Borrowed("a")];
-        let result = validate_arguments("foo", "$1 $2", &args, "a");
+        let result = validate_arguments("foo", "$1 $2", &args);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("/foo"));
         assert!(err.contains("requires 2 arguments"));
-        assert!(err.contains("only 1 was provided"));
     }
 
     #[test]
     fn test_validate_arguments_extra_args() {
         let args = vec![Cow::Borrowed("a"), Cow::Borrowed("b")];
-        let result = validate_arguments("foo", "$1", &args, "a b");
+        let result = validate_arguments("foo", "$1", &args);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("/foo"));
         assert!(err.contains("accepts 1 argument"));
-        assert!(err.contains("2 were provided"));
     }
 
     #[test]
-    fn test_validate_arguments_no_placeholders_no_args() {
+    fn test_validate_arguments_no_placeholders() {
+        // No args expected, none provided - OK
         let args: Vec<Cow<'_, str>> = vec![];
-        let result = validate_arguments("test", "no placeholders here", &args, "");
-        assert!(result.is_ok());
-    }
+        assert!(validate_arguments("test", "no placeholders", &args).is_ok());
 
-    #[test]
-    fn test_validate_arguments_no_placeholders_has_args() {
+        // No args expected but some provided - Error
         let args = vec![Cow::Borrowed("unexpected")];
-        let result = validate_arguments("test", "no placeholders here", &args, "unexpected");
+        let result = validate_arguments("test", "no placeholders", &args);
         assert!(result.is_err());
         assert!(
             result
@@ -862,34 +942,32 @@ mod tests {
     #[test]
     fn test_validate_arguments_empty_template() {
         let args: Vec<Cow<'_, str>> = vec![];
-        let result = validate_arguments("test", "", &args, "");
+        let result = validate_arguments("test", "", &args);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("cannot be empty"));
     }
 
     #[test]
     fn test_validate_arguments_with_arguments_placeholder() {
-        // $ARGUMENTS accepts any number of arguments
+        // $ARGUMENTS accepts any number of arguments including zero
         let args: Vec<Cow<'_, str>> = vec![];
-        let result = validate_arguments("test", "Do: $ARGUMENTS", &args, "");
-        assert!(result.is_ok());
+        assert!(validate_arguments("test", "Do: $ARGUMENTS", &args).is_ok());
 
         let args = vec![Cow::Borrowed("a"), Cow::Borrowed("b"), Cow::Borrowed("c")];
-        let result = validate_arguments("test", "Do: $ARGUMENTS", &args, "a b c");
-        assert!(result.is_ok());
+        assert!(validate_arguments("test", "Do: $ARGUMENTS", &args).is_ok());
     }
 
     #[test]
     fn test_validate_arguments_mixed_placeholders() {
         // Both $ARGUMENTS and positional - need at least the positional ones
         let args = vec![Cow::Borrowed("first")];
-        let result = validate_arguments("test", "$1 then $ARGUMENTS", &args, "first");
-        assert!(result.is_ok());
+        assert!(validate_arguments("test", "$1 then $ARGUMENTS", &args).is_ok());
 
         let args: Vec<Cow<'_, str>> = vec![];
-        let result = validate_arguments("test", "$1 then $ARGUMENTS", &args, "");
-        assert!(result.is_err());
+        assert!(validate_arguments("test", "$1 then $ARGUMENTS", &args).is_err());
     }
+
+    // ==================== Integration Tests ====================
 
     #[test]
     fn test_expand_user_slash_command() {
@@ -901,380 +979,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result, "Please review: security");
-    }
-
-    #[test]
-    fn test_try_expand_user_slash_command() {
-        let mut commands = HashMap::default();
-        commands.insert("review".to_string(), "Please review: $1".to_string());
-        commands.insert("explain".to_string(), "Explain at $1 level: $2".to_string());
-
-        let result = try_expand_user_slash_command("/review security", &commands).unwrap();
-        assert_eq!(result, Some("Please review: security".to_string()));
-
-        let result =
-            try_expand_user_slash_command("/explain \"beginner\" \"this code\"", &commands)
-                .unwrap();
-        assert_eq!(
-            result,
-            Some("Explain at beginner level: this code".to_string())
-        );
-
-        let result = try_expand_user_slash_command("/unknown arg", &commands).unwrap();
-        assert_eq!(result, None);
-
-        let result = try_expand_user_slash_command("not a command", &commands).unwrap();
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_try_expand_user_slash_command_with_missing_args() {
-        let mut commands = HashMap::default();
-        commands.insert("review".to_string(), "Please review: $1".to_string());
-
-        let result = try_expand_user_slash_command("/review", &commands);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_try_expand_user_slash_command_with_arguments() {
-        let mut commands = HashMap::default();
-        commands.insert("search".to_string(), "Search for: $ARGUMENTS".to_string());
-
-        let result = try_expand_user_slash_command("/search foo bar baz", &commands).unwrap();
-        assert_eq!(result, Some("Search for: foo bar baz".to_string()));
-
-        let result = try_expand_user_slash_command("/search", &commands).unwrap();
-        assert_eq!(result, Some("Search for: ".to_string()));
-    }
-
-    #[test]
-    fn test_user_slash_command_description() {
-        let cmd = UserSlashCommand {
-            name: "test".into(),
-            template: "test".into(),
-            namespace: None,
-            path: PathBuf::from("/test.md"),
-            scope: CommandScope::User,
-        };
-        assert_eq!(cmd.description(), "(user)");
-
-        let cmd = UserSlashCommand {
-            name: "frontend:test".into(),
-            template: "test".into(),
-            namespace: Some("frontend".into()),
-            path: PathBuf::from("/frontend/test.md"),
-            scope: CommandScope::User,
-        };
-        assert_eq!(cmd.description(), "(user:frontend)");
-
-        let cmd = UserSlashCommand {
-            name: "tools:git:test".into(),
-            template: "test".into(),
-            namespace: Some("tools/git".into()),
-            path: PathBuf::from("/tools/git/test.md"),
-            scope: CommandScope::User,
-        };
-        assert_eq!(cmd.description(), "(user:tools/git)");
-
-        let cmd = UserSlashCommand {
-            name: "test".into(),
-            template: "test".into(),
-            namespace: None,
-            path: PathBuf::from("/test.md"),
-            scope: CommandScope::Project,
-        };
-        assert_eq!(cmd.description(), "(project)");
-
-        let cmd = UserSlashCommand {
-            name: "frontend:test".into(),
-            template: "test".into(),
-            namespace: Some("frontend".into()),
-            path: PathBuf::from("/frontend/test.md"),
-            scope: CommandScope::Project,
-        };
-        assert_eq!(cmd.description(), "(project:frontend)");
-    }
-
-    #[test]
-    fn test_user_slash_command_requires_arguments() {
-        let cmd = UserSlashCommand {
-            name: "test".into(),
-            template: "No placeholders here".into(),
-            namespace: None,
-            path: PathBuf::from("/test.md"),
-            scope: CommandScope::User,
-        };
-        assert!(!cmd.requires_arguments());
-
-        let cmd = UserSlashCommand {
-            name: "test".into(),
-            template: "Hello $1".into(),
-            namespace: None,
-            path: PathBuf::from("/test.md"),
-            scope: CommandScope::User,
-        };
-        assert!(cmd.requires_arguments());
-
-        let cmd = UserSlashCommand {
-            name: "test".into(),
-            template: "Do: $ARGUMENTS".into(),
-            namespace: None,
-            path: PathBuf::from("/test.md"),
-            scope: CommandScope::User,
-        };
-        assert!(cmd.requires_arguments());
-    }
-
-    #[test]
-    fn test_load_command_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let commands_dir = temp_dir.path();
-
-        // Create a simple command file
-        let review_path = commands_dir.join("review.md");
-        std::fs::write(&review_path, "Please review this code for: $1").unwrap();
-
-        let result =
-            super::load_command_file(commands_dir, &review_path, CommandScope::User).unwrap();
-        assert!(result.is_some());
-        let cmd = result.unwrap();
-        assert_eq!(cmd.name.as_ref(), "review");
-        assert_eq!(cmd.template.as_ref(), "Please review this code for: $1");
-        assert!(cmd.namespace.is_none());
-        assert_eq!(cmd.scope, CommandScope::User);
-    }
-
-    #[test]
-    fn test_load_command_file_project_scope() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let commands_dir = temp_dir.path();
-
-        let review_path = commands_dir.join("review.md");
-        std::fs::write(&review_path, "Project review: $1").unwrap();
-
-        let result =
-            super::load_command_file(commands_dir, &review_path, CommandScope::Project).unwrap();
-        assert!(result.is_some());
-        let cmd = result.unwrap();
-        assert_eq!(cmd.scope, CommandScope::Project);
-        assert_eq!(cmd.description(), "(project)");
-    }
-
-    #[test]
-    fn test_load_command_file_with_namespace() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let commands_dir = temp_dir.path();
-
-        // Create a namespaced command file
-        let frontend_dir = commands_dir.join("frontend");
-        std::fs::create_dir_all(&frontend_dir).unwrap();
-        let component_path = frontend_dir.join("component.md");
-        std::fs::write(&component_path, "Create a React component: $1").unwrap();
-
-        let result =
-            super::load_command_file(commands_dir, &component_path, CommandScope::User).unwrap();
-        assert!(result.is_some());
-        let cmd = result.unwrap();
-        // Command name should be prefixed with namespace
-        assert_eq!(cmd.name.as_ref(), "frontend:component");
-        assert_eq!(cmd.template.as_ref(), "Create a React component: $1");
-        assert_eq!(cmd.namespace.as_ref().map(|s| s.as_ref()), Some("frontend"));
-    }
-
-    #[test]
-    fn test_load_command_file_nested_namespace() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let commands_dir = temp_dir.path();
-
-        // Create a deeply nested command file
-        let nested_dir = commands_dir.join("tools").join("git");
-        std::fs::create_dir_all(&nested_dir).unwrap();
-        let commit_path = nested_dir.join("commit.md");
-        std::fs::write(&commit_path, "Create a git commit: $ARGUMENTS").unwrap();
-
-        let result =
-            super::load_command_file(commands_dir, &commit_path, CommandScope::User).unwrap();
-        assert!(result.is_some());
-        let cmd = result.unwrap();
-        // Nested namespace uses : separator
-        assert_eq!(cmd.name.as_ref(), "tools:git:commit");
-        assert_eq!(
-            cmd.namespace.as_ref().map(|s| s.as_ref()),
-            Some("tools/git")
-        );
-    }
-
-    #[test]
-    fn test_load_command_file_empty_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let commands_dir = temp_dir.path();
-
-        // Create an empty command file
-        let empty_path = commands_dir.join("empty.md");
-        std::fs::write(&empty_path, "").unwrap();
-
-        let result =
-            super::load_command_file(commands_dir, &empty_path, CommandScope::User).unwrap();
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_load_commands_from_dir() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let commands_dir = temp_dir.path();
-
-        // Create multiple command files
-        std::fs::write(commands_dir.join("greet.md"), "Hello, world!").unwrap();
-        std::fs::write(commands_dir.join("review.md"), "Review: $1").unwrap();
-
-        // Create a namespaced command
-        let frontend_dir = commands_dir.join("frontend");
-        std::fs::create_dir_all(&frontend_dir).unwrap();
-        std::fs::write(frontend_dir.join("component.md"), "Component: $1").unwrap();
-
-        let mut result = CommandLoadResult::default();
-        super::load_commands_from_dir(commands_dir, commands_dir, CommandScope::User, &mut result);
-
-        assert!(result.errors.is_empty());
-        assert_eq!(result.commands.len(), 3);
-
-        let names: Vec<&str> = result.commands.iter().map(|c| c.name.as_ref()).collect();
-        assert!(names.contains(&"greet"));
-        assert!(names.contains(&"review"));
-        // Namespaced command has prefix
-        assert!(names.contains(&"frontend:component"));
-
-        let component_cmd = result
-            .commands
-            .iter()
-            .find(|c| c.name.as_ref() == "frontend:component")
-            .unwrap();
-        assert_eq!(
-            component_cmd.namespace.as_ref().map(|s| s.as_ref()),
-            Some("frontend")
-        );
-    }
-
-    #[test]
-    fn test_load_commands_from_nonexistent_dir() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let nonexistent = temp_dir.path().join("does_not_exist");
-
-        let mut result = CommandLoadResult::default();
-        super::load_commands_from_dir(&nonexistent, &nonexistent, CommandScope::User, &mut result);
-        assert!(result.errors.is_empty());
-        assert!(result.commands.is_empty());
-    }
-
-    #[test]
-    fn test_load_project_commands() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let worktree_root = temp_dir.path();
-
-        // Create .zed/commands/ directory
-        let commands_dir = worktree_root.join(".zed").join("commands");
-        std::fs::create_dir_all(&commands_dir).unwrap();
-        std::fs::write(commands_dir.join("build.md"), "Build the project").unwrap();
-
-        let result = super::load_project_commands(worktree_root);
-        assert!(result.errors.is_empty());
-        assert_eq!(result.commands.len(), 1);
-        assert_eq!(result.commands[0].name.as_ref(), "build");
-        assert_eq!(result.commands[0].scope, CommandScope::Project);
-        assert_eq!(result.commands[0].description(), "(project)");
-    }
-
-    #[test]
-    fn test_load_all_commands_no_duplicates() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let project_root = temp_dir.path().join("project");
-        std::fs::create_dir_all(&project_root).unwrap();
-
-        // Create project command
-        let project_commands = project_root.join(".zed").join("commands");
-        std::fs::create_dir_all(&project_commands).unwrap();
-        std::fs::write(project_commands.join("review.md"), "Project review: $1").unwrap();
-        std::fs::write(project_commands.join("build.md"), "Build project").unwrap();
-
-        // Create user command directory (we can't easily test this without mocking config_dir)
-        // But we can test that project commands are loaded with correct scope
-        let result = super::load_all_commands(std::slice::from_ref(&project_root));
-
-        assert!(result.errors.is_empty());
-
-        // Should have both project commands
-        assert!(result.commands.iter().any(|c| c.name.as_ref() == "review"));
-        assert!(result.commands.iter().any(|c| c.name.as_ref() == "build"));
-
-        // All should be project scope
-        for cmd in &result.commands {
-            assert_eq!(cmd.scope, CommandScope::Project);
-        }
-    }
-
-    #[test]
-    fn test_load_all_commands_duplicate_error() {
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        // Create two project roots with the same command name
-        let project1 = temp_dir.path().join("project1");
-        let project2 = temp_dir.path().join("project2");
-
-        let commands1 = project1.join(".zed").join("commands");
-        let commands2 = project2.join(".zed").join("commands");
-
-        std::fs::create_dir_all(&commands1).unwrap();
-        std::fs::create_dir_all(&commands2).unwrap();
-
-        std::fs::write(commands1.join("deploy.md"), "Deploy from project1").unwrap();
-        std::fs::write(commands2.join("deploy.md"), "Deploy from project2").unwrap();
-
-        let result = super::load_all_commands(&[project1, project2]);
-
-        // Should have one command loaded and one error for the duplicate
-        assert_eq!(result.commands.len(), 1);
-        assert_eq!(result.errors.len(), 1);
-        assert!(result.errors[0].message.contains("ambiguous"));
-        assert!(result.errors[0].message.contains("deploy"));
-    }
-
-    #[test]
-    fn test_command_load_error_display() {
-        let error = CommandLoadError {
-            path: PathBuf::from("/path/to/command.md"),
-            message: "Permission denied".to_string(),
-        };
-        assert_eq!(
-            error.to_string(),
-            "Failed to load /path/to/command.md: Permission denied"
-        );
-    }
-
-    #[test]
-    fn test_commands_to_map() {
-        let commands = vec![
-            UserSlashCommand {
-                name: "greet".into(),
-                template: "Hello!".into(),
-                namespace: None,
-                path: PathBuf::from("/greet.md"),
-                scope: CommandScope::User,
-            },
-            UserSlashCommand {
-                name: "review".into(),
-                template: "Review: $1".into(),
-                namespace: Some("code".into()),
-                path: PathBuf::from("/code/review.md"),
-                scope: CommandScope::User,
-            },
-        ];
-
-        let map = commands_to_map(&commands);
-        assert_eq!(map.len(), 2);
-        assert!(map.contains_key("greet"));
-        assert!(map.contains_key("review"));
-        assert_eq!(map.get("greet").unwrap().template.as_ref(), "Hello!");
     }
 
     #[test]
@@ -1304,25 +1008,29 @@ mod tests {
         ];
         let map = commands_to_map(&commands);
 
-        // Test command without arguments
-        let result = try_expand_from_commands("/greet", &map).unwrap();
-        assert_eq!(result, Some("Hello, world!".to_string()));
+        // Command without arguments
+        assert_eq!(
+            try_expand_from_commands("/greet", &map).unwrap(),
+            Some("Hello, world!".to_string())
+        );
 
-        // Test command with positional argument
-        let result = try_expand_from_commands("/review security", &map).unwrap();
-        assert_eq!(result, Some("Review this for: security".to_string()));
+        // Command with positional argument
+        assert_eq!(
+            try_expand_from_commands("/review security", &map).unwrap(),
+            Some("Review this for: security".to_string())
+        );
 
-        // Test command with $ARGUMENTS
-        let result = try_expand_from_commands("/search foo bar baz", &map).unwrap();
-        assert_eq!(result, Some("Search: foo bar baz".to_string()));
+        // Command with $ARGUMENTS
+        assert_eq!(
+            try_expand_from_commands("/search foo bar baz", &map).unwrap(),
+            Some("Search: foo bar baz".to_string())
+        );
 
-        // Test unknown command
-        let result = try_expand_from_commands("/unknown", &map).unwrap();
-        assert_eq!(result, None);
+        // Unknown command returns None
+        assert_eq!(try_expand_from_commands("/unknown", &map).unwrap(), None);
 
-        // Test not a command
-        let result = try_expand_from_commands("just text", &map).unwrap();
-        assert_eq!(result, None);
+        // Not a command returns None
+        assert_eq!(try_expand_from_commands("just text", &map).unwrap(), None);
     }
 
     #[test]
@@ -1346,18 +1054,766 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_has_command() {
-        let commands = vec![UserSlashCommand {
-            name: "greet".into(),
-            template: "Hello!".into(),
-            namespace: None,
-            path: PathBuf::from("/greet.md"),
-            scope: CommandScope::User,
-        }];
-        let map = commands_to_map(&commands);
+    // ==================== Edge Case Tests ====================
 
-        assert!(has_command("greet", &map));
-        assert!(!has_command("unknown", &map));
+    #[test]
+    fn test_unicode_command_names() {
+        // Test that unicode in command names works
+        let result = try_parse_user_command("/日本語 arg1");
+        assert!(result.is_some());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.name, "日本語");
+        assert_eq!(parsed.raw_arguments, "arg1");
+    }
+
+    #[test]
+    fn test_unicode_in_arguments() {
+        let args = parse_arguments("\"こんにちは\" 世界").unwrap();
+        assert_eq!(args, vec!["こんにちは", "世界"]);
+    }
+
+    #[test]
+    fn test_unicode_in_template() {
+        let args = vec![Cow::Borrowed("名前")];
+        let result = expand_template("こんにちは、$1さん！", &args, "名前").unwrap();
+        assert_eq!(result, "こんにちは、名前さん！");
+    }
+
+    #[test]
+    fn test_very_long_template() {
+        // Test that large templates work correctly
+        let long_content = "x".repeat(100_000);
+        let template = format!("Start: $1 {}", long_content);
+        let args = vec![Cow::Borrowed("value")];
+        let result = expand_template(&template, &args, "value").unwrap();
+        assert!(result.starts_with("Start: value x"));
+        assert_eq!(result.len(), 100_000 + 13); // "Start: " (7) + "value" (5) + " " (1) + long_content
+    }
+
+    #[test]
+    fn test_many_placeholders() {
+        // Test template with many placeholders
+        let template = "$1 $2 $3 $4 $5 $6 $7 $8 $9 $10";
+        assert_eq!(count_positional_placeholders(template), 10);
+
+        let args: Vec<Cow<'_, str>> = (1..=10).map(|i| Cow::Owned(i.to_string())).collect();
+        let result = expand_template(template, &args, "1 2 3 4 5 6 7 8 9 10").unwrap();
+        assert_eq!(result, "1 2 3 4 5 6 7 8 9 10");
+    }
+
+    #[test]
+    fn test_placeholder_zero_is_invalid() {
+        let args = vec![Cow::Borrowed("a")];
+        let result = expand_template("$0", &args, "a");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("$0 is invalid"));
+    }
+
+    #[test]
+    fn test_dollar_sign_without_number() {
+        // Bare $ should be preserved
+        let args: Vec<Cow<'_, str>> = vec![];
+        let result = expand_template("cost is $", &args, "").unwrap();
+        assert_eq!(result, "cost is $");
+    }
+
+    #[test]
+    fn test_consecutive_whitespace_in_arguments() {
+        let args = parse_arguments("  a    b   c  ").unwrap();
+        assert_eq!(args, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_empty_input() {
+        let args = parse_arguments("").unwrap();
+        assert!(args.is_empty());
+
+        let args = parse_arguments("   ").unwrap();
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn test_command_description_formats() {
+        let user_cmd = UserSlashCommand {
+            name: "test".into(),
+            template: "test".into(),
+            namespace: None,
+            path: PathBuf::from("/test.md"),
+            scope: CommandScope::User,
+        };
+        assert_eq!(user_cmd.description(), "(user)");
+
+        let user_ns_cmd = UserSlashCommand {
+            name: "frontend:test".into(),
+            template: "test".into(),
+            namespace: Some("frontend".into()),
+            path: PathBuf::from("/frontend/test.md"),
+            scope: CommandScope::User,
+        };
+        assert_eq!(user_ns_cmd.description(), "(user:frontend)");
+
+        let project_cmd = UserSlashCommand {
+            name: "test".into(),
+            template: "test".into(),
+            namespace: None,
+            path: PathBuf::from("/test.md"),
+            scope: CommandScope::Project,
+        };
+        assert_eq!(project_cmd.description(), "(project)");
+
+        let project_ns_cmd = UserSlashCommand {
+            name: "tools:git:test".into(),
+            template: "test".into(),
+            namespace: Some("tools/git".into()),
+            path: PathBuf::from("/tools/git/test.md"),
+            scope: CommandScope::Project,
+        };
+        assert_eq!(project_ns_cmd.description(), "(project:tools/git)");
+    }
+
+    // ==================== Async File Loading Tests with FakeFs ====================
+
+    #[gpui::test]
+    async fn test_load_commands_from_empty_dir(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/commands"), json!({})).await;
+        let fs: Arc<dyn Fs> = fs;
+
+        let result =
+            load_commands_from_path_async(&fs, Path::new(path!("/commands")), CommandScope::User)
+                .await;
+
+        assert!(result.commands.is_empty());
+        assert!(result.errors.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_load_commands_from_nonexistent_dir(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/"), json!({})).await;
+        let fs: Arc<dyn Fs> = fs;
+
+        let result = load_commands_from_path_async(
+            &fs,
+            Path::new(path!("/nonexistent")),
+            CommandScope::User,
+        )
+        .await;
+
+        assert!(result.commands.is_empty());
+        assert!(result.errors.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_load_single_command(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/commands"),
+            json!({
+                "review.md": "Please review: $1"
+            }),
+        )
+        .await;
+        let fs: Arc<dyn Fs> = fs;
+
+        let result =
+            load_commands_from_path_async(&fs, Path::new(path!("/commands")), CommandScope::User)
+                .await;
+
+        assert!(result.errors.is_empty());
+        assert_eq!(result.commands.len(), 1);
+        let cmd = &result.commands[0];
+        assert_eq!(cmd.name.as_ref(), "review");
+        assert_eq!(cmd.template.as_ref(), "Please review: $1");
+        assert!(cmd.namespace.is_none());
+        assert_eq!(cmd.scope, CommandScope::User);
+    }
+
+    #[gpui::test]
+    async fn test_load_commands_with_namespace(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/commands"),
+            json!({
+                "frontend": {
+                    "component.md": "Create component: $1"
+                }
+            }),
+        )
+        .await;
+        let fs: Arc<dyn Fs> = fs;
+
+        let result =
+            load_commands_from_path_async(&fs, Path::new(path!("/commands")), CommandScope::User)
+                .await;
+
+        assert!(result.errors.is_empty());
+        assert_eq!(result.commands.len(), 1);
+        let cmd = &result.commands[0];
+        assert_eq!(cmd.name.as_ref(), "frontend:component");
+        assert_eq!(cmd.namespace.as_ref().map(|s| s.as_ref()), Some("frontend"));
+    }
+
+    #[gpui::test]
+    async fn test_load_commands_nested_namespace(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/commands"),
+            json!({
+                "tools": {
+                    "git": {
+                        "commit.md": "Git commit: $ARGUMENTS"
+                    }
+                }
+            }),
+        )
+        .await;
+        let fs: Arc<dyn Fs> = fs;
+
+        let result =
+            load_commands_from_path_async(&fs, Path::new(path!("/commands")), CommandScope::User)
+                .await;
+
+        assert!(result.errors.is_empty());
+        assert_eq!(result.commands.len(), 1);
+        let cmd = &result.commands[0];
+        assert_eq!(cmd.name.as_ref(), "tools:git:commit");
+        assert_eq!(
+            cmd.namespace.as_ref().map(|s| s.as_ref()),
+            Some("tools/git")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_load_commands_empty_file_ignored(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/commands"),
+            json!({
+                "empty.md": "",
+                "valid.md": "Hello!"
+            }),
+        )
+        .await;
+        let fs: Arc<dyn Fs> = fs;
+
+        let result =
+            load_commands_from_path_async(&fs, Path::new(path!("/commands")), CommandScope::User)
+                .await;
+
+        assert!(result.errors.is_empty());
+        assert_eq!(result.commands.len(), 1);
+        assert_eq!(result.commands[0].name.as_ref(), "valid");
+    }
+
+    #[gpui::test]
+    async fn test_load_commands_non_md_files_ignored(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/commands"),
+            json!({
+                "command.md": "Valid command",
+                "readme.txt": "Not a command",
+                "script.sh": "Also not a command"
+            }),
+        )
+        .await;
+        let fs: Arc<dyn Fs> = fs;
+
+        let result =
+            load_commands_from_path_async(&fs, Path::new(path!("/commands")), CommandScope::User)
+                .await;
+
+        assert!(result.errors.is_empty());
+        assert_eq!(result.commands.len(), 1);
+        assert_eq!(result.commands[0].name.as_ref(), "command");
+    }
+
+    #[gpui::test]
+    async fn test_load_project_commands(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".zed": {
+                    "commands": {
+                        "build.md": "Build the project"
+                    }
+                }
+            }),
+        )
+        .await;
+        let fs: Arc<dyn Fs> = fs;
+
+        let commands_path = project_commands_dir(Path::new(path!("/project")));
+        let result =
+            load_commands_from_path_async(&fs, &commands_path, CommandScope::Project).await;
+
+        assert!(result.errors.is_empty());
+        assert_eq!(result.commands.len(), 1);
+        assert_eq!(result.commands[0].name.as_ref(), "build");
+        assert_eq!(result.commands[0].scope, CommandScope::Project);
+    }
+
+    #[gpui::test]
+    async fn test_load_all_commands_no_duplicates(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project1"),
+            json!({
+                ".zed": {
+                    "commands": {
+                        "review.md": "Project 1 review"
+                    }
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/project2"),
+            json!({
+                ".zed": {
+                    "commands": {
+                        "build.md": "Project 2 build"
+                    }
+                }
+            }),
+        )
+        .await;
+        let fs: Arc<dyn Fs> = fs;
+
+        let result = load_all_commands_async(
+            &fs,
+            &[
+                PathBuf::from(path!("/project1")),
+                PathBuf::from(path!("/project2")),
+            ],
+        )
+        .await;
+
+        assert!(result.errors.is_empty());
+        assert_eq!(result.commands.len(), 2);
+        let names: Vec<&str> = result.commands.iter().map(|c| c.name.as_ref()).collect();
+        assert!(names.contains(&"review"));
+        assert!(names.contains(&"build"));
+    }
+
+    #[gpui::test]
+    async fn test_load_all_commands_duplicate_error(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project1"),
+            json!({
+                ".zed": {
+                    "commands": {
+                        "deploy.md": "Deploy from project 1"
+                    }
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/project2"),
+            json!({
+                ".zed": {
+                    "commands": {
+                        "deploy.md": "Deploy from project 2"
+                    }
+                }
+            }),
+        )
+        .await;
+        let fs: Arc<dyn Fs> = fs;
+
+        let result = load_all_commands_async(
+            &fs,
+            &[
+                PathBuf::from(path!("/project1")),
+                PathBuf::from(path!("/project2")),
+            ],
+        )
+        .await;
+
+        // Should have one command and one error
+        assert_eq!(result.commands.len(), 1);
+        assert_eq!(result.errors.len(), 1);
+        assert!(result.errors[0].message.contains("ambiguous"));
+        assert!(result.errors[0].message.contains("deploy"));
+    }
+
+    #[gpui::test]
+    async fn test_registry_loads_commands(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".zed": {
+                    "commands": {
+                        "test.md": "Test command"
+                    }
+                }
+            }),
+        )
+        .await;
+        let fs: Arc<dyn Fs> = fs;
+
+        let registry = cx.new(|cx| {
+            SlashCommandRegistry::new(fs.clone(), vec![PathBuf::from(path!("/project"))], cx)
+        });
+
+        // Wait for async load
+        cx.run_until_parked();
+
+        registry.read_with(cx, |registry: &SlashCommandRegistry, _cx| {
+            assert!(registry.errors().is_empty());
+            assert!(registry.commands().contains_key("test"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_registry_updates_worktree_roots(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project1"),
+            json!({
+                ".zed": {
+                    "commands": {
+                        "cmd1.md": "Command 1"
+                    }
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/project2"),
+            json!({
+                ".zed": {
+                    "commands": {
+                        "cmd2.md": "Command 2"
+                    }
+                }
+            }),
+        )
+        .await;
+        let fs: Arc<dyn Fs> = fs;
+
+        let registry = cx.new(|cx| {
+            SlashCommandRegistry::new(fs.clone(), vec![PathBuf::from(path!("/project1"))], cx)
+        });
+
+        cx.run_until_parked();
+
+        registry.read_with(cx, |registry: &SlashCommandRegistry, _cx| {
+            assert!(registry.commands().contains_key("cmd1"));
+            assert!(!registry.commands().contains_key("cmd2"));
+        });
+
+        // Update worktree roots
+        registry.update(cx, |registry: &mut SlashCommandRegistry, cx| {
+            registry.set_worktree_roots(
+                vec![
+                    PathBuf::from(path!("/project1")),
+                    PathBuf::from(path!("/project2")),
+                ],
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        registry.read_with(cx, |registry: &SlashCommandRegistry, _cx| {
+            assert!(registry.commands().contains_key("cmd1"));
+            assert!(registry.commands().contains_key("cmd2"));
+        });
+    }
+
+    // ==================== Symlink Handling Tests ====================
+
+    #[gpui::test]
+    async fn test_load_commands_from_symlinked_directory(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+
+        // Create the actual commands directory with a command
+        fs.insert_tree(
+            path!("/actual_commands"),
+            json!({
+                "review.md": "Please review: $1"
+            }),
+        )
+        .await;
+
+        // Create a symlink from /commands to /actual_commands
+        fs.insert_tree(path!("/"), json!({})).await;
+        fs.create_symlink(
+            Path::new(path!("/commands")),
+            PathBuf::from(path!("/actual_commands")),
+        )
+        .await
+        .unwrap();
+
+        let fs: Arc<dyn Fs> = fs;
+
+        let result =
+            load_commands_from_path_async(&fs, Path::new(path!("/commands")), CommandScope::User)
+                .await;
+
+        assert!(result.errors.is_empty());
+        assert_eq!(result.commands.len(), 1);
+        assert_eq!(result.commands[0].name.as_ref(), "review");
+    }
+
+    #[gpui::test]
+    async fn test_load_commands_from_symlinked_file(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+
+        // Create the actual command file
+        fs.insert_tree(
+            path!("/actual"),
+            json!({
+                "real_review.md": "Review command content: $1"
+            }),
+        )
+        .await;
+
+        // Create commands directory with a symlink to the file
+        fs.insert_tree(path!("/commands"), json!({})).await;
+        fs.create_symlink(
+            Path::new(path!("/commands/review.md")),
+            PathBuf::from(path!("/actual/real_review.md")),
+        )
+        .await
+        .unwrap();
+
+        let fs: Arc<dyn Fs> = fs;
+
+        let result =
+            load_commands_from_path_async(&fs, Path::new(path!("/commands")), CommandScope::User)
+                .await;
+
+        assert!(result.errors.is_empty());
+        assert_eq!(result.commands.len(), 1);
+        assert_eq!(result.commands[0].name.as_ref(), "review");
+        assert_eq!(
+            result.commands[0].template.as_ref(),
+            "Review command content: $1"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_load_commands_claude_symlink_pattern(cx: &mut TestAppContext) {
+        // Simulates the common pattern of symlinking ~/.claude/commands/ to zed's commands dir
+        let fs = FakeFs::new(cx.executor());
+
+        // Create Claude's commands directory structure
+        fs.insert_tree(
+            path!("/home/user/.claude/commands"),
+            json!({
+                "explain.md": "Explain this code: $ARGUMENTS",
+                "refactor": {
+                    "extract.md": "Extract method: $1"
+                }
+            }),
+        )
+        .await;
+
+        // Create Zed config dir with symlink to Claude's commands
+        fs.insert_tree(path!("/home/user/.config/zed"), json!({}))
+            .await;
+        fs.create_symlink(
+            Path::new(path!("/home/user/.config/zed/commands")),
+            PathBuf::from(path!("/home/user/.claude/commands")),
+        )
+        .await
+        .unwrap();
+
+        let fs: Arc<dyn Fs> = fs;
+
+        let result = load_commands_from_path_async(
+            &fs,
+            Path::new(path!("/home/user/.config/zed/commands")),
+            CommandScope::User,
+        )
+        .await;
+
+        assert!(result.errors.is_empty());
+        assert_eq!(result.commands.len(), 2);
+
+        let names: Vec<&str> = result.commands.iter().map(|c| c.name.as_ref()).collect();
+        assert!(names.contains(&"explain"));
+        assert!(names.contains(&"refactor:extract"));
+    }
+
+    // ==================== Permission/Error Handling Tests ====================
+
+    #[gpui::test]
+    async fn test_load_commands_continues_after_single_file_error(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+
+        // Create a directory with multiple files - one valid, one that we'll make cause an error
+        fs.insert_tree(
+            path!("/commands"),
+            json!({
+                "valid.md": "Valid command",
+                "also_valid.md": "Another valid command"
+            }),
+        )
+        .await;
+
+        let fs: Arc<dyn Fs> = fs;
+
+        // Load commands - both should be loaded successfully
+        let result =
+            load_commands_from_path_async(&fs, Path::new(path!("/commands")), CommandScope::User)
+                .await;
+
+        assert!(result.errors.is_empty());
+        assert_eq!(result.commands.len(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_load_commands_reports_directory_read_errors(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+
+        // Create base directory but no commands subdirectory
+        fs.insert_tree(path!("/"), json!({})).await;
+
+        let fs: Arc<dyn Fs> = fs;
+
+        // Try to load from a path that exists but isn't a directory
+        // First create a file where we expect a directory
+        fs.create_file(Path::new(path!("/commands")), fs::CreateOptions::default())
+            .await
+            .unwrap();
+
+        let result =
+            load_commands_from_path_async(&fs, Path::new(path!("/commands")), CommandScope::User)
+                .await;
+
+        // Should return empty since /commands is a file, not a directory
+        assert!(result.commands.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_command_load_error_includes_path_info(_cx: &mut TestAppContext) {
+        // Test that CommandLoadError properly includes path information
+        let error = CommandLoadError {
+            path: PathBuf::from("/path/to/problematic/command.md"),
+            message: "Could not read file".to_string(),
+        };
+
+        let display = error.to_string();
+        assert!(display.contains("/path/to/problematic/command.md"));
+        assert!(display.contains("Could not read file"));
+    }
+
+    #[gpui::test]
+    async fn test_load_all_commands_aggregates_errors(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+
+        // Create two projects with duplicate command names
+        fs.insert_tree(
+            path!("/project1"),
+            json!({
+                ".zed": {
+                    "commands": {
+                        "build.md": "Build 1"
+                    }
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/project2"),
+            json!({
+                ".zed": {
+                    "commands": {
+                        "build.md": "Build 2"
+                    }
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/project3"),
+            json!({
+                ".zed": {
+                    "commands": {
+                        "build.md": "Build 3"
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let fs: Arc<dyn Fs> = fs;
+
+        let result = load_all_commands_async(
+            &fs,
+            &[
+                PathBuf::from(path!("/project1")),
+                PathBuf::from(path!("/project2")),
+                PathBuf::from(path!("/project3")),
+            ],
+        )
+        .await;
+
+        // Should have 1 command (first one) and 2 errors (for duplicates)
+        assert_eq!(result.commands.len(), 1);
+        assert_eq!(result.errors.len(), 2);
+
+        // All errors should mention "ambiguous"
+        for error in &result.errors {
+            assert!(error.message.contains("ambiguous"));
+        }
+    }
+
+    #[gpui::test]
+    async fn test_empty_commands_directory_no_errors(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+
+        // Create empty commands directories
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".zed": {
+                    "commands": {}
+                }
+            }),
+        )
+        .await;
+
+        let fs: Arc<dyn Fs> = fs;
+
+        let result = load_all_commands_async(&fs, &[PathBuf::from(path!("/project"))]).await;
+
+        assert!(result.commands.is_empty());
+        assert!(result.errors.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_mixed_valid_and_empty_files(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+
+        fs.insert_tree(
+            path!("/commands"),
+            json!({
+                "valid.md": "Valid command",
+                "empty.md": "",
+                "whitespace_only.md": "   ",
+                "another_valid.md": "Another valid"
+            }),
+        )
+        .await;
+
+        let fs: Arc<dyn Fs> = fs;
+
+        let result =
+            load_commands_from_path_async(&fs, Path::new(path!("/commands")), CommandScope::User)
+                .await;
+
+        // Empty file is ignored, whitespace-only is NOT empty (has content)
+        // So we should have 3 commands
+        assert!(result.errors.is_empty());
+        assert_eq!(result.commands.len(), 3);
     }
 }

@@ -180,6 +180,7 @@ pub struct AvailableCommand {
     pub name: Arc<str>,
     pub description: Arc<str>,
     pub requires_argument: bool,
+    /// The source of the command - kept for future use to differentiate UI behavior
     #[allow(dead_code)]
     pub source: CommandSource,
 }
@@ -598,13 +599,16 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     }
 
     fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<AvailableCommand>> {
-        let mut commands = self.source.available_commands(cx);
+        let commands = self.source.available_commands(cx);
 
-        if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-            // Get worktree roots for project commands
-            let worktree_roots: Vec<std::path::PathBuf> = self
-                .workspace
-                .upgrade()
+        // Get fs and worktree roots for async command loading
+        let load_user_commands = cx.has_flag::<UserSlashCommandsFeatureFlag>();
+        let (fs, worktree_roots) = if load_user_commands {
+            let workspace = self.workspace.upgrade();
+            let fs = workspace
+                .as_ref()
+                .map(|w| w.read(cx).project().read(cx).fs().clone());
+            let roots: Vec<std::path::PathBuf> = workspace
                 .map(|workspace| {
                     workspace
                         .read(cx)
@@ -613,32 +617,40 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                         .collect()
                 })
                 .unwrap_or_default();
-
-            // Load file-based commands (project commands take precedence over user commands)
-            let load_result = crate::user_slash_command::load_all_commands(&worktree_roots);
-
-            // Log any errors encountered while loading commands
-            for error in &load_result.errors {
-                log::warn!("Failed to load slash command: {}", error);
-            }
-
-            for cmd in load_result.commands {
-                commands.push(AvailableCommand {
-                    name: cmd.name.clone(),
-                    description: cmd.description().into(),
-                    requires_argument: cmd.requires_arguments(),
-                    source: CommandSource::UserDefined {
-                        template: cmd.template.clone(),
-                    },
-                });
-            }
-        }
-
-        if commands.is_empty() {
-            return Task::ready(Vec::new());
-        }
+            (fs, roots)
+        } else {
+            (None, Vec::new())
+        };
 
         cx.spawn(async move |cx| {
+            let mut commands = commands;
+
+            // Load user commands asynchronously
+            if let Some(fs) = fs {
+                let load_result =
+                    crate::user_slash_command::load_all_commands_async(&fs, &worktree_roots).await;
+
+                // Log any errors encountered while loading commands
+                for error in &load_result.errors {
+                    log::warn!("Failed to load slash command: {}", error);
+                }
+
+                for cmd in load_result.commands {
+                    commands.push(AvailableCommand {
+                        name: cmd.name.clone(),
+                        description: cmd.description().into(),
+                        requires_argument: cmd.requires_arguments(),
+                        source: CommandSource::UserDefined {
+                            template: cmd.template.clone(),
+                        },
+                    });
+                }
+            }
+
+            if commands.is_empty() {
+                return Vec::new();
+            }
+
             let candidates = commands
                 .iter()
                 .enumerate()
