@@ -230,7 +230,7 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         self.pending_request = Some(cx.spawn(async move |this, cx| {
             if debounce {
                 log::debug!("Codestral: Debouncing for {:?}", DEBOUNCE_TIMEOUT);
-                smol::Timer::after(DEBOUNCE_TIMEOUT).await;
+                cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
             }
 
             let cursor_offset = cursor_position.to_offset(&snapshot);

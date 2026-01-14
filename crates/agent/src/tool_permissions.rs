@@ -130,135 +130,341 @@ mod tests {
     use agent_settings::{CompiledRegex, InvalidRegexPattern, ToolRules};
     use std::sync::Arc;
 
-    fn empty_permissions() -> ToolPermissions {
-        ToolPermissions {
-            tools: collections::HashMap::default(),
+    struct PermTest {
+        tool: &'static str,
+        input: &'static str,
+        mode: ToolPermissionMode,
+        allow: Vec<&'static str>,
+        deny: Vec<&'static str>,
+        confirm: Vec<&'static str>,
+        global: bool,
+    }
+
+    impl PermTest {
+        fn new(input: &'static str) -> Self {
+            Self {
+                tool: "terminal",
+                input,
+                mode: ToolPermissionMode::Confirm,
+                allow: vec![],
+                deny: vec![],
+                confirm: vec![],
+                global: false,
+            }
+        }
+
+        fn tool(mut self, t: &'static str) -> Self {
+            self.tool = t;
+            self
+        }
+        fn mode(mut self, m: ToolPermissionMode) -> Self {
+            self.mode = m;
+            self
+        }
+        fn allow(mut self, p: &[&'static str]) -> Self {
+            self.allow = p.to_vec();
+            self
+        }
+        fn deny(mut self, p: &[&'static str]) -> Self {
+            self.deny = p.to_vec();
+            self
+        }
+        fn confirm(mut self, p: &[&'static str]) -> Self {
+            self.confirm = p.to_vec();
+            self
+        }
+        fn global(mut self, g: bool) -> Self {
+            self.global = g;
+            self
+        }
+
+        fn is_allow(self) {
+            assert_eq!(
+                self.run(),
+                ToolPermissionDecision::Allow,
+                "expected Allow for '{}'",
+                self.input
+            );
+        }
+        fn is_deny(self) {
+            assert!(
+                matches!(self.run(), ToolPermissionDecision::Deny(_)),
+                "expected Deny for '{}'",
+                self.input
+            );
+        }
+        fn is_confirm(self) {
+            assert_eq!(
+                self.run(),
+                ToolPermissionDecision::Confirm,
+                "expected Confirm for '{}'",
+                self.input
+            );
+        }
+
+        fn run(&self) -> ToolPermissionDecision {
+            let mut tools = collections::HashMap::default();
+            tools.insert(
+                Arc::from(self.tool),
+                ToolRules {
+                    default_mode: self.mode,
+                    always_allow: self
+                        .allow
+                        .iter()
+                        .filter_map(|p| CompiledRegex::new(p, false))
+                        .collect(),
+                    always_deny: self
+                        .deny
+                        .iter()
+                        .filter_map(|p| CompiledRegex::new(p, false))
+                        .collect(),
+                    always_confirm: self
+                        .confirm
+                        .iter()
+                        .filter_map(|p| CompiledRegex::new(p, false))
+                        .collect(),
+                    invalid_patterns: vec![],
+                },
+            );
+            decide_permission(
+                self.tool,
+                self.input,
+                &ToolPermissions { tools },
+                self.global,
+            )
         }
     }
 
-    fn terminal_rules_with_deny(patterns: &[&str]) -> ToolPermissions {
-        let mut tools = collections::HashMap::default();
-        tools.insert(
-            Arc::from("terminal"),
-            ToolRules {
-                default_mode: ToolPermissionMode::Confirm,
-                always_allow: vec![],
-                always_deny: patterns
-                    .iter()
-                    .filter_map(|p| CompiledRegex::new(p, false))
-                    .collect(),
-                always_confirm: vec![],
-                invalid_patterns: vec![],
-            },
-        );
-        ToolPermissions { tools }
+    fn t(input: &'static str) -> PermTest {
+        PermTest::new(input)
     }
 
-    fn terminal_rules_with_allow(patterns: &[&str]) -> ToolPermissions {
-        let mut tools = collections::HashMap::default();
-        tools.insert(
-            Arc::from("terminal"),
-            ToolRules {
-                default_mode: ToolPermissionMode::Confirm,
-                always_allow: patterns
-                    .iter()
-                    .filter_map(|p| CompiledRegex::new(p, false))
-                    .collect(),
-                always_deny: vec![],
-                always_confirm: vec![],
-                invalid_patterns: vec![],
+    fn no_rules(input: &str, global: bool) -> ToolPermissionDecision {
+        decide_permission(
+            "terminal",
+            input,
+            &ToolPermissions {
+                tools: collections::HashMap::default(),
             },
-        );
-        ToolPermissions { tools }
+            global,
+        )
     }
 
+    // allow pattern matches
     #[test]
-    fn test_deny_takes_precedence_over_allow() {
-        let mut tools = collections::HashMap::default();
-        tools.insert(
-            Arc::from("terminal"),
-            ToolRules {
-                default_mode: ToolPermissionMode::Allow,
-                always_allow: vec![CompiledRegex::new("dangerous", false).unwrap()],
-                always_deny: vec![CompiledRegex::new("dangerous", false).unwrap()],
-                always_confirm: vec![],
-                invalid_patterns: vec![],
-            },
-        );
-        let permissions = ToolPermissions { tools };
-
-        let decision = decide_permission("terminal", "run dangerous command", &permissions, true);
-        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
+    fn allow_exact_match() {
+        t("cargo test").allow(&["^cargo\\s"]).is_allow();
+    }
+    #[test]
+    fn allow_with_args() {
+        t("cargo build --release").allow(&["^cargo\\s"]).is_allow();
+    }
+    #[test]
+    fn allow_one_of_many() {
+        t("npm install").allow(&["^cargo\\s", "^npm\\s"]).is_allow();
+    }
+    #[test]
+    fn allow_middle_pattern() {
+        t("run cargo now").allow(&["cargo"]).is_allow();
+    }
+    #[test]
+    fn allow_anchor_prevents_middle() {
+        t("run cargo now").allow(&["^cargo"]).is_confirm();
     }
 
+    // allow pattern doesn't match -> falls through
     #[test]
-    fn test_deny_takes_precedence_over_confirm() {
-        let mut tools = collections::HashMap::default();
-        tools.insert(
-            Arc::from("terminal"),
-            ToolRules {
-                default_mode: ToolPermissionMode::Allow,
-                always_allow: vec![],
-                always_deny: vec![CompiledRegex::new("dangerous", false).unwrap()],
-                always_confirm: vec![CompiledRegex::new("dangerous", false).unwrap()],
-                invalid_patterns: vec![],
-            },
-        );
-        let permissions = ToolPermissions { tools };
-
-        let decision = decide_permission("terminal", "run dangerous command", &permissions, true);
-        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
+    fn allow_no_match_confirms() {
+        t("python x.py").allow(&["^cargo\\s"]).is_confirm();
+    }
+    #[test]
+    fn allow_no_match_global_allows() {
+        t("python x.py")
+            .allow(&["^cargo\\s"])
+            .global(true)
+            .is_allow();
     }
 
+    // deny pattern matches
     #[test]
-    fn test_confirm_takes_precedence_over_allow() {
-        let mut tools = collections::HashMap::default();
-        tools.insert(
-            Arc::from("terminal"),
-            ToolRules {
-                default_mode: ToolPermissionMode::Allow,
-                always_allow: vec![CompiledRegex::new("risky", false).unwrap()],
-                always_deny: vec![],
-                always_confirm: vec![CompiledRegex::new("risky", false).unwrap()],
-                invalid_patterns: vec![],
-            },
-        );
-        let permissions = ToolPermissions { tools };
-
-        let decision = decide_permission("terminal", "do risky thing", &permissions, true);
-        assert_eq!(decision, ToolPermissionDecision::Confirm);
+    fn deny_blocks() {
+        t("rm -rf /").deny(&["rm\\s+-rf"]).is_deny();
+    }
+    #[test]
+    fn deny_blocks_with_global() {
+        t("rm -rf /").deny(&["rm\\s+-rf"]).global(true).is_deny();
+    }
+    #[test]
+    fn deny_blocks_with_mode_allow() {
+        t("rm -rf /")
+            .deny(&["rm\\s+-rf"])
+            .mode(ToolPermissionMode::Allow)
+            .is_deny();
+    }
+    #[test]
+    fn deny_middle_match() {
+        t("echo rm -rf x").deny(&["rm\\s+-rf"]).is_deny();
+    }
+    #[test]
+    fn deny_no_match_allows() {
+        t("ls -la").deny(&["rm\\s+-rf"]).global(true).is_allow();
     }
 
+    // confirm pattern matches
     #[test]
-    fn test_no_tool_rules_uses_global_setting() {
-        let permissions = empty_permissions();
-
-        let decision = decide_permission("terminal", "any command", &permissions, false);
-        assert_eq!(decision, ToolPermissionDecision::Confirm);
-
-        let decision = decide_permission("terminal", "any command", &permissions, true);
-        assert_eq!(decision, ToolPermissionDecision::Allow);
+    fn confirm_requires_confirm() {
+        t("sudo apt install").confirm(&["sudo\\s"]).is_confirm();
+    }
+    #[test]
+    fn confirm_overrides_global() {
+        t("sudo reboot")
+            .confirm(&["sudo\\s"])
+            .global(true)
+            .is_confirm();
+    }
+    #[test]
+    fn confirm_overrides_mode_allow() {
+        t("sudo x")
+            .confirm(&["sudo"])
+            .mode(ToolPermissionMode::Allow)
+            .is_confirm();
     }
 
+    // confirm beats allow
     #[test]
-    fn test_default_mode_fallthrough() {
-        // default_mode: Allow - should allow regardless of global setting
-        let mut tools = collections::HashMap::default();
-        tools.insert(
-            Arc::from("terminal"),
-            ToolRules {
-                default_mode: ToolPermissionMode::Allow,
-                always_allow: vec![],
-                always_deny: vec![],
-                always_confirm: vec![],
-                invalid_patterns: vec![],
-            },
-        );
-        let permissions = ToolPermissions { tools };
-        let decision = decide_permission("terminal", "any command", &permissions, false);
-        assert_eq!(decision, ToolPermissionDecision::Allow);
+    fn confirm_beats_allow() {
+        t("git push --force")
+            .allow(&["^git\\s"])
+            .confirm(&["--force"])
+            .is_confirm();
+    }
+    #[test]
+    fn confirm_beats_allow_overlap() {
+        t("deploy prod")
+            .allow(&["deploy"])
+            .confirm(&["prod"])
+            .is_confirm();
+    }
+    #[test]
+    fn allow_when_confirm_no_match() {
+        t("git status")
+            .allow(&["^git\\s"])
+            .confirm(&["--force"])
+            .is_allow();
+    }
 
-        // default_mode: Deny - should deny regardless of global setting
+    // deny beats allow
+    #[test]
+    fn deny_beats_allow() {
+        t("rm -rf /tmp/x")
+            .allow(&["/tmp/"])
+            .deny(&["rm\\s+-rf"])
+            .is_deny();
+    }
+    #[test]
+    fn deny_beats_allow_diff() {
+        t("bad deploy").allow(&["deploy"]).deny(&["bad"]).is_deny();
+    }
+
+    // deny beats confirm
+    #[test]
+    fn deny_beats_confirm() {
+        t("sudo rm -rf /")
+            .confirm(&["sudo"])
+            .deny(&["rm\\s+-rf"])
+            .is_deny();
+    }
+
+    // deny beats everything
+    #[test]
+    fn deny_beats_all() {
+        t("bad cmd")
+            .allow(&["cmd"])
+            .confirm(&["cmd"])
+            .deny(&["bad"])
+            .is_deny();
+    }
+
+    // no patterns -> default_mode
+    #[test]
+    fn default_confirm() {
+        t("python x.py")
+            .mode(ToolPermissionMode::Confirm)
+            .is_confirm();
+    }
+    #[test]
+    fn default_allow() {
+        t("python x.py").mode(ToolPermissionMode::Allow).is_allow();
+    }
+    #[test]
+    fn default_deny() {
+        t("python x.py").mode(ToolPermissionMode::Deny).is_deny();
+    }
+
+    // default_mode confirm + global
+    #[test]
+    fn default_confirm_global_false() {
+        t("x")
+            .mode(ToolPermissionMode::Confirm)
+            .global(false)
+            .is_confirm();
+    }
+    #[test]
+    fn default_confirm_global_true() {
+        t("x")
+            .mode(ToolPermissionMode::Confirm)
+            .global(true)
+            .is_allow();
+    }
+
+    // no rules at all -> global setting
+    #[test]
+    fn no_rules_global_false() {
+        assert_eq!(no_rules("x", false), ToolPermissionDecision::Confirm);
+    }
+    #[test]
+    fn no_rules_global_true() {
+        assert_eq!(no_rules("x", true), ToolPermissionDecision::Allow);
+    }
+
+    // empty input
+    #[test]
+    fn empty_input_no_match() {
+        t("").deny(&["rm"]).is_confirm();
+    }
+    #[test]
+    fn empty_input_global() {
+        t("").deny(&["rm"]).global(true).is_allow();
+    }
+
+    // multiple patterns - any match
+    #[test]
+    fn multi_deny_first() {
+        t("rm x").deny(&["rm", "del", "drop"]).is_deny();
+    }
+    #[test]
+    fn multi_deny_last() {
+        t("drop x").deny(&["rm", "del", "drop"]).is_deny();
+    }
+    #[test]
+    fn multi_allow_first() {
+        t("cargo x").allow(&["^cargo", "^npm", "^git"]).is_allow();
+    }
+    #[test]
+    fn multi_allow_last() {
+        t("git x").allow(&["^cargo", "^npm", "^git"]).is_allow();
+    }
+    #[test]
+    fn multi_none_match() {
+        t("python x")
+            .allow(&["^cargo", "^npm"])
+            .deny(&["rm"])
+            .is_confirm();
+    }
+
+    // tool isolation
+    #[test]
+    fn other_tool_not_affected() {
         let mut tools = collections::HashMap::default();
         tools.insert(
             Arc::from("terminal"),
@@ -266,133 +472,6 @@ mod tests {
                 default_mode: ToolPermissionMode::Deny,
                 always_allow: vec![],
                 always_deny: vec![],
-                always_confirm: vec![],
-                invalid_patterns: vec![],
-            },
-        );
-        let permissions = ToolPermissions { tools };
-        let decision = decide_permission("terminal", "any command", &permissions, true);
-        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
-
-        // default_mode: Confirm - respects global always_allow_tool_actions
-        let mut tools = collections::HashMap::default();
-        tools.insert(
-            Arc::from("terminal"),
-            ToolRules {
-                default_mode: ToolPermissionMode::Confirm,
-                always_allow: vec![],
-                always_deny: vec![],
-                always_confirm: vec![],
-                invalid_patterns: vec![],
-            },
-        );
-        let permissions = ToolPermissions { tools };
-        let decision = decide_permission("terminal", "any command", &permissions, false);
-        assert_eq!(decision, ToolPermissionDecision::Confirm);
-        let decision = decide_permission("terminal", "any command", &permissions, true);
-        assert_eq!(decision, ToolPermissionDecision::Allow);
-    }
-
-    #[test]
-    fn test_empty_input() {
-        let permissions = terminal_rules_with_deny(&["rm"]);
-
-        // Empty input doesn't match the deny pattern, so falls through to default_mode (Confirm)
-        let decision = decide_permission("terminal", "", &permissions, false);
-        assert_eq!(decision, ToolPermissionDecision::Confirm);
-
-        // With always_allow_tool_actions=true and default_mode=Confirm, it returns Allow
-        let decision = decide_permission("terminal", "", &permissions, true);
-        assert_eq!(decision, ToolPermissionDecision::Allow);
-    }
-
-    #[test]
-    fn test_multiple_patterns_any_match() {
-        // Multiple deny patterns - any match should deny
-        let permissions = terminal_rules_with_deny(&["rm", "dangerous", "delete"]);
-
-        let decision = decide_permission("terminal", "run dangerous command", &permissions, true);
-        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
-
-        let decision = decide_permission("terminal", "delete file", &permissions, true);
-        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
-
-        // Multiple allow patterns - any match should allow
-        let permissions = terminal_rules_with_allow(&["^cargo", "^npm", "^git"]);
-
-        let decision = decide_permission("terminal", "cargo build", &permissions, false);
-        assert_eq!(decision, ToolPermissionDecision::Allow);
-
-        let decision = decide_permission("terminal", "npm install", &permissions, false);
-        assert_eq!(decision, ToolPermissionDecision::Allow);
-
-        // No pattern matches - falls through to default
-        let decision = decide_permission("terminal", "rm file", &permissions, false);
-        assert_eq!(decision, ToolPermissionDecision::Confirm);
-    }
-
-    #[test]
-    fn test_case_insensitive_matching() {
-        // Case-insensitive by default (case_sensitive: false)
-        let mut tools = collections::HashMap::default();
-        tools.insert(
-            Arc::from("terminal"),
-            ToolRules {
-                default_mode: ToolPermissionMode::Confirm,
-                always_allow: vec![],
-                always_deny: vec![CompiledRegex::new(r"\brm\b", false).unwrap()],
-                always_confirm: vec![],
-                invalid_patterns: vec![],
-            },
-        );
-        let permissions = ToolPermissions { tools };
-
-        // Should match regardless of case
-        let decision = decide_permission("terminal", "RM file.txt", &permissions, true);
-        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
-
-        let decision = decide_permission("terminal", "Rm file.txt", &permissions, true);
-        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
-
-        let decision = decide_permission("terminal", "rm file.txt", &permissions, true);
-        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
-    }
-
-    #[test]
-    fn test_case_sensitive_matching() {
-        // Case-sensitive matching when explicitly enabled
-        let mut tools = collections::HashMap::default();
-        tools.insert(
-            Arc::from("terminal"),
-            ToolRules {
-                default_mode: ToolPermissionMode::Confirm,
-                always_allow: vec![],
-                always_deny: vec![CompiledRegex::new("DROP TABLE", true).unwrap()],
-                always_confirm: vec![],
-                invalid_patterns: vec![],
-            },
-        );
-        let permissions = ToolPermissions { tools };
-
-        // Should only match exact case
-        let decision = decide_permission("terminal", "DROP TABLE users", &permissions, true);
-        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
-
-        // Should NOT match different case
-        let decision = decide_permission("terminal", "drop table users", &permissions, true);
-        assert_eq!(decision, ToolPermissionDecision::Allow);
-    }
-
-    #[test]
-    fn test_multi_tool_isolation() {
-        // Rules for terminal should not affect edit_file
-        let mut tools = collections::HashMap::default();
-        tools.insert(
-            Arc::from("terminal"),
-            ToolRules {
-                default_mode: ToolPermissionMode::Deny,
-                always_allow: vec![],
-                always_deny: vec![CompiledRegex::new("dangerous", false).unwrap()],
                 always_confirm: vec![],
                 invalid_patterns: vec![],
             },
@@ -407,107 +486,19 @@ mod tests {
                 invalid_patterns: vec![],
             },
         );
-        let permissions = ToolPermissions { tools };
-
-        // Terminal with "dangerous" should be denied
-        let decision = decide_permission("terminal", "run dangerous command", &permissions, true);
-        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
-
-        // edit_file with "dangerous" should be allowed (no deny rules for edit_file)
-        let decision = decide_permission("edit_file", "dangerous_file.txt", &permissions, true);
-        assert_eq!(decision, ToolPermissionDecision::Allow);
-
-        // Terminal without "dangerous" should still be denied due to default_mode: Deny
-        let decision = decide_permission("terminal", "safe command", &permissions, true);
-        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
-    }
-
-    #[test]
-    fn test_invalid_patterns_block_tool() {
-        let mut tools = collections::HashMap::default();
-        tools.insert(
-            Arc::from("terminal"),
-            ToolRules {
-                default_mode: ToolPermissionMode::Allow,
-                always_allow: vec![CompiledRegex::new("echo", false).unwrap()],
-                always_deny: vec![],
-                always_confirm: vec![],
-                invalid_patterns: vec![InvalidRegexPattern {
-                    pattern: "[invalid(regex".to_string(),
-                    rule_type: "always_deny".to_string(),
-                    error: "unclosed character class".to_string(),
-                }],
-            },
+        let p = ToolPermissions { tools };
+        assert!(matches!(
+            decide_permission("terminal", "x", &p, true),
+            ToolPermissionDecision::Deny(_)
+        ));
+        assert_eq!(
+            decide_permission("edit_file", "x", &p, false),
+            ToolPermissionDecision::Allow
         );
-        let permissions = ToolPermissions { tools };
-
-        // Even though "echo" matches always_allow, the tool should be blocked
-        // because there are invalid patterns
-        let decision = decide_permission("terminal", "echo hello", &permissions, true);
-        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
-
-        if let ToolPermissionDecision::Deny(msg) = decision {
-            assert!(
-                msg.contains("regex"),
-                "error message should mention regex: {}",
-                msg
-            );
-            assert!(
-                msg.contains("settings"),
-                "error message should mention settings: {}",
-                msg
-            );
-            assert!(
-                msg.contains("terminal"),
-                "error message should mention the tool name: {}",
-                msg
-            );
-        }
     }
 
     #[test]
-    fn test_same_pattern_in_deny_and_allow_deny_wins() {
-        // When the same pattern appears in both deny and allow lists, deny should win
-        let mut tools = collections::HashMap::default();
-        tools.insert(
-            Arc::from("terminal"),
-            ToolRules {
-                default_mode: ToolPermissionMode::Allow,
-                always_allow: vec![CompiledRegex::new("deploy", false).unwrap()],
-                always_deny: vec![CompiledRegex::new("deploy", false).unwrap()],
-                always_confirm: vec![],
-                invalid_patterns: vec![],
-            },
-        );
-        let permissions = ToolPermissions { tools };
-
-        let decision = decide_permission("terminal", "deploy production", &permissions, true);
-        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
-    }
-
-    #[test]
-    fn test_same_pattern_in_confirm_and_allow_confirm_wins() {
-        // When the same pattern appears in both confirm and allow lists, confirm should win
-        let mut tools = collections::HashMap::default();
-        tools.insert(
-            Arc::from("terminal"),
-            ToolRules {
-                default_mode: ToolPermissionMode::Allow,
-                always_allow: vec![CompiledRegex::new("deploy", false).unwrap()],
-                always_deny: vec![],
-                always_confirm: vec![CompiledRegex::new("deploy", false).unwrap()],
-                invalid_patterns: vec![],
-            },
-        );
-        let permissions = ToolPermissions { tools };
-
-        let decision = decide_permission("terminal", "deploy production", &permissions, true);
-        assert_eq!(decision, ToolPermissionDecision::Confirm);
-    }
-
-    #[test]
-    fn test_partial_tool_name_does_not_match() {
-        // Rules for "term" should not affect "terminal"
+    fn partial_tool_name_no_match() {
         let mut tools = collections::HashMap::default();
         tools.insert(
             Arc::from("term"),
@@ -519,29 +510,115 @@ mod tests {
                 invalid_patterns: vec![],
             },
         );
-        let permissions = ToolPermissions { tools };
-
-        // "terminal" should not be affected by "term" rules, falls back to global setting
-        let decision = decide_permission("terminal", "echo hello", &permissions, true);
-        assert_eq!(decision, ToolPermissionDecision::Allow);
-
-        let decision = decide_permission("terminal", "echo hello", &permissions, false);
-        assert_eq!(decision, ToolPermissionDecision::Confirm);
+        let p = ToolPermissions { tools };
+        assert_eq!(
+            decide_permission("terminal", "x", &p, true),
+            ToolPermissionDecision::Allow
+        );
     }
 
+    // invalid patterns block the tool
     #[test]
-    fn test_very_long_input() {
-        // Test that very long inputs are handled correctly
-        let permissions = terminal_rules_with_deny(&[r"\brm\b"]);
+    fn invalid_pattern_blocks() {
+        let mut tools = collections::HashMap::default();
+        tools.insert(
+            Arc::from("terminal"),
+            ToolRules {
+                default_mode: ToolPermissionMode::Allow,
+                always_allow: vec![CompiledRegex::new("echo", false).unwrap()],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![InvalidRegexPattern {
+                    pattern: "[bad".into(),
+                    rule_type: "always_deny".into(),
+                    error: "err".into(),
+                }],
+            },
+        );
+        let p = ToolPermissions { tools };
+        assert!(matches!(
+            decide_permission("terminal", "echo hi", &p, true),
+            ToolPermissionDecision::Deny(_)
+        ));
+    }
 
-        // Long input without the pattern should not match
-        let long_safe_input = "echo ".to_string() + &"a".repeat(100_000);
-        let decision = decide_permission("terminal", &long_safe_input, &permissions, true);
-        assert_eq!(decision, ToolPermissionDecision::Allow);
+    // user scenario: only echo allowed, git should confirm
+    #[test]
+    fn user_scenario_only_echo() {
+        t("echo hello").allow(&["^echo\\s"]).is_allow();
+    }
+    #[test]
+    fn user_scenario_git_confirms() {
+        t("git status").allow(&["^echo\\s"]).is_confirm();
+    }
+    #[test]
+    fn user_scenario_rm_confirms() {
+        t("rm -rf /").allow(&["^echo\\s"]).is_confirm();
+    }
 
-        // Long input with the pattern should match
-        let long_dangerous_input = "a".repeat(50_000) + " rm " + &"b".repeat(50_000);
-        let decision = decide_permission("terminal", &long_dangerous_input, &permissions, true);
-        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
+    // mcp tools
+    #[test]
+    fn mcp_allow() {
+        t("")
+            .tool("mcp:fs:read")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+    }
+    #[test]
+    fn mcp_deny() {
+        t("")
+            .tool("mcp:bad:del")
+            .mode(ToolPermissionMode::Deny)
+            .is_deny();
+    }
+    #[test]
+    fn mcp_confirm() {
+        t("")
+            .tool("mcp:gh:issue")
+            .mode(ToolPermissionMode::Confirm)
+            .is_confirm();
+    }
+    #[test]
+    fn mcp_confirm_global() {
+        t("")
+            .tool("mcp:gh:issue")
+            .mode(ToolPermissionMode::Confirm)
+            .global(true)
+            .is_allow();
+    }
+
+    // mcp vs builtin isolation
+    #[test]
+    fn mcp_doesnt_collide_with_builtin() {
+        let mut tools = collections::HashMap::default();
+        tools.insert(
+            Arc::from("terminal"),
+            ToolRules {
+                default_mode: ToolPermissionMode::Deny,
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        tools.insert(
+            Arc::from("mcp:srv:terminal"),
+            ToolRules {
+                default_mode: ToolPermissionMode::Allow,
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        let p = ToolPermissions { tools };
+        assert!(matches!(
+            decide_permission("terminal", "x", &p, false),
+            ToolPermissionDecision::Deny(_)
+        ));
+        assert_eq!(
+            decide_permission("mcp:srv:terminal", "x", &p, false),
+            ToolPermissionDecision::Allow
+        );
     }
 }

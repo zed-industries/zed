@@ -46,7 +46,7 @@ impl FeatureFlag for SubagentsFeatureFlag {
     const NAME: &'static str = "subagents";
 
     fn enabled_for_staff() -> bool {
-        false
+        true
     }
 }
 

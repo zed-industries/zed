@@ -133,7 +133,7 @@ pub(crate) fn request_prediction_with_zeta1(
 
         let inputs = ZetaPromptInput {
             events: included_events.into(),
-            related_files: vec![].into(),
+            related_files: vec![],
             cursor_path: full_path,
             cursor_excerpt: snapshot
                 .text_for_range(context_range)

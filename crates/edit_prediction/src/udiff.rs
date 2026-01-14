@@ -214,6 +214,54 @@ pub fn extract_file_diff(full_diff: &str, file_path: &str) -> Result<String> {
     Ok(result)
 }
 
+pub fn strip_diff_path_prefix<'a>(diff: &'a str, prefix: &str) -> Cow<'a, str> {
+    if prefix.is_empty() {
+        return Cow::Borrowed(diff);
+    }
+
+    let prefix_with_slash = format!("{}/", prefix);
+    let mut needs_rewrite = false;
+
+    for line in diff.lines() {
+        match DiffLine::parse(line) {
+            DiffLine::OldPath { path } | DiffLine::NewPath { path } => {
+                if path.starts_with(&prefix_with_slash) {
+                    needs_rewrite = true;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !needs_rewrite {
+        return Cow::Borrowed(diff);
+    }
+
+    let mut result = String::with_capacity(diff.len());
+    for line in diff.lines() {
+        match DiffLine::parse(line) {
+            DiffLine::OldPath { path } => {
+                let stripped = path
+                    .strip_prefix(&prefix_with_slash)
+                    .unwrap_or(path.as_ref());
+                result.push_str(&format!("--- a/{}\n", stripped));
+            }
+            DiffLine::NewPath { path } => {
+                let stripped = path
+                    .strip_prefix(&prefix_with_slash)
+                    .unwrap_or(path.as_ref());
+                result.push_str(&format!("+++ b/{}\n", stripped));
+            }
+            _ => {
+                result.push_str(line);
+                result.push('\n');
+            }
+        }
+    }
+
+    Cow::Owned(result)
+}
 /// Strip unnecessary git metadata lines from a diff, keeping only the lines
 /// needed for patch application: path headers (--- and +++), hunk headers (@@),
 /// and content lines (+, -, space).

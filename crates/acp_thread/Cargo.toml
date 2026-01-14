@@ -52,6 +52,7 @@ watch.workspace = true
 urlencoding.workspace = true
 
 [dev-dependencies]
+editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 gpui = { workspace = true, "features" = ["test-support"] }
 indoc.workspace = true

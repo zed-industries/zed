@@ -1899,7 +1899,7 @@ impl GitRepository for RealGitRepository {
                 cmd.arg("--author").arg(&format!("{name} <{email}>"));
             }
 
-            run_git_command(env, ask_pass, cmd, &executor).await?;
+            run_git_command(env, ask_pass, cmd, executor).await?;
 
             Ok(())
         }
@@ -1939,7 +1939,7 @@ impl GitRepository for RealGitRepository {
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
 
-            run_git_command(env, ask_pass, command, &executor).await
+            run_git_command(env, ask_pass, command, executor).await
         }
         .boxed()
     }
@@ -1976,7 +1976,7 @@ impl GitRepository for RealGitRepository {
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
 
-            run_git_command(env, ask_pass, command, &executor).await
+            run_git_command(env, ask_pass, command, executor).await
         }
         .boxed()
     }
@@ -2004,7 +2004,7 @@ impl GitRepository for RealGitRepository {
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
 
-            run_git_command(env, ask_pass, command, &executor).await
+            run_git_command(env, ask_pass, command, executor).await
         }
         .boxed()
     }
@@ -2627,7 +2627,7 @@ async fn run_git_command(
     env: Arc<HashMap<String, String>>,
     ask_pass: AskPassDelegate,
     mut command: smol::process::Command,
-    executor: &BackgroundExecutor,
+    executor: BackgroundExecutor,
 ) -> Result<RemoteCommandOutput> {
     if env.contains_key("GIT_ASKPASS") {
         let git_process = command.spawn()?;

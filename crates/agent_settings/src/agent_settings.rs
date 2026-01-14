@@ -600,11 +600,6 @@ mod tests {
             !terminal.always_confirm.is_empty(),
             "terminal should have confirm rules"
         );
-        assert!(
-            !terminal.always_allow.is_empty(),
-            "terminal should have allow rules"
-        );
-
         let edit_file = permissions
             .tools
             .get("edit_file")
@@ -627,9 +622,10 @@ mod tests {
             .tools
             .get("fetch")
             .expect("fetch tool should be configured");
-        assert!(
-            !fetch.always_allow.is_empty(),
-            "fetch should have allow rules"
+        assert_eq!(
+            fetch.default_mode,
+            settings::ToolPermissionMode::Confirm,
+            "fetch should have confirm as default mode"
         );
     }
 
@@ -660,40 +656,6 @@ mod tests {
             assert!(
                 terminal.always_deny.iter().any(|r| r.is_match(cmd)),
                 "Command '{}' should be blocked by deny rules",
-                cmd
-            );
-        }
-    }
-
-    #[test]
-    fn test_default_allow_rules_match_safe_commands() {
-        let default_json = include_str!("../../../assets/settings/default.json");
-        let value: serde_json::Value = serde_json_lenient::from_str(default_json).unwrap();
-        let tool_permissions = value["agent"]["tool_permissions"].clone();
-        let content: ToolPermissionsContent = serde_json::from_value(tool_permissions).unwrap();
-        let permissions = compile_tool_permissions(Some(content));
-
-        let terminal = permissions.tools.get("terminal").unwrap();
-
-        let safe_commands = [
-            "cargo build",
-            "cargo test",
-            "cargo check",
-            "npm test",
-            "pnpm install",
-            "yarn run build",
-            "ls",
-            "ls -la",
-            "cat file.txt",
-            "git status",
-            "git log",
-            "git diff",
-        ];
-
-        for cmd in &safe_commands {
-            assert!(
-                terminal.always_allow.iter().any(|r| r.is_match(cmd)),
-                "Command '{}' should be allowed by allow rules",
                 cmd
             );
         }
@@ -820,6 +782,110 @@ mod tests {
                 .iter()
                 .any(|r| r.is_match(":(){ :|:& };:")),
             "Default deny rules should block the classic fork bomb"
+        );
+    }
+
+    #[test]
+    fn test_compiled_regex_stores_case_sensitivity() {
+        let case_sensitive = CompiledRegex::new("test", true).unwrap();
+        let case_insensitive = CompiledRegex::new("test", false).unwrap();
+
+        assert!(case_sensitive.case_sensitive);
+        assert!(!case_insensitive.case_sensitive);
+    }
+
+    #[test]
+    fn test_invalid_regex_is_skipped_not_fail() {
+        let json = json!({
+            "tools": {
+                "terminal": {
+                    "always_deny": [
+                        { "pattern": "[invalid(regex" },
+                        { "pattern": "valid_pattern" }
+                    ]
+                }
+            }
+        });
+
+        let content: ToolPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+
+        let terminal = permissions.tools.get("terminal").unwrap();
+        assert_eq!(terminal.always_deny.len(), 1);
+        assert!(terminal.always_deny[0].is_match("valid_pattern"));
+    }
+
+    #[test]
+    fn test_unconfigured_tool_not_in_permissions() {
+        let json = json!({
+            "tools": {
+                "terminal": {
+                    "default_mode": "allow"
+                }
+            }
+        });
+
+        let content: ToolPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+
+        assert!(permissions.tools.contains_key("terminal"));
+        assert!(!permissions.tools.contains_key("edit_file"));
+        assert!(!permissions.tools.contains_key("fetch"));
+    }
+
+    #[test]
+    fn test_always_allow_pattern_only_matches_specified_commands() {
+        // Reproduces user-reported bug: when always_allow has pattern "^echo\s",
+        // only "echo hello" should be allowed, not "git status".
+        //
+        // User config:
+        //   always_allow_tool_actions: false
+        //   tool_permissions.tools.terminal.always_allow: [{ pattern: "^echo\\s" }]
+        let json = json!({
+            "tools": {
+                "terminal": {
+                    "always_allow": [
+                        { "pattern": "^echo\\s" }
+                    ]
+                }
+            }
+        });
+
+        let content: ToolPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+
+        let terminal = permissions.tools.get("terminal").unwrap();
+
+        // Verify the pattern was compiled
+        assert_eq!(
+            terminal.always_allow.len(),
+            1,
+            "Should have one always_allow pattern"
+        );
+
+        // Verify the pattern matches "echo hello"
+        assert!(
+            terminal.always_allow[0].is_match("echo hello"),
+            "Pattern ^echo\\s should match 'echo hello'"
+        );
+
+        // Verify the pattern does NOT match "git status"
+        assert!(
+            !terminal.always_allow[0].is_match("git status"),
+            "Pattern ^echo\\s should NOT match 'git status'"
+        );
+
+        // Verify the pattern does NOT match "echoHello" (no space)
+        assert!(
+            !terminal.always_allow[0].is_match("echoHello"),
+            "Pattern ^echo\\s should NOT match 'echoHello' (requires whitespace)"
+        );
+
+        // Verify default_mode is Confirm (the default)
+        assert_eq!(
+            terminal.default_mode,
+            settings::ToolPermissionMode::Confirm,
+            "default_mode should be Confirm when not specified"
         );
     }
 }

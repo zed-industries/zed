@@ -188,6 +188,25 @@ pub mod dev {
     );
 }
 
+pub mod remote_debug {
+    use gpui::actions;
+
+    actions!(
+        remote_debug,
+        [
+            /// Simulates a disconnection from the remote server for testing purposes.
+            /// This will trigger the reconnection logic.
+            SimulateDisconnect,
+            /// Simulates a timeout/slow connection to the remote server for testing purposes.
+            /// This will cause heartbeat failures and trigger reconnection.
+            SimulateTimeout,
+            /// Simulates a timeout/slow connection to the remote server for testing purposes.
+            /// This will cause heartbeat failures and attempting a reconnection while having exhausted all attempts.
+            SimulateTimeoutExhausted,
+        ]
+    );
+}
+
 pub mod workspace {
     use gpui::actions;
 

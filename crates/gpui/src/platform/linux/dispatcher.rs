@@ -13,8 +13,7 @@ use std::{
 
 use crate::{
     GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, PriorityQueueReceiver,
-    PriorityQueueSender, RealtimePriority, RunnableVariant, THREAD_TIMINGS, TaskLabel, TaskTiming,
-    ThreadTaskTimings, profiler,
+    PriorityQueueSender, RunnableVariant, THREAD_TIMINGS, TaskTiming, ThreadTaskTimings, profiler,
 };
 
 struct TimerAfter {
@@ -38,47 +37,34 @@ impl LinuxDispatcher {
         let thread_count =
             std::thread::available_parallelism().map_or(MIN_THREADS, |i| i.get().max(MIN_THREADS));
 
-        // These thread should really be lower prio then the foreground
-        // executor
         let mut background_threads = (0..thread_count)
             .map(|i| {
-                let mut receiver = background_receiver.clone();
+                let mut receiver: PriorityQueueReceiver<RunnableVariant> =
+                    background_receiver.clone();
                 std::thread::Builder::new()
                     .name(format!("Worker-{i}"))
                     .spawn(move || {
                         for runnable in receiver.iter() {
+                            // Check if the executor that spawned this task was closed
+                            if runnable.metadata().is_closed() {
+                                continue;
+                            }
+
                             let start = Instant::now();
 
-                            let mut location = match runnable {
-                                RunnableVariant::Meta(runnable) => {
-                                    let location = runnable.metadata().location;
-                                    let timing = TaskTiming {
-                                        location,
-                                        start,
-                                        end: None,
-                                    };
-                                    profiler::add_task_timing(timing);
-
-                                    runnable.run();
-                                    timing
-                                }
-                                RunnableVariant::Compat(runnable) => {
-                                    let location = core::panic::Location::caller();
-                                    let timing = TaskTiming {
-                                        location,
-                                        start,
-                                        end: None,
-                                    };
-                                    profiler::add_task_timing(timing);
-
-                                    runnable.run();
-                                    timing
-                                }
+                            let location = runnable.metadata().location;
+                            let mut timing = TaskTiming {
+                                location,
+                                start,
+                                end: None,
                             };
+                            profiler::add_task_timing(timing);
+
+                            runnable.run();
 
                             let end = Instant::now();
-                            location.end = Some(end);
-                            profiler::add_task_timing(location);
+                            timing.end = Some(end);
+                            profiler::add_task_timing(timing);
 
                             log::trace!(
                                 "background thread {}: ran runnable. took: {:?}",
@@ -94,7 +80,7 @@ impl LinuxDispatcher {
         let (timer_sender, timer_channel) = calloop::channel::channel::<TimerAfter>();
         let timer_thread = std::thread::Builder::new()
             .name("Timer".to_owned())
-            .spawn(|| {
+            .spawn(move || {
                 let mut event_loop: EventLoop<()> =
                     EventLoop::try_new().expect("Failed to initialize timer loop!");
 
@@ -103,39 +89,27 @@ impl LinuxDispatcher {
                 handle
                     .insert_source(timer_channel, move |e, _, _| {
                         if let channel::Event::Msg(timer) = e {
-                            // This has to be in an option to satisfy the borrow checker. The callback below should only be scheduled once.
                             let mut runnable = Some(timer.runnable);
                             timer_handle
                                 .insert_source(
                                     calloop::timer::Timer::from_duration(timer.duration),
                                     move |_, _, _| {
                                         if let Some(runnable) = runnable.take() {
+                                            // Check if the executor that spawned this task was closed
+                                            if runnable.metadata().is_closed() {
+                                                return TimeoutAction::Drop;
+                                            }
+
                                             let start = Instant::now();
-                                            let mut timing = match runnable {
-                                                RunnableVariant::Meta(runnable) => {
-                                                    let location = runnable.metadata().location;
-                                                    let timing = TaskTiming {
-                                                        location,
-                                                        start,
-                                                        end: None,
-                                                    };
-                                                    profiler::add_task_timing(timing);
-
-                                                    runnable.run();
-                                                    timing
-                                                }
-                                                RunnableVariant::Compat(runnable) => {
-                                                    let timing = TaskTiming {
-                                                        location: core::panic::Location::caller(),
-                                                        start,
-                                                        end: None,
-                                                    };
-                                                    profiler::add_task_timing(timing);
-
-                                                    runnable.run();
-                                                    timing
-                                                }
+                                            let location = runnable.metadata().location;
+                                            let mut timing = TaskTiming {
+                                                location,
+                                                start,
+                                                end: None,
                                             };
+                                            profiler::add_task_timing(timing);
+
+                                            runnable.run();
                                             let end = Instant::now();
 
                                             timing.end = Some(end);
@@ -189,7 +163,7 @@ impl PlatformDispatcher for LinuxDispatcher {
         thread::current().id() == self.main_thread_id
     }
 
-    fn dispatch(&self, runnable: RunnableVariant, _: Option<TaskLabel>, priority: Priority) {
+    fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
         self.background_sender
             .send(priority, runnable)
             .unwrap_or_else(|_| panic!("blocking sender returned without value"));
@@ -217,19 +191,13 @@ impl PlatformDispatcher for LinuxDispatcher {
             .ok();
     }
 
-    fn spawn_realtime(&self, priority: RealtimePriority, f: Box<dyn FnOnce() + Send>) {
+    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
         std::thread::spawn(move || {
             // SAFETY: always safe to call
             let thread_id = unsafe { libc::pthread_self() };
 
-            let policy = match priority {
-                RealtimePriority::Audio => libc::SCHED_FIFO,
-                RealtimePriority::Other => libc::SCHED_RR,
-            };
-            let sched_priority = match priority {
-                RealtimePriority::Audio => 65,
-                RealtimePriority::Other => 45,
-            };
+            let policy = libc::SCHED_FIFO;
+            let sched_priority = 65;
 
             // SAFETY: all sched_param members are valid when initialized to zero.
             let mut sched_param =
@@ -238,7 +206,7 @@ impl PlatformDispatcher for LinuxDispatcher {
             // SAFETY: sched_param is a valid initialized structure
             let result = unsafe { libc::pthread_setschedparam(thread_id, policy, &sched_param) };
             if result != 0 {
-                log::warn!("failed to set realtime thread priority to {:?}", priority);
+                log::warn!("failed to set realtime thread priority");
             }
 
             f();

@@ -25,7 +25,8 @@ use rpc::proto::Envelope;
 
 use crate::{
     RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions, RemoteOs, RemotePlatform,
-    remote_client::CommandTemplate, transport::parse_platform,
+    remote_client::{CommandTemplate, Interactive},
+    transport::parse_platform,
 };
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -42,7 +43,7 @@ pub(crate) struct DockerExecConnection {
     connection_options: DockerConnectionOptions,
     remote_platform: Option<RemotePlatform>,
     path_style: Option<PathStyle>,
-    shell: Option<String>,
+    shell: String,
 }
 
 impl DockerExecConnection {
@@ -58,7 +59,7 @@ impl DockerExecConnection {
             connection_options,
             remote_platform: None,
             path_style: None,
-            shell: None,
+            shell: "sh".to_owned(),
         };
         let (release_channel, version, commit) = cx.update(|cx| {
             (
@@ -75,8 +76,10 @@ impl DockerExecConnection {
         };
 
         this.remote_platform = Some(remote_platform);
+        log::info!("Remote platform discovered: {:?}", this.remote_platform);
 
-        this.shell = Some(this.discover_shell().await);
+        this.shell = this.discover_shell().await;
+        log::info!("Remote shell discovered: {}", this.shell);
 
         this.remote_dir_for_server = this.docker_user_home_dir().await?.trim().to_string();
 
@@ -404,6 +407,7 @@ impl DockerExecConnection {
             command.arg(arg.as_ref());
         }
         let output = command.output().await?;
+        log::debug!("{:?}: {:?}", command, output);
         anyhow::ensure!(
             output.status.success(),
             "failed to run command {command:?}: {}",
@@ -651,6 +655,7 @@ impl RemoteConnection for DockerExecConnection {
         env: &HashMap<String, String>,
         working_dir: Option<String>,
         _port_forward: Option<(u16, String, u16)>,
+        interactive: Interactive,
     ) -> Result<CommandTemplate> {
         let mut parsed_working_dir = None;
 
@@ -692,7 +697,10 @@ impl RemoteConnection for DockerExecConnection {
             docker_args.push(format!("{}={}", k, v));
         }
 
-        docker_args.push("-it".to_string());
+        match interactive {
+            Interactive::Yes => docker_args.push("-it".to_string()),
+            Interactive::No => docker_args.push("-i".to_string()),
+        }
         docker_args.push(self.connection_options.container_id.to_string());
 
         docker_args.append(&mut inner_program);
@@ -721,10 +729,7 @@ impl RemoteConnection for DockerExecConnection {
     }
 
     fn shell(&self) -> String {
-        match &self.shell {
-            Some(shell) => shell.clone(),
-            None => self.default_system_shell(),
-        }
+        self.shell.clone()
     }
 
     fn default_system_shell(&self) -> String {

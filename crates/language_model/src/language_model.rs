@@ -617,6 +617,12 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    /// Returns whether this model/provider reports accurate split input/output token counts.
+    /// When true, the UI may show separate input/output token indicators.
+    fn supports_split_token_display(&self) -> bool {
+        false
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchema
     }

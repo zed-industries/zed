@@ -687,7 +687,19 @@ pub struct VimSettingsContent {
     pub cursor_shape: Option<CursorShapeSettings>,
 }
 
-#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Debug)]
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ModeContent {
     #[default]
@@ -696,7 +708,19 @@ pub enum ModeContent {
 }
 
 /// Controls when to use system clipboard.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum UseSystemClipboard {
     /// Don't use system clipboard.
@@ -707,9 +731,39 @@ pub enum UseSystemClipboard {
     OnYank,
 }
 
+/// Cursor shape configuration for insert mode in Vim.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum VimInsertModeCursorShape {
+    /// Inherit cursor shape from the editor's base cursor_shape setting.
+    Inherit,
+    /// Vertical bar cursor.
+    Bar,
+    /// Block cursor that surrounds the character.
+    Block,
+    /// Underline cursor.
+    Underline,
+    /// Hollow box cursor.
+    Hollow,
+}
+
 /// The settings for cursor shape.
 #[with_fallible_options]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
 pub struct CursorShapeSettings {
     /// Cursor shape for the normal mode.
     ///
@@ -726,7 +780,7 @@ pub struct CursorShapeSettings {
     /// Cursor shape for the insert mode.
     ///
     /// The default value follows the primary cursor_shape.
-    pub insert: Option<CursorShape>,
+    pub insert: Option<VimInsertModeCursorShape>,
 }
 
 /// Settings specific to journaling

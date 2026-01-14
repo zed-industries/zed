@@ -2765,7 +2765,7 @@ impl Pane {
             .on_drop(
                 cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
                     this.drag_split_direction = None;
-                    this.handle_tab_drop(dragged_tab, ix, window, cx)
+                    this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
                 }),
             )
             .on_drop(
@@ -3134,6 +3134,7 @@ impl Pane {
                                             window.dispatch_action(
                                                 OpenTerminal {
                                                     working_directory: parent_abs_path.clone(),
+                                                    local: false,
                                                 }
                                                 .boxed_clone(),
                                                 cx,
@@ -3276,6 +3277,7 @@ impl Pane {
             .zip(tab_details(&self.items, window, cx))
             .map(|((ix, item), detail)| {
                 self.render_tab(ix, &**item, detail, &focus_handle, window, cx)
+                    .into_any_element()
             })
             .collect::<Vec<_>>();
         let tab_count = tab_items.len();
@@ -3320,7 +3322,51 @@ impl Pane {
                 .flatten()
                 .unwrap_or(false);
 
-        TabBar::new("tab_bar")
+        let tab_bar_settings = TabBarSettings::get_global(cx);
+        let use_separate_rows = tab_bar_settings.show_pinned_tabs_in_separate_row;
+
+        if use_separate_rows && !pinned_tabs.is_empty() && !unpinned_tabs.is_empty() {
+            self.render_two_row_tab_bar(
+                pinned_tabs,
+                unpinned_tabs,
+                tab_count,
+                navigate_backward,
+                navigate_forward,
+                open_aside_left,
+                open_aside_right,
+                render_aside_toggle_left,
+                render_aside_toggle_right,
+                window,
+                cx,
+            )
+        } else {
+            self.render_single_row_tab_bar(
+                pinned_tabs,
+                unpinned_tabs,
+                tab_count,
+                navigate_backward,
+                navigate_forward,
+                open_aside_left,
+                open_aside_right,
+                render_aside_toggle_left,
+                render_aside_toggle_right,
+                window,
+                cx,
+            )
+        }
+    }
+
+    fn configure_tab_bar_start(
+        &mut self,
+        tab_bar: TabBar,
+        navigate_backward: IconButton,
+        navigate_forward: IconButton,
+        open_aside_left: Option<AnyElement>,
+        render_aside_toggle_left: bool,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> TabBar {
+        tab_bar
             .map(|tab_bar| {
                 if let Some(open_aside_left) = open_aside_left
                     && render_aside_toggle_left
@@ -3349,6 +3395,48 @@ impl Pane {
                     tab_bar
                 }
             })
+    }
+
+    fn configure_tab_bar_end(
+        tab_bar: TabBar,
+        open_aside_right: Option<AnyElement>,
+        render_aside_toggle_right: bool,
+    ) -> TabBar {
+        tab_bar.map(|tab_bar| {
+            if let Some(open_aside_right) = open_aside_right
+                && render_aside_toggle_right
+            {
+                tab_bar.end_child(open_aside_right)
+            } else {
+                tab_bar
+            }
+        })
+    }
+
+    fn render_single_row_tab_bar(
+        &mut self,
+        pinned_tabs: Vec<AnyElement>,
+        unpinned_tabs: Vec<AnyElement>,
+        tab_count: usize,
+        navigate_backward: IconButton,
+        navigate_forward: IconButton,
+        open_aside_left: Option<AnyElement>,
+        open_aside_right: Option<AnyElement>,
+        render_aside_toggle_left: bool,
+        render_aside_toggle_right: bool,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> AnyElement {
+        let tab_bar = self
+            .configure_tab_bar_start(
+                TabBar::new("tab_bar"),
+                navigate_backward,
+                navigate_forward,
+                open_aside_left,
+                render_aside_toggle_left,
+                window,
+                cx,
+            )
             .children(pinned_tabs.len().ne(&0).then(|| {
                 let max_scroll = self.tab_bar_scroll_handle.max_offset().width;
                 // We need to check both because offset returns delta values even when the scroll handle is not scrollable
@@ -3365,73 +3453,127 @@ impl Pane {
                             .border_color(cx.theme().colors().border)
                     })
             }))
+            .child(self.render_unpinned_tabs_container(unpinned_tabs, tab_count, cx));
+        Self::configure_tab_bar_end(tab_bar, open_aside_right, render_aside_toggle_right)
+            .into_any_element()
+    }
+
+    fn render_two_row_tab_bar(
+        &mut self,
+        pinned_tabs: Vec<AnyElement>,
+        unpinned_tabs: Vec<AnyElement>,
+        tab_count: usize,
+        navigate_backward: IconButton,
+        navigate_forward: IconButton,
+        open_aside_left: Option<AnyElement>,
+        open_aside_right: Option<AnyElement>,
+        render_aside_toggle_left: bool,
+        render_aside_toggle_right: bool,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> AnyElement {
+        let pinned_tab_bar = self
+            .configure_tab_bar_start(
+                TabBar::new("pinned_tab_bar"),
+                navigate_backward,
+                navigate_forward,
+                open_aside_left,
+                render_aside_toggle_left,
+                window,
+                cx,
+            )
             .child(
                 h_flex()
-                    .id("unpinned tabs")
+                    .id("pinned_tabs_row")
+                    .debug_selector(|| "pinned_tabs_row".into())
                     .overflow_x_scroll()
                     .w_full()
-                    .track_scroll(&self.tab_bar_scroll_handle)
-                    .on_scroll_wheel(cx.listener(|this, _, _, _| {
-                        this.suppress_scroll = true;
-                    }))
-                    .children(unpinned_tabs)
-                    .child(
-                        div()
-                            .id("tab_bar_drop_target")
-                            .min_w_6()
-                            // HACK: This empty child is currently necessary to force the drop target to appear
-                            // despite us setting a min width above.
-                            .child("")
-                            // HACK: h_full doesn't occupy the complete height, using fixed height instead
-                            .h(Tab::container_height(cx))
-                            .flex_grow()
-                            .drag_over::<DraggedTab>(|bar, _, _, cx| {
-                                bar.bg(cx.theme().colors().drop_target_background)
-                            })
-                            .drag_over::<DraggedSelection>(|bar, _, _, cx| {
-                                bar.bg(cx.theme().colors().drop_target_background)
-                            })
-                            .on_drop(cx.listener(
-                                move |this, dragged_tab: &DraggedTab, window, cx| {
-                                    this.drag_split_direction = None;
-                                    this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
-                                },
-                            ))
-                            .on_drop(cx.listener(
-                                move |this, selection: &DraggedSelection, window, cx| {
-                                    this.drag_split_direction = None;
-                                    this.handle_project_entry_drop(
-                                        &selection.active_selection.entry_id,
-                                        Some(tab_count),
-                                        window,
-                                        cx,
-                                    )
-                                },
-                            ))
-                            .on_drop(cx.listener(move |this, paths, window, cx| {
-                                this.drag_split_direction = None;
-                                this.handle_external_paths_drop(paths, window, cx)
-                            }))
-                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                                if event.click_count() == 2 {
-                                    window.dispatch_action(
-                                        this.double_click_dispatch_action.boxed_clone(),
-                                        cx,
-                                    );
-                                }
-                            })),
-                    ),
+                    .children(pinned_tabs),
+            );
+        let pinned_tab_bar = Self::configure_tab_bar_end(
+            pinned_tab_bar,
+            open_aside_right,
+            render_aside_toggle_right,
+        );
+
+        v_flex()
+            .w_full()
+            .flex_none()
+            .child(pinned_tab_bar)
+            .child(
+                TabBar::new("unpinned_tab_bar").child(self.render_unpinned_tabs_container(
+                    unpinned_tabs,
+                    tab_count,
+                    cx,
+                )),
             )
-            .map(|tab_bar| {
-                if let Some(open_aside_right) = open_aside_right
-                    && render_aside_toggle_right
-                {
-                    tab_bar.end_child(open_aside_right)
-                } else {
-                    tab_bar
-                }
-            })
             .into_any_element()
+    }
+
+    fn render_unpinned_tabs_container(
+        &mut self,
+        unpinned_tabs: Vec<AnyElement>,
+        tab_count: usize,
+        cx: &mut Context<Pane>,
+    ) -> impl IntoElement {
+        h_flex()
+            .id("unpinned tabs")
+            .overflow_x_scroll()
+            .w_full()
+            .track_scroll(&self.tab_bar_scroll_handle)
+            .on_scroll_wheel(cx.listener(|this, _, _, _| {
+                this.suppress_scroll = true;
+            }))
+            .children(unpinned_tabs)
+            .child(self.render_tab_bar_drop_target(tab_count, cx))
+    }
+
+    fn render_tab_bar_drop_target(
+        &self,
+        tab_count: usize,
+        cx: &mut Context<Pane>,
+    ) -> impl IntoElement {
+        div()
+            .id("tab_bar_drop_target")
+            .min_w_6()
+            // HACK: This empty child is currently necessary to force the drop target to appear
+            // despite us setting a min width above.
+            .child("")
+            // HACK: h_full doesn't occupy the complete height, using fixed height instead
+            .h(Tab::container_height(cx))
+            .flex_grow()
+            .drag_over::<DraggedTab>(|bar, _, _, cx| {
+                bar.bg(cx.theme().colors().drop_target_background)
+            })
+            .drag_over::<DraggedSelection>(|bar, _, _, cx| {
+                bar.bg(cx.theme().colors().drop_target_background)
+            })
+            .on_drop(
+                cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
+                    this.drag_split_direction = None;
+                    this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
+                }),
+            )
+            .on_drop(
+                cx.listener(move |this, selection: &DraggedSelection, window, cx| {
+                    this.drag_split_direction = None;
+                    this.handle_project_entry_drop(
+                        &selection.active_selection.entry_id,
+                        Some(tab_count),
+                        window,
+                        cx,
+                    )
+                }),
+            )
+            .on_drop(cx.listener(move |this, paths, window, cx| {
+                this.drag_split_direction = None;
+                this.handle_external_paths_drop(paths, window, cx)
+            }))
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                if event.click_count() == 2 {
+                    window.dispatch_action(this.double_click_dispatch_action.boxed_clone(), cx);
+                }
+            }))
     }
 
     pub fn render_menu_overlay(menu: &Entity<ContextMenu>) -> Div {
@@ -3891,7 +4033,7 @@ fn default_render_tab_bar_buttons(
                             )
                             .action("Search Symbols", ToggleProjectSymbols.boxed_clone())
                             .separator()
-                            .action("New Terminal", NewTerminal.boxed_clone())
+                            .action("New Terminal", NewTerminal::default().boxed_clone())
                     }))
                 }),
         )
@@ -5005,6 +5147,181 @@ mod tests {
 
         // Order has not changed
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_separate_pinned_row_disabled_by_default(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+
+        // Pin one tab
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B", "C*"], cx);
+
+        // Verify setting is disabled by default
+        let is_separate_row_enabled = pane.read_with(cx, |_, cx| {
+            TabBarSettings::get_global(cx).show_pinned_tabs_in_separate_row
+        });
+        assert!(
+            !is_separate_row_enabled,
+            "Separate pinned row should be disabled by default"
+        );
+
+        // Verify pinned_tabs_row element does NOT exist (single row layout)
+        let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
+        assert!(
+            pinned_row_bounds.is_none(),
+            "pinned_tabs_row should not exist when setting is disabled"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_separate_pinned_row_two_rows_when_both_tab_types_exist(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Enable separate row setting
+        set_pinned_tabs_separate_row(cx, true);
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+
+        // Pin one tab - now we have both pinned and unpinned tabs
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B", "C*"], cx);
+
+        // Verify pinned_tabs_row element exists (two row layout)
+        let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
+        assert!(
+            pinned_row_bounds.is_some(),
+            "pinned_tabs_row should exist when setting is enabled and both tab types exist"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_separate_pinned_row_single_row_when_only_pinned_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Enable separate row setting
+        set_pinned_tabs_separate_row(cx, true);
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+
+        // Pin all tabs - only pinned tabs exist
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B*!"], cx);
+
+        // Verify pinned_tabs_row does NOT exist (single row layout for pinned-only)
+        let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
+        assert!(
+            pinned_row_bounds.is_none(),
+            "pinned_tabs_row should not exist when only pinned tabs exist (uses single row)"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_separate_pinned_row_single_row_when_only_unpinned_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Enable separate row setting
+        set_pinned_tabs_separate_row(cx, true);
+
+        // Add only unpinned tabs
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        // Verify pinned_tabs_row does NOT exist (single row layout for unpinned-only)
+        let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
+        assert!(
+            pinned_row_bounds.is_none(),
+            "pinned_tabs_row should not exist when only unpinned tabs exist (uses single row)"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_separate_pinned_row_toggles_between_layouts(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+
+        // Pin one tab
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+
+        // Initially disabled - single row
+        let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
+        assert!(
+            pinned_row_bounds.is_none(),
+            "Should be single row when disabled"
+        );
+
+        // Enable - two rows
+        set_pinned_tabs_separate_row(cx, true);
+        cx.run_until_parked();
+        let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
+        assert!(
+            pinned_row_bounds.is_some(),
+            "Should be two rows when enabled"
+        );
+
+        // Disable again - back to single row
+        set_pinned_tabs_separate_row(cx, false);
+        cx.run_until_parked();
+        let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
+        assert!(
+            pinned_row_bounds.is_none(),
+            "Should be single row when disabled again"
+        );
     }
 
     #[gpui::test]
@@ -7291,6 +7608,17 @@ mod tests {
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.workspace.max_tabs = value.map(|v| NonZero::new(v).unwrap())
+            });
+        });
+    }
+
+    fn set_pinned_tabs_separate_row(cx: &mut TestAppContext, enabled: bool) {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .tab_bar
+                    .get_or_insert_default()
+                    .show_pinned_tabs_in_separate_row = Some(enabled);
             });
         });
     }

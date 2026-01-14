@@ -9,7 +9,7 @@ use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, Context, Div, Element, ElementId, Entity,
     HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Modifiers,
     ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle, WeakEntity,
-    Window, div, img, px, rems,
+    Window, div, img, rems,
 };
 use settings::Settings;
 use std::{
@@ -561,14 +561,16 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         .when_some(parsed.caption.as_ref(), |this, caption| {
             this.children(render_markdown_text(caption, cx))
         })
+        .border_1()
+        .border_color(cx.border_color)
+        .rounded_sm()
+        .overflow_hidden()
         .child(
             div()
+                .min_w_0()
+                .w_full()
                 .grid()
                 .grid_cols(max_column_count as u16)
-                .border(px(1.5))
-                .border_color(cx.border_color)
-                .rounded_sm()
-                .overflow_hidden()
                 .children(cells),
         )
         .into_any()

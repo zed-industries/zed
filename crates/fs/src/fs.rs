@@ -63,9 +63,6 @@ use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
 
-#[cfg(any(test, feature = "test-support"))]
-pub use fake_git_repo::{LOAD_HEAD_TEXT_TASK, LOAD_INDEX_TEXT_TASK};
-
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
     fn remove(&self, path: &Path) -> Result<()>;
@@ -1030,6 +1027,7 @@ impl Fs for RealFs {
         Arc<dyn Watcher>,
     ) {
         use util::{ResultExt as _, paths::SanitizedPath};
+        let executor = self.executor.clone();
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
@@ -1068,11 +1066,13 @@ impl Fs for RealFs {
         (
             Box::pin(rx.filter_map({
                 let watcher = watcher.clone();
+                let executor = executor.clone();
                 move |_| {
                     let _ = watcher.clone();
                     let pending_paths = pending_paths.clone();
+                    let executor = executor.clone();
                     async move {
-                        smol::Timer::after(latency).await;
+                        executor.timer(latency).await;
                         let paths = std::mem::take(&mut *pending_paths.lock());
                         (!paths.is_empty()).then_some(paths)
                     }

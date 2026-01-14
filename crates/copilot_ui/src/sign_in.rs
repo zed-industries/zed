@@ -1,12 +1,11 @@
-use crate::{Copilot, Status, request::PromptUserDeviceFlow};
 use anyhow::Context as _;
+use copilot::{Copilot, Status, request, request::PromptUserDeviceFlow};
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled,
     Subscription, Window, WindowBounds, WindowOptions, div, point,
 };
 use ui::{ButtonLike, CommonAnimationExt, ConfiguredApiCard, Vector, VectorName, prelude::*};
-use url::Url;
 use util::ResultExt as _;
 use workspace::{Toast, Workspace, notifications::NotificationId};
 
@@ -187,22 +186,12 @@ impl CopilotCodeVerification {
         .detach();
 
         let status = copilot.read(cx).status();
-        // Determine sign-up URL based on verification_uri domain if available
-        let sign_up_url = if let Status::SigningIn {
-            prompt: Some(ref prompt),
-        } = status
-        {
-            // Extract domain from verification_uri to construct sign-up URL
-            Self::get_sign_up_url_from_verification(&prompt.verification_uri)
-        } else {
-            None
-        };
         Self {
             status,
             connect_clicked: false,
             focus_handle: cx.focus_handle(),
             copilot: copilot.clone(),
-            sign_up_url,
+            sign_up_url: None,
             _subscription: cx.observe(copilot, |this, copilot, cx| {
                 let status = copilot.read(cx).status();
                 match status {
@@ -216,28 +205,8 @@ impl CopilotCodeVerification {
     }
 
     pub fn set_status(&mut self, status: Status, cx: &mut Context<Self>) {
-        // Update sign-up URL if we have a new verification URI
-        if let Status::SigningIn {
-            prompt: Some(ref prompt),
-        } = status
-        {
-            self.sign_up_url = Self::get_sign_up_url_from_verification(&prompt.verification_uri);
-        }
         self.status = status;
         cx.notify();
-    }
-
-    fn get_sign_up_url_from_verification(verification_uri: &str) -> Option<String> {
-        // Extract domain from verification URI using url crate
-        if let Ok(url) = Url::parse(verification_uri)
-            && let Some(host) = url.host_str()
-            && !host.contains("github.com")
-        {
-            // For GHE, construct URL from domain
-            Some(format!("https://{}/features/copilot", host))
-        } else {
-            None
-        }
     }
 
     fn render_device_code(data: &PromptUserDeviceFlow, cx: &mut Context<Self>) -> impl IntoElement {
@@ -303,9 +272,49 @@ impl CopilotCodeVerification {
                             .style(ButtonStyle::Outlined)
                             .size(ButtonSize::Medium)
                             .on_click({
-                                let verification_uri = data.verification_uri.clone();
+                                let command = data.command.clone();
                                 cx.listener(move |this, _, _window, cx| {
-                                    cx.open_url(&verification_uri);
+                                    if let Some(copilot) = Copilot::global(cx) {
+                                        let command = command.clone();
+                                        let copilot_clone = copilot.clone();
+                                        copilot.update(cx, |copilot, cx| {
+                                            if let Some(server) = copilot.language_server() {
+                                                let server = server.clone();
+                                                cx.spawn(async move |_, cx| {
+                                                    let result = server
+                                                        .request::<lsp::request::ExecuteCommand>(
+                                                            lsp::ExecuteCommandParams {
+                                                                command: command.command.clone(),
+                                                                arguments: command
+                                                                    .arguments
+                                                                    .clone()
+                                                                    .unwrap_or_default(),
+                                                                ..Default::default()
+                                                            },
+                                                        )
+                                                        .await
+                                                        .into_response()
+                                                        .ok()
+                                                        .flatten();
+                                                    if let Some(value) = result {
+                                                        if let Ok(status) =
+                                                            serde_json::from_value::<
+                                                                request::SignInStatus,
+                                                            >(value)
+                                                        {
+                                                            copilot_clone
+                                                                .update(cx, |copilot, cx| {
+                                                                    copilot.update_sign_in_status(
+                                                                        status, cx,
+                                                                    );
+                                                                });
+                                                        }
+                                                    }
+                                                })
+                                                .detach();
+                                            }
+                                        });
+                                    }
                                     this.connect_clicked = true;
                                 })
                             }),
@@ -450,7 +459,7 @@ impl Render for CopilotCodeVerification {
 
 pub struct ConfigurationView {
     copilot_status: Option<Status>,
-    is_authenticated: fn(cx: &App) -> bool,
+    is_authenticated: Box<dyn Fn(&App) -> bool + 'static>,
     edit_prediction: bool,
     _subscription: Option<Subscription>,
 }
@@ -462,7 +471,7 @@ pub enum ConfigurationMode {
 
 impl ConfigurationView {
     pub fn new(
-        is_authenticated: fn(cx: &App) -> bool,
+        is_authenticated: impl Fn(&App) -> bool + 'static,
         mode: ConfigurationMode,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -470,7 +479,7 @@ impl ConfigurationView {
 
         Self {
             copilot_status: copilot.as_ref().map(|copilot| copilot.read(cx).status()),
-            is_authenticated,
+            is_authenticated: Box::new(is_authenticated),
             edit_prediction: matches!(mode, ConfigurationMode::EditPrediction),
             _subscription: copilot.as_ref().map(|copilot| {
                 cx.observe(copilot, |this, model, cx| {
@@ -669,7 +678,7 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_authenticated = self.is_authenticated;
+        let is_authenticated = &self.is_authenticated;
 
         if is_authenticated(cx) {
             return ConfiguredApiCard::new("Authorized")

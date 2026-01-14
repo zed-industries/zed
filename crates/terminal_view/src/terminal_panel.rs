@@ -29,9 +29,9 @@ use util::{ResultExt, TryFutureExt};
 use workspace::{
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
     ActivatePaneUp, ActivatePreviousPane, DraggedSelection, DraggedTab, ItemId, MoveItemToPane,
-    MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, NewTerminal,
-    Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp,
-    SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
+    MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, Pane,
+    PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown,
+    SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
     move_active_item, move_item, pane,
@@ -161,7 +161,7 @@ impl TerminalPanel {
                                     menu.context(focus_handle.clone())
                                         .action(
                                             "New Terminal",
-                                            workspace::NewTerminal.boxed_clone(),
+                                            workspace::NewTerminal::default().boxed_clone(),
                                         )
                                         // We want the focus to go back to terminal panel once task modal is dismissed,
                                         // hence we focus that first. Otherwise, we'd end up without a focused element, as
@@ -524,12 +524,16 @@ impl TerminalPanel {
 
         terminal_panel
             .update(cx, |panel, cx| {
-                panel.add_terminal_shell(
-                    Some(action.working_directory.clone()),
-                    RevealStrategy::Always,
-                    window,
-                    cx,
-                )
+                if action.local {
+                    panel.add_local_terminal_shell(RevealStrategy::Always, window, cx)
+                } else {
+                    panel.add_terminal_shell(
+                        Some(action.working_directory.clone()),
+                        RevealStrategy::Always,
+                        window,
+                        cx,
+                    )
+                }
             })
             .detach_and_log_err(cx);
     }
@@ -564,16 +568,7 @@ impl TerminalPanel {
             task.shell.clone()
         };
 
-        let builder = ShellBuilder::new(&shell, is_windows);
-        let command_label = builder.command_label(task.command.as_deref().unwrap_or(""));
-        let (command, args) = builder.build_no_quote(task.command.clone(), &task.args);
-
-        let task = SpawnInTerminal {
-            command_label,
-            command: Some(command),
-            args,
-            ..task.clone()
-        };
+        let task = prepare_task_for_spawn(task, &shell, is_windows);
 
         if task.allow_concurrent_runs && task.use_new_terminal {
             return self.spawn_in_new_terminal(task, window, cx);
@@ -649,7 +644,7 @@ impl TerminalPanel {
     /// Create a new Terminal in the current working directory or the user's home directory
     fn new_terminal(
         workspace: &mut Workspace,
-        _: &workspace::NewTerminal,
+        action: &workspace::NewTerminal,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -659,12 +654,16 @@ impl TerminalPanel {
 
         terminal_panel
             .update(cx, |this, cx| {
-                this.add_terminal_shell(
-                    default_working_directory(workspace, cx),
-                    RevealStrategy::Always,
-                    window,
-                    cx,
-                )
+                if action.local {
+                    this.add_local_terminal_shell(RevealStrategy::Always, window, cx)
+                } else {
+                    this.add_terminal_shell(
+                        default_working_directory(workspace, cx),
+                        RevealStrategy::Always,
+                        window,
+                        cx,
+                    )
+                }
             })
             .detach_and_log_err(cx);
     }
@@ -825,6 +824,26 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
+        self.add_terminal_shell_internal(false, cwd, reveal_strategy, window, cx)
+    }
+
+    fn add_local_terminal_shell(
+        &mut self,
+        reveal_strategy: RevealStrategy,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<WeakEntity<Terminal>>> {
+        self.add_terminal_shell_internal(true, None, reveal_strategy, window, cx)
+    }
+
+    fn add_terminal_shell_internal(
+        &mut self,
+        force_local: bool,
+        cwd: Option<PathBuf>,
+        reveal_strategy: RevealStrategy,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<WeakEntity<Terminal>>> {
         let workspace = self.workspace.clone();
 
         cx.spawn_in(window, async move |terminal_panel, cx| {
@@ -836,9 +855,15 @@ impl TerminalPanel {
                 terminal_panel.active_pane.clone()
             })?;
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
-            let terminal = project
-                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
-                .await;
+            let terminal = if force_local {
+                project
+                    .update(cx, |project, cx| project.create_local_terminal(cx))
+                    .await
+            } else {
+                project
+                    .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                    .await
+            };
 
             match terminal {
                 Ok(terminal) => {
@@ -1101,6 +1126,26 @@ impl TerminalPanel {
     }
 }
 
+/// Prepares a `SpawnInTerminal` by computing the command, args, and command_label
+/// based on the shell configuration. This is a pure function that can be tested
+/// without spawning actual terminals.
+pub fn prepare_task_for_spawn(
+    task: &SpawnInTerminal,
+    shell: &Shell,
+    is_windows: bool,
+) -> SpawnInTerminal {
+    let builder = ShellBuilder::new(shell, is_windows);
+    let command_label = builder.command_label(task.command.as_deref().unwrap_or(""));
+    let (command, args) = builder.build_no_quote(task.command.clone(), &task.args);
+
+    SpawnInTerminal {
+        command_label,
+        command: Some(command),
+        args,
+        ..task.clone()
+    }
+}
+
 fn is_enabled_in_workspace(workspace: &Workspace, cx: &App) -> bool {
     workspace.project().read(cx).supports_terminal(cx)
 }
@@ -1120,7 +1165,7 @@ pub fn new_terminal_pane(
             project.clone(),
             Default::default(),
             None,
-            NewTerminal.boxed_clone(),
+            workspace::NewTerminal::default().boxed_clone(),
             false,
             window,
             cx,
@@ -1776,58 +1821,32 @@ mod tests {
     use project::FakeFs;
     use settings::SettingsStore;
 
-    #[gpui::test]
-    async fn test_spawn_an_empty_task(cx: &mut TestAppContext) {
-        init_test(cx);
+    #[test]
+    fn test_prepare_empty_task() {
+        let input = SpawnInTerminal::default();
+        let shell = Shell::System;
 
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let result = prepare_task_for_spawn(&input, &shell, false);
 
-        let (window_handle, terminal_panel) = workspace
-            .update(cx, |workspace, window, cx| {
-                let window_handle = window.window_handle();
-                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
-                (window_handle, terminal_panel)
-            })
-            .unwrap();
-
-        let task = window_handle
-            .update(cx, |_, window, cx| {
-                terminal_panel.update(cx, |terminal_panel, cx| {
-                    terminal_panel.spawn_task(&SpawnInTerminal::default(), window, cx)
-                })
-            })
-            .unwrap();
-
-        let terminal = task.await.unwrap();
         let expected_shell = util::get_system_shell();
-        terminal
-            .update(cx, |terminal, _| {
-                let task_metadata = terminal
-                    .task()
-                    .expect("When spawning a task, should have the task metadata")
-                    .spawned_task
-                    .clone();
-                assert_eq!(task_metadata.env, HashMap::default());
-                assert_eq!(task_metadata.cwd, None);
-                assert_eq!(task_metadata.shell, task::Shell::System);
-                assert_eq!(
-                    task_metadata.command,
-                    Some(expected_shell.clone()),
-                    "Empty tasks should spawn a -i shell"
-                );
-                assert_eq!(task_metadata.args, Vec::<String>::new());
-                assert_eq!(
-                    task_metadata.command_label, expected_shell,
-                    "We show the shell launch for empty commands"
-                );
-            })
-            .unwrap();
+        assert_eq!(result.env, HashMap::default());
+        assert_eq!(result.cwd, None);
+        assert_eq!(result.shell, Shell::System);
+        assert_eq!(
+            result.command,
+            Some(expected_shell.clone()),
+            "Empty tasks should spawn a -i shell"
+        );
+        assert_eq!(result.args, Vec::<String>::new());
+        assert_eq!(
+            result.command_label, expected_shell,
+            "We show the shell launch for empty commands"
+        );
     }
 
     #[gpui::test]
     async fn test_bypass_max_tabs_limit(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -1866,71 +1885,44 @@ mod tests {
         );
     }
 
-    // A complex Unix command won't be properly parsed by the Windows terminal hence omit the test there.
     #[cfg(unix)]
-    #[gpui::test]
-    async fn test_spawn_script_like_task(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
-
-        let (window_handle, terminal_panel) = workspace
-            .update(cx, |workspace, window, cx| {
-                let window_handle = window.window_handle();
-                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
-                (window_handle, terminal_panel)
-            })
-            .unwrap();
-
+    #[test]
+    fn test_prepare_script_like_task() {
         let user_command = r#"REPO_URL=$(git remote get-url origin | sed -e \"s/^git@\\(.*\\):\\(.*\\)\\.git$/https:\\/\\/\\1\\/\\2/\"); COMMIT_SHA=$(git log -1 --format=\"%H\" -- \"${ZED_RELATIVE_FILE}\"); echo \"${REPO_URL}/blob/${COMMIT_SHA}/${ZED_RELATIVE_FILE}#L${ZED_ROW}-$(echo $(($(wc -l <<< \"$ZED_SELECTED_TEXT\") + $ZED_ROW - 1)))\" | xclip -selection clipboard"#.to_string();
-
         let expected_cwd = PathBuf::from("/some/work");
-        let task = window_handle
-            .update(cx, |_, window, cx| {
-                terminal_panel.update(cx, |terminal_panel, cx| {
-                    terminal_panel.spawn_task(
-                        &SpawnInTerminal {
-                            command: Some(user_command.clone()),
-                            cwd: Some(expected_cwd.clone()),
-                            ..SpawnInTerminal::default()
-                        },
-                        window,
-                        cx,
-                    )
-                })
-            })
-            .unwrap();
 
-        let terminal = task.await.unwrap();
-        let shell = util::get_system_shell();
-        terminal
-            .update(cx, |terminal, _| {
-                let task_metadata = terminal
-                    .task()
-                    .expect("When spawning a task, should have the task metadata")
-                    .spawned_task
-                    .clone();
-                assert_eq!(task_metadata.env, HashMap::default());
-                assert_eq!(task_metadata.cwd, Some(expected_cwd));
-                assert_eq!(task_metadata.shell, task::Shell::System);
-                assert_eq!(task_metadata.command, Some(shell.clone()));
-                assert_eq!(
-                    task_metadata.args,
-                    vec!["-i".to_string(), "-c".to_string(), user_command.clone(),],
-                    "Use command should have been moved into the arguments, as we're spawning a new -i shell",
-                );
-                assert_eq!(
-                    task_metadata.command_label,
-                    format!("{shell} {interactive}-c '{user_command}'", interactive = if cfg!(windows) {""} else {"-i "}),
-                    "We want to show to the user the entire command spawned");
-            })
-            .unwrap();
+        let input = SpawnInTerminal {
+            command: Some(user_command.clone()),
+            cwd: Some(expected_cwd.clone()),
+            ..SpawnInTerminal::default()
+        };
+        let shell = Shell::System;
+
+        let result = prepare_task_for_spawn(&input, &shell, false);
+
+        let system_shell = util::get_system_shell();
+        assert_eq!(result.env, HashMap::default());
+        assert_eq!(result.cwd, Some(expected_cwd));
+        assert_eq!(result.shell, Shell::System);
+        assert_eq!(result.command, Some(system_shell.clone()));
+        assert_eq!(
+            result.args,
+            vec!["-i".to_string(), "-c".to_string(), user_command.clone()],
+            "User command should have been moved into the arguments, as we're spawning a new -i shell",
+        );
+        assert_eq!(
+            result.command_label,
+            format!(
+                "{system_shell} {interactive}-c '{user_command}'",
+                interactive = if cfg!(windows) { "" } else { "-i " }
+            ),
+            "We want to show to the user the entire command spawned"
+        );
     }
 
     #[gpui::test]
     async fn renders_error_if_default_shell_fails(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
         init_test(cx);
 
         cx.update(|cx| {
@@ -1978,6 +1970,38 @@ mod tests {
                 })
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_local_terminal_in_local_project(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+
+        let (window_handle, terminal_panel) = workspace
+            .update(cx, |workspace, window, cx| {
+                let window_handle = window.window_handle();
+                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                (window_handle, terminal_panel)
+            })
+            .unwrap();
+
+        let result = window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.add_local_terminal_shell(RevealStrategy::Always, window, cx)
+                })
+            })
+            .unwrap()
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "local terminal should successfully create in local project"
+        );
     }
 
     fn set_max_tabs(cx: &mut TestAppContext, value: Option<usize>) {

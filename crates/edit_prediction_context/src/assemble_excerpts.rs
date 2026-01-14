@@ -1,16 +1,15 @@
 use language::{BufferSnapshot, OffsetRangeExt as _, Point};
 use std::ops::Range;
-use zeta_prompt::RelatedExcerpt;
 
 #[cfg(not(test))]
 const MAX_OUTLINE_ITEM_BODY_SIZE: usize = 512;
 #[cfg(test)]
 const MAX_OUTLINE_ITEM_BODY_SIZE: usize = 24;
 
-pub fn assemble_excerpts(
+pub fn assemble_excerpt_ranges(
     buffer: &BufferSnapshot,
     mut input_ranges: Vec<Range<Point>>,
-) -> Vec<RelatedExcerpt> {
+) -> Vec<Range<u32>> {
     merge_ranges(&mut input_ranges);
 
     let mut outline_ranges = Vec::new();
@@ -76,10 +75,7 @@ pub fn assemble_excerpts(
 
     input_ranges
         .into_iter()
-        .map(|range| RelatedExcerpt {
-            row_range: range.start.row..range.end.row,
-            text: buffer.text_for_range(range).collect(),
-        })
+        .map(|range| range.start.row..range.end.row)
         .collect()
 }
 

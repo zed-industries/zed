@@ -252,6 +252,9 @@ impl Telemetry {
         cx.background_spawn({
             let this = Arc::downgrade(&this);
             async move {
+                if cfg!(feature = "test-support") {
+                    return;
+                }
                 while let Some(event) = rx.next().await {
                     let Some(state) = this.upgrade() else { break };
                     state.report_event(Event::Flexible(event))

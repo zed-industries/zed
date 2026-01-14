@@ -5,12 +5,13 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use cloud_llm_client::CompletionIntent;
 use collections::HashMap;
-use copilot::copilot_chat::{
-    ChatMessage, ChatMessageContent, ChatMessagePart, CopilotChat, ImageUrl,
-    Model as CopilotChatModel, ModelVendor, Request as CopilotChatRequest, ResponseEvent, Tool,
-    ToolCall,
-};
 use copilot::{Copilot, Status};
+use copilot_chat::responses as copilot_responses;
+use copilot_chat::{
+    ChatMessage, ChatMessageContent, ChatMessagePart, CopilotChat, CopilotChatConfiguration,
+    Function, FunctionContent, ImageUrl, Model as CopilotChatModel, ModelVendor,
+    Request as CopilotChatRequest, ResponseEvent, Tool, ToolCall, ToolCallContent, ToolChoice,
+};
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
@@ -60,7 +61,7 @@ impl CopilotChatLanguageModelProvider {
                 _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                     if let Some(copilot_chat) = CopilotChat::global(cx) {
                         let language_settings = all_language_settings(None, cx);
-                        let configuration = copilot::copilot_chat::CopilotChatConfiguration {
+                        let configuration = CopilotChatConfiguration {
                             enterprise_uri: language_settings
                                 .edit_predictions
                                 .copilot
@@ -178,13 +179,13 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         cx: &mut App,
     ) -> AnyView {
         cx.new(|cx| {
-            copilot::ConfigurationView::new(
+            copilot_ui::ConfigurationView::new(
                 |cx| {
                     CopilotChat::global(cx)
                         .map(|m| m.read(cx).is_authenticated())
                         .unwrap_or(false)
                 },
-                copilot::ConfigurationMode::Chat,
+                copilot_ui::ConfigurationMode::Chat,
                 cx,
             )
         })
@@ -563,7 +564,7 @@ impl CopilotResponsesEventMapper {
 
     pub fn map_stream(
         mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<copilot::copilot_responses::StreamEvent>>>>,
+        events: Pin<Box<dyn Send + Stream<Item = Result<copilot_responses::StreamEvent>>>>,
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     {
         events.flat_map(move |event| {
@@ -576,11 +577,11 @@ impl CopilotResponsesEventMapper {
 
     fn map_event(
         &mut self,
-        event: copilot::copilot_responses::StreamEvent,
+        event: copilot_responses::StreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         match event {
-            copilot::copilot_responses::StreamEvent::OutputItemAdded { item, .. } => match item {
-                copilot::copilot_responses::ResponseOutputItem::Message { id, .. } => {
+            copilot_responses::StreamEvent::OutputItemAdded { item, .. } => match item {
+                copilot_responses::ResponseOutputItem::Message { id, .. } => {
                     vec![Ok(LanguageModelCompletionEvent::StartMessage {
                         message_id: id,
                     })]
@@ -588,7 +589,7 @@ impl CopilotResponsesEventMapper {
                 _ => Vec::new(),
             },
 
-            copilot::copilot_responses::StreamEvent::OutputTextDelta { delta, .. } => {
+            copilot_responses::StreamEvent::OutputTextDelta { delta, .. } => {
                 if delta.is_empty() {
                     Vec::new()
                 } else {
@@ -596,9 +597,9 @@ impl CopilotResponsesEventMapper {
                 }
             }
 
-            copilot::copilot_responses::StreamEvent::OutputItemDone { item, .. } => match item {
-                copilot::copilot_responses::ResponseOutputItem::Message { .. } => Vec::new(),
-                copilot::copilot_responses::ResponseOutputItem::FunctionCall {
+            copilot_responses::StreamEvent::OutputItemDone { item, .. } => match item {
+                copilot_responses::ResponseOutputItem::Message { .. } => Vec::new(),
+                copilot_responses::ResponseOutputItem::FunctionCall {
                     call_id,
                     name,
                     arguments,
@@ -632,7 +633,7 @@ impl CopilotResponsesEventMapper {
                     events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
                     events
                 }
-                copilot::copilot_responses::ResponseOutputItem::Reasoning {
+                copilot_responses::ResponseOutputItem::Reasoning {
                     summary,
                     encrypted_content,
                     ..
@@ -660,7 +661,7 @@ impl CopilotResponsesEventMapper {
                 }
             },
 
-            copilot::copilot_responses::StreamEvent::Completed { response } => {
+            copilot_responses::StreamEvent::Completed { response } => {
                 let mut events = Vec::new();
                 if let Some(usage) = response.usage {
                     events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
@@ -676,18 +677,16 @@ impl CopilotResponsesEventMapper {
                 events
             }
 
-            copilot::copilot_responses::StreamEvent::Incomplete { response } => {
+            copilot_responses::StreamEvent::Incomplete { response } => {
                 let reason = response
                     .incomplete_details
                     .as_ref()
                     .and_then(|details| details.reason.as_ref());
                 let stop_reason = match reason {
-                    Some(copilot::copilot_responses::IncompleteReason::MaxOutputTokens) => {
+                    Some(copilot_responses::IncompleteReason::MaxOutputTokens) => {
                         StopReason::MaxTokens
                     }
-                    Some(copilot::copilot_responses::IncompleteReason::ContentFilter) => {
-                        StopReason::Refusal
-                    }
+                    Some(copilot_responses::IncompleteReason::ContentFilter) => StopReason::Refusal,
                     _ => self
                         .pending_stop_reason
                         .take()
@@ -707,7 +706,7 @@ impl CopilotResponsesEventMapper {
                 events
             }
 
-            copilot::copilot_responses::StreamEvent::Failed { response } => {
+            copilot_responses::StreamEvent::Failed { response } => {
                 let provider = PROVIDER_NAME;
                 let (status_code, message) = match response.error {
                     Some(error) => {
@@ -727,18 +726,18 @@ impl CopilotResponsesEventMapper {
                 })]
             }
 
-            copilot::copilot_responses::StreamEvent::GenericError { error } => vec![Err(
+            copilot_responses::StreamEvent::GenericError { error } => vec![Err(
                 LanguageModelCompletionError::Other(anyhow!(format!("{error:?}"))),
             )],
 
-            copilot::copilot_responses::StreamEvent::Created { .. }
-            | copilot::copilot_responses::StreamEvent::Unknown => Vec::new(),
+            copilot_responses::StreamEvent::Created { .. }
+            | copilot_responses::StreamEvent::Unknown => Vec::new(),
         }
     }
 }
 
 fn into_copilot_chat(
-    model: &copilot::copilot_chat::Model,
+    model: &CopilotChatModel,
     request: LanguageModelRequest,
 ) -> Result<CopilotChatRequest> {
     let mut request_messages: Vec<LanguageModelRequestMessage> = Vec::new();
@@ -825,8 +824,8 @@ fn into_copilot_chat(
                     if let MessageContent::ToolUse(tool_use) = content {
                         tool_calls.push(ToolCall {
                             id: tool_use.id.to_string(),
-                            content: copilot::copilot_chat::ToolCallContent::Function {
-                                function: copilot::copilot_chat::FunctionContent {
+                            content: ToolCallContent::Function {
+                                function: FunctionContent {
                                     name: tool_use.name.to_string(),
                                     arguments: serde_json::to_string(&tool_use.input)?,
                                     thought_signature: tool_use.thought_signature.clone(),
@@ -890,7 +889,7 @@ fn into_copilot_chat(
         .tools
         .iter()
         .map(|tool| Tool::Function {
-            function: copilot::copilot_chat::Function {
+            function: Function {
                 name: tool.name.clone(),
                 description: tool.description.clone(),
                 parameters: tool.input_schema.clone(),
@@ -907,18 +906,18 @@ fn into_copilot_chat(
         messages,
         tools,
         tool_choice: request.tool_choice.map(|choice| match choice {
-            LanguageModelToolChoice::Auto => copilot::copilot_chat::ToolChoice::Auto,
-            LanguageModelToolChoice::Any => copilot::copilot_chat::ToolChoice::Any,
-            LanguageModelToolChoice::None => copilot::copilot_chat::ToolChoice::None,
+            LanguageModelToolChoice::Auto => ToolChoice::Auto,
+            LanguageModelToolChoice::Any => ToolChoice::Any,
+            LanguageModelToolChoice::None => ToolChoice::None,
         }),
     })
 }
 
 fn into_copilot_responses(
-    model: &copilot::copilot_chat::Model,
+    model: &CopilotChatModel,
     request: LanguageModelRequest,
-) -> copilot::copilot_responses::Request {
-    use copilot::copilot_responses as responses;
+) -> copilot_responses::Request {
+    use copilot_responses as responses;
 
     let LanguageModelRequest {
         thread_id: _,
@@ -1109,7 +1108,7 @@ fn into_copilot_responses(
         tool_choice: mapped_tool_choice,
         reasoning: None, // We would need to add support for setting from user settings.
         include: Some(vec![
-            copilot::copilot_responses::ResponseIncludable::ReasoningEncryptedContent,
+            copilot_responses::ResponseIncludable::ReasoningEncryptedContent,
         ]),
     }
 }
@@ -1117,7 +1116,7 @@ fn into_copilot_responses(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use copilot::copilot_responses as responses;
+    use copilot_chat::responses;
     use futures::StreamExt;
 
     fn map_events(events: Vec<responses::StreamEvent>) -> Vec<LanguageModelCompletionEvent> {
@@ -1384,20 +1383,22 @@ mod tests {
 
     #[test]
     fn chat_completions_stream_maps_reasoning_data() {
-        use copilot::copilot_chat::ResponseEvent;
+        use copilot_chat::{
+            FunctionChunk, ResponseChoice, ResponseDelta, ResponseEvent, Role, ToolCallChunk,
+        };
 
         let events = vec![
             ResponseEvent {
-                choices: vec![copilot::copilot_chat::ResponseChoice {
+                choices: vec![ResponseChoice {
                     index: Some(0),
                     finish_reason: None,
-                    delta: Some(copilot::copilot_chat::ResponseDelta {
+                    delta: Some(ResponseDelta {
                         content: None,
-                        role: Some(copilot::copilot_chat::Role::Assistant),
-                        tool_calls: vec![copilot::copilot_chat::ToolCallChunk {
+                        role: Some(Role::Assistant),
+                        tool_calls: vec![ToolCallChunk {
                             index: Some(0),
                             id: Some("call_abc123".to_string()),
-                            function: Some(copilot::copilot_chat::FunctionChunk {
+                            function: Some(FunctionChunk {
                                 name: Some("list_directory".to_string()),
                                 arguments: Some("{\"path\":\"test\"}".to_string()),
                                 thought_signature: None,
@@ -1412,10 +1413,10 @@ mod tests {
                 usage: None,
             },
             ResponseEvent {
-                choices: vec![copilot::copilot_chat::ResponseChoice {
+                choices: vec![ResponseChoice {
                     index: Some(0),
                     finish_reason: Some("tool_calls".to_string()),
-                    delta: Some(copilot::copilot_chat::ResponseDelta {
+                    delta: Some(ResponseDelta {
                         content: None,
                         role: None,
                         tool_calls: vec![],

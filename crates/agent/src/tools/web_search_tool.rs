@@ -81,10 +81,17 @@ impl AgentTool for WebSearchTool {
             ToolPermissionDecision::Deny(reason) => {
                 return Task::ready(Err(anyhow!("{}", reason)));
             }
-            ToolPermissionDecision::Confirm => Some(event_stream.authorize(
-                format!("Search the web for {}", MarkdownInlineCode(&input.query)),
-                cx,
-            )),
+            ToolPermissionDecision::Confirm => {
+                let context = crate::ToolPermissionContext {
+                    tool_name: "web_search".to_string(),
+                    input_value: input.query.clone(),
+                };
+                Some(event_stream.authorize(
+                    format!("Search the web for {}", MarkdownInlineCode(&input.query)),
+                    context,
+                    cx,
+                ))
+            }
         };
 
         let Some(provider) = WebSearchRegistry::read_global(cx).active_provider() else {

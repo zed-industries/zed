@@ -624,6 +624,11 @@ impl LanguageModel for CloudLanguageModel {
         self.model.supports_max_mode
     }
 
+    fn supports_split_token_display(&self) -> bool {
+        use cloud_llm_client::LanguageModelProvider::*;
+        matches!(self.model.provider, OpenAi)
+    }
+
     fn telemetry_id(&self) -> String {
         format!("zed.dev/{}", self.model.id)
     }
@@ -650,6 +655,10 @@ impl LanguageModel for CloudLanguageModel {
             .max_token_count_in_max_mode
             .filter(|_| self.model.supports_max_mode)
             .map(|max_token_count| max_token_count as u64)
+    }
+
+    fn max_output_tokens(&self) -> Option<u64> {
+        Some(self.model.max_output_tokens as u64)
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {

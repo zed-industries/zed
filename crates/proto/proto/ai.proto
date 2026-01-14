@@ -172,6 +172,18 @@ message GetAgentServerCommand {
     optional string root_dir = 3;
 }
 
+message GetContextServerCommand {
+    uint64 project_id = 1;
+    string server_id = 2;
+    optional string root_dir = 3;
+}
+
+message ContextServerCommand {
+    string path = 1;
+    repeated string args = 2;
+    map<string, string> env = 3;
+}
+
 message AgentServerCommand {
     string path = 1;
     repeated string args = 2;

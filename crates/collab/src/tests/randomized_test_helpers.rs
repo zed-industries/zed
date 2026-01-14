@@ -174,9 +174,7 @@ pub async fn run_randomized_test<T: RandomizedTest>(
     }
 
     drop(operation_channels);
-    executor.start_waiting();
     futures::future::join_all(client_tasks).await;
-    executor.finish_waiting();
 
     executor.run_until_parked();
     T::on_quiesce(&mut server, &mut clients).await;
@@ -524,10 +522,8 @@ impl<T: RandomizedTest> TestPlan<T> {
                 server.forbid_connections();
                 server.disconnect_client(removed_peer_id);
                 deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
-                deterministic.start_waiting();
                 log::info!("waiting for user {} to exit...", removed_user_id);
                 client_task.await;
-                deterministic.finish_waiting();
                 server.allow_connections();
 
                 for project in client.dev_server_projects().iter() {

@@ -1,3 +1,6 @@
+[profile.default]
+slow-timeout = { period = "60s", terminate-after = 1 }
+
 [test-groups]
 sequential-db-tests = { max-threads = 1 }
 
@@ -18,3 +21,20 @@ priority = 99
 [[profile.default.overrides]]
 filter = 'package(extension_host) and test(test_extension_store_with_test_extension)'
 priority = 99
+
+# Extended timeouts for tests that were timing out at 60s
+[[profile.default.overrides]]
+filter = 'test(test_rainbow_bracket_highlights) or test(test_wrapped_invisibles_drawing) or test(test_basic_following) or test(test_random_diagnostics_blocks)'
+slow-timeout = { period = "300s", terminate-after = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(extension_host) and test(test_extension_store_with_test_extension)'
+slow-timeout = { period = "300s", terminate-after = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(language_model) and test(test_from_image_downscales_to_default_5mb_limit)'
+slow-timeout = { period = "300s", terminate-after = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(vim) and (test(test_command_read) or test(test_capital_f_and_capital_t) or test(test_f_and_t) or test(test_change_paragraph_object) or test(test_change_surrounding_character_objects) or test(test_change_word_object) or test(test_delete_paragraph_object) or test(test_delete_surrounding_character_objects) or test(test_delete_word_object))'
+slow-timeout = { period = "300s", terminate-after = 1 }

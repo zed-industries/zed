@@ -57,6 +57,7 @@ wasmtime.workspace = true
 zeta_prompt.workspace = true
 rand.workspace = true
 similar = "2.7.0"
+flate2 = "1.1.8"
 
 # Wasmtime is included as a dependency in order to enable the same
 # features that are enabled in Zed.

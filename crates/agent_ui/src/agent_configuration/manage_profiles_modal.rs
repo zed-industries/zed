@@ -350,14 +350,18 @@ impl ManageProfilesModal {
             return;
         };
 
+        //todo: This causes the web search tool to show up even it only works when using zed hosted models
+        let tool_names: Vec<Arc<str>> = agent::supported_built_in_tool_names(
+            self.active_model.as_ref().map(|model| model.provider_id()),
+            cx,
+        )
+        .into_iter()
+        .map(|s| Arc::from(s))
+        .collect();
+
         let tool_picker = cx.new(|cx| {
             let delegate = ToolPickerDelegate::builtin_tools(
-                //todo: This causes the web search tool to show up even it only works when using zed hosted models
-                agent::supported_built_in_tool_names(
-                    self.active_model.as_ref().map(|model| model.provider_id()),
-                )
-                .map(|s| s.into())
-                .collect::<Vec<_>>(),
+                tool_names,
                 self.fs.clone(),
                 profile_id.clone(),
                 profile,

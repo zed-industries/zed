@@ -1,3 +1,4 @@
+use remote::Interactive;
 use std::{
     any::Any,
     borrow::Borrow,
@@ -1315,12 +1316,13 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
             let root_dir = response.root_dir;
             response.env.extend(extra_env);
             let command = upstream_client.update(cx, |client, _| {
-                client.build_command(
+                client.build_command_with_options(
                     Some(response.path),
                     &response.args,
                     &response.env.into_iter().collect(),
                     Some(root_dir.clone()),
                     None,
+                    Interactive::No,
                 )
             })??;
             Ok((

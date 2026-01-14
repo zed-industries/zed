@@ -1,4 +1,4 @@
-use crate::{Capslock, ResultExt as _, RunnableVariant, TaskTiming, profiler, xcb_flush};
+use crate::{Capslock, ResultExt as _, TaskTiming, profiler, xcb_flush};
 use anyhow::{Context as _, anyhow};
 use ashpd::WindowIdentifier;
 use calloop::{
@@ -297,10 +297,10 @@ impl X11ClientStatePtr {
 pub(crate) struct X11Client(Rc<RefCell<X11ClientState>>);
 
 impl X11Client {
-    pub(crate) fn new(liveness: std::sync::Weak<()>) -> anyhow::Result<Self> {
+    pub(crate) fn new() -> anyhow::Result<Self> {
         let event_loop = EventLoop::try_new()?;
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal(), liveness);
+        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
 
@@ -314,32 +314,15 @@ impl X11Client {
                         // callbacks.
                         handle.insert_idle(|_| {
                             let start = Instant::now();
-                            let mut timing = match runnable {
-                                RunnableVariant::Meta(runnable) => {
-                                    let location = runnable.metadata().location;
-                                    let timing = TaskTiming {
-                                        location,
-                                        start,
-                                        end: None,
-                                    };
-                                    profiler::add_task_timing(timing);
-
-                                    runnable.run();
-                                    timing
-                                }
-                                RunnableVariant::Compat(runnable) => {
-                                    let location = core::panic::Location::caller();
-                                    let timing = TaskTiming {
-                                        location,
-                                        start,
-                                        end: None,
-                                    };
-                                    profiler::add_task_timing(timing);
-
-                                    runnable.run();
-                                    timing
-                                }
+                            let location = runnable.metadata().location;
+                            let mut timing = TaskTiming {
+                                location,
+                                start,
+                                end: None,
                             };
+                            profiler::add_task_timing(timing);
+
+                            runnable.run();
 
                             let end = Instant::now();
                             timing.end = Some(end);

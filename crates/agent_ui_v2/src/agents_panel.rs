@@ -27,7 +27,7 @@ use workspace::{
 use crate::agent_thread_pane::{
     AgentThreadPane, AgentsUtilityPaneEvent, SerializedAgentThreadPane, SerializedHistoryEntryId,
 };
-use crate::thread_history::{AcpThreadHistory, ThreadHistoryEvent};
+use agent_ui::acp::{AcpThreadHistory, ThreadHistoryEvent};
 
 const AGENTS_PANEL_KEY: &str = "agents_panel";
 
@@ -310,9 +310,10 @@ impl AgentsPanel {
         let project = self.project.clone();
         let thread_store = self.thread_store.clone();
         let prompt_store = self.prompt_store.clone();
+        let history = self.history.clone();
 
         let agent_thread_pane = cx.new(|cx| {
-            let mut pane = AgentThreadPane::new(workspace.clone(), cx);
+            let mut pane = AgentThreadPane::new(workspace.clone(), history, cx);
             pane.open_thread(
                 entry,
                 fs,

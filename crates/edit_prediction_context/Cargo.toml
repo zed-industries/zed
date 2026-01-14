@@ -12,18 +12,20 @@ workspace = true
 path = "src/edit_prediction_context.rs"
 
 [dependencies]
-parking_lot.workspace = true
 anyhow.workspace = true
+clock.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
-lsp.workspace = true
-project.workspace = true
 log.workspace = true
+lsp.workspace = true
+parking_lot.workspace = true
+project.workspace = true
 serde.workspace = true
 smallvec.workspace = true
+text.workspace = true
 tree-sitter.workspace = true
 util.workspace = true
 zeta_prompt.workspace = true

@@ -217,12 +217,16 @@ pub trait AgentSessionList {
         cx: &mut App,
     ) -> Task<Result<AgentSessionListResponse>>;
 
+    fn supports_delete(&self) -> bool {
+        false
+    }
+
     fn delete_session(&self, _session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<()>> {
-        Task::ready(Ok(()))
+        Task::ready(Err(anyhow::anyhow!("delete_session not supported")))
     }
 
     fn delete_sessions(&self, _cx: &mut App) -> Task<Result<()>> {
-        Task::ready(Ok(()))
+        Task::ready(Err(anyhow::anyhow!("delete_sessions not supported")))
     }
 
     fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {

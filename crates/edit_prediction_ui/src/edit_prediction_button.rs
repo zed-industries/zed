@@ -22,7 +22,7 @@ use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
-use project::DisableAiSettings;
+use project::{DisableAiSettings, Project};
 use regex::Regex;
 use settings::{
     EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
@@ -75,6 +75,7 @@ pub struct EditPredictionButton {
     fs: Arc<dyn Fs>,
     user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
+    project: WeakEntity<Project>,
 }
 
 enum SupermavenButtonStatus {
@@ -95,7 +96,9 @@ impl Render for EditPredictionButton {
 
         match all_language_settings.edit_predictions.provider {
             EditPredictionProvider::Copilot => {
-                let Some(copilot) = Copilot::global(cx) else {
+                let Some(copilot) = EditPredictionStore::try_global(cx)
+                    .and_then(|store| store.read(cx).copilot_for_project(&self.project.upgrade()?))
+                else {
                     return div().hidden();
                 };
                 let status = copilot.read(cx).status();
@@ -129,7 +132,7 @@ impl Render for EditPredictionButton {
                                             .on_click(
                                                 "Reinstall Copilot",
                                                 |window, cx| {
-                                                    copilot::reinstall_and_sign_in(window, cx)
+                                                    copilot_ui::reinstall_and_sign_in(window, cx)
                                                 },
                                             ),
                                             cx,
@@ -143,11 +146,16 @@ impl Render for EditPredictionButton {
                     );
                 }
                 let this = cx.weak_entity();
-
+                let project = self.project.clone();
                 div().child(
                     PopoverMenu::new("copilot")
                         .menu(move |window, cx| {
-                            let current_status = Copilot::global(cx)?.read(cx).status();
+                            let current_status = EditPredictionStore::try_global(cx)
+                                .and_then(|store| {
+                                    store.read(cx).copilot_for_project(&project.upgrade()?)
+                                })?
+                                .read(cx)
+                                .status();
                             match current_status {
                                 Status::Authorized => this.update(cx, |this, cx| {
                                     this.build_copilot_context_menu(window, cx)
@@ -478,6 +486,7 @@ impl EditPredictionButton {
         user_store: Entity<UserStore>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
         client: Arc<Client>,
+        project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Self {
         if let Some(copilot) = Copilot::global(cx) {
@@ -514,6 +523,7 @@ impl EditPredictionButton {
             edit_prediction_provider: None,
             user_store,
             popover_menu_handle,
+            project: project.downgrade(),
             fs,
         }
     }
@@ -529,10 +539,10 @@ impl EditPredictionButton {
             ));
         }
 
-        if let Some(copilot) = Copilot::global(cx) {
-            if matches!(copilot.read(cx).status(), Status::Authorized) {
-                providers.push(EditPredictionProvider::Copilot);
-            }
+        if let Some(_) = EditPredictionStore::try_global(cx)
+            .and_then(|store| store.read(cx).copilot_for_project(&self.project.upgrade()?))
+        {
+            providers.push(EditPredictionProvider::Copilot);
         }
 
         if let Some(supermaven) = Supermaven::global(cx) {
@@ -629,7 +639,7 @@ impl EditPredictionButton {
     ) -> Entity<ContextMenu> {
         let fs = self.fs.clone();
         ContextMenu::build(window, cx, |menu, _, _| {
-            menu.entry("Sign In to Copilot", None, copilot::initiate_sign_in)
+            menu.entry("Sign In to Copilot", None, copilot_ui::initiate_sign_in)
                 .entry("Disable Copilot", None, {
                     let fs = fs.clone();
                     move |_window, cx| hide_copilot(fs.clone(), cx)
@@ -931,7 +941,7 @@ impl EditPredictionButton {
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
         let all_language_settings = all_language_settings(None, cx);
-        let copilot_config = copilot::copilot_chat::CopilotChatConfiguration {
+        let copilot_config = copilot_chat::CopilotChatConfiguration {
             enterprise_uri: all_language_settings
                 .edit_predictions
                 .copilot

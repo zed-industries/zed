@@ -961,10 +961,30 @@ pub struct ThemeColorsContent {
     /// Background color for Vim Helix Select mode indicator.
     #[serde(rename = "vim.helix_select.background")]
     pub vim_helix_select_background: Option<String>,
-
-    /// Text color for Vim mode indicator label.
-    #[serde(rename = "vim.mode.text")]
-    pub vim_mode_text: Option<String>,
+    /// Background color for Vim Normal mode indicator.
+    #[serde(rename = "vim.normal.foreground")]
+    pub vim_normal_foreground: Option<String>,
+    /// Foreground color for Vim Insert mode indicator.
+    #[serde(rename = "vim.insert.foreground")]
+    pub vim_insert_foreground: Option<String>,
+    /// Foreground color for Vim Replace mode indicator.
+    #[serde(rename = "vim.replace.foreground")]
+    pub vim_replace_foreground: Option<String>,
+    /// Foreground color for Vim Visual mode indicator.
+    #[serde(rename = "vim.visual.foreground")]
+    pub vim_visual_foreground: Option<String>,
+    /// Foreground color for Vim Visual Line mode indicator.
+    #[serde(rename = "vim.visual_line.foreground")]
+    pub vim_visual_line_foreground: Option<String>,
+    /// Foreground color for Vim Visual Block mode indicator.
+    #[serde(rename = "vim.visual_block.foreground")]
+    pub vim_visual_block_foreground: Option<String>,
+    /// Foreground color for Vim Helix Normal mode indicator.
+    #[serde(rename = "vim.helix_normal.foreground")]
+    pub vim_helix_normal_foreground: Option<String>,
+    /// Foreground color for Vim Helix Select mode indicator.
+    #[serde(rename = "vim.helix_select.foreground")]
+    pub vim_helix_select_foreground: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]

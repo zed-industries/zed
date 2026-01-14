@@ -1332,12 +1332,20 @@ fn model_response(request: RawCompletionRequest, diff_to_apply: &str) -> RawComp
 
     let current_marker = "<|fim_middle|>current\n";
     let updated_marker = "<|fim_middle|>updated\n";
+    let suffix_marker = "<|fim_suffix|>\n";
     let cursor = "<|user_cursor|>";
 
     let start_ix = current_marker.len() + prompt.find(current_marker).unwrap();
     let end_ix = start_ix + &prompt[start_ix..].find(updated_marker).unwrap();
     let excerpt = prompt[start_ix..end_ix].replace(cursor, "");
-    let new_excerpt = apply_diff_to_string(diff_to_apply, &excerpt).unwrap();
+    // In v0113_ordered format, the excerpt contains <|fim_suffix|> and suffix content.
+    // Strip that out to get just the editable region.
+    let excerpt = if let Some(suffix_pos) = excerpt.find(suffix_marker) {
+        &excerpt[..suffix_pos]
+    } else {
+        &excerpt
+    };
+    let new_excerpt = apply_diff_to_string(diff_to_apply, excerpt).unwrap();
 
     RawCompletionResponse {
         id: Uuid::new_v4().to_string(),
@@ -1627,6 +1635,82 @@ async fn test_edit_prediction_end_of_buffer(cx: &mut TestAppContext) {
         apply_edit_prediction(buffer_content, completion_response, cx).await,
         "lorem\nipsum"
     );
+}
+
+#[gpui::test]
+async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppContext) {
+    // Test that zeta2's newline normalization logic doesn't insert spurious newlines.
+    // When the buffer ends without a trailing newline, but the model returns output
+    // with a trailing newline, zeta2 should normalize both sides before diffing
+    // so no spurious newline is inserted.
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    // Single line buffer with no trailing newline
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.txt": "hello"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("root/foo.txt"), cx)
+                .unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(0, 5));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    });
+
+    let (_request, respond_tx) = requests.predict.next().await.unwrap();
+
+    // Model returns output WITH a trailing newline, even though the buffer doesn't have one.
+    // Zeta2 should normalize both sides before diffing, so no spurious newline is inserted.
+    let response = RawCompletionResponse {
+        id: Uuid::new_v4().to_string(),
+        object: "text_completion".into(),
+        created: 0,
+        model: "model".into(),
+        choices: vec![RawCompletionChoice {
+            text: "hello world\n".to_string(),
+            finish_reason: None,
+        }],
+        usage: RawCompletionUsage {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+        },
+    };
+    respond_tx.send(response).unwrap();
+
+    cx.run_until_parked();
+
+    // The prediction should insert " world" without adding a newline
+    ep_store.update(cx, |ep_store, cx| {
+        let prediction = ep_store
+            .prediction_at(&buffer, None, &project, cx)
+            .expect("should have prediction");
+        let edits: Vec<_> = prediction
+            .edits
+            .iter()
+            .map(|(range, text)| {
+                let snapshot = buffer.read(cx).snapshot();
+                (range.to_offset(&snapshot), text.clone())
+            })
+            .collect();
+        assert_eq!(edits, vec![(5..5, " world".into())]);
+    });
 }
 
 #[gpui::test]
