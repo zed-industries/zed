@@ -19,6 +19,7 @@ mod terminal_codegen;
 mod terminal_inline_assistant;
 mod text_thread_editor;
 mod ui;
+mod user_slash_command;
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -482,6 +483,7 @@ mod tests {
             expand_terminal_card: true,
             use_modifier_to_send: true,
             message_editor_min_lines: 1,
+            slash_commands: Default::default(),
         };
 
         cx.update(|cx| {

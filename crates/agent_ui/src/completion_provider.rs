@@ -6,10 +6,12 @@ use std::sync::atomic::AtomicBool;
 
 use acp_thread::MentionUri;
 use agent::{HistoryEntry, HistoryStore};
+use agent_settings::AgentSettings;
 use anyhow::Result;
 use editor::{
     CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
 };
+use feature_flags::{FeatureFlagAppExt as _, UserSlashCommandsFeatureFlag};
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
@@ -22,6 +24,7 @@ use project::{
 };
 use prompt_store::{PromptStore, UserPromptId};
 use rope::Point;
+use settings::Settings as _;
 use text::{Anchor, ToPoint as _};
 use ui::prelude::*;
 use util::ResultExt as _;
@@ -169,6 +172,14 @@ pub struct AvailableCommand {
     pub name: Arc<str>,
     pub description: Arc<str>,
     pub requires_argument: bool,
+    #[allow(dead_code)]
+    pub source: CommandSource,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CommandSource {
+    Server,
+    UserDefined { template: Arc<str> },
 }
 
 pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
@@ -572,7 +583,22 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     }
 
     fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<AvailableCommand>> {
-        let commands = self.source.available_commands(cx);
+        let mut commands = self.source.available_commands(cx);
+
+        if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+            let user_commands = AgentSettings::get_global(cx).slash_commands.clone();
+            for (name, template) in user_commands {
+                commands.push(AvailableCommand {
+                    name: name.into(),
+                    description: format!("User command: {}", template).into(),
+                    requires_argument: crate::user_slash_command::count_placeholders(&template) > 0,
+                    source: CommandSource::UserDefined {
+                        template: template.into(),
+                    },
+                });
+            }
+        }
+
         if commands.is_empty() {
             return Task::ready(Vec::new());
         }
