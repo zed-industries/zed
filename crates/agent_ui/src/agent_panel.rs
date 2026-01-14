@@ -733,6 +733,10 @@ impl AgentPanel {
         &self.thread_store
     }
 
+    pub fn history(&self) -> &Entity<AcpThreadHistory> {
+        &self.acp_history
+    }
+
     pub fn open_thread(
         &mut self,
         thread: AgentSessionInfo,
@@ -2940,13 +2944,16 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
                 return;
             };
             let project = workspace.read(cx).project().downgrade();
-            let thread_store = panel.read(cx).thread_store().clone();
+            let panel = panel.read(cx);
+            let thread_store = panel.thread_store().clone();
+            let history = panel.history().downgrade();
             assistant.assist(
                 prompt_editor,
                 self.workspace.clone(),
                 project,
                 thread_store,
                 None,
+                history,
                 initial_prompt,
                 window,
                 cx,

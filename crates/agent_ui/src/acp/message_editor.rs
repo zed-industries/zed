@@ -160,7 +160,7 @@ impl MessageEditor {
             editor.downgrade(),
             mention_set.clone(),
             thread_store.clone(),
-            Some(history), // BENTODO: non optional
+            history,
             prompt_store.clone(),
             workspace.clone(),
         ));

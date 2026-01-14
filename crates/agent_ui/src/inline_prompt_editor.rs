@@ -1,3 +1,4 @@
+use crate::acp::AcpThreadHistory;
 use agent::ThreadStore;
 use collections::{HashMap, VecDeque};
 use editor::actions::Paste;
@@ -61,6 +62,7 @@ pub struct PromptEditor<T> {
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
     thread_store: Entity<ThreadStore>,
+    history: WeakEntity<AcpThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
     model_selector: Entity<AgentModelSelector>,
@@ -332,7 +334,7 @@ impl<T: 'static> PromptEditor<T> {
                 cx.weak_entity(),
                 self.mention_set.clone(),
                 Some(self.thread_store.clone()), // BENTODO: Now global do we need threadstore?
-                None,
+                self.history.clone(),
                 self.prompt_store.clone(),
                 self.workspace.clone(),
             ))));
@@ -1212,6 +1214,7 @@ impl PromptEditor<BufferCodegen> {
         fs: Arc<dyn Fs>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: WeakEntity<AcpThreadHistory>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -1259,6 +1262,7 @@ impl PromptEditor<BufferCodegen> {
             editor: prompt_editor.clone(),
             mention_set,
             thread_store,
+            history,
             prompt_store,
             workspace,
             model_selector: cx.new(|cx| {
@@ -1370,6 +1374,7 @@ impl PromptEditor<TerminalCodegen> {
         fs: Arc<dyn Fs>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: WeakEntity<AcpThreadHistory>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -1412,6 +1417,7 @@ impl PromptEditor<TerminalCodegen> {
             editor: prompt_editor.clone(),
             mention_set,
             thread_store,
+            history,
             prompt_store,
             workspace,
             model_selector: cx.new(|cx| {

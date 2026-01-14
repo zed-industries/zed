@@ -273,7 +273,7 @@ impl AcpThreadHistory {
         }
     }
 
-    #[expect(dead_code)] // BENTODO: this should get called somehwere
+    #[expect(dead_code)] // BENTODO: this should get called somewhere
     pub(crate) fn delete_sessions(&self, cx: &mut App) -> Task<anyhow::Result<()>> {
         if let Some(session_list) = self.session_list.as_ref() {
             session_list.delete_sessions(cx)

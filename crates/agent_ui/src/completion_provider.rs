@@ -196,7 +196,7 @@ pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
     thread_store: Option<Entity<ThreadStore>>,
-    history: Option<WeakEntity<AcpThreadHistory>>,
+    history: WeakEntity<AcpThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
 }
@@ -207,7 +207,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: Option<WeakEntity<AcpThreadHistory>>, // BENTODO: Non optional
+        history: WeakEntity<AcpThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -652,7 +652,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             }
 
             Some(PromptContextType::Thread) => {
-                if let Some(history) = self.history.as_ref().and_then(|h| h.upgrade()) {
+                if let Some(history) = self.history.upgrade() {
                     let sessions = history.read(cx).sessions().to_vec();
                     let search_task =
                         filter_sessions_by_query(query, cancellation_flag, sessions, cx);
@@ -831,7 +831,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             return Task::ready(recent);
         }
 
-        if let Some(history) = self.history.as_ref().and_then(|h| h.upgrade()) {
+        if let Some(history) = self.history.upgrade() {
             const RECENT_COUNT: usize = 2;
             recent.extend(
                 history
