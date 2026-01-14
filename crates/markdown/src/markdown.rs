@@ -1829,6 +1829,40 @@ impl RenderedLine {
         mapping.source_index + (rendered_index - mapping.rendered_index)
     }
 
+    /// Returns the source index for use as an exclusive range end at a word/selection boundary.
+    /// When the rendered index is exactly at the start of a segment with a gap from the previous
+    /// segment (e.g., after stripped markdown syntax like backticks), this returns the end of the
+    /// previous segment rather than the start of the current one.
+    fn source_index_for_exclusive_rendered_end(&self, rendered_index: usize) -> usize {
+        if rendered_index >= self.layout.len() {
+            return self.source_end;
+        }
+
+        let ix = match self
+            .source_mappings
+            .binary_search_by_key(&rendered_index, |probe| probe.rendered_index)
+        {
+            Ok(ix) => ix,
+            Err(ix) => {
+                return self.source_mappings[ix - 1].source_index
+                    + (rendered_index - self.source_mappings[ix - 1].rendered_index);
+            }
+        };
+
+        // Exact match at the start of a segment. Check if there's a gap from the previous segment.
+        if ix > 0 {
+            let prev_mapping = &self.source_mappings[ix - 1];
+            let mapping = &self.source_mappings[ix];
+            let prev_segment_len = mapping.rendered_index - prev_mapping.rendered_index;
+            let prev_source_end = prev_mapping.source_index + prev_segment_len;
+            if prev_source_end < mapping.source_index {
+                return prev_source_end;
+            }
+        }
+
+        self.source_mappings[ix].source_index
+    }
+
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
         let line_rendered_index;
         let out_of_bounds;
@@ -1935,7 +1969,7 @@ impl RenderedText {
             };
 
             return line.source_index_for_rendered_index(line_rendered_start + previous_space)
-                ..line.source_index_for_rendered_index(line_rendered_start + next_space);
+                ..line.source_index_for_exclusive_rendered_end(line_rendered_start + next_space);
         }
 
         source_index..source_index
@@ -2206,6 +2240,31 @@ mod tests {
         let word_range = rendered.surrounding_word_range(51); // Inside "code"
         let selected_text = rendered.text_for_range(word_range);
         assert_eq!(selected_text, "code");
+    }
+
+    #[gpui::test]
+    fn test_inline_code_word_selection_excludes_backticks(cx: &mut TestAppContext) {
+        // Test that double-clicking on inline code selects just the code content,
+        // not the backticks. This verifies the fix for the bug where selecting
+        // inline code would include the trailing backtick.
+        let rendered = render_markdown("use `blah` here", cx);
+
+        // Source layout: "use `blah` here"
+        //                 0123456789...
+        // The inline code "blah" is at source positions 5-8 (content range 5..9)
+
+        // Click inside "blah" - should select just "blah", not "blah`"
+        let word_range = rendered.surrounding_word_range(6); // 'l' in "blah"
+
+        // text_for_range extracts from the rendered text (without backticks), so it
+        // would return "blah" even with a wrong source range. We check it anyway.
+        let selected_text = rendered.text_for_range(word_range.clone());
+        assert_eq!(selected_text, "blah");
+
+        // The source range is what matters for copy_as_markdown and selected_text,
+        // which extract directly from the source. With the bug, this would be 5..10
+        // which includes the closing backtick at position 9.
+        assert_eq!(word_range, 5..9);
     }
 
     #[gpui::test]

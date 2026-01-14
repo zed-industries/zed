@@ -244,6 +244,32 @@ pub struct DeleteToPreviousWordStart {
     pub ignore_brackets: bool,
 }
 
+/// Deletes from the cursor to the end of the next subword.
+/// Stops before the end of the next subword, if whitespace sequences of length >= 2 are encountered.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteToNextSubwordEnd {
+    #[serde(default)]
+    pub ignore_newlines: bool,
+    // Whether to stop before the start of the previous word, if language-defined bracket is encountered.
+    #[serde(default)]
+    pub ignore_brackets: bool,
+}
+
+/// Deletes from the cursor to the start of the previous subword.
+/// Stops before the start of the previous subword, if whitespace sequences of length >= 2 are encountered.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteToPreviousSubwordStart {
+    #[serde(default)]
+    pub ignore_newlines: bool,
+    // Whether to stop before the start of the previous word, if language-defined bracket is encountered.
+    #[serde(default)]
+    pub ignore_brackets: bool,
+}
+
 /// Cuts from cursor to end of line.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
@@ -450,10 +476,6 @@ actions!(
         DeleteLine,
         /// Deletes from cursor to end of line.
         DeleteToEndOfLine,
-        /// Deletes to the end of the next subword.
-        DeleteToNextSubwordEnd,
-        /// Deletes to the start of the previous subword.
-        DeleteToPreviousSubwordStart,
         /// Diffs the text stored in the clipboard against the current selection.
         DiffClipboardWithSelection,
         /// Displays names of all active cursors.
@@ -616,6 +638,10 @@ actions!(
         MoveToEndOfExcerpt,
         /// Moves cursor to the end of the previous excerpt.
         MoveToEndOfPreviousExcerpt,
+        /// Moves cursor to the start of the next larger syntax node.
+        MoveToStartOfLargerSyntaxNode,
+        /// Moves cursor to the end of the next larger syntax node.
+        MoveToEndOfLargerSyntaxNode,
         /// Moves cursor up.
         MoveUp,
         /// Inserts a new line and moves cursor to it.

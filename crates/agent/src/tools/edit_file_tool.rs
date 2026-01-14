@@ -1,5 +1,6 @@
 use crate::{
-    AgentTool, Templates, Thread, ToolCallEventStream,
+    AgentTool, Templates, Thread, ToolCallEventStream, ToolPermissionDecision,
+    decide_permission_from_settings,
     edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat},
 };
 use acp_thread::Diff;
@@ -7,6 +8,7 @@ use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields}
 use anyhow::{Context as _, Result, anyhow};
 use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
+use futures::{FutureExt as _, StreamExt as _};
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use indoc::formatdoc;
 use language::language_settings::{self, FormatOnSave};
@@ -18,7 +20,6 @@ use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use smol::stream::StreamExt as _;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -149,8 +150,16 @@ impl EditFileTool {
         event_stream: &ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
-            return Task::ready(Ok(()));
+        let path_str = input.path.to_string_lossy();
+        let settings = agent_settings::AgentSettings::get_global(cx);
+        let decision = decide_permission_from_settings(Self::name(), &path_str, settings);
+
+        match decision {
+            ToolPermissionDecision::Allow => return Task::ready(Ok(())),
+            ToolPermissionDecision::Deny(reason) => {
+                return Task::ready(Err(anyhow!("{}", reason)));
+            }
+            ToolPermissionDecision::Confirm => {}
         }
 
         // If any path component matches the local settings folder, then this could affect
@@ -395,7 +404,16 @@ impl AgentTool for EditFileTool {
             let mut hallucinated_old_text = false;
             let mut ambiguous_ranges = Vec::new();
             let mut emitted_location = false;
-            while let Some(event) = events.next().await {
+            loop {
+                let event = futures::select! {
+                    event = events.next().fuse() => match event {
+                        Some(event) => event,
+                        None => break,
+                    },
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        anyhow::bail!("Edit cancelled by user");
+                    }
+                };
                 match event {
                     EditAgentOutputEvent::Edited(range) => {
                         if !emitted_location {
