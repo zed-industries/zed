@@ -3694,6 +3694,7 @@ dependencies = [
  "serde_json",
  "settings",
  "sum_tree",
+ "theme",
  "util",
  "zlog",
 ]
