@@ -13,7 +13,18 @@ path = "src/agent_ui.rs"
 doctest = false
 
 [features]
-test-support = ["assistant_text_thread/test-support", "acp_thread/test-support", "eval_utils", "gpui/test-support", "language/test-support", "reqwest_client", "workspace/test-support", "agent/test-support", "rules_library/test-support"]
+test-support = [
+    "assistant_text_thread/test-support",
+    "acp_thread/test-support",
+    "eval_utils",
+    "gpui/test-support",
+    "git_ui/test-support",
+    "language/test-support",
+    "reqwest_client",
+    "workspace/test-support",
+    "agent/test-support",
+    "rules_library/test-support"
+]
 unit-eval = []
 
 [dependencies]
@@ -47,6 +58,7 @@ feature_flags.workspace = true
 file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
+git_ui.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
@@ -115,6 +127,8 @@ db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 eval_utils.workspace = true
 gpui = { workspace = true, "features" = ["test-support"] }
+git_ui = { workspace = true, features = ["test-support"] }
+rules_library = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, "features" = ["test-support"] }
 languages = { workspace = true, features = ["test-support"] }

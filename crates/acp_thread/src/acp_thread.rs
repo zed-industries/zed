@@ -4,6 +4,26 @@ mod mention;
 mod terminal;
 
 use agent_settings::AgentSettings;
+
+/// Key used in ACP ToolCall meta to store the tool's programmatic name.
+/// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
+pub const TOOL_NAME_META_KEY: &str = "tool_name";
+
+/// The tool name for subagent spawning
+pub const SUBAGENT_TOOL_NAME: &str = "subagent";
+
+/// Helper to extract tool name from ACP meta
+pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
+    meta.as_ref()
+        .and_then(|m| m.get(TOOL_NAME_META_KEY))
+        .and_then(|v| v.as_str())
+        .map(|s| SharedString::from(s.to_owned()))
+}
+
+/// Helper to create meta with tool name
+pub fn meta_with_tool_name(tool_name: &str) -> acp::Meta {
+    acp::Meta::from_iter([(TOOL_NAME_META_KEY.into(), tool_name.into())])
+}
 use collections::HashSet;
 pub use connection::*;
 pub use diff::*;
@@ -195,6 +215,7 @@ pub struct ToolCall {
     pub raw_input: Option<serde_json::Value>,
     pub raw_input_markdown: Option<Entity<Markdown>>,
     pub raw_output: Option<serde_json::Value>,
+    pub tool_name: Option<SharedString>,
 }
 
 impl ToolCall {
@@ -229,6 +250,8 @@ impl ToolCall {
             .as_ref()
             .and_then(|input| markdown_for_raw_output(input, &language_registry, cx));
 
+        let tool_name = tool_name_from_meta(&tool_call.meta);
+
         let result = Self {
             id: tool_call.tool_call_id,
             label: cx
@@ -241,6 +264,7 @@ impl ToolCall {
             raw_input: tool_call.raw_input,
             raw_input_markdown,
             raw_output: tool_call.raw_output,
+            tool_name,
         };
         Ok(result)
     }
@@ -338,6 +362,7 @@ impl ToolCall {
             ToolCallContent::Diff(diff) => Some(diff),
             ToolCallContent::ContentBlock(_) => None,
             ToolCallContent::Terminal(_) => None,
+            ToolCallContent::SubagentThread(_) => None,
         })
     }
 
@@ -346,7 +371,24 @@ impl ToolCall {
             ToolCallContent::Terminal(terminal) => Some(terminal),
             ToolCallContent::ContentBlock(_) => None,
             ToolCallContent::Diff(_) => None,
+            ToolCallContent::SubagentThread(_) => None,
         })
+    }
+
+    pub fn subagent_thread(&self) -> Option<&Entity<AcpThread>> {
+        self.content.iter().find_map(|content| match content {
+            ToolCallContent::SubagentThread(thread) => Some(thread),
+            _ => None,
+        })
+    }
+
+    pub fn is_subagent(&self) -> bool {
+        matches!(self.kind, acp::ToolKind::Other)
+            && self
+                .tool_name
+                .as_ref()
+                .map(|n| n.as_ref() == SUBAGENT_TOOL_NAME)
+                .unwrap_or(false)
     }
 
     fn to_markdown(&self, cx: &App) -> String {
@@ -642,6 +684,7 @@ pub enum ToolCallContent {
     ContentBlock(ContentBlock),
     Diff(Entity<Diff>),
     Terminal(Entity<Terminal>),
+    SubagentThread(Entity<AcpThread>),
 }
 
 impl ToolCallContent {
@@ -713,12 +756,20 @@ impl ToolCallContent {
             Self::ContentBlock(content) => content.to_markdown(cx).to_string(),
             Self::Diff(diff) => diff.read(cx).to_markdown(cx),
             Self::Terminal(terminal) => terminal.read(cx).to_markdown(cx),
+            Self::SubagentThread(thread) => thread.read(cx).to_markdown(cx),
         }
     }
 
     pub fn image(&self) -> Option<&Arc<gpui::Image>> {
         match self {
             Self::ContentBlock(content) => content.image(),
+            _ => None,
+        }
+    }
+
+    pub fn subagent_thread(&self) -> Option<&Entity<AcpThread>> {
+        match self {
+            Self::SubagentThread(thread) => Some(thread),
             _ => None,
         }
     }
@@ -729,6 +780,7 @@ pub enum ToolCallUpdate {
     UpdateFields(acp::ToolCallUpdate),
     UpdateDiff(ToolCallUpdateDiff),
     UpdateTerminal(ToolCallUpdateTerminal),
+    UpdateSubagentThread(ToolCallUpdateSubagentThread),
 }
 
 impl ToolCallUpdate {
@@ -737,6 +789,7 @@ impl ToolCallUpdate {
             Self::UpdateFields(update) => &update.tool_call_id,
             Self::UpdateDiff(diff) => &diff.id,
             Self::UpdateTerminal(terminal) => &terminal.id,
+            Self::UpdateSubagentThread(subagent) => &subagent.id,
         }
     }
 }
@@ -769,6 +822,18 @@ impl From<ToolCallUpdateTerminal> for ToolCallUpdate {
 pub struct ToolCallUpdateTerminal {
     pub id: acp::ToolCallId,
     pub terminal: Entity<Terminal>,
+}
+
+impl From<ToolCallUpdateSubagentThread> for ToolCallUpdate {
+    fn from(subagent: ToolCallUpdateSubagentThread) -> Self {
+        Self::UpdateSubagentThread(subagent)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ToolCallUpdateSubagentThread {
+    pub id: acp::ToolCallId,
+    pub thread: Entity<AcpThread>,
 }
 
 #[derive(Debug, Default)]
@@ -1425,6 +1490,7 @@ impl AcpThread {
                     raw_input: None,
                     raw_input_markdown: None,
                     raw_output: None,
+                    tool_name: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -1450,6 +1516,11 @@ impl AcpThread {
                 call.content.clear();
                 call.content
                     .push(ToolCallContent::Terminal(update.terminal));
+            }
+            ToolCallUpdate::UpdateSubagentThread(update) => {
+                call.content.clear();
+                call.content
+                    .push(ToolCallContent::SubagentThread(update.thread));
             }
         }
 
@@ -2739,7 +2810,8 @@ mod tests {
         });
 
         // Wait for the printf command to execute and produce output
-        smol::Timer::after(Duration::from_millis(500)).await;
+        // Use real time since parking is enabled
+        cx.executor().timer(Duration::from_millis(500)).await;
 
         // Get the acp_thread Terminal and kill it
         let wait_for_exit = thread.update(cx, |thread, cx| {
@@ -2757,7 +2829,7 @@ mod tests {
         // child never exited and wait_for_completed_task never completed.
         let exit_result = futures::select! {
             result = futures::FutureExt::fuse(wait_for_exit) => Some(result),
-            _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(5))) => None,
+            _ = futures::FutureExt::fuse(cx.background_executor.timer(Duration::from_secs(5))) => None,
         };
 
         assert!(
@@ -3739,7 +3811,7 @@ mod tests {
         });
 
         select! {
-            _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(10))) => {
+            _ = futures::FutureExt::fuse(cx.background_executor.timer(Duration::from_secs(10))) => {
                 panic!("Timeout waiting for tool call")
             }
             ix = rx.next().fuse() => {

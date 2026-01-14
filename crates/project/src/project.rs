@@ -354,6 +354,7 @@ pub enum Event {
     EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
+    BufferEdited,
 }
 
 pub struct AgentLocationChanged;
@@ -1355,6 +1356,7 @@ impl Project {
                     worktree_store.clone(),
                     task_store.clone(),
                     Some(remote_proto.clone()),
+                    false,
                     cx,
                 )
             });
@@ -1652,6 +1654,7 @@ impl Project {
                 worktree_store.clone(),
                 task_store.clone(),
                 None,
+                true,
                 cx,
             )
         });
@@ -3409,6 +3412,10 @@ impl Project {
     ) -> Option<()> {
         if matches!(event, BufferEvent::Edited | BufferEvent::Reloaded) {
             self.request_buffer_diff_recalculation(&buffer, cx);
+        }
+
+        if matches!(event, BufferEvent::Edited) {
+            cx.emit(Event::BufferEdited);
         }
 
         let buffer_id = buffer.read(cx).remote_id();

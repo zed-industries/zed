@@ -150,13 +150,8 @@ impl BackgroundExecutor {
 
     /// Enqueues the given future to be run to completion on a background thread with the given priority.
     ///
-    /// `Priority::Realtime` is currently treated as `Priority::High`.
-    ///
-    /// This is intentionally *not* a "downgrade" feature: realtime execution is effectively
-    /// disabled until we have an in-tree use case and are confident about the semantics and
-    /// failure modes (especially around channel backpressure and the risk of blocking
-    /// latency-sensitive threads). It should be straightforward to add a true realtime
-    /// implementation back once those constraints are well-defined.
+    /// When `Priority::RealtimeAudio` is used, the task runs on a dedicated thread with
+    /// realtime scheduling priority, suitable for audio processing.
     #[track_caller]
     pub fn spawn_with_priority<R>(
         &self,
@@ -166,7 +161,11 @@ impl BackgroundExecutor {
     where
         R: Send + 'static,
     {
-        Task::from_scheduler(self.inner.spawn_with_priority(priority, future))
+        if priority == Priority::RealtimeAudio {
+            Task::from_scheduler(self.inner.spawn_realtime(future))
+        } else {
+            Task::from_scheduler(self.inner.spawn_with_priority(priority, future))
+        }
     }
 
     /// Enqueues the given future to be run to completion on a background thread and blocking the current task on it.
