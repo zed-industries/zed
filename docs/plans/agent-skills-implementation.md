@@ -10,23 +10,14 @@
 - Phase 3: ProjectContext Integration - DONE
 - Phase 4: System Prompt - DONE
 - Phase 5: Skill Tool - DONE
+- Phase 6: Read File / List Directory Permissions - DONE
+- Phase 7: File Watching - DONE
+- Phase 8: Error UI - DONE
+  - SkillLoadingError event type implemented
+  - Error banner in AcpThreadView implemented
+  - "Open File" button opens problematic SKILL.md files
 
 ### Not Yet Implemented ❌
-- **Phase 6: Read File / List Directory Permissions** - NOT DONE
-  - Need to add permission checks to allow reading files from skill directories only when skill tool is enabled
-  - Need path canonicalization for security
-  - Need permission tests
-  
-- **Phase 7: File Watching** - NOT DONE
-  - Skills currently only reload on project context refresh
-  - Need explicit file watchers for global skills directory ({config_dir}/skills/)
-  - Need explicit file watchers for each worktree's .zed/skills/ directory
-  
-- **Phase 8: Error UI** - NOT DONE
-  - SkillLoadError type exists but errors are not displayed to users
-  - Need to implement error banner in AcpThreadView
-  - Need "Open File" button to open problematic SKILL.md files
-  - Need UI tests
   
 - **Phase 9: Polish** - NOT DONE
   - End-to-end testing

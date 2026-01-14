@@ -37,7 +37,8 @@ use futures::channel::{mpsc, oneshot};
 use futures::future::Shared;
 use futures::{StreamExt, future};
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
+    WeakEntity,
 };
 use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
@@ -62,6 +63,12 @@ pub struct ProjectSnapshot {
 }
 
 pub struct RulesLoadingError {
+    pub message: SharedString,
+}
+
+#[derive(Clone)]
+pub struct SkillLoadingError {
+    pub path: PathBuf,
     pub message: SharedString,
 }
 
@@ -251,6 +258,8 @@ pub struct NativeAgent {
     _subscriptions: Vec<Subscription>,
 }
 
+impl EventEmitter<SkillLoadingError> for NativeAgent {}
+
 impl NativeAgent {
     pub async fn new(
         project: Entity<Project>,
@@ -262,7 +271,7 @@ impl NativeAgent {
     ) -> Result<Entity<NativeAgent>> {
         log::debug!("Creating new NativeAgent");
 
-        let (project_context, skills) = cx
+        let (project_context, skills, skill_errors) = cx
             .update(|cx| {
                 Self::build_project_context(&project, prompt_store.as_ref(), fs.clone(), cx)
             })
@@ -294,7 +303,7 @@ impl NativeAgent {
 
             let (project_context_needs_refresh_tx, project_context_needs_refresh_rx) =
                 watch::channel(());
-            Self {
+            let this = Self {
                 sessions: HashMap::default(),
                 thread_store,
                 project_context: cx.new(|_| project_context),
@@ -321,7 +330,16 @@ impl NativeAgent {
                 prompt_store,
                 fs,
                 _subscriptions: subscriptions,
+            };
+
+            for skill_error in skill_errors {
+                cx.emit(SkillLoadingError {
+                    path: skill_error.path,
+                    message: skill_error.message.into(),
+                });
             }
+
+            this
         }))
     }
 
@@ -434,7 +452,7 @@ impl NativeAgent {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         while needs_refresh.changed().await.is_ok() {
-            let (project_context, skills) = this
+            let (project_context, skills, skill_errors) = this
                 .update(cx, |this, cx| {
                     Self::build_project_context(
                         &this.project,
@@ -447,6 +465,12 @@ impl NativeAgent {
             this.update(cx, |this, cx| {
                 this.project_context = cx.new(|_| project_context);
                 this.skills = Arc::new(skills);
+                for skill_error in skill_errors {
+                    cx.emit(SkillLoadingError {
+                        path: skill_error.path,
+                        message: skill_error.message.into(),
+                    });
+                }
             })?;
         }
 
@@ -458,7 +482,7 @@ impl NativeAgent {
         prompt_store: Option<&Entity<PromptStore>>,
         fs: Arc<dyn Fs>,
         cx: &mut App,
-    ) -> Task<(ProjectContext, Vec<Skill>)> {
+    ) -> Task<(ProjectContext, Vec<Skill>, Vec<SkillLoadError>)> {
         let worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
         let worktree_tasks = worktrees
             .iter()
@@ -545,12 +569,12 @@ impl NativeAgent {
             // Load and merge skills
             let global_skills = global_skills_task.await;
             let project_skills_results = future::join_all(project_skills_tasks).await;
-            let (skills, _skill_errors) =
+            let (skills, skill_errors) =
                 merge_skills(global_skills, project_skills_results.into_iter().flatten());
 
             let project_context =
                 ProjectContext::new(worktrees, default_user_rules, skills.clone());
-            (project_context, skills)
+            (project_context, skills, skill_errors)
         })
     }
 

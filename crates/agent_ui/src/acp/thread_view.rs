@@ -5,7 +5,9 @@ use acp_thread::{
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry};
-use agent::{NativeAgentServer, NativeAgentSessionList, SharedThread, ThreadStore};
+use agent::{
+    NativeAgentServer, NativeAgentSessionList, SharedThread, SkillLoadingError, ThreadStore,
+};
 use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
@@ -40,7 +42,7 @@ use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
@@ -54,7 +56,10 @@ use ui::{
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
-use workspace::{CollaboratorId, NewTerminal, Toast, Workspace, notifications::NotificationId};
+use workspace::{
+    CollaboratorId, NewTerminal, OpenOptions, OpenVisible, Toast, Workspace,
+    notifications::NotificationId,
+};
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
@@ -327,6 +332,8 @@ pub struct AcpThreadView {
     thread_retry_status: Option<RetryStatus>,
     thread_error: Option<ThreadError>,
     thread_error_markdown: Option<Entity<Markdown>>,
+    skill_loading_errors: Vec<SkillLoadingError>,
+    dismissed_skill_loading_error_paths: HashSet<PathBuf>,
     token_limit_callout_dismissed: bool,
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
@@ -506,6 +513,8 @@ impl AcpThreadView {
             thread_retry_status: None,
             thread_error: None,
             thread_error_markdown: None,
+            skill_loading_errors: Vec::new(),
+            dismissed_skill_loading_error_paths: HashSet::default(),
             token_limit_callout_dismissed: false,
             thread_feedback: Default::default(),
             auth_task: None,
@@ -558,6 +567,8 @@ impl AcpThreadView {
         );
         self.available_commands.replace(vec![]);
         self.new_server_version_available.take();
+        self.skill_loading_errors.clear();
+        self.dismissed_skill_loading_error_paths.clear();
         self.message_queue.clear();
         self.session_list = None;
         *self.session_list_state.borrow_mut() = None;
@@ -762,6 +773,21 @@ impl AcpThreadView {
                             cx.subscribe_in(&thread, window, Self::handle_thread_event),
                             cx.observe(&action_log, |_, _, cx| cx.notify()),
                         ];
+
+                        let native_agent = thread
+                            .read(cx)
+                            .connection()
+                            .clone()
+                            .downcast::<agent::NativeAgentConnection>()
+                            .map(|connection| connection.0.clone());
+
+                        if let Some(native_agent) = native_agent {
+                            subscriptions.push(cx.subscribe_in(
+                                &native_agent,
+                                window,
+                                Self::handle_skill_loading_error,
+                            ));
+                        }
 
                         let title_editor =
                             if thread.update(cx, |thread, cx| thread.can_set_title(cx)) {
@@ -1793,6 +1819,29 @@ impl AcpThreadView {
 
     fn handle_thread_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
         self.thread_error = Some(ThreadError::from_err(error, &self.agent));
+        cx.notify();
+    }
+
+    fn handle_skill_loading_error(
+        &mut self,
+        _agent: &Entity<agent::NativeAgent>,
+        error: &SkillLoadingError,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .dismissed_skill_loading_error_paths
+            .contains(&error.path)
+        {
+            return;
+        }
+
+        self.skill_loading_errors
+            .retain(|existing| existing.path != error.path);
+        self.skill_loading_errors.push(SkillLoadingError {
+            path: error.path.clone(),
+            message: error.message.clone(),
+        });
         cx.notify();
     }
 
@@ -6665,6 +6714,85 @@ impl AcpThreadView {
         )
     }
 
+    fn render_skill_error_banners(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let errors: Vec<_> = self
+            .skill_loading_errors
+            .iter()
+            .cloned()
+            .enumerate()
+            .collect();
+        errors
+            .into_iter()
+            .map(|(index, error)| {
+                self.render_skill_error_banner(index, error, window, cx)
+                    .into_any_element()
+            })
+            .collect()
+    }
+
+    fn render_skill_error_banner(
+        &mut self,
+        index: usize,
+        error: SkillLoadingError,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Callout {
+        let description = format!("{} ({})", error.message, error.path.display());
+        let open_path = error.path.clone();
+        let dismiss_path = error.path;
+
+        Callout::new()
+            .severity(Severity::Warning)
+            .icon(IconName::Warning)
+            .title("Skill failed to load")
+            .description(description)
+            .actions_slot(
+                h_flex().gap_0p5().child(
+                    Button::new(format!("open-skill-error-{}", index), "Open File")
+                        .label_size(LabelSize::Small)
+                        .on_click(cx.listener(move |this, _event, window, cx| {
+                            this.open_skill_error_file(open_path.clone(), window, cx);
+                        })),
+                ),
+            )
+            .dismiss_action(
+                IconButton::new(format!("dismiss-skill-error-{}", index), IconName::Close)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::text("Dismiss"))
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.dismissed_skill_loading_error_paths
+                            .insert(dismiss_path.clone());
+                        this.skill_loading_errors
+                            .retain(|existing| existing.path != dismiss_path);
+                        cx.notify();
+                    })),
+            )
+    }
+
+    fn open_skill_error_file(&self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .open_abs_path(
+                    path,
+                    OpenOptions {
+                        visible: Some(OpenVisible::None),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
+                .detach_and_log_err(cx);
+        });
+    }
+
     fn render_codex_windows_warning(&self, cx: &mut Context<Self>) -> Callout {
         Callout::new()
             .icon(IconName::Warning)
@@ -7311,6 +7439,7 @@ impl Render for AcpThreadView {
                 _ => this,
             })
             .children(self.render_thread_retry_status_callout(window, cx))
+            .children(self.render_skill_error_banners(window, cx))
             .when(self.show_codex_windows_warning, |this| {
                 this.child(self.render_codex_windows_warning(cx))
             })

@@ -1792,6 +1792,7 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
         Thread::new(
             project.clone(),
             cx.new(|_cx| ProjectContext::default()),
+            std::sync::Arc::new(Vec::new()),
             context_server_registry,
             Templates::new(),
             Some(model),

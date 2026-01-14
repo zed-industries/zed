@@ -1501,9 +1501,10 @@ fn run_agent_thread_view_test(
             agent::Thread::new(
                 project.clone(),
                 project_context,
+                std::sync::Arc::new(Vec::new()),
                 context_server_registry,
                 agent::Templates::new(),
-                Some(fake_model),
+                Some(fake_model.clone() as std::sync::Arc<dyn language_model::LanguageModel>),
                 cx,
             )
         })
