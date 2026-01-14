@@ -3556,6 +3556,17 @@ impl AcpThreadView {
             SharedString::from(format!("subagent-header-{}-{}", entry_ix, context_ix));
         let diff_stat_id = SharedString::from(format!("subagent-diff-{}-{}", entry_ix, context_ix));
 
+        let icon = h_flex().w_4().justify_center().child(if is_running {
+            SpinnerLabel::new()
+                .size(LabelSize::Small)
+                .into_any_element()
+        } else {
+            Icon::new(IconName::Check)
+                .size(IconSize::Small)
+                .color(Color::Success)
+                .into_any_element()
+        });
+
         v_flex()
             .w_full()
             .rounded_md()
@@ -3574,16 +3585,7 @@ impl AcpThreadView {
                     .child(
                         h_flex()
                             .gap_1p5()
-                            .child(if is_running {
-                                SpinnerLabel::new()
-                                    .size(LabelSize::Small)
-                                    .into_any_element()
-                            } else {
-                                Icon::new(IconName::Check)
-                                    .size(IconSize::Small)
-                                    .color(Color::Success)
-                                    .into_any_element()
-                            })
+                            .child(icon)
                             .child(
                                 Label::new(title.to_string())
                                     .size(LabelSize::Small)
