@@ -5,11 +5,13 @@
 ## COMPLETED WORK
 
 ### Async File Operations ✅ COMPLETE
+
 - All file operations now use the `Fs` trait for async I/O
 - `load_all_commands_async()` is the primary loading function
 - Tests use `FakeFs` instead of real filesystem
 
 ### SlashCommandRegistry Entity & Caching ✅ COMPLETE
+
 - `SlashCommandRegistry` struct caches commands in a `HashMap`
 - Watches for file changes in commands directories
 - Emits `SlashCommandRegistryEvent::CommandsChanged` when commands reload
@@ -18,13 +20,17 @@
 - Completion provider still loads async (acceptable since it's once per search, not per keystroke)
 
 ### Symlink Handling ✅ COMPLETE
+
 Tests added to verify symlink behavior:
+
 - `test_load_commands_from_symlinked_directory` - symlinked directories
 - `test_load_commands_from_symlinked_file` - symlinked individual files
 - `test_load_commands_claude_symlink_pattern` - common ~/.claude/commands/ symlink pattern
 
 ### Permission/Error Handling ✅ COMPLETE
+
 Tests added to verify error handling:
+
 - `test_load_commands_continues_after_single_file_error` - one bad file doesn't stop others
 - `test_load_commands_reports_directory_read_errors` - directory errors are reported
 - `test_command_load_error_includes_path_info` - errors include path information
@@ -33,30 +39,37 @@ Tests added to verify error handling:
 - `test_mixed_valid_and_empty_files` - empty files ignored, valid files loaded
 
 ### Error Handling UI ✅ COMPLETE
+
 Implemented in `crates/agent_ui/src/acp/thread_view.rs`:
+
 - Added `command_load_errors: Vec<CommandLoadError>` and `command_load_errors_dismissed: bool` fields
 - Commands are loaded asynchronously on thread view initialization
 - `render_command_load_errors()` displays a dismissable `Callout` with severity `Warning`
 - Single error shows "Failed to load slash command", multiple errors shows "Failed to load N slash commands"
 
 ### Ambiguous Command Detection ✅ COMPLETE
+
 If multiple commands have the same name (e.g., same command in two different project worktrees, or a project command and user command with the same name), an error is reported. There is no silent precedence.
 
 ### Test Coverage ✅ COMPLETE (52 tests)
 
 **Parsing Tests:**
+
 - `test_try_parse_user_command` - command parsing
 - `test_parse_arguments_*` - argument parsing edge cases
 - `test_count_positional_placeholders` - placeholder counting
 - `test_has_placeholders` - placeholder detection
 
 **Template Expansion Tests:**
+
 - `test_expand_template_*` - substitution, escapes, $ARGUMENTS
 
 **Validation Tests:**
+
 - `test_validate_arguments_*` - argument count validation
 
 **Edge Case Tests:**
+
 - `test_unicode_command_names` - unicode in command names
 - `test_unicode_in_arguments` - unicode in arguments
 - `test_unicode_in_template` - unicode in templates
@@ -69,6 +82,7 @@ If multiple commands have the same name (e.g., same command in two different pro
 - `test_command_description_formats` - all description formats
 
 **Async File Loading Tests (using FakeFs):**
+
 - `test_load_commands_from_empty_dir`
 - `test_load_commands_from_nonexistent_dir`
 - `test_load_single_command`
@@ -83,11 +97,13 @@ If multiple commands have the same name (e.g., same command in two different pro
 - `test_registry_updates_worktree_roots`
 
 **Symlink Tests:**
+
 - `test_load_commands_from_symlinked_directory`
 - `test_load_commands_from_symlinked_file`
 - `test_load_commands_claude_symlink_pattern`
 
 **Error Handling Tests:**
+
 - `test_load_commands_continues_after_single_file_error`
 - `test_load_commands_reports_directory_read_errors`
 - `test_command_load_error_includes_path_info`
@@ -120,6 +136,7 @@ Users create Markdown files in their Zed config commands directory:
 ```
 
 Project-specific commands go in `.zed/commands/`:
+
 ```
 my-project/.zed/commands/
 ├── build.md            # Creates /build command with "(project)" description
@@ -127,11 +144,13 @@ my-project/.zed/commands/
 ```
 
 **Example command file (`review.md`):**
+
 ```markdown
 Please review this code for correctness, performance, and style. Focus on: $1
 ```
 
 **Example with $ARGUMENTS (`search.md`):**
+
 ```markdown
 Search the codebase for: $ARGUMENTS
 ```
@@ -160,31 +179,33 @@ Search the codebase for: $ARGUMENTS
 ### Namespacing
 
 Subdirectories create namespaces that appear in the command description:
+
 - `commands/review.md` → `/review` with description "(user)"
 - `commands/frontend/component.md` → `/frontend:component` with description "(user:frontend)"
 - `commands/tools/git/commit.md` → `/tools:git:commit` with description "(user:tools/git)"
 
 ## Decisions
 
-| Question | Decision |
-|----------|----------|
-| Command location | `config_dir()/commands/` for user, `.zed/commands/` for project |
-| File format | Markdown files (`.md` extension) |
-| Missing arguments | Show error and don't send |
-| ACP vs user command conflicts | Show both with different indicators |
-| Duplicate command names | Error shown to user (no silent precedence) |
-| Quoted arguments | Yes, support quoted multi-word arguments |
-| $ARGUMENTS placeholder | Captures all arguments as-is |
-| Escape sequences | Use backslash: `\$1`, `\"`, `\n` |
-| @ mentions in templates | Treated as literal text |
-| Feature flag | `user-slash-commands` |
-| Frontmatter support | Not implemented (out of scope) |
+| Question                      | Decision                                                        |
+| ----------------------------- | --------------------------------------------------------------- |
+| Command location              | `config_dir()/commands/` for user, `.zed/commands/` for project |
+| File format                   | Markdown files (`.md` extension)                                |
+| Missing arguments             | Show error and don't send                                       |
+| ACP vs user command conflicts | Show both with different indicators                             |
+| Duplicate command names       | Error shown to user (no silent precedence)                      |
+| Quoted arguments              | Yes, support quoted multi-word arguments                        |
+| $ARGUMENTS placeholder        | Captures all arguments as-is                                    |
+| Escape sequences              | Use backslash: `\$1`, `\"`, `\n`                                |
+| @ mentions in templates       | Treated as literal text                                         |
+| Feature flag                  | `user-slash-commands`                                           |
+| Frontmatter support           | Not implemented (out of scope)                                  |
 
 ## Implementation
 
 ### Files Modified/Created
 
 #### `crates/feature_flags/src/flags.rs`
+
 ```rust
 pub struct UserSlashCommandsFeatureFlag;
 
@@ -194,7 +215,9 @@ impl FeatureFlag for UserSlashCommandsFeatureFlag {
 ```
 
 #### `crates/agent_ui/src/user_slash_command.rs`
+
 Main module containing:
+
 - `SlashCommandRegistry` - Entity that caches commands and watches for changes
 - `UserSlashCommand` struct - represents a loaded command
 - `CommandScope` enum - `Project` or `User`
@@ -203,14 +226,17 @@ Main module containing:
 - Parsing, validation, and expansion functions
 
 #### `crates/agent_ui/src/completion_provider.rs`
+
 - Added `CommandSource` enum: `Server` vs `UserDefined { template }`
 - Modified `search_slash_commands()` to load file-based commands asynchronously
 
 #### `crates/agent_ui/src/acp/message_editor.rs`
+
 - Modified `validate_slash_commands()` to skip validation for user commands
 - Modified `contents()` to expand user commands asynchronously before sending
 
 #### `crates/agent_ui/src/acp/thread_view.rs`
+
 - Added error display UI for command loading failures
 - Spawns async task to load commands on initialization
 
@@ -227,19 +253,19 @@ Main module containing:
 
 ## Edge Cases
 
-| Case | Behavior |
-|------|----------|
-| Empty template | Error: "Template cannot be empty" |
-| Template with no placeholders | Works with zero arguments |
-| Extra arguments beyond placeholders | Error with count mismatch |
-| $ARGUMENTS only | Accepts any number of arguments (including zero) |
-| Mixed $ARGUMENTS and $1 | Must have at least the positional args |
-| Nested quotes | Not supported (error) |
-| @ mention in template | Treated as literal text |
-| Unknown escape `\x` | Error: "Unknown escape sequence" |
-| Empty file | Ignored (not loaded as command) |
-| Non-.md files | Ignored |
-| Symlinked directories | Followed (can symlink ~/.claude/commands/) |
-| Duplicate command names | Error: "Command 'X' is ambiguous: also defined at Y" |
-| Unicode in command names | Supported |
-| Very long templates | Supported (tested with 100k chars) |
+| Case                                | Behavior                                             |
+| ----------------------------------- | ---------------------------------------------------- |
+| Empty template                      | Error: "Template cannot be empty"                    |
+| Template with no placeholders       | Works with zero arguments                            |
+| Extra arguments beyond placeholders | Error with count mismatch                            |
+| $ARGUMENTS only                     | Accepts any number of arguments (including zero)     |
+| Mixed $ARGUMENTS and $1             | Must have at least the positional args               |
+| Nested quotes                       | Not supported (error)                                |
+| @ mention in template               | Treated as literal text                              |
+| Unknown escape `\x`                 | Error: "Unknown escape sequence"                     |
+| Empty file                          | Ignored (not loaded as command)                      |
+| Non-.md files                       | Ignored                                              |
+| Symlinked directories               | Followed (can symlink ~/.claude/commands/)           |
+| Duplicate command names             | Error: "Command 'X' is ambiguous: also defined at Y" |
+| Unicode in command names            | Supported                                            |
+| Very long templates                 | Supported (tested with 100k chars)                   |
