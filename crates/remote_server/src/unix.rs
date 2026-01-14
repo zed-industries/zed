@@ -32,7 +32,7 @@ use reqwest_client::ReqwestClient;
 use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
-use smol::Async;
+
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
@@ -67,7 +67,8 @@ fn init_logging_proxy() {
     env_logger::builder()
         .format(|buf, record| {
             let mut log_record = LogRecord::new(record);
-            log_record.message = format!("(remote proxy) {}", log_record.message);
+            log_record.message =
+                std::borrow::Cow::Owned(format!("(remote proxy) {}", log_record.message));
             serde_json::to_writer(&mut *buf, &log_record)?;
             buf.write_all(b"\n")?;
             Ok(())
@@ -75,7 +76,7 @@ fn init_logging_proxy() {
         .init();
 }
 
-fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
+fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
     struct MultiWrite {
         file: File,
         channel: Sender<Vec<u8>>,
@@ -101,7 +102,7 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
     let log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&log_file_path)
+        .open(log_file_path)
         .context("Failed to open log file in append mode")?;
 
     let (tx, rx) = smol::channel::unbounded();
@@ -112,13 +113,19 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
         buffer: Vec::new(),
     });
 
+    let old_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::error!("Panic occurred: {:?}", info);
+        old_hook(info);
+    }));
     env_logger::Builder::new()
         .filter_level(log::LevelFilter::Info)
         .parse_default_env()
         .target(env_logger::Target::Pipe(target))
         .format(|buf, record| {
             let mut log_record = LogRecord::new(record);
-            log_record.message = format!("(remote server) {}", log_record.message);
+            log_record.message =
+                std::borrow::Cow::Owned(format!("(remote server) {}", log_record.message));
             serde_json::to_writer(&mut *buf, &log_record)?;
             buf.write_all(b"\n")?;
             Ok(())
@@ -242,7 +249,7 @@ fn start_server(
                         // when calling quit, but it should be.
                         cx.shutdown();
                         cx.quit();
-                    })?;
+                    });
                     break;
                 }
                 _ = app_quit_rx.next().fuse() => {
@@ -367,10 +374,11 @@ pub fn execute_run(
             commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
         }))
         .detach();
-    let log_rx = init_logging_server(log_file)?;
+    let log_rx = init_logging_server(&log_file)?;
     log::info!(
-        "starting up. pid_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
+        "starting up. pid_file: {:?}, log_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
         pid_file,
+        log_file,
         stdin_socket,
         stdout_socket,
         stderr_socket
@@ -627,19 +635,19 @@ pub(crate) fn execute_proxy(
     })?;
 
     let stdin_task = smol::spawn(async move {
-        let stdin = Async::new(std::io::stdin())?;
+        let stdin = smol::Unblock::new(std::io::stdin());
         let stream = smol::net::unix::UnixStream::connect(&server_paths.stdin_socket).await?;
         handle_io(stdin, stream, "stdin").await
     });
 
     let stdout_task: smol::Task<Result<()>> = smol::spawn(async move {
-        let stdout = Async::new(std::io::stdout())?;
+        let stdout = smol::Unblock::new(std::io::stdout());
         let stream = smol::net::unix::UnixStream::connect(&server_paths.stdout_socket).await?;
         handle_io(stream, stdout, "stdout").await
     });
 
     let stderr_task: smol::Task<Result<()>> = smol::spawn(async move {
-        let mut stderr = Async::new(std::io::stderr())?;
+        let mut stderr = smol::Unblock::new(std::io::stderr());
         let mut stream = smol::net::unix::UnixStream::connect(&server_paths.stderr_socket).await?;
         let mut stderr_buffer = vec![0; 2048];
         loop {
@@ -717,9 +725,13 @@ pub(crate) enum SpawnServerError {
 
     #[error("failed to launch and detach server process: {status}\n{paths}")]
     LaunchStatus { status: ExitStatus, paths: String },
+
+    #[error("failed to wait for server to be ready to accept connections")]
+    Timeout,
 }
 
 async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
+    log::info!("spawning server process",);
     if paths.stdin_socket.exists() {
         std::fs::remove_file(&paths.stdin_socket).map_err(SpawnServerError::RemoveStdinSocket)?;
     }
@@ -769,6 +781,9 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
         log::debug!("waiting for server to be ready to accept connections...");
         std::thread::sleep(wait_duration);
         total_time_waited += wait_duration;
+        if total_time_waited > std::time::Duration::from_secs(10) {
+            return Err(SpawnServerError::Timeout);
+        }
     }
 
     log::info!(
@@ -933,7 +948,7 @@ pub fn handle_settings_file_changes(
     });
     cx.spawn(async move |cx| {
         while let Some(server_settings_content) = server_settings_file.next().await {
-            let result = cx.update_global(|store: &mut SettingsStore, cx| {
+            cx.update_global(|store: &mut SettingsStore, cx| {
                 let result = store.set_server_settings(&server_settings_content, cx);
                 if let Err(err) = &result {
                     log::error!("Failed to load server settings: {err}");
@@ -941,9 +956,6 @@ pub fn handle_settings_file_changes(
                 settings_changed(result.err(), cx);
                 cx.refresh_windows();
             });
-            if result.is_err() {
-                break; // App dropped
-            }
         }
     })
     .detach();

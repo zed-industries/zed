@@ -687,7 +687,7 @@ async fn build_example(
 
     // Validate expected patch applies to intermediate state
     let expected_patch_with_header = ensure_diff_header(expected_patch, &cursor_file);
-    apply_diff_to_string(&intermediate_state, &expected_patch_with_header)
+    apply_diff_to_string(&expected_patch_with_header, &intermediate_state)
         .map_err(|e| format!("Expected patch failed to apply: {}", e))?;
 
     // Find where the expected patch edits would apply in the intermediate state
@@ -764,7 +764,7 @@ fn apply_edit_history_to_content(
         return Ok(content.to_string());
     }
 
-    apply_diff_to_string(content, &file_diff)
+    apply_diff_to_string(&file_diff, content)
         .map_err(|e| format!("Failed to apply edit history: {}", e))
 }
 

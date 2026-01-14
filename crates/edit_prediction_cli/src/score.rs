@@ -17,31 +17,26 @@ pub async fn run_scoring(
     app_state: Arc<EpAppState>,
     cx: AsyncApp,
 ) -> anyhow::Result<()> {
-    run_prediction(
-        example,
-        Some(args.provider),
-        args.repetitions,
-        app_state,
-        cx,
-    )
-    .await?;
+    run_prediction(example, args, app_state, cx).await?;
 
-    let _progress = Progress::global().start(Step::Score, &example.spec.name);
+    let progress = Progress::global().start(Step::Score, &example.spec.name);
 
-    let original_text = &example.buffer.as_ref().unwrap().content;
+    progress.set_substatus("applying patches");
+    let original_text = &example.prompt_inputs.as_ref().unwrap().content;
     let expected_texts: Vec<String> = example
         .spec
         .expected_patches
         .iter()
         .map(|patch| {
-            apply_diff_to_string(original_text, patch)
+            apply_diff_to_string(patch, original_text)
                 .with_context(|| format!("Expected patch did not apply for {}", example.spec.name))
         })
         .collect::<Result<Vec<_>, _>>()?;
 
+    progress.set_substatus("computing metrics");
     let mut scores = vec![];
     for prediction in &example.predictions {
-        let actual_text = match apply_diff_to_string(original_text, &prediction.actual_patch) {
+        let actual_text = match apply_diff_to_string(&prediction.actual_patch, original_text) {
             Ok(text) => text,
             Err(_) => {
                 scores.push(ExampleScore { delta_chr_f: 0.0 });

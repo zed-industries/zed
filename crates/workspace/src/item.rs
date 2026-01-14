@@ -125,6 +125,7 @@ pub enum ItemEvent {
 }
 
 // TODO: Combine this with existing HighlightedText struct?
+#[derive(Debug)]
 pub struct BreadcrumbText {
     pub text: String,
     pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
@@ -851,7 +852,8 @@ impl<T: Item> ItemHandle for Entity<T> {
                                         close_item_task.await?;
                                         pane.update(cx, |pane, _cx| {
                                             pane.nav_history_mut().remove_item(item_id);
-                                        })
+                                        });
+                                        anyhow::Ok(())
                                     }
                                 })
                                 .detach_and_log_err(cx);

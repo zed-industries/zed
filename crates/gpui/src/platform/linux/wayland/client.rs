@@ -204,7 +204,7 @@ pub struct Output {
 pub(crate) struct WaylandClientState {
     serial_tracker: SerialTracker,
     globals: Globals,
-    gpu_context: BladeContext,
+    pub gpu_context: BladeContext,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -247,7 +247,7 @@ pub(crate) struct WaylandClientState {
     cursor: Cursor,
     pending_activation: Option<PendingActivation>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
-    common: LinuxCommon,
+    pub common: LinuxCommon,
 }
 
 pub struct DragState {
@@ -453,7 +453,7 @@ fn wl_output_version(version: u32) -> u32 {
 }
 
 impl WaylandClient {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(liveness: std::sync::Weak<()>) -> Self {
         let conn = Connection::connect_to_env().unwrap();
 
         let (globals, mut event_queue) =
@@ -490,7 +490,7 @@ impl WaylandClient {
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal(), liveness);
 
         let handle = event_loop.handle();
         handle
@@ -1224,6 +1224,12 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
             if capabilities.contains(wl_seat::Capability::Keyboard) {
                 let keyboard = seat.get_keyboard(qh, ());
 
+                if let Some(text_input) = state.text_input.take() {
+                    text_input.destroy();
+                    state.ime_pre_edit = None;
+                    state.composing = false;
+                }
+
                 state.text_input = state
                     .globals
                     .text_input_manager
@@ -1238,6 +1244,11 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
             }
             if capabilities.contains(wl_seat::Capability::Pointer) {
                 let pointer = seat.get_pointer(qh, ());
+
+                if let Some(cursor_shape_device) = state.cursor_shape_device.take() {
+                    cursor_shape_device.destroy();
+                }
+
                 state.cursor_shape_device = state
                     .globals
                     .cursor_shape_manager

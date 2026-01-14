@@ -103,7 +103,7 @@ pub(crate) fn request_prediction_with_zeta1(
         let included_events = &events[events.len() - included_events_count..events.len()];
         body.can_collect_data = can_collect_file
             && this
-                .read_with(cx, |this, _| this.can_collect_events(included_events))
+                .read_with(cx, |this, cx| this.can_collect_events(included_events, cx))
                 .unwrap_or(false);
         if body.can_collect_data {
             body.git_info = git_info;
@@ -133,7 +133,7 @@ pub(crate) fn request_prediction_with_zeta1(
 
         let inputs = ZetaPromptInput {
             events: included_events.into(),
-            related_files: vec![].into(),
+            related_files: vec![],
             cursor_path: full_path,
             cursor_excerpt: snapshot
                 .text_for_range(context_range)
@@ -177,8 +177,7 @@ pub(crate) fn request_prediction_with_zeta1(
                                 })
                             },
                         );
-                    })
-                    .ok();
+                    });
                 }
 
                 return Err(err);

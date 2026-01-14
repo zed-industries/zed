@@ -85,7 +85,7 @@ actions!(
     terminal,
     [
         /// Reruns the last executed task in the terminal.
-        RerunTask
+        RerunTask,
     ]
 );
 
@@ -194,13 +194,18 @@ impl TerminalView {
     ///Create a new Terminal in the current working directory or the user's home directory
     pub fn deploy(
         workspace: &mut Workspace,
-        _: &NewCenterTerminal,
+        action: &NewCenterTerminal,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        let local = action.local;
         let working_directory = default_working_directory(workspace, cx);
-        TerminalPanel::add_center_terminal(workspace, window, cx, |project, cx| {
-            project.create_terminal_shell(working_directory, cx)
+        TerminalPanel::add_center_terminal(workspace, window, cx, move |project, cx| {
+            if local {
+                project.create_local_terminal(cx)
+            } else {
+                project.create_terminal_shell(working_directory, cx)
+            }
         })
         .detach_and_log_err(cx);
     }
@@ -389,7 +394,7 @@ impl TerminalView {
             .is_some_and(|terminal_panel| terminal_panel.read(cx).assistant_enabled());
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
-                .action("New Terminal", Box::new(NewTerminal))
+                .action("New Terminal", Box::new(NewTerminal::default()))
                 .separator()
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))
@@ -1421,7 +1426,7 @@ impl SerializableItem for TerminalView {
                 .flatten();
 
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))?
+                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
                 .await?;
             cx.update(|window, cx| {
                 cx.new(|cx| {
@@ -1580,10 +1585,10 @@ impl SearchableItem for TerminalView {
     }
 }
 
-///Gets the working directory for the given workspace, respecting the user's settings.
-/// None implies "~" on whichever machine we end up on.
+/// Gets the working directory for the given workspace, respecting the user's settings.
+/// Falls back to home directory when no project directory is available.
 pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
-    match &TerminalSettings::get_global(cx).working_directory {
+    let directory = match &TerminalSettings::get_global(cx).working_directory {
         WorkingDirectory::CurrentProjectDirectory => workspace
             .project()
             .read(cx)
@@ -1593,13 +1598,12 @@ pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Opti
             .or_else(|| first_project_directory(workspace, cx)),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
-        WorkingDirectory::Always { directory } => {
-            shellexpand::full(&directory) //TODO handle this better
-                .ok()
-                .map(|dir| Path::new(&dir.to_string()).to_path_buf())
-                .filter(|dir| dir.is_dir())
-        }
-    }
+        WorkingDirectory::Always { directory } => shellexpand::full(directory)
+            .ok()
+            .map(|dir| Path::new(&dir.to_string()).to_path_buf())
+            .filter(|dir| dir.is_dir()),
+    };
+    directory.or_else(dirs::home_dir)
 }
 ///Gets the first project's home directory, or the home directory
 fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
@@ -1637,7 +1641,7 @@ mod tests {
             assert!(workspace.worktrees(cx).next().is_none());
 
             let res = default_working_directory(workspace, cx);
-            assert_eq!(res, None);
+            assert_eq!(res, dirs::home_dir());
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, None);
         });

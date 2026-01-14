@@ -403,6 +403,7 @@ impl VsCodeSettings {
             terminal: None,
             dap: Default::default(),
             context_servers: self.context_servers(),
+            context_server_timeout: None,
             load_direnv: None,
             slash_commands: None,
             git_hosting_providers: None,
@@ -645,6 +646,7 @@ impl VsCodeSettings {
             show_tab_bar_buttons: self
                 .read_str("workbench.editor.editorActionsLocation")
                 .and_then(|str| if str == "hidden" { Some(false) } else { None }),
+            show_pinned_tabs_in_separate_row: None,
         })
     }
 
@@ -654,6 +656,7 @@ impl VsCodeSettings {
             active_language_button: None,
             cursor_position_button: None,
             line_endings_button: None,
+            active_encoding_button: None,
         })
     }
 
@@ -816,6 +819,7 @@ impl VsCodeSettings {
     fn workspace_settings_content(&self) -> WorkspaceSettingsContent {
         WorkspaceSettingsContent {
             active_pane_modifiers: self.active_pane_modifiers(),
+            text_rendering_mode: None,
             autosave: self.read_enum("files.autoSave", |s| match s {
                 "off" => Some(AutosaveSetting::Off),
                 "afterDelay" => Some(AutosaveSetting::AfterDelay {

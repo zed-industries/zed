@@ -18,6 +18,7 @@ mod slash_command_picker;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod text_thread_editor;
+mod text_thread_history;
 mod ui;
 mod user_slash_command;
 
@@ -63,8 +64,6 @@ actions!(
         ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.
         ToggleOptionsMenu,
-        /// Deletes the recently opened thread from history.
-        DeleteRecentlyOpenThread,
         /// Toggles the profile or mode selector for switching between agent profiles.
         ToggleProfileSelector,
         /// Cycles through available session modes.
@@ -171,13 +170,13 @@ impl ExternalAgent {
     pub fn server(
         &self,
         fs: Arc<dyn fs::Fs>,
-        history: Entity<agent::HistoryStore>,
+        thread_store: Entity<agent::ThreadStore>,
     ) -> Rc<dyn agent_servers::AgentServer> {
         match self {
             Self::Gemini => Rc::new(agent_servers::Gemini),
             Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
             Self::Codex => Rc::new(agent_servers::Codex),
-            Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, history)),
+            Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, thread_store)),
             Self::Custom { name } => Rc::new(agent_servers::CustomAgentServer::new(name.clone())),
         }
     }
@@ -483,6 +482,8 @@ mod tests {
             expand_terminal_card: true,
             use_modifier_to_send: true,
             message_editor_min_lines: 1,
+            tool_permissions: Default::default(),
+            show_turn_stats: false,
         };
 
         cx.update(|cx| {
