@@ -6989,6 +6989,7 @@ impl EditorElement {
         let Some(scrollbars_layout) = layout.scrollbars_layout.take() else {
             return;
         };
+        let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
         let any_scrollbar_dragged = self.editor.read(cx).scroll_manager.any_scrollbar_dragged();
 
         for (scrollbar_layout, axis) in scrollbars_layout.iter_scrollbars() {
@@ -7031,6 +7032,57 @@ impl EditorElement {
                             let mut marker = marker.clone();
                             marker.bounds.origin += hitbox.origin;
                             window.paint_quad(marker);
+                        }
+
+                        // Paint active scope markers
+                        if scrollbar_settings.active_scope_range {
+                            if let Some((start_row, end_row)) = self.editor.update(cx, |editor, cx| {
+                                editor.current_scope_boundary(window, cx)
+                            }) {
+                                let snapshot = &layout.position_map.snapshot;
+                                let display_snapshot = &snapshot.display_snapshot;
+                                let buffer_snapshot = snapshot.buffer_snapshot();
+                        
+                                let start_display_row = buffer_snapshot
+                                    .anchor_before(Point::new(start_row, 0))
+                                    .to_display_point(display_snapshot)
+                                    .row();
+                                let end_display_row = buffer_snapshot
+                                    .anchor_before(Point::new(end_row, 0))
+                                    .to_display_point(display_snapshot)
+                                    .row();
+                        
+                                let total_rows = (display_snapshot.max_point().row().0 + 1) as f32;
+                                
+                                // for painting the markers I tried useing marker_quads_for_ranges, but it didnt show up
+                                // meybe because of layering issiues so I use a custom aproach
+                                if total_rows > 0.0 {
+                                    let track_bounds = scrollbar_layout.hitbox.bounds;
+                                    let track_height = track_bounds.size.height;
+                                    
+                                    // size
+                                    let marker_size = px(4.0);
+                                    // positioning
+                                    let padding = px(2.0);
+                                    let marker_x = track_bounds.right() - marker_size - padding;
+                                    // color
+                                    let color = gpui::white().opacity(0.5);
+                        
+                                    for display_row in [start_display_row, end_display_row] {
+                                        let ratio = display_row.0 as f32 / total_rows;
+                                        let absolute_y = track_bounds.top() + (ratio * track_height);
+                                        
+                                        
+                                        window.paint_quad(gpui::fill(
+                                            Bounds::new(
+                                                point(marker_x, absolute_y - (marker_size / 2.0)),
+                                                size(marker_size, marker_size),
+                                            ),
+                                            color,
+                                        ));
+                                    }
+                                }
+                            }
                         }
                     }
 
