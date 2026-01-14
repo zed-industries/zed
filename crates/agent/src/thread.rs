@@ -1099,7 +1099,10 @@ impl Thread {
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
         self.add_tool(FindPathTool::new(self.project.clone()));
         self.add_tool(GrepTool::new(self.project.clone()));
-        self.add_tool(ListDirectoryTool::new(self.project.clone()));
+        self.add_tool(ListDirectoryTool::new(
+            self.project.clone(),
+            cx.weak_entity(),
+        ));
         self.add_tool(MovePathTool::new(self.project.clone()));
         self.add_tool(NowTool);
         self.add_tool(OpenTool::new(self.project.clone()));
@@ -2250,7 +2253,6 @@ impl Thread {
             .is_some_and(|turn| turn.tools.contains_key(name))
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn has_registered_tool(&self, name: &str) -> bool {
         self.tools.contains_key(name)
     }

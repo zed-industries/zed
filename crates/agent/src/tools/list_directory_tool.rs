@@ -1,12 +1,15 @@
-use crate::{AgentTool, ToolCallEventStream};
+use crate::{AgentTool, SkillTool, Thread, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
+use agent_skills::{SkillSource, global_skills_dir, project_skills_relative_path};
 use anyhow::{Result, anyhow};
-use gpui::{App, Entity, SharedString, Task};
+use futures::StreamExt;
+use gpui::{App, Entity, SharedString, Task, WeakEntity};
 use project::{Project, ProjectPath, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::fmt::Write;
+use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
@@ -39,11 +42,127 @@ pub struct ListDirectoryToolInput {
 
 pub struct ListDirectoryTool {
     project: Entity<Project>,
+    thread: Option<WeakEntity<Thread>>,
 }
 
 impl ListDirectoryTool {
-    pub fn new(project: Entity<Project>) -> Self {
-        Self { project }
+    pub fn new(project: Entity<Project>, thread: WeakEntity<Thread>) -> Self {
+        Self {
+            project,
+            thread: Some(thread),
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new_without_thread(project: Entity<Project>) -> Self {
+        Self {
+            project,
+            thread: None,
+        }
+    }
+
+    /// Check if a path is within a skill directory and list its contents if allowed.
+    fn try_list_skill_directory(
+        &self,
+        input: &ListDirectoryToolInput,
+        skill_tool_enabled: bool,
+        cx: &App,
+    ) -> Option<Task<Result<String>>> {
+        if !skill_tool_enabled {
+            return None;
+        }
+
+        let input_path = Path::new(&input.path);
+
+        // Check if this looks like an absolute path
+        if !input_path.is_absolute() {
+            return None;
+        }
+
+        // Check if the path is within the global skills directory
+        // We use starts_with on the path directly rather than canonicalizing,
+        // as canonicalization requires the file to exist on the real filesystem
+        // which doesn't work with FakeFs in tests.
+        let global_skills = global_skills_dir();
+        if input_path.starts_with(global_skills) {
+            return Some(self.list_skill_directory_contents(
+                input_path.to_path_buf(),
+                SkillSource::Global,
+                cx,
+            ));
+        }
+
+        // Check if the path is within any worktree's .zed/skills directory
+        for worktree in self.project.read(cx).worktrees(cx) {
+            let worktree = worktree.read(cx);
+            let worktree_skills_dir = worktree.abs_path().join(project_skills_relative_path());
+            if input_path.starts_with(&worktree_skills_dir) {
+                return Some(self.list_skill_directory_contents(
+                    input_path.to_path_buf(),
+                    SkillSource::ProjectLocal {
+                        worktree_id: worktree.id(),
+                    },
+                    cx,
+                ));
+            }
+        }
+
+        None
+    }
+
+    fn list_skill_directory_contents(
+        &self,
+        path: std::path::PathBuf,
+        _source: SkillSource,
+        cx: &App,
+    ) -> Task<Result<String>> {
+        let fs = self.project.read(cx).fs().clone();
+
+        cx.spawn(async move |_cx| {
+            if !fs.is_dir(&path).await {
+                return Err(anyhow!("{} is not a directory", path.display()));
+            }
+
+            let mut entries = fs.read_dir(&path).await?;
+            let mut folders = Vec::new();
+            let mut files = Vec::new();
+
+            while let Some(entry) = entries.next().await {
+                let Ok(entry_path) = entry else {
+                    continue;
+                };
+
+                let file_name = entry_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+
+                if fs.is_dir(&entry_path).await {
+                    folders.push(file_name);
+                } else {
+                    files.push(file_name);
+                }
+            }
+
+            folders.sort();
+            files.sort();
+
+            let mut output = String::new();
+
+            if !folders.is_empty() {
+                writeln!(output, "# Folders:\n{}", folders.join("\n")).unwrap();
+            }
+
+            if !files.is_empty() {
+                writeln!(output, "\n# Files:\n{}", files.join("\n")).unwrap();
+            }
+
+            if output.is_empty() {
+                writeln!(output, "{} is empty.", path.display()).unwrap();
+            }
+
+            Ok(output)
+        })
     }
 }
 
@@ -78,6 +197,14 @@ impl AgentTool for ListDirectoryTool {
         _event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
+        // Check if the skill tool is enabled (needed for listing skill directories)
+        let skill_tool_enabled = self
+            .thread
+            .as_ref()
+            .and_then(|t| t.upgrade())
+            .map(|thread| thread.read(cx).has_registered_tool(SkillTool::name()))
+            .unwrap_or(false);
+
         // Sometimes models will return these even though we tell it to give a path and not a glob.
         // When this happens, just list the root worktree directories.
         if matches!(input.path.as_str(), "." | "" | "./" | "*") {
@@ -100,7 +227,18 @@ impl AgentTool for ListDirectoryTool {
             return Task::ready(Ok(output));
         }
 
-        let Some(project_path) = self.project.read(cx).find_project_path(&input.path, cx) else {
+        // First, try to find the path in the project
+        let project_path = self.project.read(cx).find_project_path(&input.path, cx);
+
+        // If not found in project, check if it's a skill directory path (only if skill tool is enabled)
+        if project_path.is_none() {
+            if let Some(result) = self.try_list_skill_directory(&input, skill_tool_enabled, cx) {
+                return result;
+            }
+            return Task::ready(Err(anyhow!("Path {} not found in project", input.path)));
+        }
+
+        let Some(project_path) = project_path else {
             return Task::ready(Err(anyhow!("Path {} not found in project", input.path)));
         };
         let Some(worktree) = self
@@ -255,7 +393,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new_without_thread(project));
 
         // Test listing root directory
         let input = ListDirectoryToolInput {
@@ -326,7 +464,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new_without_thread(project));
 
         let input = ListDirectoryToolInput {
             path: "project/empty_dir".into(),
@@ -352,7 +490,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new_without_thread(project));
 
         // Test non-existent path
         let input = ListDirectoryToolInput {
@@ -430,7 +568,7 @@ mod tests {
         });
 
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new_without_thread(project));
 
         // Listing root directory should exclude private and excluded files
         let input = ListDirectoryToolInput {
@@ -577,7 +715,7 @@ mod tests {
         // Wait for worktrees to be fully scanned
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(ListDirectoryTool::new(project));
+        let tool = Arc::new(ListDirectoryTool::new_without_thread(project));
 
         // Test listing worktree1/src - should exclude secret.rs and config.toml based on local settings
         let input = ListDirectoryToolInput {

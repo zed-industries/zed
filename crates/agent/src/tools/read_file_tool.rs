@@ -1,5 +1,6 @@
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, ToolCallUpdateFields};
+use agent_skills::{SkillSource, global_skills_dir, project_skills_relative_path};
 use anyhow::{Context as _, Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task, WeakEntity};
@@ -10,10 +11,11 @@ use project::{AgentLocation, ImageItem, Project, WorktreeSettings, image_store};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
 
-use crate::{AgentTool, Thread, ToolCallEventStream, outline};
+use crate::{AgentTool, SkillTool, Thread, ToolCallEventStream, outline};
 
 /// Reads the content of the given file in the project.
 ///
@@ -67,6 +69,105 @@ impl ReadFileTool {
     }
 }
 
+impl ReadFileTool {
+    /// Check if a path is within a skill directory and return the skill file content if allowed.
+    fn try_read_skill_file(
+        &self,
+        input: &ReadFileToolInput,
+        skill_tool_enabled: bool,
+        cx: &App,
+    ) -> Option<Task<Result<LanguageModelToolResultContent>>> {
+        if !skill_tool_enabled {
+            return None;
+        }
+
+        let input_path = Path::new(&input.path);
+
+        // Check if this looks like an absolute path to a skill file
+        if !input_path.is_absolute() {
+            return None;
+        }
+
+        // Check if the path is within the global skills directory
+        // We use starts_with on the path directly rather than canonicalizing,
+        // as canonicalization requires the file to exist on the real filesystem
+        // which doesn't work with FakeFs in tests.
+        let global_skills = global_skills_dir();
+        if input_path.starts_with(global_skills) {
+            return Some(self.read_skill_file_content(
+                input_path.to_path_buf(),
+                input.start_line,
+                input.end_line,
+                SkillSource::Global,
+                cx,
+            ));
+        }
+
+        // Check if the path is within any worktree's .zed/skills directory
+        for worktree in self.project.read(cx).worktrees(cx) {
+            let worktree = worktree.read(cx);
+            let worktree_skills_dir = worktree.abs_path().join(project_skills_relative_path());
+            if input_path.starts_with(&worktree_skills_dir) {
+                return Some(self.read_skill_file_content(
+                    input_path.to_path_buf(),
+                    input.start_line,
+                    input.end_line,
+                    SkillSource::ProjectLocal {
+                        worktree_id: worktree.id(),
+                    },
+                    cx,
+                ));
+            }
+        }
+
+        None
+    }
+
+    fn read_skill_file_content(
+        &self,
+        path: PathBuf,
+        start_line: Option<u32>,
+        end_line: Option<u32>,
+        _source: SkillSource,
+        cx: &App,
+    ) -> Task<Result<LanguageModelToolResultContent>> {
+        let fs = self.project.read(cx).fs().clone();
+
+        cx.spawn(async move |_cx| {
+            let content = fs
+                .load(&path)
+                .await
+                .with_context(|| format!("Failed to read skill file: {}", path.display()))?;
+
+            // Apply line range if specified
+            let result = if start_line.is_some() || end_line.is_some() {
+                let lines: Vec<&str> = content.lines().collect();
+                let start = start_line
+                    .map(|l| l.saturating_sub(1) as usize)
+                    .unwrap_or(0);
+                let end = end_line
+                    .map(|l| l as usize)
+                    .unwrap_or(lines.len())
+                    .min(lines.len());
+
+                if start >= lines.len() {
+                    return Err(anyhow!(
+                        "Start line {} is beyond end of file ({} lines)",
+                        start + 1,
+                        lines.len()
+                    ));
+                }
+
+                lines[start..end].join("\n")
+            } else {
+                content
+            };
+
+            Ok(LanguageModelToolResultContent::Text(result.into()))
+        })
+    }
+}
+
 impl AgentTool for ReadFileTool {
     type Input = ReadFileToolInput;
     type Output = LanguageModelToolResultContent;
@@ -112,7 +213,25 @@ impl AgentTool for ReadFileTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<LanguageModelToolResultContent>> {
-        let Some(project_path) = self.project.read(cx).find_project_path(&input.path, cx) else {
+        // Check if the skill tool is enabled (needed for reading skill files)
+        let skill_tool_enabled = self
+            .thread
+            .upgrade()
+            .map(|thread| thread.read(cx).has_registered_tool(SkillTool::name()))
+            .unwrap_or(false);
+
+        // First, try to find the path in the project
+        let project_path = self.project.read(cx).find_project_path(&input.path, cx);
+
+        // If not found in project, check if it's a skill file path (only if skill tool is enabled)
+        if project_path.is_none() {
+            if let Some(result) = self.try_read_skill_file(&input, skill_tool_enabled, cx) {
+                return result;
+            }
+            return Task::ready(Err(anyhow!("Path {} not found in project", &input.path)));
+        }
+
+        let Some(project_path) = project_path else {
             return Task::ready(Err(anyhow!("Path {} not found in project", &input.path)));
         };
         let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
@@ -1054,5 +1173,172 @@ mod test {
                 .contains("worktree `private_files` setting"),
             "Config.toml should be blocked by worktree1's private_files setting"
         );
+    }
+
+    #[gpui::test]
+    async fn test_read_skill_file_allowed_when_skill_tool_enabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Create project and skill directories using insert_tree
+        // The skills directory path from paths::skills_dir()
+        let skills_dir = paths::skills_dir();
+        let skill_dir = skills_dir.join("test-skill");
+        let skill_file = skill_dir.join("SKILL.md");
+        let skill_content = "---\nname: test-skill\ndescription: Test\n---\n\nSkill content";
+
+        // Insert project files
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "file.txt": "project file"
+            }),
+        )
+        .await;
+
+        // Insert skill files at the skills_dir path
+        fs.insert_tree(
+            skills_dir,
+            json!({
+                "test-skill": {
+                    "SKILL.md": skill_content
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+
+        // Create a skill to add to the thread
+        let skill = agent_skills::parse_skill(
+            &skill_file,
+            skill_content,
+            agent_skills::SkillSource::Global,
+        )
+        .unwrap();
+
+        let skills = Arc::new(vec![skill]);
+        let thread = cx.new(|cx| {
+            let mut thread = Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                skills.clone(),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            );
+            // Add the skill tool since we have skills
+            thread.add_tool(SkillTool::new(skills.clone(), project.clone()));
+            thread
+        });
+
+        let tool = Arc::new(ReadFileTool::new(
+            thread.downgrade(),
+            project.clone(),
+            action_log,
+        ));
+
+        // Try to read the skill file using absolute path
+        let input = ReadFileToolInput {
+            path: skill_file.to_string_lossy().to_string(),
+            start_line: None,
+            end_line: None,
+        };
+
+        let (event_stream, _) = ToolCallEventStream::test();
+        let result = cx.update(|cx| tool.run(input, event_stream, cx)).await;
+
+        assert!(
+            result.is_ok(),
+            "Should be able to read skill file when skill tool is enabled: {:?}",
+            result.err()
+        );
+        let content = result.unwrap();
+        match content {
+            LanguageModelToolResultContent::Text(text) => {
+                assert!(text.contains("Skill content"));
+            }
+            _ => panic!("Expected text content"),
+        }
+    }
+
+    #[gpui::test]
+    async fn test_read_skill_file_denied_when_skill_tool_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Create project and skill directories
+        let skills_dir = paths::skills_dir();
+        let skill_file = skills_dir.join("test-skill2").join("SKILL.md");
+        let skill_content = "---\nname: test-skill2\ndescription: Test\n---\n\nSkill content";
+
+        // Insert project files
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "file.txt": "project file"
+            }),
+        )
+        .await;
+
+        // Insert skill files
+        fs.insert_tree(
+            skills_dir,
+            json!({
+                "test-skill2": {
+                    "SKILL.md": skill_content
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+
+        // Create thread WITHOUT skill tool (no skills = no skill tool added)
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                Arc::new(Vec::new()), // No skills
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+
+        let tool = Arc::new(ReadFileTool::new(
+            thread.downgrade(),
+            project.clone(),
+            action_log,
+        ));
+
+        // Try to read the skill file using absolute path
+        let input = ReadFileToolInput {
+            path: skill_file.to_string_lossy().to_string(),
+            start_line: None,
+            end_line: None,
+        };
+
+        let (event_stream, _) = ToolCallEventStream::test();
+        let result = cx.update(|cx| tool.run(input, event_stream, cx)).await;
+
+        assert!(
+            result.is_err(),
+            "Should NOT be able to read skill file when skill tool is disabled"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not found in project"));
     }
 }
