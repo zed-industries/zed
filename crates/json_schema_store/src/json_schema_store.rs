@@ -390,6 +390,7 @@ fn generate_jsonc_schema() -> serde_json::Value {
     serde_json::to_value(schema).unwrap()
 }
 
+#[cfg(debug_assertions)]
 fn generate_inspector_style_schema() -> serde_json::Value {
     let schema = schemars::generate::SchemaSettings::draft2019_09()
         .with_transform(util::schemars::DefaultDenyUnknownFields)
