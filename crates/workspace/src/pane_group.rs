@@ -877,9 +877,10 @@ impl PaneAxis {
     }
 
     fn pane_at_pixel_position(&self, coordinate: Point<Pixels>) -> Option<&Entity<Pane>> {
-        debug_assert!(self.members.len() == self.bounding_boxes.lock().len());
-
         let bounding_boxes = self.bounding_boxes.lock();
+        if self.members.len() != bounding_boxes.len() {
+            return None;
+        }
 
         for (idx, member) in self.members.iter().enumerate() {
             if let Some(coordinates) = bounding_boxes[idx]

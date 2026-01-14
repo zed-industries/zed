@@ -335,55 +335,46 @@ pub(crate) fn new_debugger_pane(
             let source = tab.pane.clone();
             let item_id_to_move = item.item_id();
 
-            let Ok(new_split_pane) = pane
-                .drag_split_direction()
-                .map(|split_direction| {
-                    weak_running.update(cx, |running, cx| {
-                        let new_pane =
-                            new_debugger_pane(workspace.clone(), project.clone(), window, cx);
-                        let _previous_subscription = running.pane_close_subscriptions.insert(
-                            new_pane.entity_id(),
-                            cx.subscribe_in(&new_pane, window, RunningState::handle_pane_event),
-                        );
-                        debug_assert!(_previous_subscription.is_none());
-                        running
-                            .panes
-                            .split(&this_pane, &new_pane, split_direction, cx)?;
-                        anyhow::Ok(new_pane)
-                    })
-                })
-                .transpose()
-            else {
-                return ControlFlow::Break(());
+            let Some(split_direction) = pane.drag_split_direction() else {
+                return ControlFlow::Continue(());
             };
 
-            match new_split_pane.transpose() {
-                // Source pane may be the one currently updated, so defer the move.
-                Ok(Some(new_pane)) => cx
-                    .spawn_in(window, async move |_, cx| {
-                        cx.update(|window, cx| {
-                            move_item(
-                                &source,
-                                &new_pane,
-                                item_id_to_move,
-                                new_pane.read(cx).active_item_index(),
-                                true,
-                                window,
-                                cx,
+            let workspace = workspace.clone();
+            let weak_running = weak_running.clone();
+            cx.spawn_in(window, async move |_, cx| {
+                cx.update(|window, cx| {
+                    let new_pane = weak_running
+                        .update(cx, |running, cx| {
+                            let new_pane =
+                                new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+                            let _previous_subscription = running.pane_close_subscriptions.insert(
+                                new_pane.entity_id(),
+                                cx.subscribe_in(&new_pane, window, RunningState::handle_pane_event),
                             );
+                            debug_assert!(_previous_subscription.is_none());
+                            running
+                                .panes
+                                .split(&this_pane, &new_pane, split_direction, cx)?;
+                            anyhow::Ok(new_pane)
                         })
-                        .ok();
-                    })
-                    .detach(),
-                // If we drop into existing pane or current pane,
-                // regular pane drop handler will take care of it,
-                // using the right tab index for the operation.
-                Ok(None) => return ControlFlow::Continue(()),
-                err @ Err(_) => {
-                    err.log_err();
-                    return ControlFlow::Break(());
-                }
-            };
+                        .ok()
+                        .and_then(|r| r.ok());
+                    let Some(new_pane) = new_pane else {
+                        return;
+                    };
+                    move_item(
+                        &source,
+                        &new_pane,
+                        item_id_to_move,
+                        new_pane.read(cx).active_item_index(),
+                        true,
+                        window,
+                        cx,
+                    );
+                })
+                .ok();
+            })
+            .detach();
 
             ControlFlow::Break(())
         }
@@ -1210,7 +1201,7 @@ impl RunningState {
 
         let cwd = (!request.cwd.is_empty())
             .then(|| PathBuf::from(&request.cwd))
-            .or_else(|| session.binary().unwrap().cwd.clone());
+            .or_else(|| session.binary().and_then(|b| b.cwd.clone()));
 
         let mut envs: HashMap<String, String> =
             self.session.read(cx).task_context().project_env.clone();
@@ -1547,17 +1538,16 @@ impl RunningState {
     ) {
         self.ensure_pane_item(item, window, cx);
 
-        let (variable_list_position, pane) = self
-            .panes
-            .panes()
-            .into_iter()
-            .find_map(|pane| {
+        let Some((variable_list_position, pane)) =
+            self.panes.panes().into_iter().find_map(|pane| {
                 pane.read(cx)
                     .items_of_type::<SubView>()
                     .position(|view| view.read(cx).view_kind() == item)
                     .map(|view| (view, pane))
             })
-            .unwrap();
+        else {
+            return;
+        };
 
         pane.update(cx, |this, cx| {
             this.activate_item(variable_list_position, true, true, window, cx);
