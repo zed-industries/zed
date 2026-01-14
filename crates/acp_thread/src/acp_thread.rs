@@ -1,6 +1,7 @@
 mod connection;
 mod diff;
 mod mention;
+mod serialization;
 mod terminal;
 
 use agent_settings::AgentSettings;
@@ -32,6 +33,7 @@ pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
 use serde_json::to_string_pretty;
+pub use serialization::*;
 use settings::Settings as _;
 use task::{Shell, ShellBuilder};
 pub use terminal::*;
