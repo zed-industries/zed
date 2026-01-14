@@ -437,7 +437,7 @@ mod tests {
             .join("\n");
 
         let input = TerminalToolInput {
-            command: long_command.clone(),
+            command: long_command,
             cd: ".".to_string(),
             timeout_ms: None,
         };
