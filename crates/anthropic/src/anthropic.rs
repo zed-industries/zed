@@ -847,11 +847,28 @@ pub enum Thinking {
     Enabled { budget_tokens: Option<u32> },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum StringOrContents {
     String(String),
     Content(Vec<RequestContent>),
+}
+
+impl Serialize for StringOrContents {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            StringOrContents::String(s) => {
+                use serde::ser::SerializeSeq;
+                let mut seq = serializer.serialize_seq(Some(1))?;
+                seq.serialize_element(&serde_json::json!({"type": "text", "text": s}))?;
+                seq.end()
+            }
+            StringOrContents::Content(contents) => contents.serialize(serializer),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
