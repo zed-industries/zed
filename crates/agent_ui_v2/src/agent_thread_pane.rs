@@ -62,11 +62,15 @@ pub struct AgentThreadPane {
     width: Option<Pixels>,
     thread_view: Option<ActiveThreadView>,
     workspace: WeakEntity<Workspace>,
-    history: Option<Entity<AcpThreadHistory>>,
+    history: Entity<AcpThreadHistory>,
 }
 
 impl AgentThreadPane {
-    pub fn new(workspace: WeakEntity<Workspace>, cx: &mut ui::Context<Self>) -> Self {
+    pub fn new(
+        workspace: WeakEntity<Workspace>,
+        history: Entity<AcpThreadHistory>,
+        cx: &mut ui::Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
         Self {
             focus_handle,
@@ -74,7 +78,7 @@ impl AgentThreadPane {
             width: None,
             thread_view: None,
             workspace,
-            history: None,
+            history,
         }
     }
 
@@ -106,11 +110,7 @@ impl AgentThreadPane {
 
         let agent: Rc<dyn AgentServer> = Rc::new(NativeAgentServer::new(fs, thread_store.clone()));
 
-        // BENTODO: We should have this created already.
-        let history = self
-            .history
-            .get_or_insert_with(|| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
-
+        let history = self.history.clone();
         let thread_view = cx.new(|cx| {
             AcpThreadView::new(
                 agent,
@@ -120,7 +120,7 @@ impl AgentThreadPane {
                 project,
                 Some(thread_store),
                 prompt_store,
-                history.clone(),
+                history,
                 true,
                 window,
                 cx,
