@@ -1498,11 +1498,7 @@ fn run_subagent_visual_tests(
         project.find_or_create_worktree(&project_path, true, cx)
     });
 
-    cx.background_executor.allow_parking();
-    cx.background_executor
-        .block_test(add_worktree_task)
-        .context("Failed to add worktree")?;
-    cx.background_executor.forbid_parking();
+    let _ = cx.foreground_executor.block_test(add_worktree_task);
 
     cx.run_until_parked();
 
@@ -1555,16 +1551,14 @@ fn run_subagent_visual_tests(
 
     let prompt_builder =
         cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
-    cx.background_executor.allow_parking();
     let panel = cx
-        .background_executor
+        .foreground_executor
         .block_test(AgentPanel::load(
             weak_workspace,
             prompt_builder,
             async_window_cx,
         ))
         .context("Failed to load AgentPanel")?;
-    cx.background_executor.forbid_parking();
 
     cx.update_window(workspace_window.into(), |_, _window, cx| {
         workspace_window
@@ -1600,11 +1594,7 @@ fn run_subagent_visual_tests(
         thread.send(vec!["Run two subagents".into()], cx)
     });
 
-    cx.background_executor.allow_parking();
-    cx.background_executor
-        .block_test(send_future)
-        .context("Failed to send message")?;
-    cx.background_executor.forbid_parking();
+    let _ = cx.foreground_executor.block_test(send_future);
 
     cx.run_until_parked();
 
