@@ -23,6 +23,7 @@ action_log.workspace = true
 agent-client-protocol.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
+agent_skills.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 client.workspace = true

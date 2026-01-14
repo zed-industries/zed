@@ -11,6 +11,10 @@ mod thread_store;
 mod tool_permissions;
 mod tools;
 
+use agent_skills::{
+    Skill, SkillLoadError, SkillSource, global_skills_dir, load_skills_from_directory,
+    project_skills_relative_path,
+};
 use context_server::ContextServerId;
 pub use db::*;
 pub use native_agent_server::NativeAgentServer;
@@ -255,7 +259,9 @@ impl NativeAgent {
         log::debug!("Creating new NativeAgent");
 
         let project_context = cx
-            .update(|cx| Self::build_project_context(&project, prompt_store.as_ref(), cx))
+            .update(|cx| {
+                Self::build_project_context(&project, prompt_store.as_ref(), fs.clone(), cx)
+            })
             .await;
 
         Ok(cx.new(|cx| {
@@ -379,7 +385,12 @@ impl NativeAgent {
         while needs_refresh.changed().await.is_ok() {
             let project_context = this
                 .update(cx, |this, cx| {
-                    Self::build_project_context(&this.project, this.prompt_store.as_ref(), cx)
+                    Self::build_project_context(
+                        &this.project,
+                        this.prompt_store.as_ref(),
+                        this.fs.clone(),
+                        cx,
+                    )
                 })?
                 .await;
             this.update(cx, |this, cx| {
@@ -393,15 +404,43 @@ impl NativeAgent {
     fn build_project_context(
         project: &Entity<Project>,
         prompt_store: Option<&Entity<PromptStore>>,
+        fs: Arc<dyn Fs>,
         cx: &mut App,
     ) -> Task<ProjectContext> {
         let worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
         let worktree_tasks = worktrees
-            .into_iter()
+            .iter()
             .map(|worktree| {
-                Self::load_worktree_info_for_system_prompt(worktree, project.clone(), cx)
+                Self::load_worktree_info_for_system_prompt(worktree.clone(), project.clone(), cx)
             })
             .collect::<Vec<_>>();
+
+        // Load global skills
+        let global_skills_dir = global_skills_dir();
+        let global_skills_fs = fs.clone();
+        let global_skills_task = cx.background_spawn(async move {
+            load_skills_from_directory(&global_skills_fs, &global_skills_dir, SkillSource::Global)
+                .await
+        });
+
+        // Load project-local skills from each worktree
+        let project_skills_tasks: Vec<_> = worktrees
+            .iter()
+            .map(|worktree| {
+                let worktree_id = worktree.read(cx).id();
+                let abs_path = worktree.read(cx).abs_path();
+                let skills_dir = abs_path.join(project_skills_relative_path());
+                let fs = fs.clone();
+                cx.background_spawn(async move {
+                    load_skills_from_directory(
+                        &fs,
+                        &skills_dir,
+                        SkillSource::ProjectLocal { worktree_id },
+                    )
+                    .await
+                })
+            })
+            .collect();
         let default_user_rules_task = if let Some(prompt_store) = prompt_store.as_ref() {
             prompt_store.read_with(cx, |prompt_store, cx| {
                 let prompts = prompt_store.default_prompt_metadata();
@@ -451,7 +490,13 @@ impl NativeAgent {
                 })
                 .collect::<Vec<_>>();
 
-            ProjectContext::new(worktrees, default_user_rules)
+            // Load and merge skills
+            let global_skills = global_skills_task.await;
+            let project_skills_results = future::join_all(project_skills_tasks).await;
+            let (skills, _skill_errors) =
+                merge_skills(global_skills, project_skills_results.into_iter().flatten());
+
+            ProjectContext::new(worktrees, default_user_rules, skills)
         })
     }
 
@@ -1986,4 +2031,38 @@ fn mcp_message_content_to_acp_content_block(
             acp::ContentBlock::ResourceLink(link)
         }
     }
+}
+
+/// Merge global and project-local skills.
+/// Name conflicts produce errors - NO OVERRIDES ALLOWED.
+fn merge_skills(
+    global: Vec<Result<Skill, SkillLoadError>>,
+    project: impl Iterator<Item = Result<Skill, SkillLoadError>>,
+) -> (Vec<Skill>, Vec<SkillLoadError>) {
+    let mut skills = Vec::new();
+    let mut errors = Vec::new();
+    let mut seen_names: HashMap<String, PathBuf> = HashMap::default();
+
+    for result in global.into_iter().chain(project) {
+        match result {
+            Ok(skill) => {
+                if let Some(existing_path) = seen_names.get(&skill.name) {
+                    errors.push(SkillLoadError {
+                        path: skill.skill_file_path.clone(),
+                        message: format!(
+                            "Skill name '{}' conflicts with skill at '{}'",
+                            skill.name,
+                            existing_path.display()
+                        ),
+                    });
+                } else {
+                    seen_names.insert(skill.name.clone(), skill.skill_file_path.clone());
+                    skills.push(skill);
+                }
+            }
+            Err(e) => errors.push(e),
+        }
+    }
+
+    (skills, errors)
 }

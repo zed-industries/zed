@@ -1,3 +1,4 @@
+use agent_skills::{MAX_SKILL_DESCRIPTIONS_SIZE, Skill, SkillSummary};
 use anyhow::Result;
 use assets::Assets;
 use fs::Fs;
@@ -43,13 +44,38 @@ pub struct ProjectContext {
     pub os: String,
     pub arch: String,
     pub shell: String,
+    pub skills: Vec<SkillSummary>,
+    /// `!skills.is_empty()` - provided as a field because handlebars can't do this.
+    pub has_skills: bool,
 }
 
 impl ProjectContext {
-    pub fn new(worktrees: Vec<WorktreeContext>, default_user_rules: Vec<UserRulesContext>) -> Self {
+    pub fn new(
+        worktrees: Vec<WorktreeContext>,
+        default_user_rules: Vec<UserRulesContext>,
+        skills: Vec<Skill>,
+    ) -> Self {
         let has_rules = worktrees
             .iter()
             .any(|worktree| worktree.rules_file.is_some());
+
+        // Apply 50KB budget for skill descriptions
+        let mut total_size = 0;
+        let skill_summaries: Vec<SkillSummary> = skills
+            .iter()
+            .filter_map(|skill| {
+                let entry_size = skill.name.len() + skill.description.len();
+                if total_size + entry_size <= MAX_SKILL_DESCRIPTIONS_SIZE {
+                    total_size += entry_size;
+                    Some(SkillSummary::from(skill))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let has_skills = !skill_summaries.is_empty();
+
         Self {
             worktrees,
             has_rules,
@@ -59,6 +85,8 @@ impl ProjectContext {
             arch: std::env::consts::ARCH.to_string(),
             shell: ShellKind::new(&get_default_system_shell_preferring_bash(), cfg!(windows))
                 .to_string(),
+            skills: skill_summaries,
+            has_skills,
         }
     }
 }

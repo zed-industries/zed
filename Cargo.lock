@@ -159,6 +159,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
+ "agent_skills",
  "anyhow",
  "chrono",
  "client",
@@ -12699,6 +12700,7 @@ dependencies = [
 name = "prompt_store"
 version = "0.1.0"
 dependencies = [
+ "agent_skills",
  "anyhow",
  "assets",
  "chrono",

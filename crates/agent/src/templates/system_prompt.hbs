@@ -156,6 +156,23 @@ Default Shell: {{shell}}
 You are powered by the model named {{model_name}}.
 
 {{/if}}
+{{#if has_skills}}
+## Agent Skills
+
+You have access to the following Skills - modular capabilities that provide specialized instructions for specific tasks. When a user's request matches a Skill's description, use the `skill` tool to retrieve the full instructions.
+
+Available Skills:
+{{#each skills}}
+- **{{name}}**: {{description}}
+{{/each}}
+
+To use a Skill:
+1. Identify when a user's request matches a Skill's description
+2. Use the `skill` tool with the skill's name to get detailed instructions
+3. Follow the instructions in the Skill
+4. If the Skill references additional files, use `read_file` to access them
+
+{{/if}}
 {{#if (or has_rules has_user_rules)}}
 ## User's Custom Instructions
 
