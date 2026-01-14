@@ -52,6 +52,14 @@ impl LinuxClient for HeadlessClient {
         f(&mut self.0.borrow_mut().common)
     }
 
+    fn quit(&self) {
+        self.with_common(|common| {
+            if let Some(ref signal) = common.signal {
+                signal.stop();
+            }
+        });
+    }
+
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         Box::new(LinuxKeyboardLayout::new("unknown".into()))
     }

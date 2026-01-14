@@ -6,7 +6,6 @@ use std::{
     sync::Arc,
 };
 
-use blade_graphics as gpu;
 use collections::{FxHashSet, HashMap};
 use futures::channel::oneshot::Receiver;
 
@@ -26,7 +25,7 @@ use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
 use crate::{
-    AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
+    AnyWindowHandle, Bounds, Decorations, DevicePixels, Globals, GpuSpecs, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Size, Tiling, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, get_window,
@@ -36,7 +35,7 @@ use crate::{
     Capslock,
     platform::{
         PlatformAtlas, PlatformInputHandler, PlatformWindow,
-        blade::{BladeContext, BladeRenderer, BladeSurfaceConfig},
+        wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig},
         linux::wayland::{display::WaylandDisplay, serial::SerialKind},
     },
 };
@@ -59,6 +58,12 @@ struct RawWindow {
     window: *mut c_void,
     display: *mut c_void,
 }
+
+// Safety: The raw pointers in RawWindow point to Wayland surface/display
+// which are valid for the window's lifetime. These are used only for
+// passing to wgpu which needs Send+Sync for surface creation.
+unsafe impl Send for RawWindow {}
+unsafe impl Sync for RawWindow {}
 
 impl rwh::HasWindowHandle for RawWindow {
     fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
@@ -97,7 +102,7 @@ pub struct WaylandWindowState {
     outputs: HashMap<ObjectId, Output>,
     display: Option<(ObjectId, Output)>,
     globals: Globals,
-    renderer: BladeRenderer,
+    renderer: WgpuRenderer,
     bounds: Bounds<Pixels>,
     scale: f32,
     input_handler: Option<PlatformInputHandler>,
@@ -314,7 +319,7 @@ impl WaylandWindowState {
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
-        gpu_context: &BladeContext,
+        gpu_context: &WgpuContext,
         options: WindowParams,
         parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
@@ -328,15 +333,14 @@ impl WaylandWindowState {
                     .display_ptr()
                     .cast::<c_void>(),
             };
-            let config = BladeSurfaceConfig {
-                size: gpu::Extent {
-                    width: options.bounds.size.width.0 as u32,
-                    height: options.bounds.size.height.0 as u32,
-                    depth: 1,
+            let config = WgpuSurfaceConfig {
+                size: Size {
+                    width: DevicePixels(options.bounds.size.width.0 as i32),
+                    height: DevicePixels(options.bounds.size.height.0 as i32),
                 },
                 transparent: true,
             };
-            BladeRenderer::new(gpu_context, &raw_window, config)?
+            WgpuRenderer::new(gpu_context, &raw_window, config)?
         };
 
         if let WaylandSurfaceState::Xdg(ref xdg_state) = surface_state {
@@ -479,7 +483,7 @@ impl WaylandWindow {
     pub fn new(
         handle: AnyWindowHandle,
         globals: Globals,
-        gpu_context: &BladeContext,
+        gpu_context: &WgpuContext,
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,

@@ -1,16 +1,15 @@
 use anyhow::{Context as _, anyhow};
 use x11rb::connection::RequestConnection;
 
-use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
+use crate::platform::wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
 use crate::{
     AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
     Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowKind, WindowParams, X11ClientStatePtr, px, size,
+    WindowDecorations, WindowKind, WindowParams, X11ClientStatePtr, px,
 };
 
-use blade_graphics as gpu;
 use collections::FxHashSet;
 use raw_window_handle as rwh;
 use util::{ResultExt, maybe};
@@ -89,12 +88,11 @@ x11rb::atom_manager! {
 fn query_render_extent(
     xcb: &Rc<XCBConnection>,
     x_window: xproto::Window,
-) -> anyhow::Result<gpu::Extent> {
+) -> anyhow::Result<Size<DevicePixels>> {
     let reply = get_reply(|| "X11 GetGeometry failed.", xcb.get_geometry(x_window))?;
-    Ok(gpu::Extent {
-        width: reply.width as u32,
-        height: reply.height as u32,
-        depth: 1,
+    Ok(Size {
+        width: DevicePixels(reply.width as i32),
+        height: DevicePixels(reply.height as i32),
     })
 }
 
@@ -236,6 +234,12 @@ struct RawWindow {
     visual_id: u32,
 }
 
+// Safety: The raw pointers in RawWindow point to X11 connection
+// which is valid for the window's lifetime. These are used only for
+// passing to wgpu which needs Send+Sync for surface creation.
+unsafe impl Send for RawWindow {}
+unsafe impl Sync for RawWindow {}
+
 #[derive(Default)]
 pub struct Callbacks {
     request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
@@ -261,7 +265,7 @@ pub struct X11WindowState {
     pub(crate) last_sync_counter: Option<sync::Int64>,
     bounds: Bounds<Pixels>,
     scale_factor: f32,
-    renderer: BladeRenderer,
+    renderer: WgpuRenderer,
     display: Rc<dyn PlatformDisplay>,
     input_handler: Option<PlatformInputHandler>,
     appearance: WindowAppearance,
@@ -389,7 +393,7 @@ impl X11WindowState {
         handle: AnyWindowHandle,
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
-        gpu_context: &BladeContext,
+        gpu_context: &WgpuContext,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
@@ -682,7 +686,7 @@ impl X11WindowState {
                     window_id: x_window,
                     visual_id: visual.id,
                 };
-                let config = BladeSurfaceConfig {
+                let config = WgpuSurfaceConfig {
                     // Note: this has to be done after the GPU init, or otherwise
                     // the sizes are immediately invalidated.
                     size: query_render_extent(xcb, x_window)?,
@@ -692,7 +696,7 @@ impl X11WindowState {
                     // too
                     transparent: false,
                 };
-                BladeRenderer::new(gpu_context, &raw_window, config)?
+                WgpuRenderer::new(gpu_context, &raw_window, config)?
             };
 
             let display = Rc::new(X11Display::new(xcb, scale_factor, x_screen_index)?);
@@ -740,11 +744,7 @@ impl X11WindowState {
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        let size = self.renderer.viewport_size();
-        Size {
-            width: size.width.into(),
-            height: size.height.into(),
-        }
+        self.bounds.size
     }
 }
 
@@ -800,7 +800,7 @@ impl X11Window {
         handle: AnyWindowHandle,
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
-        gpu_context: &BladeContext,
+        gpu_context: &WgpuContext,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
@@ -1167,10 +1167,7 @@ impl X11WindowStatePtr {
 
             let gpu_size = query_render_extent(&self.xcb, self.x_window)?;
             if true {
-                state.renderer.update_drawable_size(size(
-                    DevicePixels(gpu_size.width as i32),
-                    DevicePixels(gpu_size.height as i32),
-                ));
+                state.renderer.update_drawable_size(gpu_size);
                 resize_args = Some((state.content_size(), state.scale_factor));
             }
             if let Some(value) = state.last_sync_counter.take() {
