@@ -5,8 +5,10 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use crate::acp::AcpThreadHistory;
+use crate::user_slash_command::UserSlashCommand;
 use acp_thread::{AgentSessionInfo, MentionUri};
 use anyhow::Result;
+use collections::HashMap;
 use editor::{
     CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
 };
@@ -198,6 +200,12 @@ pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
 
     fn available_commands(&self, cx: &App) -> Vec<AvailableCommand>;
     fn confirm_command(&self, cx: &mut App);
+
+    /// Returns cached user-defined slash commands, if available.
+    /// Default implementation returns an empty HashMap, meaning commands will be loaded from disk.
+    fn cached_user_commands(&self, _cx: &App) -> Option<HashMap<String, UserSlashCommand>> {
+        None
+    }
 }
 
 pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
@@ -596,32 +604,41 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<AvailableCommand>> {
         let commands = self.source.available_commands(cx);
 
-        // Get fs and worktree roots for async command loading
-        let load_user_commands = cx.has_flag::<UserSlashCommandsFeatureFlag>();
-        let (fs, worktree_roots) = if load_user_commands {
-            let workspace = self.workspace.upgrade();
-            let fs = workspace
-                .as_ref()
-                .map(|w| w.read(cx).project().read(cx).fs().clone());
-            let roots: Vec<std::path::PathBuf> = workspace
-                .map(|workspace| {
-                    workspace
-                        .read(cx)
-                        .visible_worktrees(cx)
-                        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                        .collect()
-                })
-                .unwrap_or_default();
-            (fs, roots)
+        // Try to use cached user commands first
+        let cached_user_commands = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+            self.source.cached_user_commands(cx)
         } else {
-            (None, Vec::new())
+            None
         };
+
+        // Get fs and worktree roots for async command loading (only if not cached)
+        let (fs, worktree_roots) =
+            if cached_user_commands.is_none() && cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+                let workspace = self.workspace.upgrade();
+                let fs = workspace
+                    .as_ref()
+                    .map(|w| w.read(cx).project().read(cx).fs().clone());
+                let roots: Vec<std::path::PathBuf> = workspace
+                    .map(|workspace| {
+                        workspace
+                            .read(cx)
+                            .visible_worktrees(cx)
+                            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (fs, roots)
+            } else {
+                (None, Vec::new())
+            };
 
         cx.spawn(async move |cx| {
             let mut commands = commands;
 
-            // Load user commands asynchronously
-            if let Some(fs) = fs {
+            // Use cached commands if available, otherwise load from disk
+            let user_commands: Vec<UserSlashCommand> = if let Some(cached) = cached_user_commands {
+                cached.into_values().collect()
+            } else if let Some(fs) = fs {
                 let load_result =
                     crate::user_slash_command::load_all_commands_async(&fs, &worktree_roots).await;
 
@@ -630,16 +647,20 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     log::warn!("Failed to load slash command: {}", error);
                 }
 
-                for cmd in load_result.commands {
-                    commands.push(AvailableCommand {
-                        name: cmd.name.clone(),
-                        description: cmd.description().into(),
-                        requires_argument: cmd.requires_arguments(),
-                        source: CommandSource::UserDefined {
-                            template: cmd.template.clone(),
-                        },
-                    });
-                }
+                load_result.commands
+            } else {
+                Vec::new()
+            };
+
+            for cmd in user_commands {
+                commands.push(AvailableCommand {
+                    name: cmd.name.clone(),
+                    description: cmd.description().into(),
+                    requires_argument: cmd.requires_arguments(),
+                    source: CommandSource::UserDefined {
+                        template: cmd.template.clone(),
+                    },
+                });
             }
 
             if commands.is_empty() {

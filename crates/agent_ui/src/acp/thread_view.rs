@@ -424,6 +424,7 @@ impl AcpThreadView {
     ) -> Self {
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![]));
+        let cached_user_commands = Rc::new(RefCell::new(collections::HashMap::default()));
 
         let agent_server_store = project.read(cx).agent_server_store().clone();
         let agent_display_name = agent_server_store
@@ -442,6 +443,7 @@ impl AcpThreadView {
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
                 available_commands.clone(),
+                cached_user_commands.clone(),
                 agent.name(),
                 &placeholder,
                 editor::EditorMode::AutoHeight {
@@ -468,6 +470,7 @@ impl AcpThreadView {
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
                 available_commands.clone(),
+                cached_user_commands.clone(),
                 agent.name(),
             )
         });
@@ -509,14 +512,20 @@ impl AcpThreadView {
                 .collect();
             let registry = cx.new(|cx| SlashCommandRegistry::new(fs, worktree_roots, cx));
 
-            // Subscribe to registry changes to update error display
-            cx.subscribe(&registry, |this, registry, event, cx| match event {
+            // Subscribe to registry changes to update error display and cached commands
+            let cached_user_commands_for_subscription = cached_user_commands.clone();
+            cx.subscribe(&registry, move |this, registry, event, cx| match event {
                 SlashCommandRegistryEvent::CommandsChanged => {
                     this.command_load_errors = registry.read(cx).errors().to_vec();
+                    *cached_user_commands_for_subscription.borrow_mut() =
+                        registry.read(cx).commands().clone();
                     cx.notify();
                 }
             })
             .detach();
+
+            // Initialize cached commands from registry
+            *cached_user_commands.borrow_mut() = registry.read(cx).commands().clone();
 
             Some(registry)
         } else {

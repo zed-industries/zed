@@ -9,7 +9,7 @@ use crate::{
     mention_set::{
         Mention, MentionImage, MentionSet, insert_crease_for_mention, paste_images_as_context,
     },
-    user_slash_command,
+    user_slash_command::{self, UserSlashCommand},
 };
 use acp_thread::{AgentSessionInfo, MentionUri};
 use agent::ThreadStore;
@@ -46,6 +46,7 @@ pub struct MessageEditor {
     workspace: WeakEntity<Workspace>,
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+    cached_user_commands: Rc<RefCell<collections::HashMap<String, UserSlashCommand>>>,
     agent_name: SharedString,
     thread_store: Option<Entity<ThreadStore>>,
     _subscriptions: Vec<Subscription>,
@@ -98,6 +99,18 @@ impl PromptCompletionProviderDelegate for Entity<MessageEditor> {
     fn confirm_command(&self, cx: &mut App) {
         self.update(cx, |this, cx| this.send(cx));
     }
+
+    fn cached_user_commands(
+        &self,
+        cx: &App,
+    ) -> Option<collections::HashMap<String, UserSlashCommand>> {
+        let commands = self.read(cx).cached_user_commands.borrow();
+        if commands.is_empty() {
+            None
+        } else {
+            Some(commands.clone())
+        }
+    }
 }
 
 impl MessageEditor {
@@ -109,6 +122,7 @@ impl MessageEditor {
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+        cached_user_commands: Rc<RefCell<collections::HashMap<String, UserSlashCommand>>>,
         agent_name: SharedString,
         placeholder: &str,
         mode: EditorMode,
@@ -219,6 +233,7 @@ impl MessageEditor {
             workspace,
             prompt_capabilities,
             available_commands,
+            cached_user_commands,
             agent_name,
             thread_store,
             _subscriptions: subscriptions,
@@ -450,15 +465,10 @@ impl MessageEditor {
             };
 
             // Check if this is a user-defined slash command and expand it
-            if let Ok(Some(expanded)) =
-                user_slash_command::try_expand_from_commands(&text, &user_commands)
-            {
-                return Ok((vec![expanded.into()], Vec::new()));
-            }
-
-            // If expansion failed (e.g., missing arguments), return the error
-            if let Err(err) = user_slash_command::try_expand_from_commands(&text, &user_commands) {
-                return Err(err);
+            match user_slash_command::try_expand_from_commands(&text, &user_commands) {
+                Ok(Some(expanded)) => return Ok((vec![expanded.into()], Vec::new())),
+                Err(err) => return Err(err),
+                Ok(None) => {} // Not a user command, continue with normal processing
             }
 
             if let Err(err) = Self::validate_slash_commands(
@@ -1254,6 +1264,7 @@ mod tests {
                     None,
                     Default::default(),
                     Default::default(),
+                    Default::default(),
                     "Test Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
@@ -1369,6 +1380,7 @@ mod tests {
                     None,
                     prompt_capabilities.clone(),
                     available_commands.clone(),
+                    Default::default(),
                     "Claude Code".into(),
                     "Test",
                     EditorMode::AutoHeight {
@@ -1542,6 +1554,7 @@ mod tests {
                     None,
                     prompt_capabilities.clone(),
                     available_commands.clone(),
+                    Default::default(),
                     "Test Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
@@ -1765,6 +1778,7 @@ mod tests {
                     history.downgrade(),
                     None,
                     prompt_capabilities.clone(),
+                    Default::default(),
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -2259,6 +2273,7 @@ mod tests {
                     None,
                     Default::default(),
                     Default::default(),
+                    Default::default(),
                     "Test Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
@@ -2368,6 +2383,7 @@ mod tests {
                     None,
                     Default::default(),
                     Default::default(),
+                    Default::default(),
                     "Test Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
@@ -2448,6 +2464,7 @@ mod tests {
                     None,
                     Default::default(),
                     Default::default(),
+                    Default::default(),
                     "Test Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
@@ -2497,6 +2514,7 @@ mod tests {
                     thread_store.clone(),
                     history.downgrade(),
                     None,
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     "Test Agent".into(),
@@ -2553,6 +2571,7 @@ mod tests {
                     None,
                     Default::default(),
                     Default::default(),
+                    Default::default(),
                     "Test Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
@@ -2606,6 +2625,7 @@ mod tests {
                     thread_store.clone(),
                     history.downgrade(),
                     None,
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     "Test Agent".into(),
@@ -2673,6 +2693,7 @@ mod tests {
                     thread_store.clone(),
                     history.downgrade(),
                     None,
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     "Test Agent".into(),
@@ -2833,6 +2854,7 @@ mod tests {
                     thread_store.clone(),
                     history.downgrade(),
                     None,
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     "Test Agent".into(),
