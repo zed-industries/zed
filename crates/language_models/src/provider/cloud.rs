@@ -626,7 +626,7 @@ impl LanguageModel for CloudLanguageModel {
 
     fn supports_split_token_display(&self) -> bool {
         use cloud_llm_client::LanguageModelProvider::*;
-        matches!(self.model.provider, OpenAi | XAi)
+        matches!(self.model.provider, OpenAi)
     }
 
     fn telemetry_id(&self) -> String {

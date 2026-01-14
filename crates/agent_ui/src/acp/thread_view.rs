@@ -6085,13 +6085,18 @@ impl AcpThreadView {
         };
 
         if show_split {
+            let max_output_tokens = self
+                .as_native_thread(cx)
+                .and_then(|thread| thread.read(cx).model())
+                .and_then(|model| model.max_output_tokens())
+                .unwrap_or(0);
+
             let input = crate::text_thread_editor::humanize_token_count(usage.input_tokens);
             let input_max = crate::text_thread_editor::humanize_token_count(
-                usage.max_tokens.saturating_sub(usage.max_output_tokens),
+                usage.max_tokens.saturating_sub(max_output_tokens),
             );
             let output = crate::text_thread_editor::humanize_token_count(usage.output_tokens);
-            let output_max =
-                crate::text_thread_editor::humanize_token_count(usage.max_output_tokens);
+            let output_max = crate::text_thread_editor::humanize_token_count(max_output_tokens);
 
             Some(
                 h_flex()
