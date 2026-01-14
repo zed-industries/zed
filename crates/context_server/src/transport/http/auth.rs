@@ -531,6 +531,7 @@ fn generate_code_verifier() -> String {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClientRegistration {
     client_id: String,
+    // todo! where does this go?
     #[serde(default)]
     client_secret: Option<String>,
     #[serde(default)]
@@ -555,8 +556,8 @@ pub enum BearerMethod {
     Header,
     Body,
     Query,
-    #[serde(untagged)]
-    Other(()),
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -618,7 +619,7 @@ impl ProtectedResource {
 pub enum ResponseType {
     Code,
     Token,
-    #[serde(untagged)]
+    #[serde(other)]
     Other,
 }
 
@@ -638,7 +639,7 @@ pub enum GrantType {
     Implicit,
     RefreshToken,
     ClientCredentials,
-    #[serde(untagged)]
+    #[serde(other)]
     Other,
 }
 
@@ -663,7 +664,7 @@ pub enum TokenEndpointAuthMethod {
     None,
     ClientSecretBasic,
     ClientSecretPost,
-    #[serde(untagged)]
+    #[serde(other)]
     Other,
 }
 
@@ -688,7 +689,7 @@ pub enum CodeChallengeMethod {
     Plain,
     #[serde(rename = "S256")]
     S256,
-    #[serde(untagged)]
+    #[serde(other)]
     Other,
 }
 
