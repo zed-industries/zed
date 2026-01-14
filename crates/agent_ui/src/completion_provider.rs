@@ -6,7 +6,6 @@ use std::sync::atomic::AtomicBool;
 
 use acp_thread::MentionUri;
 use agent::{HistoryEntry, HistoryStore};
-use agent_settings::AgentSettings;
 use anyhow::Result;
 use editor::{
     CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
@@ -24,7 +23,6 @@ use project::{
 };
 use prompt_store::{PromptStore, UserPromptId};
 use rope::Point;
-use settings::Settings as _;
 use text::{Anchor, ToPoint as _};
 use ui::prelude::*;
 use util::ResultExt as _;
@@ -586,16 +584,18 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         let mut commands = self.source.available_commands(cx);
 
         if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-            let user_commands = AgentSettings::get_global(cx).slash_commands.clone();
-            for (name, template) in user_commands {
-                commands.push(AvailableCommand {
-                    name: name.into(),
-                    description: format!("User command: {}", template).into(),
-                    requires_argument: crate::user_slash_command::count_placeholders(&template) > 0,
-                    source: CommandSource::UserDefined {
-                        template: template.into(),
-                    },
-                });
+            // Load file-based user commands from config_dir()/commands/
+            if let Ok(user_commands) = crate::user_slash_command::load_user_commands() {
+                for cmd in user_commands {
+                    commands.push(AvailableCommand {
+                        name: cmd.name.clone(),
+                        description: cmd.description().into(),
+                        requires_argument: cmd.requires_arguments(),
+                        source: CommandSource::UserDefined {
+                            template: cmd.template.clone(),
+                        },
+                    });
+                }
             }
         }
 

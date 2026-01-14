@@ -13,7 +13,6 @@ use crate::{
 use acp_thread::MentionUri;
 use agent::HistoryStore;
 use agent_client_protocol as acp;
-use agent_settings::AgentSettings;
 use anyhow::{Result, anyhow};
 use collections::HashSet;
 use editor::{
@@ -343,13 +342,13 @@ impl MessageEditor {
     fn validate_slash_commands(
         text: &str,
         available_commands: &[acp::AvailableCommand],
-        user_slash_commands: &collections::HashMap<String, String>,
+        user_commands: &collections::HashMap<String, user_slash_command::UserSlashCommand>,
         agent_name: &str,
     ) -> Result<()> {
         if let Some(parsed_command) = SlashCommandCompletion::try_parse(text, 0) {
             if let Some(command_name) = parsed_command.command {
                 // Check if this is a user-defined slash command
-                if user_slash_commands.contains_key(&command_name) {
+                if user_slash_command::has_command(&command_name, user_commands) {
                     return Ok(());
                 }
 
@@ -388,31 +387,32 @@ impl MessageEditor {
         let text = self.editor.read(cx).text(cx);
         let available_commands = self.available_commands.borrow().clone();
 
-        // Get user-defined slash commands if feature flag is enabled
-        let user_slash_commands = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-            AgentSettings::get_global(cx).slash_commands.clone()
+        // Load file-based user commands if feature flag is enabled
+        let user_commands = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+            user_slash_command::load_user_commands()
+                .ok()
+                .map(|cmds| user_slash_command::commands_to_map(&cmds))
+                .unwrap_or_default()
         } else {
             collections::HashMap::default()
         };
 
         // Check if this is a user-defined slash command and expand it
         if let Ok(Some(expanded)) =
-            user_slash_command::try_expand_user_slash_command(&text, &user_slash_commands)
+            user_slash_command::try_expand_from_commands(&text, &user_commands)
         {
             return Task::ready(Ok((vec![expanded.into()], Vec::new())));
         }
 
         // If expansion failed (e.g., missing arguments), return the error
-        if let Err(err) =
-            user_slash_command::try_expand_user_slash_command(&text, &user_slash_commands)
-        {
+        if let Err(err) = user_slash_command::try_expand_from_commands(&text, &user_commands) {
             return Task::ready(Err(err));
         }
 
         if let Err(err) = Self::validate_slash_commands(
             &text,
             &available_commands,
-            &user_slash_commands,
+            &user_commands,
             &self.agent_name,
         ) {
             return Task::ready(Err(err));
@@ -1105,7 +1105,7 @@ mod tests {
     use agent_client_protocol as acp;
     use assistant_text_thread::TextThreadStore;
     use editor::{AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset};
-    use feature_flags::FeatureFlagAppExt as _;
+
     use fs::FakeFs;
     use futures::StreamExt as _;
     use gpui::{
@@ -1115,7 +1115,7 @@ mod tests {
     use lsp::{CompletionContext, CompletionTriggerKind};
     use project::{CompletionIntent, Project, ProjectPath};
     use serde_json::json;
-    use settings::Settings as _;
+
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
     use util::{path, paths::PathStyle, rel_path::rel_path};
@@ -2604,152 +2604,5 @@ mod tests {
                 assert!(visible_range.contains(&cursor_row));
             })
         });
-    }
-
-    #[gpui::test]
-    async fn test_user_defined_slash_commands(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        // Enable the user slash commands feature flag
-        cx.update(|cx| {
-            cx.update_flags(false, vec!["user-slash-commands".to_string()]);
-        });
-
-        // Set up user-defined slash commands in settings
-        cx.update(|cx| {
-            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-            settings.slash_commands.insert(
-                "review".to_string(),
-                "Please review this code for: $1".to_string(),
-            );
-            settings.slash_commands.insert(
-                "explain".to_string(),
-                "Explain at $1 level:\\n\\n$2".to_string(),
-            );
-            settings
-                .slash_commands
-                .insert("greet".to_string(), "Hello, world!".to_string());
-            agent_settings::AgentSettings::override_global(settings, cx);
-        });
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree("/test", json!({})).await;
-
-        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
-        let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
-        let available_commands = Rc::new(RefCell::new(vec![]));
-
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let workspace_handle = workspace.downgrade();
-        let message_editor = workspace.update_in(cx, |_, window, cx| {
-            cx.new(|cx| {
-                MessageEditor::new(
-                    workspace_handle.clone(),
-                    project.downgrade(),
-                    history_store.clone(),
-                    None,
-                    prompt_capabilities.clone(),
-                    available_commands.clone(),
-                    "Test Agent".into(),
-                    "Test",
-                    EditorMode::AutoHeight {
-                        min_lines: 1,
-                        max_lines: None,
-                    },
-                    window,
-                    cx,
-                )
-            })
-        });
-        let editor = message_editor.update(cx, |message_editor, _| message_editor.editor.clone());
-
-        // Test basic user command expansion without arguments
-        editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("/greet", window, cx);
-        });
-
-        let contents_result = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
-            .await;
-
-        assert!(contents_result.is_ok());
-        let (content, _) = contents_result.unwrap();
-        assert_eq!(content.len(), 1);
-        match &content[0] {
-            acp::ContentBlock::Text(text_content) => {
-                assert_eq!(text_content.text, "Hello, world!");
-            }
-            _ => panic!("Expected text content block"),
-        }
-
-        // Test user command expansion with arguments
-        editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("/review security", window, cx);
-        });
-
-        let contents_result = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
-            .await;
-
-        assert!(contents_result.is_ok());
-        let (content, _) = contents_result.unwrap();
-        assert_eq!(content.len(), 1);
-        match &content[0] {
-            acp::ContentBlock::Text(text_content) => {
-                assert_eq!(text_content.text, "Please review this code for: security");
-            }
-            _ => panic!("Expected text content block"),
-        }
-
-        // Test user command with quoted arguments
-        editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("/review \"security and performance\"", window, cx);
-        });
-
-        let contents_result = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
-            .await;
-
-        assert!(contents_result.is_ok());
-        let (content, _) = contents_result.unwrap();
-        match &content[0] {
-            acp::ContentBlock::Text(text_content) => {
-                assert_eq!(
-                    text_content.text,
-                    "Please review this code for: security and performance"
-                );
-            }
-            _ => panic!("Expected text content block"),
-        }
-
-        // Test user command with missing arguments should fail
-        editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("/review", window, cx);
-        });
-
-        let contents_result = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
-            .await;
-
-        assert!(contents_result.is_err());
-        let error = contents_result.unwrap_err().to_string();
-        assert!(error.contains("/review"));
-        assert!(error.contains("requires 1 argument"));
-
-        // Test that unknown slash commands still fail validation
-        editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("/unknown_command arg", window, cx);
-        });
-
-        let contents_result = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
-            .await;
-
-        assert!(contents_result.is_err());
-        let error = contents_result.unwrap_err().to_string();
-        assert!(error.contains("not supported"));
     }
 }

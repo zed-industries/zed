@@ -1,13 +1,132 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use std::borrow::Cow;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+/// A user-defined slash command loaded from a markdown file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UserSlashCommand {
+    /// The command name (filename without .md extension)
+    pub name: Arc<str>,
+    /// The template content from the file
+    pub template: Arc<str>,
+    /// The namespace (subdirectory path, if any)
+    pub namespace: Option<Arc<str>>,
+    /// The full path to the command file
+    pub path: PathBuf,
+}
+
+impl UserSlashCommand {
+    /// Returns a description string for display in completions.
+    /// Format: "(user)" or "(user:namespace)"
+    pub fn description(&self) -> String {
+        match &self.namespace {
+            Some(ns) => format!("(user:{})", ns),
+            None => "(user)".to_string(),
+        }
+    }
+
+    /// Returns true if this command has any placeholders ($1, $2, etc. or $ARGUMENTS)
+    pub fn requires_arguments(&self) -> bool {
+        has_placeholders(&self.template)
+    }
+}
+
+/// Parsed user command from input text
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedUserCommand<'a> {
     pub name: &'a str,
     pub raw_arguments: &'a str,
 }
 
+/// Returns the path to the user commands directory.
+pub fn commands_dir() -> PathBuf {
+    paths::config_dir().join("commands")
+}
+
+/// Loads all user slash commands from the commands directory.
+/// Commands are markdown files in `config_dir()/commands/`.
+/// Subdirectories create namespaces.
+pub fn load_user_commands() -> Result<Vec<UserSlashCommand>> {
+    let commands_path = commands_dir();
+    if !commands_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut commands = Vec::new();
+    load_commands_from_dir(&commands_path, &commands_path, &mut commands)?;
+    Ok(commands)
+}
+
+fn load_commands_from_dir(
+    base_path: &Path,
+    current_path: &Path,
+    commands: &mut Vec<UserSlashCommand>,
+) -> Result<()> {
+    let entries = match std::fs::read_dir(current_path) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            load_commands_from_dir(base_path, &path, commands)?;
+        } else if path.extension().is_some_and(|ext| ext == "md") {
+            if let Some(command) = load_command_file(base_path, &path)? {
+                commands.push(command);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn load_command_file(base_path: &Path, file_path: &Path) -> Result<Option<UserSlashCommand>> {
+    let name = match file_path.file_stem() {
+        Some(stem) => stem.to_string_lossy().into_owned(),
+        None => return Ok(None),
+    };
+
+    let template = std::fs::read_to_string(file_path)?;
+    if template.is_empty() {
+        return Ok(None);
+    }
+
+    let namespace = file_path
+        .parent()
+        .and_then(|parent| parent.strip_prefix(base_path).ok())
+        .filter(|rel| !rel.as_os_str().is_empty())
+        .map(|rel| {
+            rel.to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "/")
+                .into()
+        });
+
+    Ok(Some(UserSlashCommand {
+        name: name.into(),
+        template: template.into(),
+        namespace,
+        path: file_path.to_path_buf(),
+    }))
+}
+
+/// Converts a list of UserSlashCommand to a HashMap for quick lookup.
+/// The key is the command name.
+pub fn commands_to_map(commands: &[UserSlashCommand]) -> HashMap<String, UserSlashCommand> {
+    let mut map = HashMap::default();
+    for cmd in commands {
+        map.insert(cmd.name.to_string(), cmd.clone());
+    }
+    map
+}
+
+/// Parses a line of input to extract a user command invocation.
+/// Returns None if the line doesn't start with a slash command.
 pub fn try_parse_user_command(line: &str) -> Option<ParsedUserCommand<'_>> {
     let line = line.trim_start();
     if !line.starts_with('/') {
@@ -33,6 +152,10 @@ pub fn try_parse_user_command(line: &str) -> Option<ParsedUserCommand<'_>> {
     })
 }
 
+/// Parses command arguments, supporting quoted strings.
+/// - Unquoted arguments are space-separated
+/// - Quoted arguments can contain spaces: "multi word arg"
+/// - Escape sequences: \" for literal quote, \\ for backslash, \n for newline
 pub fn parse_arguments(input: &str) -> Result<Vec<Cow<'_, str>>> {
     let mut arguments = Vec::new();
     let mut chars = input.char_indices().peekable();
@@ -93,7 +216,14 @@ pub fn parse_arguments(input: &str) -> Result<Vec<Cow<'_, str>>> {
     Ok(arguments)
 }
 
-pub fn count_placeholders(template: &str) -> usize {
+/// Checks if a template has any placeholders ($1, $2, etc. or $ARGUMENTS)
+pub fn has_placeholders(template: &str) -> bool {
+    count_positional_placeholders(template) > 0 || template.contains("$ARGUMENTS")
+}
+
+/// Counts the highest positional placeholder number in the template.
+/// For example, "$1 and $3" returns 3.
+pub fn count_positional_placeholders(template: &str) -> usize {
     let mut max_placeholder = 0;
     let mut chars = template.chars().peekable();
 
@@ -123,18 +253,42 @@ pub fn count_placeholders(template: &str) -> usize {
     max_placeholder
 }
 
+/// Validates that arguments match the template's placeholders.
+/// Templates can use $ARGUMENTS (all args as one string) or $1, $2, etc. (positional).
 pub fn validate_arguments(
     command_name: &str,
     template: &str,
     arguments: &[Cow<'_, str>],
+    raw_arguments: &str,
 ) -> Result<()> {
     if template.is_empty() {
         return Err(anyhow!("Template cannot be empty"));
     }
 
-    let required_count = count_placeholders(template);
+    let has_arguments_placeholder = template.contains("$ARGUMENTS");
+    let positional_count = count_positional_placeholders(template);
 
-    if required_count == 0 && !arguments.is_empty() {
+    if has_arguments_placeholder {
+        // $ARGUMENTS accepts any number of arguments (including zero)
+        // But if there are also positional placeholders, validate those
+        if positional_count > 0 && arguments.len() < positional_count {
+            return Err(anyhow!(
+                "The /{} command requires {} positional {}, but only {} {} provided",
+                command_name,
+                positional_count,
+                if positional_count == 1 {
+                    "argument"
+                } else {
+                    "arguments"
+                },
+                arguments.len(),
+                if arguments.len() == 1 { "was" } else { "were" }
+            ));
+        }
+        return Ok(());
+    }
+
+    if positional_count == 0 && !arguments.is_empty() {
         return Err(anyhow!(
             "The /{} command accepts no arguments, but {} {} provided",
             command_name,
@@ -143,12 +297,12 @@ pub fn validate_arguments(
         ));
     }
 
-    if arguments.len() < required_count {
+    if arguments.len() < positional_count {
         return Err(anyhow!(
             "The /{} command requires {} {}, but only {} {} provided",
             command_name,
-            required_count,
-            if required_count == 1 {
+            positional_count,
+            if positional_count == 1 {
                 "argument"
             } else {
                 "arguments"
@@ -158,12 +312,12 @@ pub fn validate_arguments(
         ));
     }
 
-    if arguments.len() > required_count {
+    if arguments.len() > positional_count {
         return Err(anyhow!(
             "The /{} command accepts {} {}, but {} {} provided",
             command_name,
-            required_count,
-            if required_count == 1 {
+            positional_count,
+            if positional_count == 1 {
                 "argument"
             } else {
                 "arguments"
@@ -173,10 +327,19 @@ pub fn validate_arguments(
         ));
     }
 
+    let _ = raw_arguments; // Used by $ARGUMENTS
     Ok(())
 }
 
-pub fn expand_template(template: &str, arguments: &[Cow<'_, str>]) -> Result<String> {
+/// Expands a template by substituting placeholders with arguments.
+/// - $ARGUMENTS is replaced with all arguments as a single string
+/// - $1, $2, etc. are replaced with positional arguments
+/// - \$ produces literal $, \" produces literal ", \n produces newline
+pub fn expand_template(
+    template: &str,
+    arguments: &[Cow<'_, str>],
+    raw_arguments: &str,
+) -> Result<String> {
     let mut result = String::with_capacity(template.len());
     let mut chars = template.char_indices().peekable();
 
@@ -194,29 +357,40 @@ pub fn expand_template(template: &str, arguments: &[Cow<'_, str>]) -> Result<Str
                 }
             }
         } else if c == '$' {
-            let mut num_str = String::new();
-            while let Some(&(_, next_c)) = chars.peek() {
-                if next_c.is_ascii_digit() {
-                    num_str.push(next_c);
+            // Check for $ARGUMENTS first
+            let remaining: String = chars.clone().map(|(_, c)| c).collect();
+            if remaining.starts_with("ARGUMENTS") {
+                result.push_str(raw_arguments);
+                // Skip "ARGUMENTS"
+                for _ in 0..9 {
                     chars.next();
-                } else {
-                    break;
-                }
-            }
-            if !num_str.is_empty() {
-                let n: usize = num_str.parse()?;
-                if n == 0 {
-                    return Err(anyhow!(
-                        "Placeholder $0 is invalid; placeholders start at $1"
-                    ));
-                }
-                if let Some(arg) = arguments.get(n - 1) {
-                    result.push_str(arg);
-                } else {
-                    return Err(anyhow!("Missing argument for placeholder ${}", n));
                 }
             } else {
-                result.push('$');
+                // Check for positional placeholder $N
+                let mut num_str = String::new();
+                while let Some(&(_, next_c)) = chars.peek() {
+                    if next_c.is_ascii_digit() {
+                        num_str.push(next_c);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                if !num_str.is_empty() {
+                    let n: usize = num_str.parse()?;
+                    if n == 0 {
+                        return Err(anyhow!(
+                            "Placeholder $0 is invalid; placeholders start at $1"
+                        ));
+                    }
+                    if let Some(arg) = arguments.get(n - 1) {
+                        result.push_str(arg);
+                    } else {
+                        return Err(anyhow!("Missing argument for placeholder ${}", n));
+                    }
+                } else {
+                    result.push('$');
+                }
             }
         } else {
             result.push(c);
@@ -226,16 +400,46 @@ pub fn expand_template(template: &str, arguments: &[Cow<'_, str>]) -> Result<Str
     Ok(result)
 }
 
+/// Expands a user slash command, validating arguments and performing substitution.
 pub fn expand_user_slash_command(
     command_name: &str,
     template: &str,
     arguments: &[Cow<'_, str>],
+    raw_arguments: &str,
 ) -> Result<String> {
-    validate_arguments(command_name, template, arguments)?;
-    expand_template(template, arguments)
+    validate_arguments(command_name, template, arguments, raw_arguments)?;
+    expand_template(template, arguments, raw_arguments)
 }
 
-pub fn try_expand_user_slash_command(
+/// Attempts to expand a user slash command from input text.
+/// Returns Ok(None) if the input is not a user command or the command doesn't exist.
+/// Returns Err if the command exists but expansion fails (e.g., missing arguments).
+pub fn try_expand_from_commands(
+    line: &str,
+    commands: &HashMap<String, UserSlashCommand>,
+) -> Result<Option<String>> {
+    let Some(parsed) = try_parse_user_command(line) else {
+        return Ok(None);
+    };
+
+    let Some(command) = commands.get(parsed.name) else {
+        return Ok(None);
+    };
+
+    let arguments = parse_arguments(parsed.raw_arguments)?;
+    let expanded = expand_user_slash_command(
+        parsed.name,
+        &command.template,
+        &arguments,
+        parsed.raw_arguments,
+    )?;
+    Ok(Some(expanded))
+}
+
+/// Legacy function for compatibility with settings-based commands.
+/// Attempts to expand a user slash command from input text using a simple HashMap.
+#[cfg(test)]
+fn try_expand_user_slash_command(
     line: &str,
     slash_commands: &HashMap<String, String>,
 ) -> Result<Option<String>> {
@@ -248,8 +452,14 @@ pub fn try_expand_user_slash_command(
     };
 
     let arguments = parse_arguments(parsed.raw_arguments)?;
-    let expanded = expand_user_slash_command(parsed.name, template, &arguments)?;
+    let expanded =
+        expand_user_slash_command(parsed.name, template, &arguments, parsed.raw_arguments)?;
     Ok(Some(expanded))
+}
+
+/// Checks if a command name exists in the user commands.
+pub fn has_command(name: &str, commands: &HashMap<String, UserSlashCommand>) -> bool {
+    commands.contains_key(name)
 }
 
 #[cfg(test)]
@@ -351,83 +561,120 @@ mod tests {
     }
 
     #[test]
-    fn test_count_placeholders() {
-        assert_eq!(count_placeholders("Hello $1"), 1);
-        assert_eq!(count_placeholders("$1 and $2"), 2);
-        assert_eq!(count_placeholders("$1 $1"), 1);
-        assert_eq!(count_placeholders("$2 then $1"), 2);
-        assert_eq!(count_placeholders("no placeholders"), 0);
-        assert_eq!(count_placeholders("\\$1 escaped"), 0);
-        assert_eq!(count_placeholders("$10 big number"), 10);
+    fn test_count_positional_placeholders() {
+        assert_eq!(count_positional_placeholders("Hello $1"), 1);
+        assert_eq!(count_positional_placeholders("$1 and $2"), 2);
+        assert_eq!(count_positional_placeholders("$1 $1"), 1);
+        assert_eq!(count_positional_placeholders("$2 then $1"), 2);
+        assert_eq!(count_positional_placeholders("no placeholders"), 0);
+        assert_eq!(count_positional_placeholders("\\$1 escaped"), 0);
+        assert_eq!(count_positional_placeholders("$10 big number"), 10);
+    }
+
+    #[test]
+    fn test_has_placeholders() {
+        assert!(has_placeholders("Hello $1"));
+        assert!(has_placeholders("$ARGUMENTS"));
+        assert!(has_placeholders("prefix $ARGUMENTS suffix"));
+        assert!(!has_placeholders("no placeholders"));
+        assert!(!has_placeholders("\\$1 escaped"));
     }
 
     #[test]
     fn test_expand_template_basic() {
         let args = vec![Cow::Borrowed("world")];
-        let result = expand_template("Hello $1", &args).unwrap();
+        let result = expand_template("Hello $1", &args, "world").unwrap();
         assert_eq!(result, "Hello world");
     }
 
     #[test]
     fn test_expand_template_multiple_placeholders() {
         let args = vec![Cow::Borrowed("a"), Cow::Borrowed("b")];
-        let result = expand_template("$1 and $2", &args).unwrap();
+        let result = expand_template("$1 and $2", &args, "a b").unwrap();
         assert_eq!(result, "a and b");
     }
 
     #[test]
     fn test_expand_template_repeated_placeholder() {
         let args = vec![Cow::Borrowed("x")];
-        let result = expand_template("$1 $1", &args).unwrap();
+        let result = expand_template("$1 $1", &args, "x").unwrap();
         assert_eq!(result, "x x");
     }
 
     #[test]
     fn test_expand_template_out_of_order() {
         let args = vec![Cow::Borrowed("a"), Cow::Borrowed("b")];
-        let result = expand_template("$2 then $1", &args).unwrap();
+        let result = expand_template("$2 then $1", &args, "a b").unwrap();
         assert_eq!(result, "b then a");
     }
 
     #[test]
     fn test_expand_template_newline_escape() {
         let args: Vec<Cow<'_, str>> = vec![];
-        let result = expand_template("line1\\nline2", &args).unwrap();
+        let result = expand_template("line1\\nline2", &args, "").unwrap();
         assert_eq!(result, "line1\nline2");
     }
 
     #[test]
     fn test_expand_template_dollar_escape() {
         let args: Vec<Cow<'_, str>> = vec![];
-        let result = expand_template("cost is \\$1", &args).unwrap();
+        let result = expand_template("cost is \\$1", &args, "").unwrap();
         assert_eq!(result, "cost is $1");
     }
 
     #[test]
     fn test_expand_template_quote_escape() {
         let args: Vec<Cow<'_, str>> = vec![];
-        let result = expand_template("say \\\"hi\\\"", &args).unwrap();
+        let result = expand_template("say \\\"hi\\\"", &args, "").unwrap();
         assert_eq!(result, "say \"hi\"");
     }
 
     #[test]
     fn test_expand_template_backslash_escape() {
         let args: Vec<Cow<'_, str>> = vec![];
-        let result = expand_template("path\\\\file", &args).unwrap();
+        let result = expand_template("path\\\\file", &args, "").unwrap();
         assert_eq!(result, "path\\file");
+    }
+
+    #[test]
+    fn test_expand_template_arguments_placeholder() {
+        let args = vec![Cow::Borrowed("foo"), Cow::Borrowed("bar")];
+        let result = expand_template("All args: $ARGUMENTS", &args, "foo bar").unwrap();
+        assert_eq!(result, "All args: foo bar");
+    }
+
+    #[test]
+    fn test_expand_template_arguments_with_positional() {
+        let args = vec![Cow::Borrowed("first"), Cow::Borrowed("second")];
+        let result = expand_template("First: $1, All: $ARGUMENTS", &args, "first second").unwrap();
+        assert_eq!(result, "First: first, All: first second");
+    }
+
+    #[test]
+    fn test_expand_template_arguments_empty() {
+        let args: Vec<Cow<'_, str>> = vec![];
+        let result = expand_template("Args: $ARGUMENTS", &args, "").unwrap();
+        assert_eq!(result, "Args: ");
+    }
+
+    #[test]
+    fn test_expand_template_arguments_preserves_quotes() {
+        let args = vec![Cow::Borrowed("multi word")];
+        let result = expand_template("Args: $ARGUMENTS", &args, "\"multi word\"").unwrap();
+        assert_eq!(result, "Args: \"multi word\"");
     }
 
     #[test]
     fn test_validate_arguments_exact_match() {
         let args = vec![Cow::Borrowed("a"), Cow::Borrowed("b")];
-        let result = validate_arguments("test", "$1 $2", &args);
+        let result = validate_arguments("test", "$1 $2", &args, "a b");
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_validate_arguments_missing_args() {
         let args = vec![Cow::Borrowed("a")];
-        let result = validate_arguments("foo", "$1 $2", &args);
+        let result = validate_arguments("foo", "$1 $2", &args, "a");
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("/foo"));
@@ -438,7 +685,7 @@ mod tests {
     #[test]
     fn test_validate_arguments_extra_args() {
         let args = vec![Cow::Borrowed("a"), Cow::Borrowed("b")];
-        let result = validate_arguments("foo", "$1", &args);
+        let result = validate_arguments("foo", "$1", &args, "a b");
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("/foo"));
@@ -449,14 +696,14 @@ mod tests {
     #[test]
     fn test_validate_arguments_no_placeholders_no_args() {
         let args: Vec<Cow<'_, str>> = vec![];
-        let result = validate_arguments("test", "no placeholders here", &args);
+        let result = validate_arguments("test", "no placeholders here", &args, "");
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_validate_arguments_no_placeholders_has_args() {
         let args = vec![Cow::Borrowed("unexpected")];
-        let result = validate_arguments("test", "no placeholders here", &args);
+        let result = validate_arguments("test", "no placeholders here", &args, "unexpected");
         assert!(result.is_err());
         assert!(
             result
@@ -469,16 +716,44 @@ mod tests {
     #[test]
     fn test_validate_arguments_empty_template() {
         let args: Vec<Cow<'_, str>> = vec![];
-        let result = validate_arguments("test", "", &args);
+        let result = validate_arguments("test", "", &args, "");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("cannot be empty"));
     }
 
     #[test]
+    fn test_validate_arguments_with_arguments_placeholder() {
+        // $ARGUMENTS accepts any number of arguments
+        let args: Vec<Cow<'_, str>> = vec![];
+        let result = validate_arguments("test", "Do: $ARGUMENTS", &args, "");
+        assert!(result.is_ok());
+
+        let args = vec![Cow::Borrowed("a"), Cow::Borrowed("b"), Cow::Borrowed("c")];
+        let result = validate_arguments("test", "Do: $ARGUMENTS", &args, "a b c");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_arguments_mixed_placeholders() {
+        // Both $ARGUMENTS and positional - need at least the positional ones
+        let args = vec![Cow::Borrowed("first")];
+        let result = validate_arguments("test", "$1 then $ARGUMENTS", &args, "first");
+        assert!(result.is_ok());
+
+        let args: Vec<Cow<'_, str>> = vec![];
+        let result = validate_arguments("test", "$1 then $ARGUMENTS", &args, "");
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_expand_user_slash_command() {
-        let result =
-            expand_user_slash_command("review", "Please review: $1", &[Cow::Borrowed("security")])
-                .unwrap();
+        let result = expand_user_slash_command(
+            "review",
+            "Please review: $1",
+            &[Cow::Borrowed("security")],
+            "security",
+        )
+        .unwrap();
         assert_eq!(result, "Please review: security");
     }
 
@@ -513,5 +788,289 @@ mod tests {
 
         let result = try_expand_user_slash_command("/review", &commands);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_try_expand_user_slash_command_with_arguments() {
+        let mut commands = HashMap::default();
+        commands.insert("search".to_string(), "Search for: $ARGUMENTS".to_string());
+
+        let result = try_expand_user_slash_command("/search foo bar baz", &commands).unwrap();
+        assert_eq!(result, Some("Search for: foo bar baz".to_string()));
+
+        let result = try_expand_user_slash_command("/search", &commands).unwrap();
+        assert_eq!(result, Some("Search for: ".to_string()));
+    }
+
+    #[test]
+    fn test_user_slash_command_description() {
+        let cmd = UserSlashCommand {
+            name: "test".into(),
+            template: "test".into(),
+            namespace: None,
+            path: PathBuf::from("/test.md"),
+        };
+        assert_eq!(cmd.description(), "(user)");
+
+        let cmd = UserSlashCommand {
+            name: "test".into(),
+            template: "test".into(),
+            namespace: Some("frontend".into()),
+            path: PathBuf::from("/frontend/test.md"),
+        };
+        assert_eq!(cmd.description(), "(user:frontend)");
+
+        let cmd = UserSlashCommand {
+            name: "test".into(),
+            template: "test".into(),
+            namespace: Some("tools/git".into()),
+            path: PathBuf::from("/tools/git/test.md"),
+        };
+        assert_eq!(cmd.description(), "(user:tools/git)");
+    }
+
+    #[test]
+    fn test_user_slash_command_requires_arguments() {
+        let cmd = UserSlashCommand {
+            name: "test".into(),
+            template: "No placeholders here".into(),
+            namespace: None,
+            path: PathBuf::from("/test.md"),
+        };
+        assert!(!cmd.requires_arguments());
+
+        let cmd = UserSlashCommand {
+            name: "test".into(),
+            template: "Hello $1".into(),
+            namespace: None,
+            path: PathBuf::from("/test.md"),
+        };
+        assert!(cmd.requires_arguments());
+
+        let cmd = UserSlashCommand {
+            name: "test".into(),
+            template: "Do: $ARGUMENTS".into(),
+            namespace: None,
+            path: PathBuf::from("/test.md"),
+        };
+        assert!(cmd.requires_arguments());
+    }
+
+    #[test]
+    fn test_load_command_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let commands_dir = temp_dir.path();
+
+        // Create a simple command file
+        let review_path = commands_dir.join("review.md");
+        std::fs::write(&review_path, "Please review this code for: $1").unwrap();
+
+        let result = super::load_command_file(commands_dir, &review_path).unwrap();
+        assert!(result.is_some());
+        let cmd = result.unwrap();
+        assert_eq!(cmd.name.as_ref(), "review");
+        assert_eq!(cmd.template.as_ref(), "Please review this code for: $1");
+        assert!(cmd.namespace.is_none());
+    }
+
+    #[test]
+    fn test_load_command_file_with_namespace() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let commands_dir = temp_dir.path();
+
+        // Create a namespaced command file
+        let frontend_dir = commands_dir.join("frontend");
+        std::fs::create_dir_all(&frontend_dir).unwrap();
+        let component_path = frontend_dir.join("component.md");
+        std::fs::write(&component_path, "Create a React component: $1").unwrap();
+
+        let result = super::load_command_file(commands_dir, &component_path).unwrap();
+        assert!(result.is_some());
+        let cmd = result.unwrap();
+        assert_eq!(cmd.name.as_ref(), "component");
+        assert_eq!(cmd.template.as_ref(), "Create a React component: $1");
+        assert_eq!(cmd.namespace.as_ref().map(|s| s.as_ref()), Some("frontend"));
+    }
+
+    #[test]
+    fn test_load_command_file_nested_namespace() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let commands_dir = temp_dir.path();
+
+        // Create a deeply nested command file
+        let nested_dir = commands_dir.join("tools").join("git");
+        std::fs::create_dir_all(&nested_dir).unwrap();
+        let commit_path = nested_dir.join("commit.md");
+        std::fs::write(&commit_path, "Create a git commit: $ARGUMENTS").unwrap();
+
+        let result = super::load_command_file(commands_dir, &commit_path).unwrap();
+        assert!(result.is_some());
+        let cmd = result.unwrap();
+        assert_eq!(cmd.name.as_ref(), "commit");
+        assert_eq!(
+            cmd.namespace.as_ref().map(|s| s.as_ref()),
+            Some("tools/git")
+        );
+    }
+
+    #[test]
+    fn test_load_command_file_empty_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let commands_dir = temp_dir.path();
+
+        // Create an empty command file
+        let empty_path = commands_dir.join("empty.md");
+        std::fs::write(&empty_path, "").unwrap();
+
+        let result = super::load_command_file(commands_dir, &empty_path).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_load_commands_from_dir() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let commands_dir = temp_dir.path();
+
+        // Create multiple command files
+        std::fs::write(commands_dir.join("greet.md"), "Hello, world!").unwrap();
+        std::fs::write(commands_dir.join("review.md"), "Review: $1").unwrap();
+
+        // Create a namespaced command
+        let frontend_dir = commands_dir.join("frontend");
+        std::fs::create_dir_all(&frontend_dir).unwrap();
+        std::fs::write(frontend_dir.join("component.md"), "Component: $1").unwrap();
+
+        let mut commands = Vec::new();
+        super::load_commands_from_dir(commands_dir, commands_dir, &mut commands).unwrap();
+
+        assert_eq!(commands.len(), 3);
+
+        let names: Vec<&str> = commands.iter().map(|c| c.name.as_ref()).collect();
+        assert!(names.contains(&"greet"));
+        assert!(names.contains(&"review"));
+        assert!(names.contains(&"component"));
+
+        let component_cmd = commands
+            .iter()
+            .find(|c| c.name.as_ref() == "component")
+            .unwrap();
+        assert_eq!(
+            component_cmd.namespace.as_ref().map(|s| s.as_ref()),
+            Some("frontend")
+        );
+    }
+
+    #[test]
+    fn test_load_commands_from_nonexistent_dir() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let nonexistent = temp_dir.path().join("does_not_exist");
+
+        let mut commands = Vec::new();
+        let result = super::load_commands_from_dir(&nonexistent, &nonexistent, &mut commands);
+        assert!(result.is_ok());
+        assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn test_commands_to_map() {
+        let commands = vec![
+            UserSlashCommand {
+                name: "greet".into(),
+                template: "Hello!".into(),
+                namespace: None,
+                path: PathBuf::from("/greet.md"),
+            },
+            UserSlashCommand {
+                name: "review".into(),
+                template: "Review: $1".into(),
+                namespace: Some("code".into()),
+                path: PathBuf::from("/code/review.md"),
+            },
+        ];
+
+        let map = commands_to_map(&commands);
+        assert_eq!(map.len(), 2);
+        assert!(map.contains_key("greet"));
+        assert!(map.contains_key("review"));
+        assert_eq!(map.get("greet").unwrap().template.as_ref(), "Hello!");
+    }
+
+    #[test]
+    fn test_try_expand_from_commands() {
+        let commands = vec![
+            UserSlashCommand {
+                name: "greet".into(),
+                template: "Hello, world!".into(),
+                namespace: None,
+                path: PathBuf::from("/greet.md"),
+            },
+            UserSlashCommand {
+                name: "review".into(),
+                template: "Review this for: $1".into(),
+                namespace: None,
+                path: PathBuf::from("/review.md"),
+            },
+            UserSlashCommand {
+                name: "search".into(),
+                template: "Search: $ARGUMENTS".into(),
+                namespace: None,
+                path: PathBuf::from("/search.md"),
+            },
+        ];
+        let map = commands_to_map(&commands);
+
+        // Test command without arguments
+        let result = try_expand_from_commands("/greet", &map).unwrap();
+        assert_eq!(result, Some("Hello, world!".to_string()));
+
+        // Test command with positional argument
+        let result = try_expand_from_commands("/review security", &map).unwrap();
+        assert_eq!(result, Some("Review this for: security".to_string()));
+
+        // Test command with $ARGUMENTS
+        let result = try_expand_from_commands("/search foo bar baz", &map).unwrap();
+        assert_eq!(result, Some("Search: foo bar baz".to_string()));
+
+        // Test unknown command
+        let result = try_expand_from_commands("/unknown", &map).unwrap();
+        assert_eq!(result, None);
+
+        // Test not a command
+        let result = try_expand_from_commands("just text", &map).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_try_expand_from_commands_missing_args() {
+        let commands = vec![UserSlashCommand {
+            name: "review".into(),
+            template: "Review: $1".into(),
+            namespace: None,
+            path: PathBuf::from("/review.md"),
+        }];
+        let map = commands_to_map(&commands);
+
+        let result = try_expand_from_commands("/review", &map);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("requires 1 argument")
+        );
+    }
+
+    #[test]
+    fn test_has_command() {
+        let commands = vec![UserSlashCommand {
+            name: "greet".into(),
+            template: "Hello!".into(),
+            namespace: None,
+            path: PathBuf::from("/greet.md"),
+        }];
+        let map = commands_to_map(&commands);
+
+        assert!(has_command("greet", &map));
+        assert!(!has_command("unknown", &map));
     }
 }
