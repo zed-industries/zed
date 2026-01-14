@@ -5169,11 +5169,13 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
     let result = task.await;
     assert!(result.is_ok(), "subagent tool should complete successfully");
 
-    let summary = result.unwrap();
+    let output = result.unwrap();
     assert!(
-        summary.contains("Summary") || summary.contains("TODO") || summary.contains("5"),
+        output.summary.contains("Summary")
+            || output.summary.contains("TODO")
+            || output.summary.contains("5"),
         "summary should contain subagent's response: {}",
-        summary
+        output.summary
     );
 }
 
