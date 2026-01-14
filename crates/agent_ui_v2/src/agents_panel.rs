@@ -24,10 +24,10 @@ use workspace::{
     utility_pane::{UtilityPaneSlot, utility_slot_for_dock_position},
 };
 
-use agent_ui::acp::{AcpThreadHistory, ThreadHistoryEvent};
 use crate::agent_thread_pane::{
     AgentThreadPane, AgentsUtilityPaneEvent, SerializedAgentThreadPane, SerializedHistoryEntryId,
 };
+use agent_ui::acp::{AcpThreadHistory, ThreadHistoryEvent};
 
 const AGENTS_PANEL_KEY: &str = "agents_panel";
 
