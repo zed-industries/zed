@@ -1128,12 +1128,15 @@ impl Render for TerminalView {
                         self.mode.clone(),
                     ))
                     .when(self.content_mode(window, cx).is_scrollable(), |div| {
+                        let colors = cx.theme().colors();
                         div.custom_scrollbars(
                             Scrollbars::for_settings::<TerminalScrollbarSettingsWrapper>()
                                 .show_along(ScrollAxes::Vertical)
+                                .style(ui::ScrollbarStyle::Editor)
                                 .with_stable_track_along(
                                     ScrollAxes::Vertical,
-                                    cx.theme().colors().editor_background,
+                                    colors.editor_background,
+                                    Some(colors.border),
                                 )
                                 .tracked_scroll_handle(&self.scroll_handle),
                             window,

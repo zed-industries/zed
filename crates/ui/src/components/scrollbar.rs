@@ -102,6 +102,7 @@ where
 {
     let element_id = config.id.take().unwrap_or_else(|| caller_location.into());
     let track_color = config.track_color;
+    let border_color = config.border_color;
 
     let state = window.use_keyed_state(element_id, cx, |window, cx| {
         let parent_id = cx.entity_id();
@@ -111,9 +112,9 @@ where
     });
 
     state.update(cx, |state, cx| {
-        state
-            .0
-            .update(cx, |state, _cx| state.update_track_color(track_color))
+        state.0.update(cx, |state, _cx| {
+            state.update_colors(track_color, border_color)
+        })
     });
     state
 }
@@ -352,7 +353,7 @@ impl ReservedSpace {
     }
 
     fn needs_scroll_track(&self) -> bool {
-        *self == ReservedSpace::Track
+        matches!(self, Self::Track | Self::StableTrack)
     }
 
     fn needs_space_reserved(&self, max_offset: Pixels) -> bool {
@@ -388,6 +389,13 @@ enum Handle<T: ScrollableHandle> {
     Untracked(fn() -> T),
 }
 
+#[derive(Clone, Copy, Default, PartialEq)]
+pub enum ScrollbarStyle {
+    #[default]
+    Rounded,
+    Editor,
+}
+
 #[derive(Clone)]
 pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     id: Option<ElementId>,
@@ -395,7 +403,9 @@ pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     tracked_entity: Option<Option<EntityId>>,
     scrollable_handle: Handle<T>,
     visibility: Point<ReservedSpace>,
+    style: Option<ScrollbarStyle>,
     track_color: Option<Hsla>,
+    border_color: Option<Hsla>,
     scrollbar_width: ScrollbarWidth,
 }
 
@@ -417,7 +427,9 @@ impl Scrollbars {
             scrollable_handle: Handle::Untracked(ScrollHandle::new),
             tracked_entity: None,
             visibility: show_along.apply_to(Default::default(), ReservedSpace::Thumb),
+            style: None,
             track_color: None,
+            border_color: None,
             scrollbar_width: ScrollbarWidth::Normal,
         }
     }
@@ -459,6 +471,8 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             visibility,
             get_visibility,
             track_color,
+            border_color,
+            style,
             ..
         } = self;
 
@@ -469,12 +483,19 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             visibility,
             scrollbar_width,
             track_color,
+            border_color,
             get_visibility,
+            style,
         }
     }
 
     pub fn show_along(mut self, along: ScrollAxes) -> Self {
         self.visibility = along.apply_to(self.visibility, ReservedSpace::Thumb);
+        self
+    }
+
+    pub fn style(mut self, style: ScrollbarStyle) -> Self {
+        self.style = Some(style);
         self
     }
 
@@ -484,9 +505,15 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
         self
     }
 
-    pub fn with_stable_track_along(mut self, along: ScrollAxes, background_color: Hsla) -> Self {
+    pub fn with_stable_track_along(
+        mut self,
+        along: ScrollAxes,
+        background_color: Hsla,
+        track_border_color: Option<Hsla>,
+    ) -> Self {
         self.visibility = along.apply_to(self.visibility, ReservedSpace::StableTrack);
         self.track_color = Some(background_color);
+        self.border_color = track_border_color;
         self
     }
 
@@ -600,6 +627,12 @@ enum ParentHoverEvent {
     Outside,
 }
 
+#[derive(Clone)]
+struct TrackColors {
+    background: Hsla,
+    border: Option<Hsla>,
+}
+
 /// This is used to ensure notifies within the state do not notify the parent
 /// unintentionally.
 struct ScrollbarStateWrapper<T: ScrollableHandle>(Entity<ScrollbarState<T>>);
@@ -614,8 +647,9 @@ struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
     show_behavior: ShowBehavior,
     get_visibility: fn(&App) -> ShowScrollbar,
     visibility: Point<ReservedSpace>,
-    track_color: Option<Hsla>,
+    track_color: Option<TrackColors>,
     show_state: VisibilityState,
+    style: ScrollbarStyle,
     mouse_in_parent: bool,
     last_prepaint_state: Option<ScrollbarPrepaintState>,
     _auto_hide_task: Option<Task<()>>,
@@ -644,9 +678,13 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             scroll_handle,
             width: config.scrollbar_width,
             visibility: config.visibility,
-            track_color: config.track_color,
+            track_color: config.track_color.map(|color| TrackColors {
+                background: color,
+                border: config.border_color,
+            }),
             show_behavior,
             get_visibility: config.get_visibility,
+            style: config.style.unwrap_or_default(),
             show_state: VisibilityState::from_behavior(show_behavior),
             mouse_in_parent: true,
             last_prepaint_state: None,
@@ -814,8 +852,11 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         }
     }
 
-    fn update_track_color(&mut self, track_color: Option<Hsla>) {
-        self.track_color = track_color;
+    fn update_colors(&mut self, track_color: Option<Hsla>, border_color: Option<Hsla>) {
+        self.track_color = track_color.map(|color| TrackColors {
+            background: color,
+            border: border_color,
+        });
     }
 
     fn parent_hovered(&self, window: &Window) -> bool {
@@ -1006,7 +1047,7 @@ struct ScrollbarLayout {
     track_bounds: Bounds<Pixels>,
     cursor_hitbox: Hitbox,
     reserved_space: ReservedSpace,
-    track_background: Option<(Bounds<Pixels>, Hsla)>,
+    track_config: Option<(Bounds<Pixels>, TrackColors)>,
     axis: ScrollbarAxis,
 }
 
@@ -1130,7 +1171,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                     let state = self.state.read(cx);
                     let thumb_ranges = state.thumb_ranges().collect::<Vec<_>>();
                     let width = state.width.to_pixels();
-                    let track_color = state.track_color;
+                    let track_color = state.track_color.as_ref();
 
                     let additional_padding = if thumb_ranges.len() == 2 {
                         width
@@ -1145,40 +1186,34 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                 ScrollbarAxis::Horizontal => Corner::BottomLeft,
                                 ScrollbarAxis::Vertical => Corner::TopRight,
                             };
-                            let Bounds { origin, size } = Bounds::from_corner_and_size(
-                                track_anchor,
-                                bounds
-                                    .corner(track_anchor)
-                                    .apply_along(axis.invert(), |corner| {
-                                        corner - SCROLLBAR_PADDING
-                                    }),
-                                bounds.size.apply_along(axis.invert(), |_| width),
-                            );
-                            let scroll_track_bounds = Bounds::new(self.origin + origin, size);
 
-                            let padded_bounds = scroll_track_bounds.extend(match axis {
-                                ScrollbarAxis::Horizontal => Edges {
-                                    right: -SCROLLBAR_PADDING,
-                                    left: -SCROLLBAR_PADDING,
-                                    ..Default::default()
-                                },
-                                ScrollbarAxis::Vertical => Edges {
-                                    top: -SCROLLBAR_PADDING,
-                                    bottom: -SCROLLBAR_PADDING,
-                                    ..Default::default()
-                                },
-                            });
+                            let scroll_track_bounds = Bounds::from_corner_and_size(
+                                track_anchor,
+                                self.origin + bounds.corner(track_anchor),
+                                bounds
+                                    .size
+                                    .apply_along(axis.invert(), |_| width + 2 * SCROLLBAR_PADDING),
+                            );
+
+                            // Rounded style needs a bit of padding, whereas for editor scrolbars,
+                            // we want the full length of the track
+                            let thumb_container_bounds = match state.style {
+                                ScrollbarStyle::Rounded => {
+                                    scroll_track_bounds.dilate(-SCROLLBAR_PADDING)
+                                }
+                                ScrollbarStyle::Editor => scroll_track_bounds,
+                            };
 
                             let available_space =
-                                padded_bounds.size.along(axis) - additional_padding;
+                                thumb_container_bounds.size.along(axis) - additional_padding;
 
                             let thumb_offset = thumb_range.start * available_space;
                             let thumb_end = thumb_range.end * available_space;
                             let thumb_bounds = Bounds::new(
-                                padded_bounds
+                                thumb_container_bounds
                                     .origin
                                     .apply_along(axis, |origin| origin + thumb_offset),
-                                padded_bounds
+                                thumb_container_bounds
                                     .size
                                     .apply_along(axis, |_| thumb_end - thumb_offset),
                             );
@@ -1187,19 +1222,19 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
 
                             ScrollbarLayout {
                                 thumb_bounds,
-                                track_bounds: padded_bounds,
+                                track_bounds: thumb_container_bounds,
                                 axis,
                                 cursor_hitbox: window.insert_hitbox(
                                     if needs_scroll_track {
-                                        padded_bounds
+                                        thumb_container_bounds
                                     } else {
                                         thumb_bounds
                                     },
                                     HitboxBehavior::BlockMouseExceptScroll,
                                 ),
-                                track_background: track_color
+                                track_config: track_color
                                     .filter(|_| needs_scroll_track)
-                                    .map(|color| (padded_bounds.dilate(SCROLLBAR_PADDING), color)),
+                                    .map(|color| (scroll_track_bounds, color.clone())),
                                 reserved_space,
                             }
                         })
@@ -1263,7 +1298,9 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
             let capture_phase;
 
             if self.state.read(cx).visible() {
-                let thumb_state = &self.state.read(cx).thumb_state;
+                let state = self.state.read(cx);
+                let thumb_state = &state.thumb_state;
+                let style = state.style;
 
                 if thumb_state.is_dragging() {
                     capture_phase = DispatchPhase::Capture;
@@ -1276,7 +1313,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                     cursor_hitbox,
                     axis,
                     reserved_space,
-                    track_background,
+                    track_config,
                     ..
                 } in &prepaint_state.thumbs
                 {
@@ -1291,12 +1328,14 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                         _ => (colors.scrollbar_thumb_background, false),
                     };
 
+                    let blend_color = track_config
+                        .as_ref()
+                        .map(|(_, colors)| colors.background)
+                        .unwrap_or(colors.surface_background);
+
                     let blending_color = if hovered || reserved_space.needs_scroll_track() {
-                        track_background
-                            .map(|(_, background)| background)
-                            .unwrap_or(colors.surface_background)
+                        blend_color
                     } else {
-                        let blend_color = colors.surface_background;
                         blend_color.min(blend_color.alpha(MAXIMUM_OPACITY))
                     };
 
@@ -1306,25 +1345,47 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                         thumb_color.fade_out(fade);
                     }
 
-                    if let Some((track_bounds, color)) = track_background {
-                        let mut color = *color;
+                    if let Some((track_bounds, colors)) = track_config {
+                        let mut track_color = colors.background;
                         if let Some(fade) = autohide_fade {
-                            color.fade_out(fade);
+                            track_color.fade_out(fade);
                         }
 
+                        let has_border = colors.border.is_some();
+
+                        let (track_bounds, border_edges) = if has_border {
+                            let edges = match axis {
+                                ScrollbarAxis::Horizontal => Edges {
+                                    top: px(1.),
+                                    ..Default::default()
+                                },
+                                ScrollbarAxis::Vertical => Edges {
+                                    left: px(1.),
+                                    ..Default::default()
+                                },
+                            };
+                            (track_bounds.extend(edges), edges)
+                        } else {
+                            (*track_bounds, Edges::default())
+                        };
+
                         window.paint_quad(quad(
-                            *track_bounds,
+                            track_bounds,
                             Corners::default(),
-                            color,
-                            Edges::default(),
-                            Hsla::transparent_black(),
-                            BorderStyle::default(),
+                            track_color,
+                            border_edges,
+                            colors.border.unwrap_or_else(Hsla::transparent_black),
+                            BorderStyle::Solid,
                         ));
                     }
 
                     window.paint_quad(quad(
                         *thumb_bounds,
-                        Corners::all(Pixels::MAX).clamp_radii_for_quad_size(thumb_bounds.size),
+                        match style {
+                            ScrollbarStyle::Rounded => Corners::all(Pixels::MAX)
+                                .clamp_radii_for_quad_size(thumb_bounds.size),
+                            ScrollbarStyle::Editor => Corners::default(),
+                        },
                         thumb_color,
                         Edges::default(),
                         Hsla::transparent_black(),
