@@ -14893,7 +14893,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more 0.99.20",
  "ec4rs",
  "fs",
  "futures 0.3.31",
@@ -14904,8 +14903,29 @@ dependencies = [
  "migrator",
  "paths",
  "pretty_assertions",
- "release_channel",
  "rust-embed",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "settings_content",
+ "settings_json",
+ "settings_macros",
+ "smallvec",
+ "unindent",
+ "util",
+ "zlog",
+]
+
+[[package]]
+name = "settings_content"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "derive_more 0.99.20",
+ "gpui",
+ "release_channel",
  "schemars",
  "serde",
  "serde_json",
@@ -14913,11 +14933,8 @@ dependencies = [
  "serde_repr",
  "settings_json",
  "settings_macros",
- "smallvec",
  "strum 0.27.2",
- "unindent",
  "util",
- "zlog",
 ]
 
 [[package]]

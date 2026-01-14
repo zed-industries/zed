@@ -30,15 +30,16 @@ use util::{
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
-use crate::{
-    ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, LspSettings, LspSettingsMap, ThemeName, VsCodeSettings, WorktreeId,
-    fallible_options,
-    merge_from::MergeFrom,
-    settings_content::{
-        ExtensionsSettingsContent, ProjectSettingsContent, SettingsContent, UserSettingsContent,
-    },
+use crate::settings_content::{
+    ExtensionsSettingsContent, FontFamilyName, IconThemeName, LanguageSettingsContent,
+    LanguageToSettingsMap, LspSettings, LspSettingsMap, ProjectSettingsContent, SettingsContent,
+    ThemeName, UserSettingsContent,
 };
+use crate::{
+    ActiveSettingsProfileName, ParseStatus, UserSettingsContentExt, VsCodeSettings, WorktreeId,
+    fallible_options,
+};
+use settings_content::merge_from::MergeFrom;
 
 use settings_json::{infer_json_indent_size, parse_json_with_comments, update_value_in_json_text};
 
@@ -1215,14 +1216,6 @@ pub struct SettingsParseResult {
     pub parse_status: ParseStatus,
     /// The result of attempting to migrate the settings file
     pub migration_status: MigrationStatus,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ParseStatus {
-    /// Settings were parsed successfully
-    Success,
-    /// Settings failed to parse
-    Failed { error: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

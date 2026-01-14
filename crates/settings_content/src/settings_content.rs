@@ -1,9 +1,12 @@
 mod agent;
 mod editor;
 mod extension;
+mod fallible_options;
 mod language;
 mod language_model;
+pub mod merge_from;
 mod project;
+mod serde_helper;
 mod terminal;
 mod theme;
 mod workspace;
@@ -11,15 +14,20 @@ mod workspace;
 pub use agent::*;
 pub use editor::*;
 pub use extension::*;
+pub use fallible_options::*;
 pub use language::*;
 pub use language_model::*;
+pub use merge_from::MergeFrom as MergeFromTrait;
 pub use project::*;
+pub use serde_helper::{
+    serialize_f32_with_two_decimal_places, serialize_optional_f32_with_two_decimal_places,
+};
 pub use terminal::*;
 pub use theme::*;
 pub use workspace::*;
 
 use collections::{HashMap, IndexMap};
-use gpui::{App, SharedString};
+use gpui::SharedString;
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -29,7 +37,13 @@ use std::env;
 use std::sync::Arc;
 pub use util::serde::default_true;
 
-use crate::{ActiveSettingsProfileName, merge_from};
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseStatus {
+    /// Settings were parsed successfully
+    Success,
+    /// Settings failed to parse
+    Failed { error: String },
+}
 
 #[with_fallible_options]
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -211,13 +225,6 @@ impl UserSettingsContent {
             "windows" => self.windows.as_deref(),
             _ => None,
         }
-    }
-
-    pub fn for_profile(&self, cx: &App) -> Option<&SettingsContent> {
-        let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() else {
-            return None;
-        };
-        self.profiles.get(&active_profile.0)
     }
 }
 
