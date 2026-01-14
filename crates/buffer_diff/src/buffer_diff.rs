@@ -89,9 +89,9 @@ pub struct DiffHunk {
     /// The range in the buffer's diff base text to which this hunk corresponds.
     pub diff_base_byte_range: Range<usize>,
     pub secondary_status: DiffHunkSecondaryStatus,
-    /// Anchors representing the word diff locations in the active buffer
+    /// Anchors representing the diff locations in the active buffer
     pub buffer_diffs: Vec<Range<Anchor>>,
-    /// Offsets relative to the start of the deleted diff that represent word diff locations
+    /// Offsets relative to the start of the deleted hunk that represent diff locations
     pub base_diffs: Vec<Range<usize>>,
 }
 
@@ -1192,14 +1192,15 @@ impl BufferDiff {
         let mut this = BufferDiff::new(&buffer, cx);
         let mut base_text = base_text.to_owned();
         text::LineEnding::normalize(&mut base_text);
-        let inner = cx.foreground_executor().block_on(this.update_diff(
+        let update_task = this.update_diff(
             buffer.clone(),
             Some(Arc::from(base_text)),
             true,
             None,
             None,
             cx,
-        ));
+        );
+        let inner = cx.foreground_executor().block_on(update_task);
         this.set_snapshot(inner, &buffer, cx).detach();
         this
     }

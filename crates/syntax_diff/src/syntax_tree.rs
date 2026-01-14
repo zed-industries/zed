@@ -369,14 +369,15 @@ pub fn build_tree<'a>(
     language_scope: &LanguageScope,
 ) -> SyntaxTree<'a> {
     let mut nodes = Vec::with_capacity(cursor.node().descendant_count());
-    let classifier = CharClassifier::new(Some(language_scope.clone()));
-    let brackets: HashSet<_> = language_scope
-        .brackets()
-        .filter(|(pair, enabled)| pair.surround && *enabled)
-        .flat_map(|(pair, _)| [pair.start.as_str(), pair.end.as_str()])
-        .collect();
 
     if cursor.node().child_count() > 0 || !cursor.node().is_extra() {
+        let classifier = CharClassifier::new(Some(language_scope.clone()));
+        let brackets: HashSet<_> = language_scope
+            .brackets()
+            .filter(|(pair, enabled)| pair.surround && *enabled)
+            .flat_map(|(pair, _)| [pair.start.as_str(), pair.end.as_str()])
+            .collect();
+
         build_tree_recursive(
             &mut cursor,
             &mut nodes,
