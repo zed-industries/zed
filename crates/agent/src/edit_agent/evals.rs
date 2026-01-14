@@ -7,7 +7,7 @@ use client::{Client, UserStore};
 use eval_utils::{EvalOutput, EvalOutputProcessor, OutcomeKind};
 use fs::FakeFs;
 use futures::{FutureExt, future::LocalBoxFuture};
-use gpui::{AppContext, TestAppContext, Timer};
+use gpui::{AppContext, TestAppContext};
 use http_client::StatusCode;
 use indoc::{formatdoc, indoc};
 use language_model::{
@@ -1655,7 +1655,9 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
         if let Some(retry_after) = retry_delay {
             let jitter = retry_after.mul_f64(rand::rng().random_range(0.0..1.0));
             eprintln!("Attempt #{attempt}: Retry after {retry_after:?} + jitter of {jitter:?}");
-            Timer::after(retry_after + jitter).await;
+            // This code does not use the gpui::executor
+            #[allow(clippy::disallowed_methods)]
+            smol::Timer::after(retry_after + jitter).await;
         } else {
             return response;
         }

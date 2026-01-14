@@ -20,7 +20,10 @@ pub use thread_store::*;
 pub use tool_permissions::*;
 pub use tools::*;
 
-use acp_thread::{AcpThread, AgentModelSelector, UserMessageId};
+use acp_thread::{
+    AcpThread, AgentModelSelector, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
+    AgentSessionListResponse, UserMessageId,
+};
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -1345,6 +1348,11 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         }) as _)
     }
 
+    fn session_list(&self, cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
+        let thread_store = self.0.read(cx).thread_store.clone();
+        Some(Rc::new(NativeAgentSessionList::new(thread_store, cx)) as _)
+    }
+
     fn telemetry(&self) -> Option<Rc<dyn acp_thread::AgentTelemetry>> {
         Some(Rc::new(self.clone()) as Rc<dyn acp_thread::AgentTelemetry>)
     }
@@ -1368,6 +1376,74 @@ impl acp_thread::AgentTelemetry for NativeAgentConnection {
         cx.background_spawn(async move {
             serde_json::to_value(task.await).context("Failed to serialize thread")
         })
+    }
+}
+
+pub struct NativeAgentSessionList {
+    thread_store: Entity<ThreadStore>,
+    updates_rx: watch::Receiver<()>,
+    _subscription: Subscription,
+}
+
+impl NativeAgentSessionList {
+    fn new(thread_store: Entity<ThreadStore>, cx: &mut App) -> Self {
+        let (mut tx, rx) = watch::channel(());
+        let subscription = cx.observe(&thread_store, move |_, _| {
+            tx.send(()).ok();
+        });
+        Self {
+            thread_store,
+            updates_rx: rx,
+            _subscription: subscription,
+        }
+    }
+
+    fn to_session_info(entry: DbThreadMetadata) -> AgentSessionInfo {
+        AgentSessionInfo {
+            session_id: entry.id,
+            cwd: None,
+            title: Some(entry.title),
+            updated_at: Some(entry.updated_at),
+            meta: None,
+        }
+    }
+
+    pub fn thread_store(&self) -> &Entity<ThreadStore> {
+        &self.thread_store
+    }
+}
+
+impl AgentSessionList for NativeAgentSessionList {
+    fn list_sessions(
+        &self,
+        _request: AgentSessionListRequest,
+        cx: &mut App,
+    ) -> Task<Result<AgentSessionListResponse>> {
+        let sessions = self
+            .thread_store
+            .read(cx)
+            .entries()
+            .map(Self::to_session_info)
+            .collect();
+        Task::ready(Ok(AgentSessionListResponse::new(sessions)))
+    }
+
+    fn delete_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {
+        self.thread_store
+            .update(cx, |store, cx| store.delete_thread(session_id.clone(), cx))
+    }
+
+    fn delete_sessions(&self, cx: &mut App) -> Task<Result<()>> {
+        self.thread_store
+            .update(cx, |store, cx| store.delete_threads(cx))
+    }
+
+    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+        Some(self.updates_rx.clone())
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }
 

@@ -149,8 +149,7 @@ fn examples_from_response(
         match parse_result {
             Ok(spec) => Some(Example {
                 spec,
-                buffer: None,
-                context: None,
+                prompt_inputs: None,
                 prompt: None,
                 predictions: Vec::new(),
                 score: Vec::new(),

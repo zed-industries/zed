@@ -803,8 +803,36 @@ pub fn theme_colors_refinement(
             .vim_helix_select_background
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
-        vim_mode_text: this
-            .vim_mode_text
+        vim_normal_foreground: this
+            .vim_normal_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_insert_foreground: this
+            .vim_insert_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_replace_foreground: this
+            .vim_replace_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_visual_foreground: this
+            .vim_visual_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_visual_line_foreground: this
+            .vim_visual_line_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_visual_block_foreground: this
+            .vim_visual_block_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_helix_normal_foreground: this
+            .vim_helix_normal_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_helix_select_foreground: this
+            .vim_helix_select_foreground
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
     }

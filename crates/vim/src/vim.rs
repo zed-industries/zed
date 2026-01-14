@@ -1322,18 +1322,21 @@ impl Vim {
                         _ => CursorShape::Underline,
                     }
                 } else {
-                    cursor_shape.normal.unwrap_or(CursorShape::Block)
+                    cursor_shape.normal
                 }
             }
-            Mode::HelixNormal => cursor_shape.normal.unwrap_or(CursorShape::Block),
-            Mode::Replace => cursor_shape.replace.unwrap_or(CursorShape::Underline),
+            Mode::HelixNormal => cursor_shape.normal,
+            Mode::Replace => cursor_shape.replace,
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixSelect => {
-                cursor_shape.visual.unwrap_or(CursorShape::Block)
+                cursor_shape.visual
             }
-            Mode::Insert => cursor_shape.insert.unwrap_or({
-                let editor_settings = EditorSettings::get_global(cx);
-                editor_settings.cursor_shape.unwrap_or_default()
-            }),
+            Mode::Insert => match cursor_shape.insert {
+                InsertModeCursorShape::Explicit(shape) => shape,
+                InsertModeCursorShape::Inherit => {
+                    let editor_settings = EditorSettings::get_global(cx);
+                    editor_settings.cursor_shape.unwrap_or_default()
+                }
+            },
         }
     }
 
@@ -2047,34 +2050,65 @@ struct VimSettings {
     pub cursor_shape: CursorShapeSettings,
 }
 
+/// Cursor shape configuration for insert mode.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum InsertModeCursorShape {
+    /// Inherit cursor shape from the editor's base cursor_shape setting.
+    /// This allows users to set their preferred editor cursor and have
+    /// it automatically apply to vim insert mode.
+    Inherit,
+    /// Use an explicit cursor shape for insert mode.
+    Explicit(CursorShape),
+}
+
 /// The settings for cursor shape.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CursorShapeSettings {
     /// Cursor shape for the normal mode.
     ///
     /// Default: block
-    pub normal: Option<CursorShape>,
+    pub normal: CursorShape,
     /// Cursor shape for the replace mode.
     ///
     /// Default: underline
-    pub replace: Option<CursorShape>,
+    pub replace: CursorShape,
     /// Cursor shape for the visual mode.
     ///
     /// Default: block
-    pub visual: Option<CursorShape>,
+    pub visual: CursorShape,
     /// Cursor shape for the insert mode.
     ///
-    /// The default value follows the primary cursor_shape.
-    pub insert: Option<CursorShape>,
+    /// Default: Inherit (follows editor.cursor_shape)
+    pub insert: InsertModeCursorShape,
+}
+
+impl From<settings::VimInsertModeCursorShape> for InsertModeCursorShape {
+    fn from(shape: settings::VimInsertModeCursorShape) -> Self {
+        match shape {
+            settings::VimInsertModeCursorShape::Inherit => InsertModeCursorShape::Inherit,
+            settings::VimInsertModeCursorShape::Bar => {
+                InsertModeCursorShape::Explicit(CursorShape::Bar)
+            }
+            settings::VimInsertModeCursorShape::Block => {
+                InsertModeCursorShape::Explicit(CursorShape::Block)
+            }
+            settings::VimInsertModeCursorShape::Underline => {
+                InsertModeCursorShape::Explicit(CursorShape::Underline)
+            }
+            settings::VimInsertModeCursorShape::Hollow => {
+                InsertModeCursorShape::Explicit(CursorShape::Hollow)
+            }
+        }
+    }
 }
 
 impl From<settings::CursorShapeSettings> for CursorShapeSettings {
     fn from(settings: settings::CursorShapeSettings) -> Self {
         Self {
-            normal: settings.normal.map(Into::into),
-            replace: settings.replace.map(Into::into),
-            visual: settings.visual.map(Into::into),
-            insert: settings.insert.map(Into::into),
+            normal: settings.normal.unwrap().into(),
+            replace: settings.replace.unwrap().into(),
+            visual: settings.visual.unwrap().into(),
+            insert: settings.insert.unwrap().into(),
         }
     }
 }

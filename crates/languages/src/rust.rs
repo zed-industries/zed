@@ -571,6 +571,7 @@ impl LspAdapter for RustLspAdapter {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", "();"),
             lsp::SymbolKind::STRUCT => ("struct ", ";"),
             lsp::SymbolKind::ENUM => ("enum ", "{}"),
+            lsp::SymbolKind::ENUM_MEMBER => ("enum E{", "}"),
             lsp::SymbolKind::INTERFACE => ("trait ", "{}"),
             lsp::SymbolKind::CONSTANT => ("const ", ":()=();"),
             lsp::SymbolKind::MODULE => ("mod ", ";"),

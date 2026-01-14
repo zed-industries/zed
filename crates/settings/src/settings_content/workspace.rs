@@ -413,6 +413,11 @@ pub struct TabBarSettingsContent {
     ///
     /// Default: true
     pub show_tab_bar_buttons: Option<bool>,
+    /// Whether or not to show pinned tabs in a separate row.
+    /// When enabled, pinned tabs appear in a top row and unpinned tabs in a bottom row.
+    ///
+    /// Default: false
+    pub show_pinned_tabs_in_separate_row: Option<bool>,
 }
 
 #[with_fallible_options]
