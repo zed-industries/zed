@@ -341,7 +341,7 @@ impl Client {
             method,
             params,
             None,
-            self.request_timeout.or(Some(DEFAULT_REQUEST_TIMEOUT)),
+            self.request_timeout.unwrap_or(DEFAULT_REQUEST_TIMEOUT),
         )
         .await
     }
@@ -351,7 +351,7 @@ impl Client {
         method: &str,
         params: impl Serialize,
         cancel_rx: Option<oneshot::Receiver<()>>,
-        timeout: Option<Duration>,
+        timeout: Duration,
     ) -> Result<T> {
         let id = self.next_id.fetch_add(1, SeqCst);
         let request = serde_json::to_string(&Request {
@@ -387,13 +387,7 @@ impl Client {
         handle_response?;
         send?;
 
-        let mut timeout_fut = pin!(
-            match timeout {
-                Some(timeout) => future::Either::Left(executor.timer(timeout)),
-                None => future::Either::Right(future::pending()),
-            }
-            .fuse()
-        );
+        let mut timeout_fut = pin!(executor.timer(timeout).fuse());
         let mut cancel_fut = pin!(
             match cancel_rx {
                 Some(rx) => future::Either::Left(async {
@@ -433,7 +427,7 @@ impl Client {
                 anyhow::bail!(RequestCanceled)
             }
             _ = timeout_fut => {
-                log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", timeout.unwrap());
+                log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", timeout);
                 anyhow::bail!("Context server request timeout");
             }
         }

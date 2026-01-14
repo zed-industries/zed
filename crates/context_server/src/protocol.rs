@@ -104,7 +104,7 @@ impl InitializedContextServerProtocol {
         &self,
         params: T::Params,
         cancel_rx: Option<oneshot::Receiver<()>>,
-        timeout: Option<Duration>,
+        timeout: Duration,
     ) -> Result<T::Response> {
         self.inner
             .request_with(T::METHOD, params, cancel_rx, timeout)

@@ -9,7 +9,7 @@ use smallvec::{SmallVec, smallvec};
 
 use anyhow::{Context as _, Result};
 use base64::Engine as _;
-use http_client::{AsyncBody, HttpClient, Request, Response, Uri};
+use http_client::{AsyncBody, HttpClient, Method, Request, Response, Uri};
 use rand::distr::Distribution;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
