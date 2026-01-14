@@ -351,7 +351,7 @@ impl ContextServerStore {
                 env: None,
                 timeout: None,
             },
-            local_only: false,
+            remote: false,
         });
         self.run_server(server, configuration, cx);
     }
