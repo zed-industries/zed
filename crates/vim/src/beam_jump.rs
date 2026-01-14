@@ -142,6 +142,12 @@ impl BeamJumpState {
 
         self.push_pattern_char(ch, buffer);
 
+        debug_assert!(
+            self.matches
+                .iter()
+                .all(|m| m.start > self.cursor_offset || m.end <= self.cursor_offset)
+        );
+
         if self.pattern_len < 2 {
             return BeamJumpAction::Continue;
         }
@@ -308,7 +314,10 @@ impl BeamJumpState {
                 break;
             }
 
-            if offset != self.cursor_offset && is_character_match(target, ch, self.smartcase) {
+            if offset != self.cursor_offset
+                && !(offset < self.cursor_offset && self.cursor_offset < next)
+                && is_character_match(target, ch, self.smartcase)
+            {
                 matches.push(BeamJumpMatch {
                     start: offset,
                     end: next,
@@ -339,6 +348,10 @@ impl BeamJumpState {
             new_end += next_ch.len_utf8();
 
             if new_end > self.view_end {
+                return false;
+            }
+
+            if m.start < self.cursor_offset && self.cursor_offset < new_end {
                 return false;
             }
 

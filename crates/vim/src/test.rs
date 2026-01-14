@@ -2322,6 +2322,140 @@ async fn test_beam_jump_hides_labels_when_units_unsafe(cx: &mut gpui::TestAppCon
 
 #[perf]
 #[gpui::test]
+async fn test_beam_jump_excludes_cross_cursor_match_from_pending_commit(
+    cx: &mut gpui::TestAppContext,
+) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.vim.get_or_insert_with(Default::default).beam_jump = Some(true);
+        });
+    });
+
+    cx.update(|_window, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "s",
+            PushSneak { first_char: None },
+            Some("vim_mode == normal"),
+        )])
+    });
+
+    cx.set_state("aˇb", Mode::Normal);
+
+    cx.simulate_keystrokes("s a");
+    cx.assert_state("aˇb", Mode::Normal);
+
+    let highlights = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+    assert_eq!(
+        highlights.len(),
+        1,
+        "expected a single 1-char match highlight. {}",
+        cx.assertion_context()
+    );
+    assert!(
+        highlights.iter().all(|highlight| highlight.label.is_none()),
+        "expected labels to be hidden until pattern length >= 2. {}",
+        cx.assertion_context()
+    );
+
+    // Typing `b` would normally produce an `ab` match whose range crosses the cursor.
+    // Such matches cannot be reached by the existing jump logic and must not be rendered.
+    cx.simulate_keystrokes("b");
+    cx.assert_state("aˇb", Mode::Normal);
+
+    let highlights = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+    assert!(
+        highlights.is_empty(),
+        "expected cross-cursor matches to be excluded from viewport candidates. {}",
+        cx.assertion_context()
+    );
+}
+
+#[perf]
+#[gpui::test]
+async fn test_beam_jump_extension_drops_cross_cursor_match(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings(cx, |s| {
+            s.vim.get_or_insert_with(Default::default).beam_jump = Some(true);
+        });
+    });
+
+    cx.update(|_window, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "s",
+            PushSneak { first_char: None },
+            Some("vim_mode == normal"),
+        )])
+    });
+
+    cx.set_state("abˇc abc", Mode::Normal);
+
+    cx.simulate_keystrokes("s a b");
+    cx.assert_state("abˇc abc", Mode::Normal);
+
+    let highlights = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+    assert!(
+        highlights.len() > 1 && highlights.iter().any(|highlight| highlight.label.is_some()),
+        "expected multi-candidate mode before extension. {}",
+        cx.assertion_context()
+    );
+
+    // Extending to `abc` should drop the match that would cross the cursor.
+    cx.simulate_keystrokes("c");
+    cx.assert_state("abˇc abc", Mode::Normal);
+
+    let highlights = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let len = snapshot.display_snapshot.buffer_snapshot().len();
+        editor
+            .beam_jump_highlights_in_range(MultiBufferOffset(0)..len)
+            .to_vec()
+    });
+
+    assert_eq!(
+        highlights.len(),
+        1,
+        "expected the cross-cursor candidate to be removed. {}",
+        cx.assertion_context()
+    );
+    assert_eq!(
+        highlights
+            .first()
+            .and_then(|highlight| highlight.label.as_ref())
+            .map(|label| label.as_ref()),
+        Some(";"),
+        "expected pending-commit on the remaining candidate. {}",
+        cx.assertion_context()
+    );
+    assert_eq!(
+        highlights[0].range,
+        MultiBufferOffset(4)..MultiBufferOffset(7),
+        "expected the remaining match to be after the cursor. {}",
+        cx.assertion_context()
+    );
+}
+
+#[perf]
+#[gpui::test]
 async fn test_beam_jump_pending_commit_does_not_jump_until_semicolon(
     cx: &mut gpui::TestAppContext,
 ) {
