@@ -1,8 +1,5 @@
 //! # json_schema_store
-use std::{
-    str::FromStr,
-    sync::{Arc, LazyLock},
-};
+use std::sync::{Arc, LazyLock};
 
 use anyhow::{Context as _, Result};
 use collections::HashMap;
@@ -113,7 +110,7 @@ impl SchemaStore {
     }
 }
 
-fn handle_schema_request(
+pub fn handle_schema_request(
     lsp_store: Entity<LspStore>,
     uri: String,
     cx: &mut AsyncApp,
@@ -185,24 +182,21 @@ fn handle_schema_request(
     }
 
     // Dynamic schemas that need runtime data
-    let languages = lsp_store.read_with(cx, |lsp_store, _| lsp_store.languages.clone());
     let schema_name = schema_name.to_string();
     let rest = rest.map(|s| s.to_string());
     cx.spawn(async move |cx| {
-        let schema =
-            resolve_dynamic_schema(&languages, lsp_store, &schema_name, rest.as_deref(), cx)
-                .await?;
+        let schema = resolve_dynamic_schema(lsp_store, &schema_name, rest.as_deref(), cx).await?;
         serde_json::to_string(&schema).context("Failed to serialize schema")
     })
 }
 
 async fn resolve_dynamic_schema(
-    languages: &Arc<LanguageRegistry>,
     lsp_store: Entity<LspStore>,
     schema_name: &str,
     rest: Option<&str>,
     cx: &mut AsyncApp,
 ) -> Result<serde_json::Value> {
+    let languages = lsp_store.read_with(cx, |store, _| store.languages.clone());
     let schema = match schema_name {
         "settings" if rest.is_some_and(|r| r.starts_with("lsp/")) => {
             let lsp_name = rest
@@ -299,54 +293,6 @@ async fn resolve_dynamic_schema(
         }
         _ => {
             anyhow::bail!("Unrecognized builtin JSON schema: {schema_name}");
-        }
-    };
-    Ok(schema)
-}
-
-pub async fn resolve_schema_request(
-    languages: &Arc<LanguageRegistry>,
-    lsp_store: Entity<LspStore>,
-    uri: String,
-    cx: &mut AsyncApp,
-) -> Result<serde_json::Value> {
-    let path = uri.strip_prefix("zed://schemas/").context("Invalid URI")?;
-    resolve_schema_request_inner(languages, lsp_store, path, cx).await
-}
-
-pub async fn resolve_schema_request_inner(
-    languages: &Arc<LanguageRegistry>,
-    lsp_store: Entity<LspStore>,
-    path: &str,
-    cx: &mut AsyncApp,
-) -> Result<serde_json::Value> {
-    let (schema_name, rest) = path.split_once('/').unzip();
-    let schema_name = schema_name.unwrap_or(path);
-
-    // Handle static schemas
-    let schema = match schema_name {
-        "tsconfig" => serde_json::Value::from_str(TSCONFIG_SCHEMA)?,
-        "package_json" => serde_json::Value::from_str(PACKAGE_JSON_SCHEMA)?,
-        "tasks" => task::TaskTemplates::generate_json_schema(),
-        "snippets" => snippet_provider::format::VsSnippetsFile::generate_json_schema(),
-        "jsonc" => generate_jsonc_schema(),
-        "keymap" => settings::KeymapFile::generate_json_schema_from_inventory(),
-        "action" => {
-            let normalized_action_name = rest.context("No Action name provided")?;
-            let action_name = denormalize_action_name(normalized_action_name);
-            let schema = settings::KeymapFile::get_action_schema_by_name(&action_name);
-            let mut generator = settings::KeymapFile::action_schema_generator();
-            root_schema_from_action_schema(schema, &mut generator).to_value()
-        }
-        "zed_inspector_style" => {
-            if cfg!(debug_assertions) {
-                generate_inspector_style_schema()
-            } else {
-                schemars::json_schema!(true).to_value()
-            }
-        }
-        _ => {
-            return resolve_dynamic_schema(languages, lsp_store, schema_name, rest, cx).await;
         }
     };
     Ok(schema)
