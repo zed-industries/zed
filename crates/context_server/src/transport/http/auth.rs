@@ -184,6 +184,7 @@ impl OAuthClient {
             .uri(token_endpoint.clone())
             .header("Content-Type", "application/x-www-form-urlencoded")
             .header("Accept", "application/json")
+            .method(Method::POST)
             .body(AsyncBody::from(form))
             .context(ExchangeTokenError::BuildTokenExchangeRequest)?;
 
