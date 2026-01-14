@@ -250,6 +250,7 @@ image.workspace = true
 agent_ui = { workspace = true, features = ["test-support"] }
 agent_ui_v2 = { workspace = true, features = ["test-support"] }
 search = { workspace = true, features = ["test-support"] }
+repl = { workspace = true, features = ["test-support"] }
 
 [package.metadata.bundle-dev]
 icon = ["resources/app-icon-dev@2x.png", "resources/app-icon-dev.png"]
