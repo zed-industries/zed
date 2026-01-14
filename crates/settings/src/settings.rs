@@ -22,7 +22,9 @@ pub mod private {
 }
 
 use gpui::{App, Global};
+use release_channel::ReleaseChannel;
 use rust_embed::RustEmbed;
+use std::env;
 use std::{borrow::Cow, fmt, str};
 use util::asset_str;
 
@@ -52,6 +54,8 @@ impl Global for ActiveSettingsProfileName {}
 
 pub trait UserSettingsContentExt {
     fn for_profile(&self, cx: &App) -> Option<&SettingsContent>;
+    fn for_release_channel(&self) -> Option<&SettingsContent>;
+    fn for_os(&self) -> Option<&SettingsContent>;
 }
 
 impl UserSettingsContentExt for UserSettingsContent {
@@ -60,6 +64,24 @@ impl UserSettingsContentExt for UserSettingsContent {
             return None;
         };
         self.profiles.get(&active_profile.0)
+    }
+
+    fn for_release_channel(&self) -> Option<&SettingsContent> {
+        match *release_channel::RELEASE_CHANNEL {
+            ReleaseChannel::Dev => self.dev.as_deref(),
+            ReleaseChannel::Nightly => self.nightly.as_deref(),
+            ReleaseChannel::Preview => self.preview.as_deref(),
+            ReleaseChannel::Stable => self.stable.as_deref(),
+        }
+    }
+
+    fn for_os(&self) -> Option<&SettingsContent> {
+        match env::consts::OS {
+            "macos" => self.macos.as_deref(),
+            "linux" => self.linux.as_deref(),
+            "windows" => self.windows.as_deref(),
+            _ => None,
+        }
     }
 }
 

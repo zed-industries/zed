@@ -28,12 +28,10 @@ pub use workspace::*;
 
 use collections::{HashMap, IndexMap};
 use gpui::SharedString;
-use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::collections::BTreeSet;
-use std::env;
 use std::sync::Arc;
 pub use util::serde::default_true;
 
@@ -206,26 +204,6 @@ pub struct UserSettingsContent {
 
 pub struct ExtensionsSettingsContent {
     pub all_languages: AllLanguageSettingsContent,
-}
-
-impl UserSettingsContent {
-    pub fn for_release_channel(&self) -> Option<&SettingsContent> {
-        match *release_channel::RELEASE_CHANNEL {
-            ReleaseChannel::Dev => self.dev.as_deref(),
-            ReleaseChannel::Nightly => self.nightly.as_deref(),
-            ReleaseChannel::Preview => self.preview.as_deref(),
-            ReleaseChannel::Stable => self.stable.as_deref(),
-        }
-    }
-
-    pub fn for_os(&self) -> Option<&SettingsContent> {
-        match env::consts::OS {
-            "macos" => self.macos.as_deref(),
-            "linux" => self.linux.as_deref(),
-            "windows" => self.windows.as_deref(),
-            _ => None,
-        }
-    }
 }
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.

@@ -19,7 +19,6 @@ anyhow.workspace = true
 collections.workspace = true
 derive_more.workspace = true
 gpui.workspace = true
-release_channel.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

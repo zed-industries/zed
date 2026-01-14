@@ -26,6 +26,7 @@ inventory.workspace = true
 log.workspace = true
 migrator.workspace = true
 paths.workspace = true
+release_channel.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true
 serde.workspace = true
