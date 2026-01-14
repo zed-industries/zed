@@ -72,7 +72,7 @@ pub struct ProjectDiff {
     pending_scroll: Option<PathKey>,
     review_comment_count: usize,
     _task: Task<Result<()>>,
-    _subscriptions: Vec<Subscription>,
+    _subscription: Subscription,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -374,11 +374,10 @@ impl ProjectDiff {
             pending_scroll: None,
             review_comment_count: 0,
             _task: task,
-            _subscriptions: vec![
+            _subscription: Subscription::join(
                 branch_diff_subscription,
-                editor_subscription,
-                review_comment_subscription,
-            ],
+                Subscription::join(editor_subscription, review_comment_subscription),
+            ),
         }
     }
 
