@@ -1,4 +1,4 @@
-use crate::QueueMessage;
+use crate::SendImmediately;
 use crate::acp::AcpThreadHistory;
 use crate::{
     ChatWithFollow,
@@ -53,7 +53,7 @@ pub struct MessageEditor {
 #[derive(Clone, Copy, Debug)]
 pub enum MessageEditorEvent {
     Send,
-    Queue,
+    SendImmediately,
     Cancel,
     Focus,
     LostFocus,
@@ -508,18 +508,6 @@ impl MessageEditor {
         cx.emit(MessageEditorEvent::Send)
     }
 
-    pub fn queue(&mut self, cx: &mut Context<Self>) {
-        if self.is_empty(cx) {
-            return;
-        }
-
-        self.editor.update(cx, |editor, cx| {
-            editor.clear_inlay_hints(cx);
-        });
-
-        cx.emit(MessageEditorEvent::Queue)
-    }
-
     pub fn trigger_completion_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let editor = self.editor.clone();
 
@@ -563,8 +551,16 @@ impl MessageEditor {
         self.send(cx);
     }
 
-    fn queue_message(&mut self, _: &QueueMessage, _: &mut Window, cx: &mut Context<Self>) {
-        self.queue(cx);
+    fn send_immediately(&mut self, _: &SendImmediately, _: &mut Window, cx: &mut Context<Self>) {
+        if self.is_empty(cx) {
+            return;
+        }
+
+        self.editor.update(cx, |editor, cx| {
+            editor.clear_inlay_hints(cx);
+        });
+
+        cx.emit(MessageEditorEvent::SendImmediately)
     }
 
     fn chat_with_follow(
@@ -1009,7 +1005,7 @@ impl Render for MessageEditor {
         div()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
-            .on_action(cx.listener(Self::queue_message))
+            .on_action(cx.listener(Self::send_immediately))
             .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::paste_raw))

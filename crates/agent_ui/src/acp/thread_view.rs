@@ -73,9 +73,9 @@ use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip, Usag
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
     ContinueThread, ContinueWithBurnMode, CycleFavoriteModels, CycleModeSelector,
-    ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAgentDiff, OpenHistory, QueueMessage,
-    RejectAll, RejectOnce, SelectPermissionGranularity, SendNextQueuedMessage, ToggleBurnMode,
-    ToggleProfileSelector,
+    ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAgentDiff, OpenHistory, RejectAll,
+    RejectOnce, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
+    ToggleBurnMode, ToggleProfileSelector,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(1);
@@ -1212,7 +1212,7 @@ impl AcpThreadView {
     ) {
         match event {
             MessageEditorEvent::Send => self.send(window, cx),
-            MessageEditorEvent::Queue => self.queue_message(window, cx),
+            MessageEditorEvent::SendImmediately => self.interrupt_and_send(window, cx),
             MessageEditorEvent::Cancel => self.cancel_generation(cx),
             MessageEditorEvent::Focus => {
                 self.cancel_editing(&Default::default(), window, cx);
@@ -1264,7 +1264,7 @@ impl AcpThreadView {
                     }
                 }
             }
-            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Queue) => {}
+            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::SendImmediately) => {}
             ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::Send) => {
                 self.regenerate(event.entry_index, editor.clone(), window, cx);
             }
@@ -1308,7 +1308,7 @@ impl AcpThreadView {
         }
 
         if thread.read(cx).status() != ThreadStatus::Idle {
-            self.stop_current_and_send_new_message(window, cx);
+            self.queue_message(window, cx);
             return;
         }
 
@@ -1350,6 +1350,23 @@ impl AcpThreadView {
         }
 
         self.send_impl(self.message_editor.clone(), window, cx)
+    }
+
+    fn interrupt_and_send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread() else {
+            return;
+        };
+
+        if self.is_loading_contents {
+            return;
+        }
+
+        if thread.read(cx).status() == ThreadStatus::Idle {
+            self.send_impl(self.message_editor.clone(), window, cx);
+            return;
+        }
+
+        self.stop_current_and_send_new_message(window, cx);
     }
 
     fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -6026,13 +6043,7 @@ impl AcpThreadView {
                 .tooltip(move |_window, cx| {
                     if is_editor_empty && !is_generating {
                         Tooltip::for_action("Type to Send", &Chat, cx)
-                    } else {
-                        let title = if is_generating {
-                            "Stop and Send Message"
-                        } else {
-                            "Send"
-                        };
-
+                    } else if is_generating {
                         let focus_handle = focus_handle.clone();
 
                         Tooltip::element(move |_window, cx| {
@@ -6042,7 +6053,7 @@ impl AcpThreadView {
                                     h_flex()
                                         .gap_2()
                                         .justify_between()
-                                        .child(Label::new(title))
+                                        .child(Label::new("Queue and Send"))
                                         .child(KeyBinding::for_action_in(&Chat, &focus_handle, cx)),
                                 )
                                 .child(
@@ -6052,15 +6063,17 @@ impl AcpThreadView {
                                         .justify_between()
                                         .border_t_1()
                                         .border_color(cx.theme().colors().border_variant)
-                                        .child(Label::new("Queue Message"))
+                                        .child(Label::new("Send Immediately"))
                                         .child(KeyBinding::for_action_in(
-                                            &QueueMessage,
+                                            &SendImmediately,
                                             &focus_handle,
                                             cx,
                                         )),
                                 )
                                 .into_any_element()
                         })(_window, cx)
+                    } else {
+                        Tooltip::for_action("Send Message", &Chat, cx)
                     }
                 })
                 .on_click(cx.listener(|this, _, window, cx| {
@@ -9259,7 +9272,7 @@ pub(crate) mod tests {
             editor.set_text("Message 2", window, cx);
         });
         thread_view.update_in(cx, |thread_view, window, cx| {
-            thread_view.send(window, cx);
+            thread_view.interrupt_and_send(window, cx);
         });
 
         cx.update(|_, cx| {

@@ -310,7 +310,7 @@
       "shift-alt-y": "agent::KeepAll",
       "shift-alt-z": "agent::RejectAll",
       "ctrl-enter": "agent::ChatWithFollow",
-      "ctrl-shift-enter": "agent::QueueMessage",
+      "ctrl-shift-enter": "agent::SendImmediately",
       "ctrl-shift-alt-enter": "agent::SendNextQueuedMessage",
       "ctrl-shift-backspace": "agent::ClearMessageQueue",
       "ctrl-shift-v": "agent::PasteRaw",
