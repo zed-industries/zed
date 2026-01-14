@@ -504,6 +504,12 @@ impl EditorElement {
         register_action(editor, window, Editor::unstage_and_next);
         register_action(editor, window, Editor::expand_all_diff_hunks);
         register_action(editor, window, Editor::collapse_all_diff_hunks);
+        register_action(editor, window, Editor::toggle_review_comments_expanded);
+        register_action(editor, window, Editor::submit_diff_review_comment_action);
+        register_action(editor, window, Editor::edit_review_comment);
+        register_action(editor, window, Editor::delete_review_comment);
+        register_action(editor, window, Editor::confirm_edit_review_comment_action);
+        register_action(editor, window, Editor::cancel_edit_review_comment_action);
         register_action(editor, window, Editor::go_to_previous_change);
         register_action(editor, window, Editor::go_to_next_change);
         register_action(editor, window, Editor::go_to_prev_reference);
@@ -3114,26 +3120,6 @@ impl EditorElement {
 
         let buffer_row = row_info.and_then(|info| info.buffer_row);
         Some((display_row, buffer_row))
-    }
-
-    fn diff_review_button(width: Pixels, cx: &mut App) -> AnyElement {
-        let text_c = cx.theme().colors().text;
-        let icon_c = cx.theme().colors().icon_accent;
-
-        h_flex()
-            .id("diff_review_button")
-            .cursor_pointer()
-            .w(width - px(1.))
-            .h(relative(0.9))
-            .justify_center()
-            .rounded_sm()
-            .border_1()
-            .border_color(text_c.opacity(0.1))
-            .bg(text_c.opacity(0.15))
-            .hover(|s| s.bg(icon_c.opacity(0.4)).border_color(icon_c.opacity(0.5)))
-            .child(Icon::new(IconName::Plus).size(IconSize::Small))
-            .tooltip(Tooltip::text("Add Review"))
-            .into_any_element()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -10460,8 +10446,13 @@ impl Element for EditorElement {
                                 available_width + em_width - px(6.)
                             };
 
+                            let button = self.editor.update(cx, |editor, cx| {
+                                editor
+                                    .render_diff_review_button(display_row, button_width, cx)
+                                    .into_any_element()
+                            });
                             prepaint_gutter_button(
-                                Self::diff_review_button(button_width, cx),
+                                button,
                                 display_row,
                                 line_height,
                                 &gutter_dimensions,
@@ -12001,6 +11992,8 @@ mod tests {
     #[gpui::test]
     async fn test_soft_wrap_editor_width_auto_height_editor(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
+        // Ensure wrap completes synchronously by giving block_with_timeout enough ticks
+        cx.dispatcher.scheduler().set_timeout_ticks(1000..=1000);
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&"a ".to_string().repeat(100), cx);
@@ -12038,6 +12031,8 @@ mod tests {
     #[gpui::test]
     async fn test_soft_wrap_editor_width_full_editor(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
+        // Ensure wrap completes synchronously by giving block_with_timeout enough ticks
+        cx.dispatcher.scheduler().set_timeout_ticks(1000..=1000);
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&"a ".to_string().repeat(100), cx);

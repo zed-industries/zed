@@ -135,6 +135,8 @@ languages = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, "features" = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+recent_projects = { workspace = true, features = ["test-support"] }
+title_bar = { workspace = true, features = ["test-support"] }
 semver.workspace = true
 reqwest_client.workspace = true
 tree-sitter-md.workspace = true
