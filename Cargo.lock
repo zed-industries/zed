@@ -3729,7 +3729,6 @@ dependencies = [
  "lsp",
  "menu",
  "serde_json",
- "settings",
  "ui",
  "util",
  "workspace",

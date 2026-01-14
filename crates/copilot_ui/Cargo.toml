@@ -17,7 +17,6 @@ default = []
 test-support = [
     "copilot/test-support",
     "gpui/test-support",
-    "settings/test-support",
 ]
 
 [dependencies]
