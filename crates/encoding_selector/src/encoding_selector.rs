@@ -293,9 +293,7 @@ impl PickerDelegate for EncodingSelectorDelegate {
             let selected_encoding = self.encodings[mat.candidate_id];
 
             self.buffer.update(cx, |buffer, cx| {
-                buffer.set_encoding(selected_encoding);
-                buffer.set_force_encoding_on_next_reload(true);
-                let _ = buffer.reload(cx);
+                let _ = buffer.reload_with_encoding(selected_encoding, cx);
             });
         }
         self.dismissed(window, cx);
