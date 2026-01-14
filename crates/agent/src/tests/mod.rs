@@ -772,17 +772,17 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     let tool_call_auth_1 = next_tool_call_authorization(&mut events).await;
     let tool_call_auth_2 = next_tool_call_authorization(&mut events).await;
 
-    // Approve the first
+    // Approve the first - send "allow" option_id (UI transforms "once" to "allow")
     tool_call_auth_1
         .response
-        .send(tool_call_auth_1.options[1].option_id.clone())
+        .send(acp::PermissionOptionId::new("allow"))
         .unwrap();
     cx.run_until_parked();
 
-    // Reject the second
+    // Reject the second - send "deny" option_id directly since Deny is now a button
     tool_call_auth_2
         .response
-        .send(tool_call_auth_1.options[2].option_id.clone())
+        .send(acp::PermissionOptionId::new("deny"))
         .unwrap();
     cx.run_until_parked();
 
@@ -821,11 +821,14 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     ));
     fake_model.end_last_completion_stream();
 
-    // Respond by always allowing tools.
+    // Respond by always allowing tools - send transformed option_id
+    // (UI transforms "always:tool_requiring_permission" to "always_allow:tool_requiring_permission")
     let tool_call_auth_3 = next_tool_call_authorization(&mut events).await;
     tool_call_auth_3
         .response
-        .send(tool_call_auth_3.options[0].option_id.clone())
+        .send(acp::PermissionOptionId::new(
+            "always_allow:tool_requiring_permission",
+        ))
         .unwrap();
     cx.run_until_parked();
     let completion = fake_model.pending_completions().pop().unwrap();
@@ -1139,12 +1142,13 @@ async fn next_tool_call_authorization(
                 .iter()
                 .map(|o| o.kind)
                 .collect::<Vec<_>>();
+            // Only 2 options now: AllowAlways (for tool) and AllowOnce (granularity only)
+            // Deny is handled by the UI buttons, not as a separate option
             assert_eq!(
                 permission_kinds,
                 vec![
                     acp::PermissionOptionKind::AllowAlways,
                     acp::PermissionOptionKind::AllowOnce,
-                    acp::PermissionOptionKind::RejectOnce,
                 ]
             );
             return tool_call_authorization;
@@ -3471,6 +3475,7 @@ fn setup_context_server(
             name.into(),
             project::project_settings::ContextServerSettings::Stdio {
                 enabled: true,
+                remote: false,
                 command: ContextServerCommand {
                     path: "somebinary".into(),
                     args: Vec::new(),

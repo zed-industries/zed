@@ -300,7 +300,7 @@
       "cmd-shift-enter": "agent::ContinueThread",
       "alt-enter": "agent::ContinueWithBurnMode",
       "cmd-y": "agent::AllowOnce",
-      "cmd-alt-y": "agent::AllowAlways",
+      "cmd-alt-a": "agent::OpenPermissionDropdown",
       "cmd-alt-z": "agent::RejectOnce",
     },
   },
