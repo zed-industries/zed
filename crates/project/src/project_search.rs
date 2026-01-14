@@ -3,6 +3,7 @@ use std::{
     collections::BTreeSet,
     io::{BufRead, BufReader},
     ops::Range,
+    panic,
     path::{Path, PathBuf},
     pin::pin,
     sync::Arc,
@@ -836,16 +837,13 @@ impl PathInclusionMatcher {
         // For example, `src/**/*.rs` becomes `src/` and `**/*.rs`. The glob part gets dropped.
         // Then, when checking whether a given directory should be scanned, we check whether it is a non-empty substring of any glob prefix.
         if query.filters_path() {
-            included.extend(
-                query
-                    .files_to_include()
-                    .sources()
-                    .filter_map(|glob| {
-                        let prefix = wax::Glob::new(glob).ok()?.partition().0;
-                        // Skip patterns with empty prefixes (e.g., **/*.rs) to avoid panics in wax
-                        (!prefix.as_os_str().is_empty()).then_some(prefix)
-                    }),
-            );
+            included.extend(query.files_to_include().sources().filter_map(|glob| {
+                let wax_glob = wax::Glob::new(glob).ok()?;
+                // Safely extract prefix, catching any panics from wax::partition
+                let prefix = panic::catch_unwind(|| wax_glob.partition().0).ok()?;
+                // Skip patterns with empty prefixes (e.g., **/*.rs) to avoid panics in wax
+                (!prefix.as_os_str().is_empty()).then_some(prefix)
+            }));
         }
         Self { included, query }
     }
@@ -1146,5 +1144,41 @@ mod tests {
             &worktree_snapshot,
             &worktree_settings
         ));
+    }
+
+    #[gpui::test]
+    async fn test_path_inclusion_matcher_problematic_patterns(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        // Test glob patterns that cause panics in wax::partition()
+        // These patterns should not crash PathInclusionMatcher::new
+        let problematic_patterns = vec![
+            "*",           // Single wildcard
+            "**",          // Recursive wildcard
+            ".*",          // Hidden files
+            "*.*",         // Any file with extension
+            "**/*.rs",     // Files in any directory
+            ".gitignore",  // Specific hidden file
+        ];
+
+        for pattern in problematic_patterns {
+            let files_to_include =
+                PathMatcher::new(vec![pattern], PathStyle::Posix).unwrap();
+            let files_to_exclude = PathMatcher::default();
+            let search_query = SearchQuery::text(
+                "test",
+                false,
+                false,
+                false,
+                files_to_include,
+                files_to_exclude,
+                false,
+                None,
+            )
+            .unwrap();
+
+            // This should not panic even for problematic patterns
+            let _path_matcher = PathInclusionMatcher::new(Arc::new(search_query));
+        }
     }
 }
