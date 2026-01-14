@@ -584,8 +584,22 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         let mut commands = self.source.available_commands(cx);
 
         if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-            // Load file-based user commands from config_dir()/commands/
-            if let Ok(user_commands) = crate::user_slash_command::load_user_commands() {
+            // Get worktree roots for project commands
+            let worktree_roots: Vec<std::path::PathBuf> = self
+                .workspace
+                .upgrade()
+                .map(|workspace| {
+                    workspace
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            // Load file-based commands (project commands take precedence over user commands)
+            if let Ok(user_commands) = crate::user_slash_command::load_all_commands(&worktree_roots)
+            {
                 for cmd in user_commands {
                     commands.push(AvailableCommand {
                         name: cmd.name.clone(),

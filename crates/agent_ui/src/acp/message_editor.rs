@@ -389,7 +389,20 @@ impl MessageEditor {
 
         // Load file-based user commands if feature flag is enabled
         let user_commands = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-            user_slash_command::load_user_commands()
+            // Get worktree roots for project commands
+            let worktree_roots: Vec<std::path::PathBuf> = self
+                .workspace
+                .upgrade()
+                .map(|workspace| {
+                    workspace
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            user_slash_command::load_all_commands(&worktree_roots)
                 .ok()
                 .map(|cmds| user_slash_command::commands_to_map(&cmds))
                 .unwrap_or_default()

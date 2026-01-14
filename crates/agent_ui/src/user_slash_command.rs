@@ -4,6 +4,15 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// The scope of a user-defined slash command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandScope {
+    /// Project-specific command from .zed/commands/
+    Project,
+    /// User-wide command from config_dir()/commands/
+    User,
+}
+
 /// A user-defined slash command loaded from a markdown file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UserSlashCommand {
@@ -15,15 +24,21 @@ pub struct UserSlashCommand {
     pub namespace: Option<Arc<str>>,
     /// The full path to the command file
     pub path: PathBuf,
+    /// Whether this is a project or user command
+    pub scope: CommandScope,
 }
 
 impl UserSlashCommand {
     /// Returns a description string for display in completions.
-    /// Format: "(user)" or "(user:namespace)"
+    /// Format: "(project)", "(project:namespace)", "(user)", or "(user:namespace)"
     pub fn description(&self) -> String {
+        let scope_name = match self.scope {
+            CommandScope::Project => "project",
+            CommandScope::User => "user",
+        };
         match &self.namespace {
-            Some(ns) => format!("(user:{})", ns),
-            None => "(user)".to_string(),
+            Some(ns) => format!("({}:{})", scope_name, ns),
+            None => format!("({})", scope_name),
         }
     }
 
@@ -41,27 +56,77 @@ pub struct ParsedUserCommand<'a> {
 }
 
 /// Returns the path to the user commands directory.
-pub fn commands_dir() -> PathBuf {
+pub fn user_commands_dir() -> PathBuf {
     paths::config_dir().join("commands")
 }
 
-/// Loads all user slash commands from the commands directory.
+/// Returns the path to the project commands directory for a given worktree root.
+pub fn project_commands_dir(worktree_root: &Path) -> PathBuf {
+    worktree_root.join(".zed").join("commands")
+}
+
+/// Loads all user slash commands from the user commands directory.
 /// Commands are markdown files in `config_dir()/commands/`.
 /// Subdirectories create namespaces.
 pub fn load_user_commands() -> Result<Vec<UserSlashCommand>> {
-    let commands_path = commands_dir();
+    let commands_path = user_commands_dir();
+    load_commands_from_path(&commands_path, CommandScope::User)
+}
+
+/// Loads all project slash commands from a worktree root.
+/// Commands are markdown files in `.zed/commands/`.
+/// Subdirectories create namespaces.
+pub fn load_project_commands(worktree_root: &Path) -> Result<Vec<UserSlashCommand>> {
+    let commands_path = project_commands_dir(worktree_root);
+    load_commands_from_path(&commands_path, CommandScope::Project)
+}
+
+/// Loads all commands (both project and user) for given worktree roots.
+/// Project commands take precedence over user commands with the same name.
+pub fn load_all_commands(worktree_roots: &[PathBuf]) -> Result<Vec<UserSlashCommand>> {
+    let mut commands = Vec::new();
+    let mut seen_names = std::collections::HashSet::new();
+
+    // Load project commands first (they take precedence)
+    for root in worktree_roots {
+        if let Ok(project_commands) = load_project_commands(root) {
+            for cmd in project_commands {
+                if seen_names.insert(cmd.name.to_string()) {
+                    commands.push(cmd);
+                }
+            }
+        }
+    }
+
+    // Load user commands (skip if name already exists from project)
+    if let Ok(user_commands) = load_user_commands() {
+        for cmd in user_commands {
+            if seen_names.insert(cmd.name.to_string()) {
+                commands.push(cmd);
+            }
+        }
+    }
+
+    Ok(commands)
+}
+
+fn load_commands_from_path(
+    commands_path: &Path,
+    scope: CommandScope,
+) -> Result<Vec<UserSlashCommand>> {
     if !commands_path.exists() {
         return Ok(Vec::new());
     }
 
     let mut commands = Vec::new();
-    load_commands_from_dir(&commands_path, &commands_path, &mut commands)?;
+    load_commands_from_dir(commands_path, commands_path, scope, &mut commands)?;
     Ok(commands)
 }
 
 fn load_commands_from_dir(
     base_path: &Path,
     current_path: &Path,
+    scope: CommandScope,
     commands: &mut Vec<UserSlashCommand>,
 ) -> Result<()> {
     let entries = match std::fs::read_dir(current_path) {
@@ -75,9 +140,9 @@ fn load_commands_from_dir(
         let path = entry.path();
 
         if path.is_dir() {
-            load_commands_from_dir(base_path, &path, commands)?;
+            load_commands_from_dir(base_path, &path, scope, commands)?;
         } else if path.extension().is_some_and(|ext| ext == "md") {
-            if let Some(command) = load_command_file(base_path, &path)? {
+            if let Some(command) = load_command_file(base_path, &path, scope)? {
                 commands.push(command);
             }
         }
@@ -86,7 +151,11 @@ fn load_commands_from_dir(
     Ok(())
 }
 
-fn load_command_file(base_path: &Path, file_path: &Path) -> Result<Option<UserSlashCommand>> {
+fn load_command_file(
+    base_path: &Path,
+    file_path: &Path,
+    scope: CommandScope,
+) -> Result<Option<UserSlashCommand>> {
     let name = match file_path.file_stem() {
         Some(stem) => stem.to_string_lossy().into_owned(),
         None => return Ok(None),
@@ -112,6 +181,7 @@ fn load_command_file(base_path: &Path, file_path: &Path) -> Result<Option<UserSl
         template: template.into(),
         namespace,
         path: file_path.to_path_buf(),
+        scope,
     }))
 }
 
@@ -809,6 +879,7 @@ mod tests {
             template: "test".into(),
             namespace: None,
             path: PathBuf::from("/test.md"),
+            scope: CommandScope::User,
         };
         assert_eq!(cmd.description(), "(user)");
 
@@ -817,6 +888,7 @@ mod tests {
             template: "test".into(),
             namespace: Some("frontend".into()),
             path: PathBuf::from("/frontend/test.md"),
+            scope: CommandScope::User,
         };
         assert_eq!(cmd.description(), "(user:frontend)");
 
@@ -825,8 +897,27 @@ mod tests {
             template: "test".into(),
             namespace: Some("tools/git".into()),
             path: PathBuf::from("/tools/git/test.md"),
+            scope: CommandScope::User,
         };
         assert_eq!(cmd.description(), "(user:tools/git)");
+
+        let cmd = UserSlashCommand {
+            name: "test".into(),
+            template: "test".into(),
+            namespace: None,
+            path: PathBuf::from("/test.md"),
+            scope: CommandScope::Project,
+        };
+        assert_eq!(cmd.description(), "(project)");
+
+        let cmd = UserSlashCommand {
+            name: "test".into(),
+            template: "test".into(),
+            namespace: Some("frontend".into()),
+            path: PathBuf::from("/frontend/test.md"),
+            scope: CommandScope::Project,
+        };
+        assert_eq!(cmd.description(), "(project:frontend)");
     }
 
     #[test]
@@ -836,6 +927,7 @@ mod tests {
             template: "No placeholders here".into(),
             namespace: None,
             path: PathBuf::from("/test.md"),
+            scope: CommandScope::User,
         };
         assert!(!cmd.requires_arguments());
 
@@ -844,6 +936,7 @@ mod tests {
             template: "Hello $1".into(),
             namespace: None,
             path: PathBuf::from("/test.md"),
+            scope: CommandScope::User,
         };
         assert!(cmd.requires_arguments());
 
@@ -852,6 +945,7 @@ mod tests {
             template: "Do: $ARGUMENTS".into(),
             namespace: None,
             path: PathBuf::from("/test.md"),
+            scope: CommandScope::User,
         };
         assert!(cmd.requires_arguments());
     }
@@ -865,12 +959,30 @@ mod tests {
         let review_path = commands_dir.join("review.md");
         std::fs::write(&review_path, "Please review this code for: $1").unwrap();
 
-        let result = super::load_command_file(commands_dir, &review_path).unwrap();
+        let result =
+            super::load_command_file(commands_dir, &review_path, CommandScope::User).unwrap();
         assert!(result.is_some());
         let cmd = result.unwrap();
         assert_eq!(cmd.name.as_ref(), "review");
         assert_eq!(cmd.template.as_ref(), "Please review this code for: $1");
         assert!(cmd.namespace.is_none());
+        assert_eq!(cmd.scope, CommandScope::User);
+    }
+
+    #[test]
+    fn test_load_command_file_project_scope() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let commands_dir = temp_dir.path();
+
+        let review_path = commands_dir.join("review.md");
+        std::fs::write(&review_path, "Project review: $1").unwrap();
+
+        let result =
+            super::load_command_file(commands_dir, &review_path, CommandScope::Project).unwrap();
+        assert!(result.is_some());
+        let cmd = result.unwrap();
+        assert_eq!(cmd.scope, CommandScope::Project);
+        assert_eq!(cmd.description(), "(project)");
     }
 
     #[test]
@@ -884,7 +996,8 @@ mod tests {
         let component_path = frontend_dir.join("component.md");
         std::fs::write(&component_path, "Create a React component: $1").unwrap();
 
-        let result = super::load_command_file(commands_dir, &component_path).unwrap();
+        let result =
+            super::load_command_file(commands_dir, &component_path, CommandScope::User).unwrap();
         assert!(result.is_some());
         let cmd = result.unwrap();
         assert_eq!(cmd.name.as_ref(), "component");
@@ -903,7 +1016,8 @@ mod tests {
         let commit_path = nested_dir.join("commit.md");
         std::fs::write(&commit_path, "Create a git commit: $ARGUMENTS").unwrap();
 
-        let result = super::load_command_file(commands_dir, &commit_path).unwrap();
+        let result =
+            super::load_command_file(commands_dir, &commit_path, CommandScope::User).unwrap();
         assert!(result.is_some());
         let cmd = result.unwrap();
         assert_eq!(cmd.name.as_ref(), "commit");
@@ -922,7 +1036,8 @@ mod tests {
         let empty_path = commands_dir.join("empty.md");
         std::fs::write(&empty_path, "").unwrap();
 
-        let result = super::load_command_file(commands_dir, &empty_path).unwrap();
+        let result =
+            super::load_command_file(commands_dir, &empty_path, CommandScope::User).unwrap();
         assert!(result.is_none());
     }
 
@@ -941,7 +1056,13 @@ mod tests {
         std::fs::write(frontend_dir.join("component.md"), "Component: $1").unwrap();
 
         let mut commands = Vec::new();
-        super::load_commands_from_dir(commands_dir, commands_dir, &mut commands).unwrap();
+        super::load_commands_from_dir(
+            commands_dir,
+            commands_dir,
+            CommandScope::User,
+            &mut commands,
+        )
+        .unwrap();
 
         assert_eq!(commands.len(), 3);
 
@@ -966,9 +1087,57 @@ mod tests {
         let nonexistent = temp_dir.path().join("does_not_exist");
 
         let mut commands = Vec::new();
-        let result = super::load_commands_from_dir(&nonexistent, &nonexistent, &mut commands);
+        let result = super::load_commands_from_dir(
+            &nonexistent,
+            &nonexistent,
+            CommandScope::User,
+            &mut commands,
+        );
         assert!(result.is_ok());
         assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn test_load_project_commands() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let worktree_root = temp_dir.path();
+
+        // Create .zed/commands/ directory
+        let commands_dir = worktree_root.join(".zed").join("commands");
+        std::fs::create_dir_all(&commands_dir).unwrap();
+        std::fs::write(commands_dir.join("build.md"), "Build the project").unwrap();
+
+        let commands = super::load_project_commands(worktree_root).unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].name.as_ref(), "build");
+        assert_eq!(commands[0].scope, CommandScope::Project);
+        assert_eq!(commands[0].description(), "(project)");
+    }
+
+    #[test]
+    fn test_load_all_commands_precedence() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_root = temp_dir.path().join("project");
+        std::fs::create_dir_all(&project_root).unwrap();
+
+        // Create project command
+        let project_commands = project_root.join(".zed").join("commands");
+        std::fs::create_dir_all(&project_commands).unwrap();
+        std::fs::write(project_commands.join("review.md"), "Project review: $1").unwrap();
+        std::fs::write(project_commands.join("build.md"), "Build project").unwrap();
+
+        // Create user command directory (we can't easily test this without mocking config_dir)
+        // But we can test that project commands are loaded with correct scope
+        let commands = super::load_all_commands(std::slice::from_ref(&project_root)).unwrap();
+
+        // Should have both project commands
+        assert!(commands.iter().any(|c| c.name.as_ref() == "review"));
+        assert!(commands.iter().any(|c| c.name.as_ref() == "build"));
+
+        // All should be project scope
+        for cmd in &commands {
+            assert_eq!(cmd.scope, CommandScope::Project);
+        }
     }
 
     #[test]
@@ -979,12 +1148,14 @@ mod tests {
                 template: "Hello!".into(),
                 namespace: None,
                 path: PathBuf::from("/greet.md"),
+                scope: CommandScope::User,
             },
             UserSlashCommand {
                 name: "review".into(),
                 template: "Review: $1".into(),
                 namespace: Some("code".into()),
                 path: PathBuf::from("/code/review.md"),
+                scope: CommandScope::User,
             },
         ];
 
@@ -1003,18 +1174,21 @@ mod tests {
                 template: "Hello, world!".into(),
                 namespace: None,
                 path: PathBuf::from("/greet.md"),
+                scope: CommandScope::User,
             },
             UserSlashCommand {
                 name: "review".into(),
                 template: "Review this for: $1".into(),
                 namespace: None,
                 path: PathBuf::from("/review.md"),
+                scope: CommandScope::User,
             },
             UserSlashCommand {
                 name: "search".into(),
                 template: "Search: $ARGUMENTS".into(),
                 namespace: None,
                 path: PathBuf::from("/search.md"),
+                scope: CommandScope::User,
             },
         ];
         let map = commands_to_map(&commands);
@@ -1047,6 +1221,7 @@ mod tests {
             template: "Review: $1".into(),
             namespace: None,
             path: PathBuf::from("/review.md"),
+            scope: CommandScope::User,
         }];
         let map = commands_to_map(&commands);
 
@@ -1067,6 +1242,7 @@ mod tests {
             template: "Hello!".into(),
             namespace: None,
             path: PathBuf::from("/greet.md"),
+            scope: CommandScope::User,
         }];
         let map = commands_to_map(&commands);
 
