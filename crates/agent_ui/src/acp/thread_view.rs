@@ -3551,9 +3551,6 @@ impl AcpThreadView {
 
         let card_header_id =
             SharedString::from(format!("subagent-header-{}-{}", entry_ix, context_ix));
-        let card_id = SharedString::from(format!("subagent-card-{}-{}", entry_ix, context_ix));
-        let disclosure_id =
-            SharedString::from(format!("subagent-disclosure-{}-{}", entry_ix, context_ix));
         let diff_stat_id = SharedString::from(format!("subagent-diff-{}-{}", entry_ix, context_ix));
 
         v_flex()
@@ -3561,81 +3558,82 @@ impl AcpThreadView {
             .rounded_md()
             .border_1()
             .border_color(self.tool_card_border_color(cx))
-            .bg(cx.theme().colors().editor_background)
             .overflow_hidden()
             .child(
                 h_flex()
-                    .id(card_id)
                     .group(&card_header_id)
+                    .py_1()
+                    .px_1p5()
                     .w_full()
-                    .p_1()
-                    .gap_1p5()
+                    .gap_1()
+                    .justify_between()
                     .bg(self.tool_card_header_bg(cx))
                     .child(
-                        div()
-                            .id(disclosure_id)
-                            .cursor_pointer()
-                            .on_click(cx.listener({
-                                move |this, _, _, cx| {
-                                    if this.expanded_subagents.contains(&session_id) {
-                                        this.expanded_subagents.remove(&session_id);
-                                    } else {
-                                        this.expanded_subagents.insert(session_id.clone());
-                                    }
-                                    cx.notify();
-                                }
-                            }))
-                            .child(Disclosure::new(
-                                SharedString::from(format!(
-                                    "subagent-disclosure-inner-{}-{}",
-                                    entry_ix, context_ix
-                                )),
-                                is_expanded,
-                            )),
-                    )
-                    .child(if is_running {
-                        SpinnerLabel::new()
-                            .size(LabelSize::Small)
-                            .into_any_element()
-                    } else {
-                        Icon::new(IconName::Check)
-                            .size(IconSize::Small)
-                            .color(Color::Success)
-                            .into_any_element()
-                    })
-                    .child(
-                        h_flex().flex_1().overflow_hidden().child(
-                            Label::new(title.to_string())
-                                .size(LabelSize::Small)
-                                .color(Color::Default),
-                        ),
-                    )
-                    .when(files_changed > 0, |this| {
-                        this.child(
-                            h_flex()
-                                .gap_1()
-                                .child(Label::new("—").size(LabelSize::Small).color(Color::Muted))
-                                .child(
-                                    Label::new(format!(
-                                        "{} {} changed",
-                                        files_changed,
-                                        if files_changed == 1 { "file" } else { "files" }
-                                    ))
+                        h_flex()
+                            .gap_1p5()
+                            .child(if is_running {
+                                SpinnerLabel::new()
                                     .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                    .into_any_element()
+                            } else {
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::Small)
+                                    .color(Color::Success)
+                                    .into_any_element()
+                            })
+                            .child(
+                                Label::new(title.to_string())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Default),
+                            )
+                            .when(files_changed > 0, |this| {
+                                this.child(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Label::new(format!(
+                                                "— {} {} changed",
+                                                files_changed,
+                                                if files_changed == 1 { "file" } else { "files" }
+                                            ))
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                        )
+                                        .child(DiffStat::new(
+                                            diff_stat_id.clone(),
+                                            diff_stats.lines_added as usize,
+                                            diff_stats.lines_removed as usize,
+                                        )),
                                 )
-                                .child(DiffStat::new(
-                                    diff_stat_id.clone(),
-                                    diff_stats.lines_added as usize,
-                                    diff_stats.lines_removed as usize,
-                                )),
+                            }),
+                    )
+                    .child(
+                        Disclosure::new(
+                            SharedString::from(format!(
+                                "subagent-disclosure-inner-{}-{}",
+                                entry_ix, context_ix
+                            )),
+                            is_expanded,
                         )
-                    }),
+                        .opened_icon(IconName::ChevronUp)
+                        .closed_icon(IconName::ChevronDown)
+                        .visible_on_hover(card_header_id)
+                        .on_click(cx.listener({
+                            move |this, _, _, cx| {
+                                if this.expanded_subagents.contains(&session_id) {
+                                    this.expanded_subagents.remove(&session_id);
+                                } else {
+                                    this.expanded_subagents.insert(session_id.clone());
+                                }
+                                cx.notify();
+                            }
+                        })),
+                    ),
             )
             .when(is_expanded, |this| {
-                this.child(self.render_subagent_expanded_content(
-                    entry_ix, context_ix, thread, is_running, window, cx,
-                ))
+                this.child(
+                    self.render_subagent_expanded_content(entry_ix, context_ix, thread, window, cx),
+                )
             })
             .into_any_element()
     }
@@ -3645,14 +3643,13 @@ impl AcpThreadView {
         _entry_ix: usize,
         _context_ix: usize,
         thread: &Entity<AcpThread>,
-        is_running: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let thread_read = thread.read(cx);
         let entries = thread_read.entries();
 
-        // Find the most recent assistant message with any content (message or thought)
+        // Find the most recent agent message with any content (message or thought)
         let last_assistant_markdown = entries.iter().rev().find_map(|entry| {
             if let AgentThreadEntry::AssistantMessage(msg) = entry {
                 msg.chunks.iter().find_map(|chunk| match chunk {
@@ -3664,28 +3661,22 @@ impl AcpThreadView {
             }
         });
 
-        let has_content = last_assistant_markdown.is_some();
-
-        v_flex()
+        div()
+            .id("subagents_content")
             .w_full()
             .p_2()
-            .gap_2()
+            .max_h_56()
+            .overflow_y_scroll()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
             .bg(cx.theme().colors().editor_background)
             .when_some(last_assistant_markdown, |this, markdown| {
                 this.child(
-                    div()
-                        .when(!is_running, |d| d.max_h(px(200.)).overflow_hidden())
-                        .text_sm()
-                        .child(self.render_markdown(
-                            markdown,
-                            default_markdown_style(false, false, window, cx),
-                        )),
+                    self.render_markdown(
+                        markdown,
+                        default_markdown_style(false, false, window, cx),
+                    ),
                 )
-            })
-            .when(is_running && !has_content, |this| {
-                this.child(SpinnerLabel::new().size(LabelSize::Small))
             })
     }
 
