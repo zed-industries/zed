@@ -84,6 +84,7 @@ impl<T: MergeFrom> MergeFrom for Box<T> {
     }
 }
 
+// Implementations for collections that extend/merge their contents
 impl<K, V> MergeFrom for collections::HashMap<K, V>
 where
     K: Clone + std::hash::Hash + Eq,
