@@ -1,5 +1,6 @@
 use anyhow::{Context as _, Result};
 use flate2::read::GzDecoder;
+use gpui::BackgroundExecutor;
 use http_client::{AsyncBody, HttpClient, Method, Request};
 use indoc::indoc;
 use serde::Deserialize;
@@ -31,6 +32,7 @@ pub async fn fetch_captured_examples_after(
     http_client: Arc<dyn HttpClient>,
     after_timestamps: &[String],
     max_rows_per_timestamp: usize,
+    background_executor: BackgroundExecutor,
 ) -> Result<Vec<Example>> {
     if after_timestamps.is_empty() {
         return Ok(Vec::new());
@@ -82,6 +84,7 @@ pub async fn fetch_captured_examples_after(
             &token,
             &request,
             &step_progress,
+            background_executor.clone(),
         )
         .await?;
 
@@ -239,6 +242,7 @@ async fn run_sql_with_polling(
     token: &str,
     request: &serde_json::Value,
     step_progress: &crate::progress::StepProgress,
+    background_executor: BackgroundExecutor,
 ) -> Result<SnowflakeStatementResponse> {
     let mut response = run_sql(http_client.clone(), base_url, token, request).await?;
 
@@ -252,7 +256,7 @@ async fn run_sql_with_polling(
         for attempt in 1..=MAX_POLL_ATTEMPTS {
             step_progress.set_substatus(format!("polling ({attempt})"));
 
-            smol::Timer::after(POLL_INTERVAL).await;
+            background_executor.timer(POLL_INTERVAL).await;
 
             response =
                 fetch_partition(http_client.clone(), base_url, token, &statement_handle, 0).await?;
