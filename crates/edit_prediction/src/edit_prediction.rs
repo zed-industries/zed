@@ -1,7 +1,9 @@
 use anyhow::Result;
 use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
-use cloud_llm_client::predict_edits_v3::{self, PromptFormat};
+use cloud_llm_client::predict_edits_v3::{
+    self, PromptFormat, RawCompletionRequest, RawCompletionResponse,
+};
 use cloud_llm_client::{
     EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason, EditPredictionRejection,
     MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
@@ -36,6 +38,7 @@ use settings::{EditPredictionProvider, SettingsStore, update_settings_file};
 use std::collections::{VecDeque, hash_map};
 use text::Edit;
 use workspace::Workspace;
+use zeta_prompt::ZetaVersion;
 
 use std::ops::Range;
 use std::path::Path;
@@ -181,7 +184,9 @@ pub struct EditPredictionStore {
 pub enum EditPredictionModel {
     #[default]
     Zeta1,
-    Zeta2,
+    Zeta2 {
+        version: ZetaVersion,
+    },
     Sweep,
     Mercury,
 }
@@ -192,7 +197,7 @@ pub struct EditPredictionModelInput {
     snapshot: BufferSnapshot,
     position: Anchor,
     events: Vec<Arc<zeta_prompt::Event>>,
-    related_files: Arc<[RelatedFile]>,
+    related_files: Vec<RelatedFile>,
     recent_paths: VecDeque<ProjectPath>,
     trigger: PredictEditsRequestTrigger,
     diagnostic_search_range: Range<Point>,
@@ -652,7 +657,9 @@ impl EditPredictionStore {
             update_required: false,
             #[cfg(feature = "cli-support")]
             eval_cache: None,
-            edit_prediction_model: EditPredictionModel::Zeta2,
+            edit_prediction_model: EditPredictionModel::Zeta2 {
+                version: Default::default(),
+            },
             sweep_ai: SweepAi::new(cx),
             mercury: Mercury::new(cx),
             data_collection_choice,
@@ -764,26 +771,38 @@ impl EditPredictionStore {
     pub fn context_for_project<'a>(
         &'a self,
         project: &Entity<Project>,
-        cx: &'a App,
-    ) -> Arc<[RelatedFile]> {
+        cx: &'a mut App,
+    ) -> Vec<RelatedFile> {
         self.projects
             .get(&project.entity_id())
-            .map(|project| project.context.read(cx).related_files())
-            .unwrap_or_else(|| vec![].into())
+            .map(|project| {
+                project
+                    .context
+                    .update(cx, |context, cx| context.related_files(cx))
+            })
+            .unwrap_or_default()
     }
 
     pub fn context_for_project_with_buffers<'a>(
         &'a self,
         project: &Entity<Project>,
-        cx: &'a App,
-    ) -> Option<impl 'a + Iterator<Item = (RelatedFile, Entity<Buffer>)>> {
+        cx: &'a mut App,
+    ) -> Vec<(RelatedFile, Entity<Buffer>)> {
         self.projects
             .get(&project.entity_id())
-            .map(|project| project.context.read(cx).related_files_with_buffers())
+            .map(|project| {
+                project
+                    .context
+                    .update(cx, |context, cx| context.related_files_with_buffers(cx))
+            })
+            .unwrap_or_default()
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        if self.edit_prediction_model == EditPredictionModel::Zeta2 {
+        if matches!(
+            self.edit_prediction_model,
+            EditPredictionModel::Zeta2 { .. }
+        ) {
             self.user_store.read(cx).edit_prediction_usage()
         } else {
             None
@@ -1193,7 +1212,7 @@ impl EditPredictionStore {
                 sweep_ai::edit_prediction_accepted(self, current_prediction, cx)
             }
             EditPredictionModel::Mercury => {}
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
                 zeta2::edit_prediction_accepted(self, current_prediction, cx)
             }
         }
@@ -1327,7 +1346,7 @@ impl EditPredictionStore {
         was_shown: bool,
     ) {
         match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
                 if self.custom_predict_edits_url.is_some() {
                     return;
                 }
@@ -1719,7 +1738,7 @@ impl EditPredictionStore {
         let related_files = if self.use_context {
             self.context_for_project(&project, cx)
         } else {
-            Vec::new().into()
+            Vec::new()
         };
 
         let inputs = EditPredictionModelInput {
@@ -1762,7 +1781,9 @@ impl EditPredictionStore {
         }
         let task = match self.edit_prediction_model {
             EditPredictionModel::Zeta1 => zeta1::request_prediction_with_zeta1(self, inputs, cx),
-            EditPredictionModel::Zeta2 => zeta2::request_prediction_with_zeta2(self, inputs, cx),
+            EditPredictionModel::Zeta2 { version } => {
+                zeta2::request_prediction_with_zeta2(self, inputs, version, cx)
+            }
             EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(inputs, cx),
             EditPredictionModel::Mercury => self.mercury.request_prediction(inputs, cx),
         };
@@ -1884,16 +1905,21 @@ impl EditPredictionStore {
     }
 
     async fn send_raw_llm_request(
-        request: open_ai::Request,
+        request: RawCompletionRequest,
         client: Arc<Client>,
+        custom_url: Option<Arc<Url>>,
         llm_token: LlmApiToken,
         app_version: Version,
         #[cfg(feature = "cli-support")] eval_cache: Option<Arc<dyn EvalCache>>,
         #[cfg(feature = "cli-support")] eval_cache_kind: EvalCacheEntryKind,
-    ) -> Result<(open_ai::Response, Option<EditPredictionUsage>)> {
-        let url = client
-            .http_client()
-            .build_zed_llm_url("/predict_edits/raw", &[])?;
+    ) -> Result<(RawCompletionResponse, Option<EditPredictionUsage>)> {
+        let url = if let Some(custom_url) = custom_url {
+            custom_url.as_ref().clone()
+        } else {
+            client
+                .http_client()
+                .build_zed_llm_url("/predict_edits/raw", &[])?
+        };
 
         #[cfg(feature = "cli-support")]
         let cache_key = if let Some(cache) = eval_cache {
@@ -2082,8 +2108,8 @@ impl EditPredictionStore {
     ) {
         self.get_or_init_project(project, cx)
             .context
-            .update(cx, |store, _| {
-                store.set_related_files(related_files);
+            .update(cx, |store, cx| {
+                store.set_related_files(related_files, cx);
             });
     }
 
@@ -2191,6 +2217,23 @@ impl EditPredictionStore {
         self.use_context = cx.has_flag::<Zeta2FeatureFlag>()
             && all_language_settings(None, cx).edit_predictions.use_context;
     }
+}
+
+pub(crate) fn filter_redundant_excerpts(
+    mut related_files: Vec<RelatedFile>,
+    cursor_path: &Path,
+    cursor_row_range: Range<u32>,
+) -> Vec<RelatedFile> {
+    for file in &mut related_files {
+        if file.path.as_ref() == cursor_path {
+            file.excerpts.retain(|excerpt| {
+                excerpt.row_range.start < cursor_row_range.start
+                    || excerpt.row_range.end > cursor_row_range.end
+            });
+        }
+    }
+    related_files.retain(|file| !file.excerpts.is_empty());
+    related_files
 }
 
 #[derive(Error, Debug)]

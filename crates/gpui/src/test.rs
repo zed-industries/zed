@@ -54,7 +54,9 @@ pub fn run_test(
             }
             let result = panic::catch_unwind(|| {
                 let dispatcher = TestDispatcher::new(seed);
+                let scheduler = dispatcher.scheduler().clone();
                 test_fn(dispatcher, seed);
+                scheduler.end_test();
             });
 
             match result {

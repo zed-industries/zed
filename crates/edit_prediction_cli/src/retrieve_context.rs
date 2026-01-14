@@ -1,5 +1,5 @@
 use crate::{
-    example::{Example, ExampleContext},
+    example::Example,
     headless::EpAppState,
     load_project::run_load_project,
     progress::{InfoStyle, Progress, Step, StepProgress},
@@ -19,7 +19,11 @@ pub async fn run_context_retrieval(
     app_state: Arc<EpAppState>,
     mut cx: AsyncApp,
 ) -> anyhow::Result<()> {
-    if example.context.is_some() {
+    if example
+        .prompt_inputs
+        .as_ref()
+        .is_some_and(|inputs| inputs.related_files.is_some())
+    {
         return Ok(());
     }
 
@@ -63,9 +67,9 @@ pub async fn run_context_retrieval(
     let excerpt_count: usize = context_files.iter().map(|f| f.excerpts.len()).sum();
     step_progress.set_info(format!("{} excerpts", excerpt_count), InfoStyle::Normal);
 
-    example.context = Some(ExampleContext {
-        files: context_files,
-    });
+    if let Some(prompt_inputs) = example.prompt_inputs.as_mut() {
+        prompt_inputs.related_files = Some(context_files);
+    }
     Ok(())
 }
 

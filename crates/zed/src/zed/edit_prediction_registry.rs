@@ -204,7 +204,9 @@ fn assign_edit_prediction_provider(
                         } else if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME
                             && cx.has_flag::<Zeta2FeatureFlag>()
                         {
-                            edit_prediction::EditPredictionModel::Zeta2
+                            edit_prediction::EditPredictionModel::Zeta2 {
+                                version: Default::default(),
+                            }
                         } else if name == EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME
                             && cx.has_flag::<MercuryFeatureFlag>()
                         {
