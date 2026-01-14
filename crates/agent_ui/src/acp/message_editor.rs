@@ -1,4 +1,5 @@
 use crate::QueueMessage;
+use crate::acp::AcpThreadHistory;
 use crate::{
     ChatWithFollow,
     completion_provider::{
@@ -9,7 +10,7 @@ use crate::{
         Mention, MentionImage, MentionSet, insert_crease_for_mention, paste_images_as_context,
     },
 };
-use acp_thread::{AgentSessionInfo, AgentSessionList, MentionUri};
+use acp_thread::{AgentSessionInfo, MentionUri};
 use agent::ThreadStore;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
@@ -101,7 +102,7 @@ impl MessageEditor {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        session_list: Rc<RefCell<Option<Rc<dyn AgentSessionList>>>>,
+        history: WeakEntity<AcpThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
@@ -159,7 +160,7 @@ impl MessageEditor {
             editor.downgrade(),
             mention_set.clone(),
             thread_store.clone(),
-            session_list,
+            Some(history), // BENTODO: non optional
             prompt_store.clone(),
             workspace.clone(),
         ));
@@ -1108,7 +1109,8 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = None;
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -1116,7 +1118,7 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
                     Default::default(),
                     Default::default(),
@@ -1214,13 +1216,14 @@ mod tests {
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let thread_store = None;
-        let session_list = Rc::new(RefCell::new(None));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         // Start with no available commands - simulating Claude which doesn't support slash commands
         let available_commands = Rc::new(RefCell::new(vec![]));
 
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
         let workspace_handle = workspace.downgrade();
         let message_editor = workspace.update_in(cx, |_, window, cx| {
             cx.new(|cx| {
@@ -1228,7 +1231,7 @@ mod tests {
                     workspace_handle.clone(),
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
                     prompt_capabilities.clone(),
                     available_commands.clone(),
@@ -1372,7 +1375,8 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window, cx);
 
         let thread_store = None;
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![
             acp::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
@@ -1390,7 +1394,7 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
                     prompt_capabilities.clone(),
                     available_commands.clone(),
@@ -1603,7 +1607,8 @@ mod tests {
         }
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -1613,7 +1618,7 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
                     prompt_capabilities.clone(),
                     Default::default(),
@@ -2097,7 +2102,8 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2105,7 +2111,7 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
                     Default::default(),
                     Default::default(),
@@ -2196,7 +2202,8 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         // Create a thread metadata to insert as summary
         let thread_metadata = AgentSessionInfo {
@@ -2213,7 +2220,7 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
                     Default::default(),
                     Default::default(),
@@ -2276,7 +2283,8 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = None;
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         let thread_metadata = AgentSessionInfo {
             session_id: acp::SessionId::new("thread-123"),
@@ -2292,7 +2300,7 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
                     Default::default(),
                     Default::default(),
@@ -2334,7 +2342,8 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = None;
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2342,7 +2351,7 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
                     Default::default(),
                     Default::default(),
@@ -2387,7 +2396,8 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2395,7 +2405,7 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
                     Default::default(),
                     Default::default(),
@@ -2441,7 +2451,8 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
@@ -2449,7 +2460,7 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
                     Default::default(),
                     Default::default(),
@@ -2504,7 +2515,8 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         let (message_editor, editor) = workspace.update_in(cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
@@ -2513,7 +2525,7 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
                     Default::default(),
                     Default::default(),
@@ -2660,7 +2672,8 @@ mod tests {
         });
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         // Create a new `MessageEditor`. The `EditorMode::full()` has to be used
         // to ensure we have a fixed viewport, so we can eventually actually
@@ -2672,7 +2685,7 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
                     Default::default(),
                     Default::default(),

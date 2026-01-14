@@ -455,6 +455,7 @@ impl AcpThreadHistory {
 
     fn remove_history(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(session_list) = self.session_list.as_ref() {
+            //BENTODO: use threadhistory instead
             session_list.delete_sessions(cx).detach_and_log_err(cx);
         }
         self.confirming_delete_history = false;

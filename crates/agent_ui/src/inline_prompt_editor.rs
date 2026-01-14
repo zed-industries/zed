@@ -19,7 +19,6 @@ use parking_lot::Mutex;
 use project::Project;
 use prompt_store::PromptStore;
 use settings::Settings;
-use std::cell::RefCell;
 use std::cmp;
 use std::ops::Range;
 use std::rc::Rc;
@@ -332,8 +331,8 @@ impl<T: 'static> PromptEditor<T> {
                 PromptEditorCompletionProviderDelegate,
                 cx.weak_entity(),
                 self.mention_set.clone(),
-                Some(self.thread_store.clone()),
-                Rc::new(RefCell::new(None)),
+                Some(self.thread_store.clone()), // BENTODO: Now global do we need threadstore?
+                None,
                 self.prompt_store.clone(),
                 self.workspace.clone(),
             ))));

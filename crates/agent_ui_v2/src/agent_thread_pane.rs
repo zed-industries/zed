@@ -3,7 +3,7 @@ use agent::{NativeAgentServer, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use agent_settings::AgentSettings;
-use agent_ui::acp::AcpThreadView;
+use agent_ui::acp::{AcpThreadHistory, AcpThreadView};
 use fs::Fs;
 use gpui::{
     Entity, EventEmitter, Focusable, Pixels, SharedString, Subscription, WeakEntity, prelude::*,
@@ -62,6 +62,7 @@ pub struct AgentThreadPane {
     width: Option<Pixels>,
     thread_view: Option<ActiveThreadView>,
     workspace: WeakEntity<Workspace>,
+    history: Option<Entity<AcpThreadHistory>>,
 }
 
 impl AgentThreadPane {
@@ -73,6 +74,7 @@ impl AgentThreadPane {
             width: None,
             thread_view: None,
             workspace,
+            history: None,
         }
     }
 
@@ -104,6 +106,11 @@ impl AgentThreadPane {
 
         let agent: Rc<dyn AgentServer> = Rc::new(NativeAgentServer::new(fs, thread_store.clone()));
 
+        // BENTODO: We should have this created already.
+        let history = self
+            .history
+            .get_or_insert_with(|| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
+
         let thread_view = cx.new(|cx| {
             AcpThreadView::new(
                 agent,
@@ -113,6 +120,7 @@ impl AgentThreadPane {
                 project,
                 Some(thread_store),
                 prompt_store,
+                history.clone(),
                 true,
                 window,
                 cx,

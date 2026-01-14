@@ -305,6 +305,7 @@ impl ActiveView {
         thread_store: Entity<ThreadStore>,
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
+        history: Entity<AcpThreadHistory>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
@@ -317,6 +318,7 @@ impl ActiveView {
                 project,
                 Some(thread_store),
                 prompt_store,
+                history,
                 false,
                 window,
                 cx,
@@ -429,7 +431,6 @@ pub struct AgentPanel {
     context_server_registry: Entity<ContextServerRegistry>,
     configuration: Option<Entity<AgentConfiguration>>,
     configuration_subscription: Option<Subscription>,
-    history_subscription: Option<Subscription>,
     active_view: ActiveView,
     previous_view: Option<ActiveView>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -583,6 +584,7 @@ impl AgentPanel {
                 thread_store.clone(),
                 project.clone(),
                 workspace.clone(),
+                acp_history.clone(),
                 window,
                 cx,
             ),
@@ -684,7 +686,6 @@ impl AgentPanel {
             prompt_store,
             configuration: None,
             configuration_subscription: None,
-            history_subscription: None,
             context_server_registry,
             previous_view: None,
             new_thread_menu_handle: PopoverMenuHandle::default(),
@@ -1558,20 +1559,12 @@ impl AgentPanel {
                 project,
                 thread_store,
                 self.prompt_store.clone(),
+                self.acp_history.clone(),
                 !loading,
                 window,
                 cx,
             )
         });
-
-        let acp_history = self.acp_history.clone();
-        self.history_subscription = Some(cx.observe(&thread_view, move |_, thread_view, cx| {
-            if let Some(session_list) = thread_view.read(cx).session_list() {
-                acp_history.update(cx, |history, cx| {
-                    history.set_session_list(Some(session_list), cx);
-                });
-            }
-        }));
 
         self.set_active_view(
             ActiveView::ExternalAgentThread { thread_view },

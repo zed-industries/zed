@@ -1,12 +1,11 @@
-use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use acp_thread::{AgentSessionInfo, AgentSessionList, AgentSessionListRequest, MentionUri};
+use crate::acp::AcpThreadHistory;
+use acp_thread::{AgentSessionInfo, MentionUri};
 use agent::ThreadStore;
 use anyhow::Result;
 use editor::{
@@ -197,7 +196,7 @@ pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
     thread_store: Option<Entity<ThreadStore>>,
-    session_list: Rc<RefCell<Option<Rc<dyn AgentSessionList>>>>,
+    history: Option<WeakEntity<AcpThreadHistory>>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
 }
@@ -208,7 +207,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
         thread_store: Option<Entity<ThreadStore>>,
-        session_list: Rc<RefCell<Option<Rc<dyn AgentSessionList>>>>,
+        history: Option<WeakEntity<AcpThreadHistory>>, // BENTODO: Non optional
         prompt_store: Option<Entity<PromptStore>>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -218,7 +217,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             mention_set,
             workspace,
             thread_store,
-            session_list,
+            history,
             prompt_store,
         }
     }
@@ -653,15 +652,12 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             }
 
             Some(PromptContextType::Thread) => {
-                if let Some(session_list) = self.session_list.borrow().clone() {
-                    let search_sessions_task =
-                        search_sessions(query, cancellation_flag, session_list, cx);
+                if let Some(history) = self.history.as_ref().and_then(|h| h.upgrade()) {
+                    let sessions = history.read(cx).sessions().to_vec();
+                    let search_task =
+                        filter_sessions_by_query(query, cancellation_flag, sessions, cx);
                     cx.spawn(async move |_cx| {
-                        search_sessions_task
-                            .await
-                            .into_iter()
-                            .map(Match::Thread)
-                            .collect()
+                        search_task.await.into_iter().map(Match::Thread).collect()
                     })
                 } else if let Some(thread_store) = self.thread_store.as_ref() {
                     let search_threads_task =
@@ -835,19 +831,12 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             return Task::ready(recent);
         }
 
-        if let Some(session_list) = self.session_list.borrow().clone() {
-            let task = session_list.list_sessions(AgentSessionListRequest::default(), cx);
-            return cx.spawn(async move |_cx| {
-                let sessions = match task.await {
-                    Ok(response) => response.sessions,
-                    Err(error) => {
-                        log::error!("Failed to load recent sessions: {error:#}");
-                        return recent;
-                    }
-                };
-
-                const RECENT_COUNT: usize = 2;
-                let threads = sessions
+        if let Some(history) = self.history.as_ref().and_then(|h| h.upgrade()) {
+            const RECENT_COUNT: usize = 2;
+            recent.extend(
+                history
+                    .read(cx)
+                    .sessions()
                     .into_iter()
                     .filter(|session| {
                         let uri = MentionUri::Thread {
@@ -857,11 +846,10 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                         !mentions.contains(&uri)
                     })
                     .take(RECENT_COUNT)
-                    .collect::<Vec<_>>();
-
-                recent.extend(threads.into_iter().map(Match::RecentThread));
-                recent
-            });
+                    .cloned()
+                    .map(Match::RecentThread),
+            );
+            return Task::ready(recent);
         }
 
         let Some(thread_store) = self.thread_store.as_ref() else {
@@ -1629,25 +1617,17 @@ pub(crate) fn search_threads(
     })
 }
 
-pub(crate) fn search_sessions(
+fn filter_sessions_by_query(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
-    session_list: Rc<dyn AgentSessionList>,
+    sessions: Vec<AgentSessionInfo>,
     cx: &mut App,
 ) -> Task<Vec<AgentSessionInfo>> {
-    let task = session_list.list_sessions(AgentSessionListRequest::default(), cx);
+    if query.is_empty() {
+        return Task::ready(sessions);
+    }
     let executor = cx.background_executor().clone();
-    cx.spawn(async move |_cx| {
-        let sessions = match task.await {
-            Ok(response) => response.sessions,
-            Err(error) => {
-                log::error!("Failed to list sessions: {error:#}");
-                return Vec::new();
-            }
-        };
-        if query.is_empty() {
-            return sessions;
-        }
+    cx.background_spawn(async move {
         filter_sessions(query, cancellation_flag, sessions, executor).await
     })
 }
@@ -1815,9 +1795,7 @@ fn selection_ranges(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use acp_thread::AgentSessionListResponse;
     use gpui::TestAppContext;
-    use std::{any::Any, rc::Rc};
 
     #[test]
     fn test_prompt_completion_parse() {
@@ -2059,41 +2037,20 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_search_sessions_filters_results(cx: &mut TestAppContext) {
-        #[derive(Clone)]
-        struct StubSessionList {
-            sessions: Vec<AgentSessionInfo>,
-        }
-
-        impl AgentSessionList for StubSessionList {
-            fn list_sessions(
-                &self,
-                _request: AgentSessionListRequest,
-                _cx: &mut App,
-            ) -> Task<anyhow::Result<AgentSessionListResponse>> {
-                Task::ready(Ok(AgentSessionListResponse::new(self.sessions.clone())))
-            }
-
-            fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-                self
-            }
-        }
-
+    async fn test_filter_sessions_by_query(cx: &mut TestAppContext) {
         let mut alpha = AgentSessionInfo::new("session-alpha");
         alpha.title = Some("Alpha Session".into());
         let mut beta = AgentSessionInfo::new("session-beta");
         beta.title = Some("Beta Session".into());
 
-        let session_list: Rc<dyn AgentSessionList> = Rc::new(StubSessionList {
-            sessions: vec![alpha.clone(), beta],
-        });
+        let sessions = vec![alpha.clone(), beta];
 
         let task = {
             let mut app = cx.app.borrow_mut();
-            search_sessions(
+            filter_sessions_by_query(
                 "Alpha".into(),
                 Arc::new(AtomicBool::default()),
-                session_list,
+                sessions,
                 &mut app,
             )
         };

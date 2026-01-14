@@ -72,7 +72,7 @@ pub enum ThreadHistoryEvent {
 impl EventEmitter<ThreadHistoryEvent> for AcpThreadHistory {}
 
 impl AcpThreadHistory {
-    pub(crate) fn new(
+    pub fn new(
         session_list: Option<Rc<dyn AgentSessionList>>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -255,6 +255,31 @@ impl AcpThreadHistory {
 
     pub(crate) fn sessions(&self) -> &[AgentSessionInfo] {
         &self.sessions
+    }
+
+    pub(crate) fn get_recent_sessions(&self, limit: usize) -> Vec<AgentSessionInfo> {
+        self.sessions.iter().take(limit).cloned().collect()
+    }
+
+    pub(crate) fn delete_session(
+        &self,
+        session_id: &acp::SessionId,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<()>> {
+        if let Some(session_list) = self.session_list.as_ref() {
+            session_list.delete_session(session_id, cx)
+        } else {
+            Task::ready(Ok(()))
+        }
+    }
+
+    #[expect(dead_code)] // BENTODO: this should get called somehwere
+    pub(crate) fn delete_sessions(&self, cx: &mut App) -> Task<anyhow::Result<()>> {
+        if let Some(session_list) = self.session_list.as_ref() {
+            session_list.delete_sessions(cx)
+        } else {
+            Task::ready(Ok(()))
+        }
     }
 
     fn add_list_separators(
