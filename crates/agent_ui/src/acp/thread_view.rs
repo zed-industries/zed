@@ -3202,7 +3202,9 @@ impl AcpThreadView {
                                                 this.child(
                                                     div()
                                                         .id(entry_ix)
-                                                        .tooltip(Tooltip::text("Interrupted Edit"))
+                                                        .tooltip(Tooltip::text(
+                                                            "Interrupted Edit",
+                                                        ))
                                                         .child(
                                                             Icon::new(IconName::XCircle)
                                                                 .color(Color::Muted)
