@@ -840,7 +840,11 @@ impl PathInclusionMatcher {
                 query
                     .files_to_include()
                     .sources()
-                    .flat_map(|glob| Some(wax::Glob::new(glob).ok()?.partition().0)),
+                    .filter_map(|glob| {
+                        let prefix = wax::Glob::new(glob).ok()?.partition().0;
+                        // Skip patterns with empty prefixes (e.g., **/*.rs) to avoid panics in wax
+                        (!prefix.as_os_str().is_empty()).then_some(prefix)
+                    }),
             );
         }
         Self { included, query }
