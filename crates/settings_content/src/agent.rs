@@ -1,5 +1,4 @@
 use collections::{HashMap, IndexMap};
-use gpui::SharedString;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
@@ -272,7 +271,7 @@ pub enum CompletionMode {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct LanguageModelParameters {
     pub provider: Option<LanguageModelProviderSetting>,
-    pub model: Option<SharedString>,
+    pub model: Option<String>,
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub temperature: Option<f32>,
 }
@@ -336,7 +335,7 @@ pub struct AllAgentServersSettings {
 
     /// Custom agent servers configured by the user
     #[serde(flatten)]
-    pub custom: HashMap<SharedString, CustomAgentServerSettings>,
+    pub custom: HashMap<String, CustomAgentServerSettings>,
 }
 
 #[with_fallible_options]

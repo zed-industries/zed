@@ -18484,7 +18484,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     let _fake_server = fake_servers.next().await.unwrap();
     update_test_language_settings(cx, |language_settings| {
         language_settings.languages.0.insert(
-            language_name.clone().0,
+            language_name.clone().0.to_string(),
             LanguageSettingsContent {
                 tab_size: NonZeroU32::new(8),
                 ..Default::default()

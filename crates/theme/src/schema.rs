@@ -1,12 +1,15 @@
 #![allow(missing_docs)]
 
-use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla};
+use gpui::{HighlightStyle, Hsla};
 use palette::FromColor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use settings::{FontWeightContent, WindowBackgroundContent};
 
-use crate::{StatusColorsRefinement, ThemeColorsRefinement};
+use crate::{
+    StatusColorsRefinement, ThemeColorsRefinement, font_style_content_to_font_style,
+    font_weight_content_to_font_weight,
+};
 
 fn ensure_non_opaque(color: Hsla) -> Hsla {
     const MAXIMUM_OPACITY: f32 = 0.7;
@@ -63,8 +66,8 @@ pub fn syntax_overrides(this: &settings::ThemeStyleContent) -> Vec<(String, High
                         .background_color
                         .as_ref()
                         .and_then(|color| try_parse_color(color).ok()),
-                    font_style: style.font_style.map(FontStyle::from),
-                    font_weight: style.font_weight.map(FontWeight::from),
+                    font_style: style.font_style.map(font_style_content_to_font_style),
+                    font_weight: style.font_weight.map(font_weight_content_to_font_weight),
                     ..Default::default()
                 },
             )

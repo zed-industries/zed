@@ -3777,12 +3777,12 @@ fn render_font_picker(
         .get_value_from_file(file.to_settings(), field.pick)
         .1
         .cloned()
-        .unwrap_or_else(|| SharedString::default().into());
+        .unwrap_or_else(|| String::new().into());
 
     PopoverMenu::new("font-picker")
         .trigger(render_picker_trigger_button(
             "font_family_picker_trigger".into(),
-            current_value.clone().into(),
+            SharedString::from(current_value.as_ref().to_string()),
         ))
         .menu(move |window, cx| {
             let file = file.clone();
@@ -3790,14 +3790,14 @@ fn render_font_picker(
 
             Some(cx.new(move |cx| {
                 font_picker(
-                    current_value.clone().into(),
+                    SharedString::from(current_value.as_ref().to_string()),
                     move |font_name, cx| {
                         update_settings_file(
                             file.clone(),
                             field.json_path,
                             cx,
                             move |settings, _cx| {
-                                (field.write)(settings, Some(font_name.into()));
+                                (field.write)(settings, Some(font_name.to_string().into()));
                             },
                         )
                         .log_err(); // todo(settings_ui) don't log err

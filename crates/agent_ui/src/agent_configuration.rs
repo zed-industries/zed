@@ -1343,22 +1343,24 @@ async fn open_new_agent_servers_entry_in_settings_editor(
 
             let mut unique_server_name = None;
             let edits = settings.edits_for_update(&text, |settings| {
-                let server_name: Option<SharedString> = (0..u8::MAX)
+                let server_name: Option<String> = (0..u8::MAX)
                     .map(|i| {
                         if i == 0 {
-                            "your_agent".into()
+                            "your_agent".to_string()
                         } else {
-                            format!("your_agent_{}", i).into()
+                            format!("your_agent_{}", i)
                         }
                     })
                     .find(|name| {
                         !settings
                             .agent_servers
                             .as_ref()
-                            .is_some_and(|agent_servers| agent_servers.custom.contains_key(name))
+                            .is_some_and(|agent_servers| {
+                                agent_servers.custom.contains_key(name.as_str())
+                            })
                     });
                 if let Some(server_name) = server_name {
-                    unique_server_name = Some(server_name.clone());
+                    unique_server_name = Some(SharedString::from(server_name.clone()));
                     settings
                         .agent_servers
                         .get_or_insert_default()

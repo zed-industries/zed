@@ -27,7 +27,6 @@ pub use theme::*;
 pub use workspace::*;
 
 use collections::{HashMap, IndexMap};
-use gpui::SharedString;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
@@ -178,7 +177,7 @@ pub struct SettingsContent {
 }
 
 impl SettingsContent {
-    pub fn languages_mut(&mut self) -> &mut HashMap<SharedString, LanguageSettingsContent> {
+    pub fn languages_mut(&mut self) -> &mut HashMap<String, LanguageSettingsContent> {
         &mut self.project.all_languages.languages.0
     }
 }
@@ -949,14 +948,14 @@ pub struct RemoteSettingsContent {
     Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
 )]
 pub struct DevContainerConnection {
-    pub name: SharedString,
-    pub container_id: SharedString,
+    pub name: String,
+    pub container_id: String,
 }
 
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct SshConnection {
-    pub host: SharedString,
+    pub host: String,
     pub username: Option<String>,
     pub port: Option<u16>,
     #[serde(default)]
@@ -979,7 +978,7 @@ pub struct SshConnection {
 
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Debug)]
 pub struct WslConnection {
-    pub distro_name: SharedString,
+    pub distro_name: String,
     pub user: Option<String>,
     #[serde(default)]
     pub projects: BTreeSet<RemoteProject>,

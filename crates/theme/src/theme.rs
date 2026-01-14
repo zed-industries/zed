@@ -273,8 +273,10 @@ impl ThemeFamily {
                             .background_color
                             .as_ref()
                             .and_then(|color| try_parse_color(color).ok()),
-                        font_style: highlight.font_style.map(Into::into),
-                        font_weight: highlight.font_weight.map(Into::into),
+                        font_style: highlight.font_style.map(font_style_content_to_font_style),
+                        font_weight: highlight
+                            .font_weight
+                            .map(font_weight_content_to_font_weight),
                         ..Default::default()
                     },
                 )
@@ -285,7 +287,7 @@ impl ThemeFamily {
         let window_background_appearance = theme
             .style
             .window_background_appearance
-            .map(Into::into)
+            .map(window_background_content_to_appearance)
             .unwrap_or_default();
 
         Theme {

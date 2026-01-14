@@ -1,13 +1,33 @@
 use std::{num::NonZeroU32, path::Path};
 
 use collections::{HashMap, HashSet};
-use gpui::{Modifiers, SharedString};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::Error as _};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
 use crate::{ExtendingVec, merge_from};
+
+/// Keyboard modifier keys configuration for settings.
+/// This is a content type that mirrors `gpui::Modifiers` but without the gpui dependency.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ModifiersContent {
+    /// Whether the control key is pressed.
+    #[serde(default)]
+    pub control: bool,
+    /// Whether the alt key is pressed.
+    #[serde(default)]
+    pub alt: bool,
+    /// Whether the shift key is pressed.
+    #[serde(default)]
+    pub shift: bool,
+    /// Whether the platform key (Cmd on macOS, Win on Windows) is pressed.
+    #[serde(default)]
+    pub platform: bool,
+    /// Whether the function key is pressed.
+    #[serde(default)]
+    pub function: bool,
+}
 
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -571,7 +591,7 @@ pub struct InlayHintSettingsContent {
     /// If no modifiers are specified, this is equivalent to `null`.
     ///
     /// Default: null
-    pub toggle_on_modifiers_press: Option<Modifiers>,
+    pub toggle_on_modifiers_press: Option<ModifiersContent>,
 }
 
 /// The kind of an inlay hint.
@@ -769,9 +789,9 @@ pub enum Formatter {
     /// Format code using an external command.
     External {
         /// The external program to run.
-        command: Arc<str>,
+        command: String,
         /// The arguments to pass to the program.
-        arguments: Option<Arc<[String]>>,
+        arguments: Vec<String>,
     },
     /// Files should be formatted using a code action executed by language servers.
     CodeAction(String),
@@ -890,7 +910,7 @@ pub struct LanguageTaskSettingsContent {
 /// Map from language name to settings.
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct LanguageToSettingsMap(pub HashMap<SharedString, LanguageSettingsContent>);
+pub struct LanguageToSettingsMap(pub HashMap<String, LanguageSettingsContent>);
 
 /// Determines how indent guides are colored.
 #[derive(

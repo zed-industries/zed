@@ -470,7 +470,7 @@ impl RemoteEntry {
             Self::Project { connection, .. } => Cow::Borrowed(connection),
             Self::SshConfig { host, .. } => Cow::Owned(
                 SshConnection {
-                    host: host.clone(),
+                    host: host.to_string(),
                     ..SshConnection::default()
                 }
                 .into(),
@@ -1129,7 +1129,7 @@ impl RemoteServerProjects {
             Connection::Ssh(connection) => {
                 if let Some(nickname) = connection.nickname.clone() {
                     let aux_label = SharedString::from(format!("({})", connection.host));
-                    (nickname.into(), Some(aux_label), false)
+                    (nickname, Some(aux_label), false)
                 } else {
                     (connection.host.clone(), None, false)
                 }
@@ -1535,7 +1535,7 @@ impl RemoteServerProjects {
                 .ssh_connections
                 .get_or_insert(Default::default())
                 .push(SshConnection {
-                    host: SharedString::from(connection_options.host.to_string()),
+                    host: connection_options.host.to_string(),
                     username: connection_options.username,
                     port: connection_options.port,
                     projects: BTreeSet::new(),
@@ -2340,7 +2340,7 @@ impl RemoteServerProjects {
             .track_focus(&self.focus_handle(cx))
             .child(
                 SshConnectionHeader {
-                    connection_string,
+                    connection_string: connection_string.into(),
                     paths: Default::default(),
                     nickname,
                     is_wsl: false,
@@ -2408,7 +2408,7 @@ impl RemoteServerProjects {
                     ..
                 } = server
                 {
-                    expected_ssh_hosts.remove(&connection.host);
+                    expected_ssh_hosts.remove(connection.host.as_str());
                 }
             }
             should_rebuild = current_ssh_hosts != expected_ssh_hosts;
