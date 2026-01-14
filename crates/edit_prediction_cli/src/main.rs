@@ -194,7 +194,7 @@ impl Display for Command {
                     .get_name()
             ),
             Command::Synthesize(args) => {
-                write!(f, "synthesize --repo={}", args.repo)
+                write!(f, "synthesize --repos {}", args.repos.join(" "))
             }
             Command::Clean => write!(f, "clean"),
             Command::SplitCommit(_) => write!(f, "split-commit"),
@@ -244,15 +244,15 @@ enum PredictionProvider {
 
 #[derive(Debug, Args, Clone)]
 struct SynthesizeArgs {
-    /// Repository URL (git@github.com:owner/repo or https://...)
-    #[clap(long)]
-    repo: String,
+    /// Repository URLs (git@github.com:owner/repo or https://...)
+    #[clap(long, required = true, num_args = 1..)]
+    repos: Vec<String>,
 
-    /// Number of examples to generate
+    /// Number of examples to generate per repository
     #[clap(long, default_value_t = 5)]
     count: usize,
 
-    /// Maximum commits to scan before giving up
+    /// Maximum commits to scan per repository before giving up
     #[clap(long, default_value_t = 100)]
     max_commits: usize,
 
@@ -423,7 +423,7 @@ fn main() {
                 panic!("output dir is required");
             };
             let config = SynthesizeConfig {
-                repo_url: synth_args.repo.clone(),
+                repo_urls: synth_args.repos.clone(),
                 count: synth_args.count,
                 max_commits: synth_args.max_commits,
                 output_dir,
