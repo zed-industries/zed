@@ -145,14 +145,12 @@ impl NotebookEditor {
             cell_order.push(cell_id.clone());
             let cell_entity = Cell::load(cell, &languages, notebook_language.clone(), window, cx);
 
-            // subscribe to cell events based on cell type
             match &cell_entity {
                 Cell::Code(code_cell) => {
                     let cell_id_for_focus = cell_id.clone();
                     cx.subscribe(code_cell, move |this, cell, event, cx| match event {
                         CellEvent::Run(cell_id) => this.execute_cell(cell_id.clone(), cx),
                         CellEvent::FocusedIn(_) => {
-                            // find the index of this cell and update selected_cell_index
                             if let Some(index) = this
                                 .cell_order
                                 .iter()
@@ -165,7 +163,6 @@ impl NotebookEditor {
                     })
                     .detach();
 
-                    // subscribe to editor focus events
                     let cell_id_for_editor = cell_id.clone();
                     let editor = code_cell.read(cx).editor().clone();
                     cx.subscribe(&editor, move |this, _editor, event, cx| {
@@ -184,13 +181,11 @@ impl NotebookEditor {
                 }
                 Cell::Markdown(markdown_cell) => {
                     let cell_id_for_focus = cell_id.clone();
-                    // subscribe to markdown cell events
                     cx.subscribe(
                         markdown_cell,
                         move |_this, cell, event: &MarkdownCellEvent, cx| {
                             match event {
                                 MarkdownCellEvent::FinishedEditing => {
-                                    // reparse markdown when editing is done
                                     cell.update(cx, |cell, cx| {
                                         cell.reparse_markdown(cx);
                                     });
@@ -207,7 +202,6 @@ impl NotebookEditor {
                     )
                     .detach();
 
-                    // subscribe to editor focus events
                     let cell_id_for_editor = cell_id.clone();
                     let editor = markdown_cell.read(cx).editor().clone();
                     cx.subscribe(&editor, move |this, _editor, event, cx| {
