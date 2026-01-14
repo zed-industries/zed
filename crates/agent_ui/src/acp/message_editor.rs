@@ -159,7 +159,6 @@ impl MessageEditor {
             cx.entity(),
             editor.downgrade(),
             mention_set.clone(),
-            thread_store.clone(),
             history,
             prompt_store.clone(),
             workspace.clone(),

@@ -61,7 +61,6 @@ pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
-    thread_store: Entity<ThreadStore>,
     history: WeakEntity<AcpThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
@@ -333,7 +332,6 @@ impl<T: 'static> PromptEditor<T> {
                 PromptEditorCompletionProviderDelegate,
                 cx.weak_entity(),
                 self.mention_set.clone(),
-                Some(self.thread_store.clone()), // BENTODO: Now global do we need threadstore?
                 self.history.clone(),
                 self.prompt_store.clone(),
                 self.workspace.clone(),
@@ -1261,7 +1259,6 @@ impl PromptEditor<BufferCodegen> {
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
             mention_set,
-            thread_store,
             history,
             prompt_store,
             workspace,
@@ -1416,7 +1413,6 @@ impl PromptEditor<TerminalCodegen> {
         let mut this = Self {
             editor: prompt_editor.clone(),
             mention_set,
-            thread_store,
             history,
             prompt_store,
             workspace,

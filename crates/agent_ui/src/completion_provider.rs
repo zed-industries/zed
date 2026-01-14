@@ -6,7 +6,6 @@ use std::sync::atomic::AtomicBool;
 
 use crate::acp::AcpThreadHistory;
 use acp_thread::{AgentSessionInfo, MentionUri};
-use agent::ThreadStore;
 use anyhow::Result;
 use editor::{
     CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
@@ -195,7 +194,6 @@ pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     source: Arc<T>,
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
-    thread_store: Option<Entity<ThreadStore>>,
     history: WeakEntity<AcpThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
@@ -206,7 +204,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: T,
         editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
-        thread_store: Option<Entity<ThreadStore>>,
         history: WeakEntity<AcpThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         workspace: WeakEntity<Workspace>,
@@ -216,7 +213,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             editor,
             mention_set,
             workspace,
-            thread_store,
             history,
             prompt_store,
         }
@@ -659,16 +655,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     cx.spawn(async move |_cx| {
                         search_task.await.into_iter().map(Match::Thread).collect()
                     })
-                } else if let Some(thread_store) = self.thread_store.as_ref() {
-                    let search_threads_task =
-                        search_threads(query, cancellation_flag, thread_store, cx);
-                    cx.background_spawn(async move {
-                        search_threads_task
-                            .await
-                            .into_iter()
-                            .map(Match::Thread)
-                            .collect()
-                    })
                 } else {
                     Task::ready(Vec::new())
                 }
@@ -851,27 +837,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             );
             return Task::ready(recent);
         }
-
-        let Some(thread_store) = self.thread_store.as_ref() else {
-            return Task::ready(recent);
-        };
-
-        const RECENT_COUNT: usize = 2;
-        let threads = thread_store
-            .read(cx)
-            .entries()
-            .map(thread_metadata_to_session_info)
-            .filter(|thread| {
-                let uri = MentionUri::Thread {
-                    id: thread.session_id.clone(),
-                    name: session_title(thread).to_string(),
-                };
-                !mentions.contains(&uri)
-            })
-            .take(RECENT_COUNT)
-            .collect::<Vec<_>>();
-
-        recent.extend(threads.into_iter().map(Match::RecentThread));
 
         Task::ready(recent)
     }
@@ -1596,27 +1561,6 @@ pub(crate) fn search_symbols(
     })
 }
 
-pub(crate) fn search_threads(
-    query: String,
-    cancellation_flag: Arc<AtomicBool>,
-    thread_store: &Entity<ThreadStore>,
-    cx: &mut App,
-) -> Task<Vec<AgentSessionInfo>> {
-    let sessions = thread_store
-        .read(cx)
-        .entries()
-        .map(thread_metadata_to_session_info)
-        .collect::<Vec<_>>();
-    if query.is_empty() {
-        return Task::ready(sessions);
-    }
-
-    let executor = cx.background_executor().clone();
-    cx.background_spawn(async move {
-        filter_sessions(query, cancellation_flag, sessions, executor).await
-    })
-}
-
 fn filter_sessions_by_query(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
@@ -1659,16 +1603,6 @@ async fn filter_sessions(
         .into_iter()
         .map(|mat| sessions[mat.candidate_id].clone())
         .collect()
-}
-
-fn thread_metadata_to_session_info(entry: agent::DbThreadMetadata) -> AgentSessionInfo {
-    AgentSessionInfo {
-        session_id: entry.id,
-        cwd: None,
-        title: Some(entry.title),
-        updated_at: Some(entry.updated_at),
-        meta: None,
-    }
 }
 
 pub(crate) fn search_rules(
