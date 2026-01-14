@@ -753,6 +753,13 @@ impl ProjectPanel {
                                     task.detach_and_notify_err(window, cx);
                                 }
                                 None => {
+                                    if let Some(edit_state) = project_panel.state.edit_state.take()
+                                    {
+                                        if let Some(entry_id) = edit_state.temporarily_unfolded {
+                                            project_panel.state.unfolded_dir_ids.remove(&entry_id);
+                                        }
+                                    }
+
                                     project_panel.state.edit_state = None;
                                     project_panel
                                         .update_visible_entries(None, false, false, window, cx);
@@ -1936,6 +1943,12 @@ impl ProjectPanel {
     }
 
     fn add_entry(&mut self, is_dir: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(previous_edit_state) = self.state.edit_state.take() {
+            if let Some(entry_id) = previous_edit_state.temporarily_unfolded {
+                self.state.unfolded_dir_ids.remove(&entry_id);
+            }
+        }
+
         let Some((worktree_id, entry_id)) = self
             .state
             .selection
