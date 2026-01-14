@@ -2307,6 +2307,9 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
             },
         )
         .await;
+    // Ensure progress notification is fully processed before starting the next one
+    cx.executor().run_until_parked();
+
     fake_server
         .start_progress_with(
             progress_token,
@@ -2316,11 +2319,13 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
             },
         )
         .await;
+    // Ensure progress notification is fully processed before cancelling
     cx.executor().run_until_parked();
 
     project.update(cx, |project, cx| {
         project.cancel_language_server_work_for_buffers([buffer.clone()], cx)
     });
+    cx.executor().run_until_parked();
 
     let cancel_notification = fake_server
         .receive_notification::<lsp::notification::WorkDoneProgressCancel>()

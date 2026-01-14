@@ -107,7 +107,16 @@ impl AgentTool for SaveFileTool {
                     format!("Save {}", paths.join(", "))
                 }
             };
-            Some(event_stream.authorize(title, cx))
+            let first_path = input
+                .paths
+                .first()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let context = crate::ToolPermissionContext {
+                tool_name: "save_file".to_string(),
+                input_value: first_path,
+            };
+            Some(event_stream.authorize(title, context, cx))
         } else {
             None
         };

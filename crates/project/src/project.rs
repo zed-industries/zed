@@ -354,6 +354,7 @@ pub enum Event {
     EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
+    BufferEdited,
 }
 
 pub struct AgentLocationChanged;
@@ -1101,8 +1102,14 @@ impl Project {
                 .detach();
 
             let weak_self = cx.weak_entity();
-            let context_server_store =
-                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self.clone(), cx));
+            let context_server_store = cx.new(|cx| {
+                ContextServerStore::local(
+                    worktree_store.clone(),
+                    Some(weak_self.clone()),
+                    false,
+                    cx,
+                )
+            });
 
             let environment = cx.new(|cx| {
                 ProjectEnvironment::new(env, worktree_store.downgrade(), None, false, cx)
@@ -1309,8 +1316,6 @@ impl Project {
             }
 
             let weak_self = cx.weak_entity();
-            let context_server_store =
-                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self.clone(), cx));
 
             let buffer_store = cx.new(|cx| {
                 BufferStore::remote(
@@ -1338,6 +1343,7 @@ impl Project {
                     cx,
                 )
             });
+
             let task_store = cx.new(|cx| {
                 TaskStore::remote(
                     buffer_store.downgrade(),
@@ -1355,11 +1361,22 @@ impl Project {
                     worktree_store.clone(),
                     task_store.clone(),
                     Some(remote_proto.clone()),
+                    false,
                     cx,
                 )
             });
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
+
+            let context_server_store = cx.new(|cx| {
+                ContextServerStore::remote(
+                    rpc::proto::REMOTE_SERVER_PROJECT_ID,
+                    remote.clone(),
+                    worktree_store.clone(),
+                    Some(weak_self.clone()),
+                    cx,
+                )
+            });
 
             let environment = cx.new(|cx| {
                 ProjectEnvironment::new(
@@ -1652,6 +1669,7 @@ impl Project {
                 worktree_store.clone(),
                 task_store.clone(),
                 None,
+                true,
                 cx,
             )
         });
@@ -1674,8 +1692,9 @@ impl Project {
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
             let weak_self = cx.weak_entity();
-            let context_server_store =
-                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self, cx));
+            let context_server_store = cx.new(|cx| {
+                ContextServerStore::local(worktree_store.clone(), Some(weak_self), false, cx)
+            });
 
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
@@ -3409,6 +3428,10 @@ impl Project {
     ) -> Option<()> {
         if matches!(event, BufferEvent::Edited | BufferEvent::Reloaded) {
             self.request_buffer_diff_recalculation(&buffer, cx);
+        }
+
+        if matches!(event, BufferEvent::Edited) {
+            cx.emit(Event::BufferEdited);
         }
 
         let buffer_id = buffer.read(cx).remote_id();

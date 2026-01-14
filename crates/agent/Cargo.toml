@@ -66,6 +66,7 @@ telemetry.workspace = true
 text.workspace = true
 thiserror.workspace = true
 ui.workspace = true
+url.workspace = true
 util.workspace = true
 uuid.workspace = true
 watch.workspace = true

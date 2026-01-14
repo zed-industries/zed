@@ -1,8 +1,10 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
+use strum::{EnumIter, IntoEnumIterator as _, IntoStaticStr};
 
 pub const CURSOR_MARKER: &str = "<|user_cursor|>";
 
@@ -13,7 +15,55 @@ pub struct ZetaPromptInput {
     pub editable_range_in_excerpt: Range<usize>,
     pub cursor_offset_in_excerpt: usize,
     pub events: Vec<Arc<Event>>,
-    pub related_files: Arc<[RelatedFile]>,
+    pub related_files: Vec<RelatedFile>,
+}
+
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, EnumIter, IntoStaticStr)]
+#[allow(non_camel_case_types)]
+pub enum ZetaVersion {
+    V0112_MiddleAtEnd,
+    #[default]
+    V0113_Ordered,
+}
+
+impl std::fmt::Display for ZetaVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", <&'static str>::from(self))
+    }
+}
+
+impl ZetaVersion {
+    pub fn parse(version_string: &str) -> Result<Self> {
+        let mut results = ZetaVersion::iter().filter(|version| {
+            <&'static str>::from(version)
+                .to_lowercase()
+                .contains(&version_string.to_lowercase())
+        });
+        let Some(result) = results.next() else {
+            anyhow::bail!(
+                "`{version_string}` did not match any of:\n{}",
+                Self::options_as_string()
+            );
+        };
+        if results.next().is_some() {
+            anyhow::bail!(
+                "`{version_string}` matched more than one of:\n{}",
+                Self::options_as_string()
+            );
+        }
+        Ok(result)
+    }
+
+    fn options_as_string() -> String {
+        ZetaVersion::iter()
+            .map(|version| format!("- {}\n", <&'static str>::from(version)))
+            .collect::<Vec<_>>()
+            .concat()
+    }
+
+    pub fn default_as_string() -> String {
+        <&'static str>::from(Self::default()).to_string()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -66,100 +116,116 @@ pub struct RelatedFile {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RelatedExcerpt {
     pub row_range: Range<u32>,
-    pub text: String,
+    pub text: Arc<str>,
 }
 
-pub fn format_zeta_prompt(input: &ZetaPromptInput) -> String {
+pub fn format_zeta_prompt(input: &ZetaPromptInput, version: ZetaVersion) -> String {
     let mut prompt = String::new();
     write_related_files(&mut prompt, &input.related_files);
     write_edit_history_section(&mut prompt, input);
-    write_cursor_excerpt_section(&mut prompt, input);
+
+    match version {
+        ZetaVersion::V0112_MiddleAtEnd => {
+            v0112_middle_at_end::write_cursor_excerpt_section(&mut prompt, input);
+        }
+        ZetaVersion::V0113_Ordered => {
+            v0113_ordered::write_cursor_excerpt_section(&mut prompt, input)
+        }
+    }
+
     prompt
 }
 
 pub fn write_related_files(prompt: &mut String, related_files: &[RelatedFile]) {
-    push_delimited(prompt, "related_files", &[], |prompt| {
-        for file in related_files {
-            let path_str = file.path.to_string_lossy();
-            push_delimited(prompt, "related_file", &[("path", &path_str)], |prompt| {
-                for excerpt in &file.excerpts {
-                    push_delimited(
-                        prompt,
-                        "related_excerpt",
-                        &[(
-                            "lines",
-                            &format!(
-                                "{}-{}",
-                                excerpt.row_range.start + 1,
-                                excerpt.row_range.end + 1
-                            ),
-                        )],
-                        |prompt| {
-                            prompt.push_str(&excerpt.text);
-                            prompt.push('\n');
-                        },
-                    );
-                }
-            });
+    for file in related_files {
+        let path_str = file.path.to_string_lossy();
+        write!(prompt, "<|file_sep|>{}\n", path_str).ok();
+        for excerpt in &file.excerpts {
+            prompt.push_str(&excerpt.text);
+            if !prompt.ends_with('\n') {
+                prompt.push('\n');
+            }
+            if excerpt.row_range.end < file.max_row {
+                prompt.push_str("...\n");
+            }
         }
-    });
+    }
 }
 
 fn write_edit_history_section(prompt: &mut String, input: &ZetaPromptInput) {
-    push_delimited(prompt, "edit_history", &[], |prompt| {
-        if input.events.is_empty() {
-            prompt.push_str("(No edit history)");
-        } else {
-            for event in &input.events {
-                write_event(prompt, event);
-            }
-        }
-    });
+    prompt.push_str("<|file_sep|>edit history\n");
+    for event in &input.events {
+        write_event(prompt, event);
+    }
 }
 
-fn write_cursor_excerpt_section(prompt: &mut String, input: &ZetaPromptInput) {
-    push_delimited(prompt, "cursor_excerpt", &[], |prompt| {
+mod v0112_middle_at_end {
+    use super::*;
+
+    pub fn write_cursor_excerpt_section(prompt: &mut String, input: &ZetaPromptInput) {
         let path_str = input.cursor_path.to_string_lossy();
-        push_delimited(prompt, "file", &[("path", &path_str)], |prompt| {
-            prompt.push_str(&input.cursor_excerpt[..input.editable_range_in_excerpt.start]);
-            push_delimited(prompt, "editable_region", &[], |prompt| {
-                prompt.push_str(
-                    &input.cursor_excerpt
-                        [input.editable_range_in_excerpt.start..input.cursor_offset_in_excerpt],
-                );
-                prompt.push_str(CURSOR_MARKER);
-                prompt.push_str(
-                    &input.cursor_excerpt
-                        [input.cursor_offset_in_excerpt..input.editable_range_in_excerpt.end],
-                );
-            });
-            prompt.push_str(&input.cursor_excerpt[input.editable_range_in_excerpt.end..]);
-        });
-    });
+        write!(prompt, "<|file_sep|>{}\n", path_str).ok();
+
+        prompt.push_str("<|fim_prefix|>\n");
+        prompt.push_str(&input.cursor_excerpt[..input.editable_range_in_excerpt.start]);
+
+        prompt.push_str("<|fim_suffix|>\n");
+        prompt.push_str(&input.cursor_excerpt[input.editable_range_in_excerpt.end..]);
+        if !prompt.ends_with('\n') {
+            prompt.push('\n');
+        }
+
+        prompt.push_str("<|fim_middle|>current\n");
+        prompt.push_str(
+            &input.cursor_excerpt
+                [input.editable_range_in_excerpt.start..input.cursor_offset_in_excerpt],
+        );
+        prompt.push_str(CURSOR_MARKER);
+        prompt.push_str(
+            &input.cursor_excerpt
+                [input.cursor_offset_in_excerpt..input.editable_range_in_excerpt.end],
+        );
+        if !prompt.ends_with('\n') {
+            prompt.push('\n');
+        }
+
+        prompt.push_str("<|fim_middle|>updated\n");
+    }
 }
 
-fn push_delimited(
-    prompt: &mut String,
-    tag: &'static str,
-    arguments: &[(&str, &str)],
-    cb: impl FnOnce(&mut String),
-) {
-    if !prompt.ends_with("\n") {
-        prompt.push('\n');
-    }
-    prompt.push('<');
-    prompt.push_str(tag);
-    for (arg_name, arg_value) in arguments {
-        write!(prompt, " {}=\"{}\"", arg_name, arg_value).ok();
-    }
-    prompt.push_str(">\n");
+mod v0113_ordered {
+    use super::*;
 
-    cb(prompt);
+    pub fn write_cursor_excerpt_section(prompt: &mut String, input: &ZetaPromptInput) {
+        let path_str = input.cursor_path.to_string_lossy();
+        write!(prompt, "<|file_sep|>{}\n", path_str).ok();
 
-    if !prompt.ends_with('\n') {
-        prompt.push('\n');
+        prompt.push_str("<|fim_prefix|>\n");
+        prompt.push_str(&input.cursor_excerpt[..input.editable_range_in_excerpt.start]);
+        if !prompt.ends_with('\n') {
+            prompt.push('\n');
+        }
+
+        prompt.push_str("<|fim_middle|>current\n");
+        prompt.push_str(
+            &input.cursor_excerpt
+                [input.editable_range_in_excerpt.start..input.cursor_offset_in_excerpt],
+        );
+        prompt.push_str(CURSOR_MARKER);
+        prompt.push_str(
+            &input.cursor_excerpt
+                [input.cursor_offset_in_excerpt..input.editable_range_in_excerpt.end],
+        );
+        if !prompt.ends_with('\n') {
+            prompt.push('\n');
+        }
+
+        prompt.push_str("<|fim_suffix|>\n");
+        prompt.push_str(&input.cursor_excerpt[input.editable_range_in_excerpt.end..]);
+        if !prompt.ends_with('\n') {
+            prompt.push('\n');
+        }
+
+        prompt.push_str("<|fim_middle|>updated\n");
     }
-    prompt.push_str("</");
-    prompt.push_str(tag);
-    prompt.push_str(">\n");
 }

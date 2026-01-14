@@ -68,6 +68,12 @@ impl Mercury {
                     MAX_REWRITE_TOKENS,
                 );
 
+            let related_files = crate::filter_redundant_excerpts(
+                related_files,
+                full_path.as_ref(),
+                context_range.start.row..context_range.end.row,
+            );
+
             let context_offset_range = context_range.to_offset(&snapshot);
 
             let editable_offset_range = editable_range.to_offset(&snapshot);
@@ -245,7 +251,7 @@ fn build_prompt(inputs: &ZetaPromptInput) -> String {
                             prompt.push_str(CODE_SNIPPET_FILE_PATH_PREFIX);
                             prompt.push_str(related_file.path.to_string_lossy().as_ref());
                             prompt.push('\n');
-                            prompt.push_str(&related_excerpt.text.to_string());
+                            prompt.push_str(related_excerpt.text.as_ref());
                         },
                     );
                 }

@@ -6,6 +6,7 @@ mod migrate;
 mod open_listener;
 mod open_url_modal;
 mod quick_action_bar;
+pub mod remote_debug;
 pub mod telemetry_log;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub mod visual_tests;
@@ -378,7 +379,7 @@ pub fn initialize_workspace(
         })
         .detach();
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(test, target_os = "macos")))]
         initialize_file_watcher(window, cx);
 
         if let Some(specs) = window.gpu_specs() {
@@ -406,6 +407,7 @@ pub fn initialize_workspace(
                 app_state.user_store.clone(),
                 edit_prediction_menu_handle.clone(),
                 app_state.client.clone(),
+                workspace.project().clone(),
                 cx,
             )
         });
@@ -528,6 +530,7 @@ fn unstable_version_notification(cx: &mut App) {
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[allow(unused)]
 fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
     if let Err(e) = fs::fs_watcher::global(|_| {}) {
         let message = format!(
@@ -558,6 +561,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
 }
 
 #[cfg(target_os = "windows")]
+#[allow(unused)]
 fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
     if let Err(e) = fs::fs_watcher::global(|_| {}) {
         let message = format!(
@@ -4749,6 +4753,7 @@ mod tests {
                 "lsp_tool",
                 "markdown",
                 "menu",
+                "new_process_modal",
                 "notebook",
                 "notification_panel",
                 "onboarding",
@@ -4757,10 +4762,12 @@ mod tests {
                 "pane",
                 "panel",
                 "picker",
+                "project_dropdown",
                 "project_panel",
                 "project_search",
                 "project_symbols",
                 "projects",
+                "remote_debug",
                 "repl",
                 "rules_library",
                 "search",
@@ -4916,10 +4923,10 @@ mod tests {
             project_panel::init(cx);
             outline_panel::init(cx);
             terminal_view::init(cx);
-            copilot::copilot_chat::init(
+            copilot_chat::init(
                 app_state.fs.clone(),
                 app_state.client.http_client(),
-                copilot::copilot_chat::CopilotChatConfiguration::default(),
+                copilot_chat::CopilotChatConfiguration::default(),
                 cx,
             );
             image_viewer::init(cx);
