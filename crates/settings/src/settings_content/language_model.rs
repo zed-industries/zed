@@ -219,6 +219,7 @@ pub enum OpenAiReasoningEffort {
     Low,
     Medium,
     High,
+    Xhigh,
 }
 
 #[with_fallible_options]
