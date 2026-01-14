@@ -1,6 +1,11 @@
 use dev_container::DevContainerFeature;
 use dev_container::TemplateOptions;
 use dev_container::get_features;
+use gpui::AppContext;
+use gpui::Entity;
+use gpui::Task;
+use picker::Picker;
+use picker::PickerDelegate;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -477,16 +482,158 @@ pub enum DevContainerMessage {
 
 pub struct DevContainerModal {
     workspace: WeakEntity<Workspace>,
+    picker: Option<Entity<Picker<SimplePickerDelegate>>>,
     focus_handle: FocusHandle,
     confirm_entry: NavigableEntry,
     back_entry: NavigableEntry,
     state: DevContainerState,
 }
 
+struct SimplePickerDelegate {
+    selected_index: usize,
+    placeholder_text: String,
+    stateful_modal: WeakEntity<DevContainerModal>,
+    all_elements: Vec<TemplateEntry>,
+    matches: Vec<usize>,
+    on_confirm: Box<
+        dyn FnMut(
+            TemplateEntry,
+            &mut DevContainerModal,
+            &mut Window,
+            &mut Context<DevContainerModal>,
+        ),
+    >,
+}
+
+impl SimplePickerDelegate {
+    fn new(
+        placeholder_text: String,
+        stateful_modal: WeakEntity<DevContainerModal>,
+        elements: Vec<TemplateEntry>,
+        on_confirm: Box<
+            dyn FnMut(
+                TemplateEntry,
+                &mut DevContainerModal,
+                &mut Window,
+                &mut Context<DevContainerModal>,
+            ),
+        >,
+    ) -> Self {
+        Self {
+            selected_index: 0,
+            placeholder_text,
+            stateful_modal,
+            all_elements: elements,
+            matches: Vec::new(),
+            on_confirm,
+        }
+    }
+}
+
+impl PickerDelegate for SimplePickerDelegate {
+    type ListItem = AnyElement;
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<picker::Picker<Self>>,
+    ) {
+        self.selected_index = ix;
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        self.placeholder_text.clone().into()
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        _cx: &mut Context<picker::Picker<Self>>,
+    ) -> gpui::Task<()> {
+        self.matches = self
+            .all_elements
+            .iter()
+            .enumerate()
+            .filter(|(_, template_entry)| {
+                template_entry.template.id.contains(&query)
+                    || template_entry.template.name.contains(&query)
+            })
+            .map(|(ix, _)| ix)
+            .collect();
+
+        self.selected_index = std::cmp::min(self.selected_index, self.matches.len() - 1);
+        Task::ready(())
+    }
+
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        window: &mut Window,
+        cx: &mut Context<picker::Picker<Self>>,
+    ) {
+        let fun = &mut self.on_confirm;
+
+        self.stateful_modal
+            .update(cx, |modal, cx| {
+                fun(
+                    self.all_elements[self.matches[self.selected_index]].clone(),
+                    modal,
+                    window,
+                    cx,
+                );
+            })
+            .log_err();
+    }
+
+    fn dismissed(&mut self, window: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
+        self.stateful_modal
+            .update(cx, |modal, cx| {
+                modal.dismiss(&menu::Cancel, window, cx);
+            })
+            .log_err();
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        window: &mut Window,
+        cx: &mut Context<picker::Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let Some(template_entry) = self.all_elements.get(self.matches[ix]) else {
+            return None;
+        };
+        Some(
+            div()
+                .track_focus(&template_entry.entry.focus_handle)
+                .child(
+                    ListItem::new("li-todo")
+                        .inset(true)
+                        .spacing(ui::ListItemSpacing::Sparse)
+                        .start_slot(Icon::new(IconName::Box))
+                        .toggle_state(selected)
+                        .child(Label::new(template_entry.template.name.clone())),
+                )
+                .into_any_element(),
+        )
+    }
+}
+
 impl DevContainerModal {
     pub fn new(workspace: WeakEntity<Workspace>, _window: &mut Window, cx: &mut App) -> Self {
         DevContainerModal {
             workspace,
+            picker: None,
             state: DevContainerState::Initial,
             focus_handle: cx.focus_handle(),
             confirm_entry: NavigableEntry::focusable(cx),
@@ -530,72 +677,19 @@ impl DevContainerModal {
 
     fn render_retrieved_templates(
         &self,
-        items: Vec<TemplateEntry>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let mut view =
-            Navigable::new(
-                div()
-                    .child(div().track_focus(&self.focus_handle).child(
-                        ModalHeader::new().child(
-                            Headline::new("Create Dev Container").size(HeadlineSize::XSmall),
-                        ),
-                    ))
-                    .child(ListSeparator)
-                    .children(items.iter().map(|template_entry| {
-                        div()
-                            .track_focus(&template_entry.entry.focus_handle)
-                            .on_action({
-                                let template = template_entry.clone();
-                                cx.listener(move |this, _: &menu::Confirm, window, cx| {
-                                    this.accept_message(
-                                        DevContainerMessage::TemplateSelected(template.clone()),
-                                        window,
-                                        cx,
-                                    );
-                                })
-                            })
-                            .child(
-                                ListItem::new("li-todo")
-                                    .inset(true)
-                                    .spacing(ui::ListItemSpacing::Sparse)
-                                    .start_slot(Icon::new(IconName::Box))
-                                    .toggle_state(
-                                        template_entry
-                                            .entry
-                                            .focus_handle
-                                            .contains_focused(window, cx),
-                                    )
-                                    .child(Label::new(template_entry.template.name.clone())),
-                            )
-                    }))
-                    .child(ListSeparator)
-                    .child(
-                        div()
-                            .track_focus(&self.back_entry.focus_handle)
-                            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                                this.accept_message(DevContainerMessage::GoBack, window, cx);
-                            }))
-                            .child(
-                                ListItem::new("li-goback")
-                                    .inset(true)
-                                    .spacing(ui::ListItemSpacing::Sparse)
-                                    .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
-                                    .toggle_state(
-                                        self.back_entry.focus_handle.contains_focused(window, cx),
-                                    )
-                                    .child(Label::new("Go Back")),
-                            ),
-                    )
-                    .into_any_element(),
-            );
-
-        for item in items {
-            view = view.entry(item.entry.clone());
+        if let Some(picker) = &self.picker {
+            let picker_element = div()
+                .track_focus(&self.focus_handle(cx))
+                .child(picker.clone().into_any_element())
+                .into_any_element();
+            picker.focus_handle(cx).focus(window, cx);
+            picker_element
+        } else {
+            div().into_any_element()
         }
-        view = view.entry(self.back_entry.clone());
-        view.render(window, cx).into_any_element()
     }
 
     fn render_user_options_specifying(
@@ -898,8 +992,8 @@ impl StatefulModal for DevContainerModal {
         match state {
             DevContainerState::Initial => self.render_initial(window, cx),
             DevContainerState::QueryingTemplates => self.render_querying_templates(window, cx),
-            DevContainerState::TemplateQueryReturned(Ok(items)) => {
-                self.render_retrieved_templates(items, window, cx)
+            DevContainerState::TemplateQueryReturned(Ok(_)) => {
+                self.render_retrieved_templates(window, cx)
             }
             DevContainerState::UserOptionsSpecifying(template_entry) => {
                 self.render_user_options_specifying(template_entry, window, cx)
@@ -940,26 +1034,46 @@ impl StatefulModal for DevContainerModal {
                 _ => Some(DevContainerState::Initial),
             },
             DevContainerMessage::TemplatesRetrieved(items) => {
+                let items = items
+                    .into_iter()
+                    .map(|item| TemplateEntry {
+                        template: item,
+                        entry: NavigableEntry::focusable(cx),
+                        options_selected: HashMap::new(),
+                        next_option: None,
+                        features: Vec::new(),
+                        features_selected: HashMap::new(),
+                    })
+                    .collect::<Vec<TemplateEntry>>();
                 if self.state == DevContainerState::QueryingTemplates {
-                    Some(DevContainerState::TemplateQueryReturned(Ok(items
-                        .into_iter()
-                        // .filter(|item| item.id == "docker-in-docker".to_string()) // TODO just for simplicity, we'll keep it to one element
-                        .map(|item| TemplateEntry {
-                            template: item,
-                            entry: NavigableEntry::focusable(cx),
-                            options_selected: HashMap::new(),
-                            next_option: None,
-                            features: Vec::new(),
-                            features_selected: HashMap::new(),
-                        })
-                        .collect())))
+                    let delegate = SimplePickerDelegate::new(
+                        "Select a template".to_string(),
+                        cx.weak_entity(),
+                        items.clone(),
+                        Box::new(|entry, this, window, cx| {
+                            this.accept_message(
+                                DevContainerMessage::TemplateSelected(entry),
+                                window,
+                                cx,
+                            );
+                        }),
+                    );
+
+                    let picker =
+                        cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+                    self.picker = Some(picker);
+                    Some(DevContainerState::TemplateQueryReturned(Ok(items)))
                 } else {
                     None
                 }
             }
             DevContainerMessage::TemplateSelected(mut template_entry) => {
                 let Some(options) = template_entry.template.clone().options else {
-                    panic!("not ready yet");
+                    return self.accept_message(
+                        DevContainerMessage::TemplateOptionsCompleted(template_entry),
+                        window,
+                        cx,
+                    );
                 };
 
                 let options = options
