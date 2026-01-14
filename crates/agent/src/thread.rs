@@ -2771,8 +2771,14 @@ pub struct ToolCallEventStream {
 impl ToolCallEventStream {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> (Self, ToolCallEventStreamReceiver) {
+        let (stream, receiver, _cancellation_tx) = Self::test_with_cancellation();
+        (stream, receiver)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_with_cancellation() -> (Self, ToolCallEventStreamReceiver, watch::Sender<bool>) {
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
-        let (_cancellation_tx, cancellation_rx) = watch::channel(false);
+        let (cancellation_tx, cancellation_rx) = watch::channel(false);
 
         let stream = ToolCallEventStream::new(
             "test_id".into(),
@@ -2781,7 +2787,17 @@ impl ToolCallEventStream {
             cancellation_rx,
         );
 
-        (stream, ToolCallEventStreamReceiver(events_rx))
+        (
+            stream,
+            ToolCallEventStreamReceiver(events_rx),
+            cancellation_tx,
+        )
+    }
+
+    /// Signal cancellation for this event stream. Only available in tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn signal_cancellation_with_sender(cancellation_tx: &mut watch::Sender<bool>) {
+        cancellation_tx.send(true).ok();
     }
 
     fn new(

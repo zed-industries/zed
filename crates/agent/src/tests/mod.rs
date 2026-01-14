@@ -1792,6 +1792,101 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
     verify_thread_recovery(&thread, &fake_model, cx).await;
 }
 
+#[gpui::test]
+async fn test_cancellation_aware_tool_responds_to_cancellation(cx: &mut TestAppContext) {
+    // This test verifies that tools which properly handle cancellation via
+    // `event_stream.cancelled_by_user()` (like edit_file_tool) respond promptly
+    // to cancellation and report that they were cancelled.
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    always_allow_tools(cx);
+    let fake_model = model.as_fake();
+
+    let (tool, was_cancelled) = CancellationAwareTool::new();
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(tool);
+            thread.send(
+                UserMessageId::new(),
+                ["call the cancellation aware tool"],
+                cx,
+            )
+        })
+        .unwrap();
+
+    cx.run_until_parked();
+
+    // Simulate the model calling the cancellation-aware tool
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "cancellation_aware_1".into(),
+            name: "cancellation_aware".into(),
+            raw_input: r#"{}"#.into(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    // Wait for the tool call to be reported
+    let mut tool_started = false;
+    let deadline = cx.executor().num_cpus() * 100;
+    for _ in 0..deadline {
+        cx.run_until_parked();
+
+        while let Some(Some(event)) = events.next().now_or_never() {
+            if let Ok(ThreadEvent::ToolCall(tool_call)) = &event {
+                if tool_call.title == "Cancellation Aware Tool" {
+                    tool_started = true;
+                    break;
+                }
+            }
+        }
+
+        if tool_started {
+            break;
+        }
+
+        cx.background_executor
+            .timer(Duration::from_millis(10))
+            .await;
+    }
+    assert!(tool_started, "expected cancellation aware tool to start");
+
+    // Cancel the thread and wait for it to complete
+    let cancel_task = thread.update(cx, |thread, cx| thread.cancel(cx));
+
+    // The cancel task should complete promptly because the tool handles cancellation
+    let timeout = cx.background_executor.timer(Duration::from_secs(5));
+    futures::select! {
+        _ = cancel_task.fuse() => {}
+        _ = timeout.fuse() => {
+            panic!("cancel task timed out - tool did not respond to cancellation");
+        }
+    }
+
+    // Verify the tool detected cancellation via its flag
+    assert!(
+        was_cancelled.load(std::sync::atomic::Ordering::SeqCst),
+        "tool should have detected cancellation via event_stream.cancelled_by_user()"
+    );
+
+    // Collect remaining events
+    let remaining_events = collect_events_until_stop(&mut events, cx).await;
+
+    // Verify we got a cancellation stop event
+    assert_eq!(
+        stop_events(remaining_events),
+        vec![acp::StopReason::Cancelled],
+    );
+
+    // Verify we can send a new message after cancellation
+    verify_thread_recovery(&thread, &fake_model, cx).await;
+}
+
 /// Helper to verify thread can recover after cancellation by sending a simple message.
 async fn verify_thread_recovery(
     thread: &Entity<Thread>,
@@ -3239,6 +3334,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             WordListTool::name(): true,
                             ToolRequiringPermission::name(): true,
                             InfiniteTool::name(): true,
+                            CancellationAwareTool::name(): true,
                             ThinkingTool::name(): true,
                             "terminal": true,
                         }
@@ -4246,6 +4342,95 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
             "subagent should be cancelled when parent cancels"
         );
     });
+}
+
+#[gpui::test]
+async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
+    // This test verifies that the subagent tool properly handles user cancellation
+    // via `event_stream.cancelled_by_user()` and stops all running subagents.
+    init_test(cx);
+    always_allow_tools(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+
+    let parent = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            project_context.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        )
+    });
+
+    let parent_tools: std::collections::BTreeMap<gpui::SharedString, Arc<dyn crate::AnyAgentTool>> =
+        std::collections::BTreeMap::new();
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(SubagentTool::new(
+        parent.downgrade(),
+        project.clone(),
+        project_context,
+        context_server_registry,
+        Templates::new(),
+        0,
+        parent_tools,
+    ));
+
+    let (event_stream, _rx, mut cancellation_tx) =
+        crate::ToolCallEventStream::test_with_cancellation();
+
+    // Start the subagent tool
+    let task = cx.update(|cx| {
+        tool.run(
+            SubagentToolInput {
+                subagents: vec![crate::SubagentConfig {
+                    label: "Long running task".to_string(),
+                    task_prompt: "Do a very long task that takes forever".to_string(),
+                    summary_prompt: "Summarize".to_string(),
+                    context_low_prompt: "Context low".to_string(),
+                    timeout_ms: None,
+                    allowed_tools: None,
+                }],
+            },
+            event_stream.clone(),
+            cx,
+        )
+    });
+
+    cx.run_until_parked();
+
+    // Signal cancellation via the event stream
+    crate::ToolCallEventStream::signal_cancellation_with_sender(&mut cancellation_tx);
+
+    // The task should complete promptly with a cancellation error
+    let timeout = cx.background_executor.timer(Duration::from_secs(5));
+    let result = futures::select! {
+        result = task.fuse() => result,
+        _ = timeout.fuse() => {
+            panic!("subagent tool did not respond to cancellation within timeout");
+        }
+    };
+
+    // Verify we got a cancellation error
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("cancelled by user"),
+        "expected cancellation error, got: {}",
+        err
+    );
 }
 
 #[gpui::test]

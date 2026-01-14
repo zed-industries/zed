@@ -3,7 +3,7 @@ use action_log::ActionLog;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashSet};
-use futures::channel::mpsc;
+use futures::{FutureExt, channel::mpsc};
 use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task, WeakEntity};
 use language_model::LanguageModelToolUseId;
 use project::Project;
@@ -255,7 +255,14 @@ impl AgentTool for SubagentTool {
         let subagent_configs = input.subagents;
 
         cx.spawn(async move |cx| {
-            let mut tasks = Vec::new();
+            // Create all subagent threads upfront so we can track them for cancellation
+            let mut subagent_data: Vec<(
+                String,            // label
+                Entity<Thread>,    // subagent thread
+                Entity<AcpThread>, // acp thread for display
+                String,            // task prompt
+                Option<u64>,       // timeout
+            )> = Vec::new();
 
             for config in subagent_configs {
                 let subagent_context = SubagentContext {
@@ -280,88 +287,106 @@ impl AgentTool for SubagentTool {
                         parent_tools.clone()
                     };
 
-                let project = project.clone();
-                let project_context = project_context.clone();
-                let context_server_registry = context_server_registry.clone();
-                let templates = templates.clone();
-                let model = model.clone();
-                let parent_thread_weak = parent_thread_weak.clone();
                 let label = config.label.clone();
+                let task_prompt = config.task_prompt.clone();
+                let timeout_ms = config.timeout_ms;
 
-                let event_stream = event_stream.clone();
-                let task = cx.spawn({
-                    let task_prompt = config.task_prompt.clone();
-                    let timeout_ms = config.timeout_ms;
-
-                    async move |cx| {
-                        let subagent_thread: Entity<Thread> = cx.new(|cx| {
-                            Thread::new_subagent(
-                                project.clone(),
-                                project_context.clone(),
-                                context_server_registry.clone(),
-                                templates.clone(),
-                                model,
-                                subagent_context,
-                                subagent_tools,
-                                cx,
-                            )
-                        });
-
-                        let subagent_weak = subagent_thread.downgrade();
-
-                        let acp_thread: Entity<AcpThread> = cx.new(|cx| {
-                            let session_id = subagent_thread.read(cx).id().clone();
-                            let action_log: Entity<ActionLog> =
-                                cx.new(|_| ActionLog::new(project.clone()));
-                            let connection: Rc<dyn AgentConnection> =
-                                Rc::new(SubagentDisplayConnection);
-                            AcpThread::new(
-                                &label,
-                                connection,
-                                project.clone(),
-                                action_log,
-                                session_id,
-                                watch::Receiver::constant(acp::PromptCapabilities::new()),
-                                cx,
-                            )
-                        });
-
-                        event_stream.update_subagent_thread(acp_thread.clone());
-
-                        if let Some(parent) = parent_thread_weak.upgrade() {
-                            parent.update(cx, |thread, _cx| {
-                                thread.register_running_subagent(subagent_weak.clone());
-                            });
-                        }
-
-                        let result = run_subagent(
-                            &subagent_thread,
-                            &acp_thread,
-                            task_prompt,
-                            timeout_ms,
-                            cx,
-                        )
-                        .await;
-
-                        if let Some(parent) = parent_thread_weak.upgrade() {
-                            let _ = parent.update(cx, |thread, _cx| {
-                                thread.unregister_running_subagent(&subagent_weak);
-                            });
-                        }
-
-                        (label, result)
-                    }
+                let subagent_thread: Entity<Thread> = cx.new(|cx| {
+                    Thread::new_subagent(
+                        project.clone(),
+                        project_context.clone(),
+                        context_server_registry.clone(),
+                        templates.clone(),
+                        model.clone(),
+                        subagent_context,
+                        subagent_tools,
+                        cx,
+                    )
                 });
 
-                tasks.push(task);
+                let subagent_weak = subagent_thread.downgrade();
+
+                let acp_thread: Entity<AcpThread> = cx.new(|cx| {
+                    let session_id = subagent_thread.read(cx).id().clone();
+                    let action_log: Entity<ActionLog> = cx.new(|_| ActionLog::new(project.clone()));
+                    let connection: Rc<dyn AgentConnection> = Rc::new(SubagentDisplayConnection);
+                    AcpThread::new(
+                        &label,
+                        connection,
+                        project.clone(),
+                        action_log,
+                        session_id,
+                        watch::Receiver::constant(acp::PromptCapabilities::new()),
+                        cx,
+                    )
+                });
+
+                event_stream.update_subagent_thread(acp_thread.clone());
+
+                if let Some(parent) = parent_thread_weak.upgrade() {
+                    parent.update(cx, |thread, _cx| {
+                        thread.register_running_subagent(subagent_weak.clone());
+                    });
+                }
+
+                subagent_data.push((label, subagent_thread, acp_thread, task_prompt, timeout_ms));
             }
 
-            // Wait for all subagents to complete
-            let results: Vec<(String, Result<String>)> = futures::future::join_all(tasks).await;
+            // Collect weak refs for cancellation cleanup
+            let subagent_threads: Vec<WeakEntity<Thread>> = subagent_data
+                .iter()
+                .map(|(_, thread, _, _, _)| thread.downgrade())
+                .collect();
+
+            // Spawn tasks for each subagent
+            let tasks: Vec<_> = subagent_data
+                .into_iter()
+                .map(
+                    |(label, subagent_thread, acp_thread, task_prompt, timeout_ms)| {
+                        let parent_thread_weak = parent_thread_weak.clone();
+                        cx.spawn(async move |cx| {
+                            let subagent_weak = subagent_thread.downgrade();
+
+                            let result = run_subagent(
+                                &subagent_thread,
+                                &acp_thread,
+                                task_prompt,
+                                timeout_ms,
+                                cx,
+                            )
+                            .await;
+
+                            if let Some(parent) = parent_thread_weak.upgrade() {
+                                let _ = parent.update(cx, |thread, _cx| {
+                                    thread.unregister_running_subagent(&subagent_weak);
+                                });
+                            }
+
+                            (label, result)
+                        })
+                    },
+                )
+                .collect();
+
+            // Wait for all subagents to complete, or cancellation
+            let results: Vec<(String, Result<String>)> = futures::select! {
+                results = futures::future::join_all(tasks).fuse() => results,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    // Cancel all running subagents
+                    for subagent_weak in &subagent_threads {
+                        if let Some(subagent) = subagent_weak.upgrade() {
+                            let _ = subagent.update(cx, |thread, cx| {
+                                thread.cancel(cx).detach();
+                            });
+                        }
+                    }
+                    anyhow::bail!("Subagent tool cancelled by user");
+                }
+            };
 
             // Format the combined results
             let mut output = String::new();
-            for (label, result) in results {
+            for (label, result) in &results {
                 output.push_str(&format!("## {}\n\n", label));
                 match result {
                     Ok(summary) => output.push_str(&summary),
