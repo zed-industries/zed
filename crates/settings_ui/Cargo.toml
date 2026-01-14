@@ -16,6 +16,7 @@ default = []
 test-support = []
 
 [dependencies]
+agent_settings.workspace = true
 anyhow.workspace = true
 bm25 = "2.3.2"
 copilot_ui.workspace = true

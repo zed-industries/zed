@@ -6828,7 +6828,7 @@ fn ai_page() -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section() -> [SettingsPageItem; 11] {
+    fn agent_configuration_section() -> [SettingsPageItem; 12] {
         [
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6852,6 +6852,20 @@ fn ai_page() -> SettingsPage {
                 }),
                 metadata: None,
                 files: USER,
+            }),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Configure Tool Rules".into(),
+                json_path: Some("agent.tool_permissions"),
+                description: Some("Set up regex patterns to auto-allow, auto-deny, or always prompt for specific tool inputs.".into()),
+                in_json: true,
+                files: USER,
+                render: Arc::new(|_, window, cx| {
+                    let settings_window = cx.entity();
+                    let page = window.use_state(cx, |_, cx| {
+                        crate::pages::ToolPermissionsSetupPage::new(settings_window, cx)
+                    });
+                    page.into_any_element()
+                }),
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Single File Review",

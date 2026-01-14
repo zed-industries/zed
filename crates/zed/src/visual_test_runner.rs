@@ -183,6 +183,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         git_ui::init(cx);
+        settings_ui::init(cx);
 
         // Load default keymaps so tooltips can show keybindings like "f9" for ToggleBreakpoint
         // We load a minimal set of editor keybindings needed for visual tests
@@ -473,6 +474,23 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
         Err(e) => {
             eprintln!("✗ diff_review_button: FAILED - {}", e);
+            failed += 1;
+        }
+    }
+
+    // Run Test 7: Tool Permissions Settings UI visual tests
+    println!("\n--- Test 7: tool_permissions_settings ---");
+    match run_tool_permissions_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+        Ok(TestResult::Passed) => {
+            println!("✓ tool_permissions_settings: PASSED");
+            passed += 1;
+        }
+        Ok(TestResult::BaselineUpdated(_)) => {
+            println!("✓ tool_permissions_settings: Baselines updated");
+            updated += 1;
+        }
+        Err(e) => {
+            eprintln!("✗ tool_permissions_settings: FAILED - {}", e);
             failed += 1;
         }
     }
@@ -842,7 +860,7 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
     theme::init(theme::LoadThemes::JustBase, cx);
     client::init(&client, cx);
 
-    Arc::new(AppState {
+    let app_state = Arc::new(AppState {
         client,
         fs,
         languages,
@@ -851,7 +869,12 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
         node_runtime: NodeRuntime::unavailable(),
         build_window_options: |_, _| Default::default(),
         session,
-    })
+    });
+
+    // Set the global app state so settings_ui can find it
+    AppState::set_global(Arc::downgrade(&app_state), cx);
+
+    app_state
 }
 
 /// Runs visual tests for breakpoint hover states in the editor gutter.
@@ -1706,7 +1729,9 @@ fn run_subagent_visual_tests(
         project.find_or_create_worktree(&project_path, true, cx)
     });
 
+    cx.background_executor.allow_parking();
     let _ = cx.foreground_executor.block_test(add_worktree_task);
+    cx.background_executor.forbid_parking();
 
     cx.run_until_parked();
 
@@ -1987,6 +2012,111 @@ fn run_subagent_visual_tests(
         | (_, TestResult::BaselineUpdated(p), _)
         | (_, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
     }
+}
+
+#[cfg(all(target_os = "macos", feature = "visual-tests"))]
+/// Visual test for the Tool Permissions Settings UI page
+///
+/// Tests the tool permissions settings page which shows a list of tools
+/// with configurable permission rules (allow, deny, confirm patterns).
+#[cfg(target_os = "macos")]
+fn run_tool_permissions_visual_tests(
+    app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    use zed_actions::OpenSettingsAt;
+
+    // Create a minimal workspace to dispatch the settings action from
+    let window_size = size(px(900.0), px(700.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    let project = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            false,
+            cx,
+        )
+    });
+
+    let workspace_window: WindowHandle<Workspace> = cx
+        .update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.new(|cx| {
+                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                    })
+                },
+            )
+        })
+        .context("Failed to open workspace window for settings test")?;
+
+    cx.run_until_parked();
+
+    // Dispatch the OpenSettingsAt action to open settings at the tool_permissions path
+    workspace_window
+        .update(cx, |_workspace, window, cx| {
+            window.dispatch_action(
+                Box::new(OpenSettingsAt {
+                    path: "agent.tool_permissions".to_string(),
+                }),
+                cx,
+            );
+        })
+        .context("Failed to dispatch OpenSettingsAt action")?;
+
+    cx.run_until_parked();
+
+    // Give the settings window time to open and render
+    for _ in 0..10 {
+        cx.advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+    }
+
+    // Find the settings window that was opened
+    let settings_window = cx
+        .update(|cx| {
+            cx.windows()
+                .into_iter()
+                .find(|w| w.downcast::<settings_ui::SettingsWindow>().is_some())
+        })
+        .context("Failed to find settings window")?;
+
+    // Test 1: Tool permissions page view
+    let test1_result = run_visual_test(
+        "tool_permissions_page",
+        settings_window,
+        cx,
+        update_baseline,
+    )?;
+
+    // Close the settings window
+    let _ = cx.update_window(settings_window, |_, window, _cx| {
+        window.remove_window();
+    });
+
+    // Close the workspace window
+    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+
+    cx.run_until_parked();
+
+    Ok(test1_result)
 }
 
 #[cfg(all(target_os = "macos", feature = "visual-tests"))]
