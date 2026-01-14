@@ -50,6 +50,7 @@ use {
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
     assets::Assets,
+    editor::display_map::DisplayRow,
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
     gpui::{
@@ -1382,6 +1383,198 @@ import { AiPaneTabContext } from 'context';
         update_baseline,
     )?;
 
+    // Test 4: Show the diff review overlay on the regular editor
+    regular_window
+        .update(cx, |workspace, window, cx| {
+            // Get the first editor from the workspace
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    editor.show_diff_review_overlay(DisplayRow(1), window, cx);
+                });
+            }
+        })
+        .ok();
+
+    // Wait for overlay to render
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 4: Regular editor with overlay shown
+    let test4_result = run_visual_test(
+        "diff_review_overlay_shown",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Test 5: Type text into the diff review prompt and submit it
+    // First, get the prompt editor from the overlay and type some text
+    regular_window
+        .update(cx, |workspace, window, cx| {
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    // Get the prompt editor from the overlay and insert text
+                    if let Some(prompt_editor) = editor.diff_review_prompt_editor().cloned() {
+                        prompt_editor.update(cx, |prompt_editor: &mut editor::Editor, cx| {
+                            prompt_editor.insert(
+                                "This change needs better error handling",
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                });
+            }
+        })
+        .ok();
+
+    // Wait for text to be inserted
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 5: Diff review overlay with typed text
+    let test5_result = run_visual_test(
+        "diff_review_overlay_with_text",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Test 6: Submit a comment to store it locally
+    regular_window
+        .update(cx, |workspace, window, cx| {
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    // Submit the comment that was typed in test 5
+                    editor.submit_diff_review_comment(window, cx);
+                });
+            }
+        })
+        .ok();
+
+    // Wait for comment to be stored
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 6: Overlay with one stored comment
+    let test6_result = run_visual_test(
+        "diff_review_one_comment",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Test 7: Add more comments to show multiple comments expanded
+    regular_window
+        .update(cx, |workspace, window, cx| {
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    // Add second comment
+                    if let Some(prompt_editor) = editor.diff_review_prompt_editor().cloned() {
+                        prompt_editor.update(cx, |pe, cx| {
+                            pe.insert("Second comment about imports", window, cx);
+                        });
+                    }
+                    editor.submit_diff_review_comment(window, cx);
+
+                    // Add third comment
+                    if let Some(prompt_editor) = editor.diff_review_prompt_editor().cloned() {
+                        prompt_editor.update(cx, |pe, cx| {
+                            pe.insert("Third comment about naming conventions", window, cx);
+                        });
+                    }
+                    editor.submit_diff_review_comment(window, cx);
+                });
+            }
+        })
+        .ok();
+
+    // Wait for comments to be stored
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 7: Overlay with multiple comments expanded
+    let test7_result = run_visual_test(
+        "diff_review_multiple_comments_expanded",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Test 8: Collapse the comments section
+    regular_window
+        .update(cx, |workspace, _window, cx| {
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    // Toggle collapse using the public method
+                    editor.set_diff_review_comments_expanded(false, cx);
+                });
+            }
+        })
+        .ok();
+
+    // Wait for UI to update
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 8: Comments collapsed
+    let test8_result = run_visual_test(
+        "diff_review_comments_collapsed",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
     // Clean up: remove worktrees to stop background scanning
     workspace_window
         .update(cx, |workspace, _window, cx| {
@@ -1415,12 +1608,27 @@ import { AiPaneTabContext } from 'context';
     }
 
     // Return combined result
-    match (&test1_result, &test2_result, &test3_result) {
-        (TestResult::Passed, TestResult::Passed, TestResult::Passed) => Ok(TestResult::Passed),
-        (TestResult::BaselineUpdated(p), _, _)
-        | (_, TestResult::BaselineUpdated(p), _)
-        | (_, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
-    }
+    let all_results = [
+        &test1_result,
+        &test2_result,
+        &test3_result,
+        &test4_result,
+        &test5_result,
+        &test6_result,
+        &test7_result,
+        &test8_result,
+    ];
+
+    // Combine results: if any test updated a baseline, return BaselineUpdated;
+    // otherwise return Passed. The exhaustive match ensures the compiler
+    // verifies we handle all TestResult variants.
+    let result = all_results
+        .iter()
+        .fold(TestResult::Passed, |acc, r| match r {
+            TestResult::Passed => acc,
+            TestResult::BaselineUpdated(p) => TestResult::BaselineUpdated(p.clone()),
+        });
+    Ok(result)
 }
 
 /// A stub AgentServer for visual testing that returns a pre-programmed connection.

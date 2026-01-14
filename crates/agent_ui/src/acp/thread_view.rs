@@ -73,10 +73,12 @@ use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip, Usag
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ClearMessageQueue, ContinueThread,
     ContinueWithBurnMode, CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow,
-    KeepAll, NewThread, OpenAgentDiff, OpenHistory, QueueMessage, RejectAll, RejectOnce,
+    KeepAll, NewThread, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, SendImmediately,
     SendNextQueuedMessage, ToggleBurnMode, ToggleProfileSelector,
 };
 
+/// Maximum number of lines to show for a collapsed terminal command preview.
+const MAX_COLLAPSED_LINES: usize = 3;
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(1);
 const TOKEN_THRESHOLD: u64 = 1;
 
@@ -331,7 +333,14 @@ pub struct AcpThreadView {
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
     auth_task: Option<Task<()>>,
+    /// Tracks which tool calls have their content/output expanded.
+    /// Used for showing/hiding tool call results, terminal output, etc.
     expanded_tool_calls: HashSet<acp::ToolCallId>,
+    /// Tracks which terminal commands have their command text expanded.
+    /// This is separate from `expanded_tool_calls` because command text expansion
+    /// (showing all lines of a long command) is independent from output expansion
+    /// (showing the terminal output).
+    expanded_terminal_commands: HashSet<acp::ToolCallId>,
     expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     expanded_subagents: HashSet<acp::SessionId>,
@@ -517,6 +526,7 @@ impl AcpThreadView {
             thread_feedback: Default::default(),
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
+            expanded_terminal_commands: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             expanded_subagents: HashSet::default(),
@@ -1206,7 +1216,7 @@ impl AcpThreadView {
     ) {
         match event {
             MessageEditorEvent::Send => self.send(window, cx),
-            MessageEditorEvent::Queue => self.queue_message(window, cx),
+            MessageEditorEvent::SendImmediately => self.interrupt_and_send(window, cx),
             MessageEditorEvent::Cancel => self.cancel_generation(cx),
             MessageEditorEvent::Focus => {
                 self.cancel_editing(&Default::default(), window, cx);
@@ -1258,7 +1268,7 @@ impl AcpThreadView {
                     }
                 }
             }
-            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Queue) => {}
+            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::SendImmediately) => {}
             ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::Send) => {
                 self.regenerate(event.entry_index, editor.clone(), window, cx);
             }
@@ -1302,7 +1312,7 @@ impl AcpThreadView {
         }
 
         if thread.read(cx).status() != ThreadStatus::Idle {
-            self.stop_current_and_send_new_message(window, cx);
+            self.queue_message(window, cx);
             return;
         }
 
@@ -1344,6 +1354,23 @@ impl AcpThreadView {
         }
 
         self.send_impl(self.message_editor.clone(), window, cx)
+    }
+
+    fn interrupt_and_send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread() else {
+            return;
+        };
+
+        if self.is_loading_contents {
+            return;
+        }
+
+        if thread.read(cx).status() == ThreadStatus::Idle {
+            self.send_impl(self.message_editor.clone(), window, cx);
+            return;
+        }
+
+        self.stop_current_and_send_new_message(window, cx);
     }
 
     fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2733,6 +2760,23 @@ impl AcpThreadView {
                 ContextMenu::build(window, cx, move |menu, _, cx| {
                     let is_at_top = entity.read(cx).list_state.logical_scroll_top().item_ix == 0;
 
+                    let copy_this_agent_response =
+                        ContextMenuEntry::new("Copy This Agent Response").handler({
+                            let entity = entity.clone();
+                            move |_, cx| {
+                                entity.update(cx, |this, cx| {
+                                    if let Some(thread) = this.thread() {
+                                        let entries = thread.read(cx).entries();
+                                        if let Some(text) =
+                                            Self::get_agent_message_content(entries, entry_ix, cx)
+                                        {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(text));
+                                        }
+                                    }
+                                });
+                            }
+                        });
+
                     let scroll_item = if is_at_top {
                         ContextMenuEntry::new("Scroll to Bottom").handler({
                             let entity = entity.clone();
@@ -2769,7 +2813,8 @@ impl AcpThreadView {
                         });
 
                     menu.when_some(focus, |menu, focus| menu.context(focus))
-                        .action("Copy", Box::new(markdown::CopyAsMarkdown))
+                        .action("Copy Selection", Box::new(markdown::CopyAsMarkdown))
+                        .item(copy_this_agent_response)
                         .separator()
                         .item(scroll_item)
                         .item(open_thread_as_markdown)
@@ -3126,34 +3171,10 @@ impl AcpThreadView {
             .mr_5()
             .map(|this| {
                 if is_terminal_tool {
-                    this.child(
-                        v_flex()
-                            .p_1p5()
-                            .gap_0p5()
-                            .text_ui_sm(cx)
-                            .bg(self.tool_card_header_bg(cx))
-                            .child(
-                                Label::new("Run Command")
-                                    .buffer_font(cx)
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                MarkdownElement::new(
-                                    tool_call.label.clone(),
-                                    terminal_command_markdown_style(window, cx),
-                                )
-                                .code_block_renderer(
-                                    markdown::CodeBlockRenderer::Default {
-                                        copy_button: false,
-                                        copy_button_on_hover: false,
-                                        border: false,
-                                    },
-                                )
-                            ),
-                    )
+                    let label_source = tool_call.label.read(cx).source();
+                    this.child(self.render_collapsible_command(true, label_source, &tool_call.id, cx))
                 } else {
-                   this.child(
+                    this.child(
                         h_flex()
                             .group(&card_header_id)
                             .relative()
@@ -4008,6 +4029,120 @@ impl AcpThreadView {
             .into_any()
     }
 
+    /// Renders command lines with an optional expand/collapse button depending
+    /// on the number of lines in `command_source`.
+    fn render_collapsible_command(
+        &self,
+        is_preview: bool,
+        command_source: &str,
+        tool_call_id: &acp::ToolCallId,
+        cx: &Context<Self>,
+    ) -> Div {
+        let expand_button_bg = self.tool_card_header_bg(cx);
+        let expanded = self.expanded_terminal_commands.contains(tool_call_id);
+
+        let lines: Vec<&str> = command_source.lines().collect();
+        let line_count = lines.len();
+        let extra_lines = line_count.saturating_sub(MAX_COLLAPSED_LINES);
+
+        let show_expand_button = extra_lines > 0;
+
+        let max_lines = if expanded || !show_expand_button {
+            usize::MAX
+        } else {
+            MAX_COLLAPSED_LINES
+        };
+
+        let display_lines = lines.into_iter().take(max_lines);
+
+        let command_group =
+            SharedString::from(format!("collapsible-command-group-{}", tool_call_id));
+
+        v_flex()
+            .group(command_group.clone())
+            .bg(self.tool_card_header_bg(cx))
+            .child(
+                v_flex()
+                    .p_1p5()
+                    .when(is_preview, |this| {
+                        this.pt_1().child(
+                            // Wrapping this label on a container with 24px height to avoid
+                            // layout shift when it changes from being a preview label
+                            // to the actual path where the command will run in
+                            h_flex().h_6().child(
+                                Label::new("Run Command")
+                                    .buffer_font(cx)
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            ),
+                        )
+                    })
+                    .children(display_lines.map(|line| {
+                        let text: SharedString = if line.is_empty() {
+                            " ".into()
+                        } else {
+                            line.to_string().into()
+                        };
+
+                        Label::new(text).buffer_font(cx).size(LabelSize::Small)
+                    }))
+                    .child(
+                        div().absolute().top_1().right_1().child(
+                            CopyButton::new(command_source.to_string())
+                                .tooltip_label("Copy Command")
+                                .visible_on_hover(command_group),
+                        ),
+                    ),
+            )
+            .when(show_expand_button, |this| {
+                let expand_icon = if expanded {
+                    IconName::ChevronUp
+                } else {
+                    IconName::ChevronDown
+                };
+
+                this.child(
+                    h_flex()
+                        .id(format!("expand-command-btn-{}", tool_call_id))
+                        .cursor_pointer()
+                        .when(!expanded, |s| s.absolute().bottom_0())
+                        .when(expanded, |s| s.mt_1())
+                        .w_full()
+                        .h_6()
+                        .gap_1()
+                        .justify_center()
+                        .border_t_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .bg(expand_button_bg.opacity(0.95))
+                        .hover(|s| s.bg(cx.theme().colors().element_hover))
+                        .when(!expanded, |this| {
+                            let label = match extra_lines {
+                                1 => "1 more line".to_string(),
+                                _ => format!("{} more lines", extra_lines),
+                            };
+
+                            this.child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                        })
+                        .child(
+                            Icon::new(expand_icon)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .on_click(cx.listener({
+                            let tool_call_id = tool_call_id.clone();
+                            move |this, _event, _window, cx| {
+                                if expanded {
+                                    this.expanded_terminal_commands.remove(&tool_call_id);
+                                } else {
+                                    this.expanded_terminal_commands.insert(tool_call_id.clone());
+                                }
+                                cx.notify();
+                            }
+                        })),
+                )
+            })
+    }
+
     fn render_terminal_tool_call(
         &self,
         entry_ix: usize,
@@ -4059,10 +4194,24 @@ impl AcpThreadView {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "current directory".to_string());
 
+        // Since the command's source is wrapped in a markdown code block
+        // (```\n...\n```), we need to strip that so we're left with only the
+        // command's content.
+        let command_source = command.read(cx).source();
+        let command_content = command_source
+            .strip_prefix("```\n")
+            .and_then(|s| s.strip_suffix("\n```"))
+            .unwrap_or(&command_source);
+
+        let command_element =
+            self.render_collapsible_command(false, command_content, &tool_call.id, cx);
+
         let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
 
         let header = h_flex()
             .id(header_id)
+            .px_1p5()
+            .pt_1()
             .flex_none()
             .gap_1()
             .justify_between()
@@ -4206,7 +4355,6 @@ impl AcpThreadView {
             .read(cx)
             .entry(entry_ix)
             .and_then(|entry| entry.terminal(terminal));
-        let show_output = is_expanded && terminal_view.is_some();
 
         v_flex()
             .my_1p5()
@@ -4219,28 +4367,12 @@ impl AcpThreadView {
             .child(
                 v_flex()
                     .group(&header_group)
-                    .py_1p5()
-                    .pr_1p5()
-                    .pl_2()
-                    .gap_0p5()
                     .bg(header_bg)
                     .text_xs()
                     .child(header)
-                    .child(
-                        MarkdownElement::new(
-                            command.clone(),
-                            terminal_command_markdown_style(window, cx),
-                        )
-                        .code_block_renderer(
-                            markdown::CodeBlockRenderer::Default {
-                                copy_button: false,
-                                copy_button_on_hover: true,
-                                border: false,
-                            },
-                        ),
-                    ),
+                    .child(command_element),
             )
-            .when(show_output, |this| {
+            .when(is_expanded && terminal_view.is_some(), |this| {
                 this.child(
                     div()
                         .pt_2()
@@ -5820,13 +5952,7 @@ impl AcpThreadView {
                 .tooltip(move |_window, cx| {
                     if is_editor_empty && !is_generating {
                         Tooltip::for_action("Type to Send", &Chat, cx)
-                    } else {
-                        let title = if is_generating {
-                            "Stop and Send Message"
-                        } else {
-                            "Send"
-                        };
-
+                    } else if is_generating {
                         let focus_handle = focus_handle.clone();
 
                         Tooltip::element(move |_window, cx| {
@@ -5836,7 +5962,7 @@ impl AcpThreadView {
                                     h_flex()
                                         .gap_2()
                                         .justify_between()
-                                        .child(Label::new(title))
+                                        .child(Label::new("Queue and Send"))
                                         .child(KeyBinding::for_action_in(&Chat, &focus_handle, cx)),
                                 )
                                 .child(
@@ -5846,15 +5972,17 @@ impl AcpThreadView {
                                         .justify_between()
                                         .border_t_1()
                                         .border_color(cx.theme().colors().border_variant)
-                                        .child(Label::new("Queue Message"))
+                                        .child(Label::new("Send Immediately"))
                                         .child(KeyBinding::for_action_in(
-                                            &QueueMessage,
+                                            &SendImmediately,
                                             &focus_handle,
                                             cx,
                                         )),
                                 )
                                 .into_any_element()
                         })(_window, cx)
+                    } else {
+                        Tooltip::for_action("Send Message", &Chat, cx)
                     }
                 })
                 .on_click(cx.listener(|this, _, window, cx| {
@@ -6862,6 +6990,18 @@ impl AcpThreadView {
         });
     }
 
+    /// Inserts code snippets as creases into the message editor.
+    pub(crate) fn insert_code_crease(
+        &self,
+        creases: Vec<(String, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.message_editor.update(cx, |message_editor, cx| {
+            message_editor.insert_code_creases(creases, window, cx);
+        });
+    }
+
     fn render_thread_retry_status_callout(
         &self,
         _window: &mut Window,
@@ -7329,6 +7469,59 @@ impl AcpThreadView {
             self.message_editor.clone()
         }
     }
+
+    fn get_agent_message_content(
+        entries: &[AgentThreadEntry],
+        entry_index: usize,
+        cx: &App,
+    ) -> Option<String> {
+        let entry = entries.get(entry_index)?;
+        if matches!(entry, AgentThreadEntry::UserMessage(_)) {
+            return None;
+        }
+
+        let start_index = (0..entry_index)
+            .rev()
+            .find(|&i| matches!(entries.get(i), Some(AgentThreadEntry::UserMessage(_))))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+
+        let end_index = (entry_index + 1..entries.len())
+            .find(|&i| matches!(entries.get(i), Some(AgentThreadEntry::UserMessage(_))))
+            .map(|i| i - 1)
+            .unwrap_or(entries.len() - 1);
+
+        let parts: Vec<String> = (start_index..=end_index)
+            .filter_map(|i| entries.get(i))
+            .filter_map(|entry| {
+                if let AgentThreadEntry::AssistantMessage(message) = entry {
+                    let text: String = message
+                        .chunks
+                        .iter()
+                        .filter_map(|chunk| match chunk {
+                            AssistantMessageChunk::Message { block } => {
+                                let markdown = block.to_markdown(cx);
+                                if markdown.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(markdown.to_string())
+                                }
+                            }
+                            AssistantMessageChunk::Thought { .. } => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+
+                    if text.is_empty() { None } else { Some(text) }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let text = parts.join("\n\n");
+        if text.is_empty() { None } else { Some(text) }
+    }
 }
 
 fn loading_contents_spinner(size: IconSize) -> AnyElement {
@@ -7725,18 +7918,6 @@ fn plan_label_markdown_style(
             ..default_md_style.base_text_style
         },
         ..default_md_style
-    }
-}
-
-fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
-    let default_md_style = default_markdown_style(true, false, window, cx);
-
-    MarkdownStyle {
-        base_text_style: TextStyle {
-            ..default_md_style.base_text_style
-        },
-        selection_background_color: cx.theme().colors().element_selection_background,
-        ..Default::default()
     }
 }
 
@@ -9056,7 +9237,7 @@ pub(crate) mod tests {
             editor.set_text("Message 2", window, cx);
         });
         thread_view.update_in(cx, |thread_view, window, cx| {
-            thread_view.send(window, cx);
+            thread_view.interrupt_and_send(window, cx);
         });
 
         cx.update(|_, cx| {
