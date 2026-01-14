@@ -83,7 +83,7 @@ use crate::{
 };
 use crate::{
     RunnableVariant, TaskTiming,
-    platform::{PlatformWindow, blade::BladeContext},
+    platform::{PlatformWindow, wgpu::WgpuContext},
 };
 use crate::{
     SharedString,
@@ -204,7 +204,7 @@ pub struct Output {
 pub(crate) struct WaylandClientState {
     serial_tracker: SerialTracker,
     globals: Globals,
-    pub gpu_context: BladeContext,
+    pub gpu_context: WgpuContext,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -537,7 +537,7 @@ impl WaylandClient {
             .unwrap();
 
         // This could be unified with the notification handling in zed/main:fail_to_open_window.
-        let gpu_context = BladeContext::new().notify_err("Unable to init GPU context");
+        let gpu_context = WgpuContext::new().notify_err("Unable to init GPU context");
 
         let seat = seat.unwrap();
         let globals = Globals::new(
@@ -824,6 +824,14 @@ impl LinuxClient for WaylandClient {
 
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         f(&mut self.0.borrow_mut().common)
+    }
+
+    fn quit(&self) {
+        self.with_common(|common| {
+            if let Some(ref signal) = common.signal {
+                signal.stop();
+            }
+        });
     }
 
     fn run(&self) {

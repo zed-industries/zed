@@ -36,6 +36,7 @@ pub(crate) const SCROLL_LINES: f32 = 3.0;
 // Taken from https://github.com/GNOME/gtk/blob/main/gtk/gtksettings.c#L320
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
+#[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
 pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 
@@ -117,6 +118,7 @@ pub trait LinuxClient {
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
+    fn quit(&self);
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
     fn window_identifier(
@@ -144,7 +146,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) appearance: WindowAppearance,
     pub(crate) auto_hide_scrollbars: bool,
     pub(crate) callbacks: PlatformHandlers,
-    pub(crate) signal: LoopSignal,
+    pub(crate) signal: Option<LoopSignal>,
     pub(crate) menus: Vec<OwnedMenu>,
 }
 
@@ -173,7 +175,7 @@ impl LinuxCommon {
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,
             callbacks,
-            signal,
+            signal: Some(signal),
             menus: Vec::new(),
         };
 
@@ -218,7 +220,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn quit(&self) {
-        self.with_common(|common| common.signal.stop());
+        LinuxClient::quit(self);
     }
 
     fn compositor_name(&self) -> &'static str {
@@ -705,7 +707,7 @@ pub(super) fn reveal_path_internal(
         .detach();
 }
 
-#[allow(unused)]
+#[cfg(any(feature = "wayland", feature = "x11"))]
 pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bool {
     let diff = a - b;
     diff.x.abs() <= DOUBLE_CLICK_DISTANCE && diff.y.abs() <= DOUBLE_CLICK_DISTANCE

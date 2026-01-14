@@ -8,14 +8,11 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
 
-#[cfg(any(
-    all(
-        any(target_os = "linux", target_os = "freebsd"),
-        any(feature = "x11", feature = "wayland")
-    ),
-    all(target_os = "macos", feature = "macos-blade")
+#[cfg(all(
+    any(target_os = "linux", target_os = "freebsd"),
+    any(feature = "wayland", feature = "x11")
 ))]
-mod blade;
+mod wgpu;
 
 #[cfg(any(test, feature = "test-support"))]
 mod test;
@@ -30,10 +27,8 @@ mod windows;
     feature = "screen-capture",
     any(
         target_os = "windows",
-        all(
-            any(target_os = "linux", target_os = "freebsd"),
-            any(feature = "wayland", feature = "x11"),
-        )
+        target_os = "linux",
+        target_os = "freebsd",
     )
 ))]
 pub(crate) mod scap_screen_capture;
@@ -110,26 +105,37 @@ pub(crate) fn current_platform(headless: bool, liveness: std::sync::Weak<()>) ->
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) fn current_platform(headless: bool, liveness: std::sync::Weak<()>) -> Rc<dyn Platform> {
-    #[cfg(feature = "x11")]
-    use anyhow::Context as _;
-
     if headless {
         return Rc::new(HeadlessClient::new(liveness));
     }
 
-    match guess_compositor() {
-        #[cfg(feature = "wayland")]
-        "Wayland" => Rc::new(WaylandClient::new(liveness)),
+    #[cfg(all(feature = "wayland", feature = "x11"))]
+    {
+        if std::env::var("XDG_SESSION_TYPE").ok().as_deref() == Some("wayland")
+            || std::env::var("WAYLAND_DISPLAY").is_ok()
+        {
+            return Rc::new(WaylandClient::new(liveness));
+        }
+        return Rc::new(
+            X11Client::new(liveness).expect("Failed to initialize X11 client"),
+        );
+    }
 
-        #[cfg(feature = "x11")]
-        "X11" => Rc::new(
-            X11Client::new(liveness)
-                .context("Failed to initialize X11 client.")
-                .unwrap(),
-        ),
+    #[cfg(all(feature = "wayland", not(feature = "x11")))]
+    {
+        return Rc::new(WaylandClient::new(liveness));
+    }
 
-        "Headless" => Rc::new(HeadlessClient::new(liveness)),
-        _ => unreachable!(),
+    #[cfg(all(feature = "x11", not(feature = "wayland")))]
+    {
+        return Rc::new(
+            X11Client::new(liveness).expect("Failed to initialize X11 client"),
+        );
+    }
+
+    #[cfg(not(any(feature = "wayland", feature = "x11")))]
+    {
+        Rc::new(HeadlessClient::new(liveness))
     }
 }
 

@@ -216,7 +216,7 @@ Additionally, it is extremely beneficial to provide the contents of your Zed log
 
 ```sh
 truncate -s 0 ~/.local/share/zed/logs/Zed.log # Clear the log file
-ZED_LOG=blade_graphics=info zed .
+ZED_LOG=wgpu=info zed .
 cat ~/.local/share/zed/logs/Zed.log
 # copy the output
 ```
@@ -224,7 +224,7 @@ cat ~/.local/share/zed/logs/Zed.log
 Or, if you have the Zed cli setup, you can do
 
 ```sh
-ZED_LOG=blade_graphics=info /path/to/zed/cli --foreground .
+ZED_LOG=wgpu=info /path/to/zed/cli --foreground .
 # copy the output
 ```
 
@@ -384,7 +384,7 @@ Replace `192` with your desired DPI value. This affects the system globally and 
 
 ### Font rendering parameters
 
-When using Blade rendering (Linux platforms and self-compiled builds with the Blade renderer enabled), Zed reads `ZED_FONTS_GAMMA` and `ZED_FONTS_GRAYSCALE_ENHANCED_CONTRAST` environment variables for the values to use for font rendering.
+On Linux, Zed reads `ZED_FONTS_GAMMA` and `ZED_FONTS_GRAYSCALE_ENHANCED_CONTRAST` environment variables for the values to use for font rendering.
 
 `ZED_FONTS_GAMMA` corresponds to [getgamma](https://learn.microsoft.com/en-us/windows/win32/api/dwrite/nf-dwrite-idwriterenderingparams-getgamma) values.
 Allowed range [1.0, 2.2], other values are clipped.

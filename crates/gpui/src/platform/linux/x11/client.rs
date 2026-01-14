@@ -50,7 +50,7 @@ use super::{
 
 use crate::platform::{
     LinuxCommon, PlatformWindow,
-    blade::BladeContext,
+    wgpu::WgpuContext,
     linux::{
         DEFAULT_CURSOR_ICON_NAME, LinuxClient, get_xkb_compose_state, is_within_click_distance,
         log_cursor_icon_warning, open_uri_internal,
@@ -177,7 +177,7 @@ pub struct X11ClientState {
     pub(crate) last_location: Point<Pixels>,
     pub(crate) current_count: usize,
 
-    pub(crate) gpu_context: BladeContext,
+    pub(crate) gpu_context: WgpuContext,
 
     pub(crate) scale_factor: f32,
 
@@ -437,7 +437,7 @@ impl X11Client {
             .to_string();
         let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
 
-        let gpu_context = BladeContext::new().notify_err("Unable to init GPU context");
+        let gpu_context = WgpuContext::new().notify_err("Unable to init GPU context");
 
         let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection)
             .context("Failed to create resource database")?;
@@ -1453,6 +1453,14 @@ impl LinuxClient for X11Client {
 
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         f(&mut self.0.borrow_mut().common)
+    }
+
+    fn quit(&self) {
+        self.with_common(|common| {
+            if let Some(ref signal) = common.signal {
+                signal.stop();
+            }
+        });
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
