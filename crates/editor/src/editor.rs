@@ -1644,7 +1644,15 @@ impl ClipboardSelection {
             project.absolute_path(&project_path, cx)
         });
 
-        let line_range = file_path.as_ref().map(|_| range.start.row..=range.end.row);
+        let line_range = file_path.as_ref().and_then(|_| {
+            let (_, start_point, start_excerpt_id) = buffer.point_to_buffer_point(range.start)?;
+            let (_, end_point, end_excerpt_id) = buffer.point_to_buffer_point(range.end)?;
+            if start_excerpt_id == end_excerpt_id {
+                Some(start_point.row..=end_point.row)
+            } else {
+                None
+            }
+        });
 
         Self {
             len,
