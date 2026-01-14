@@ -350,7 +350,7 @@ actions!(
         SelectPrevDirectory,
         /// Opens a diff view to compare two marked files.
         CompareMarkedFiles,
-        /// Opens context menu at the mouse position
+        /// Opens the project panel context menu at the current mouse position.
         OpenContextMenu
     ]
 );
@@ -1237,7 +1237,7 @@ impl ProjectPanel {
         cx.notify();
     }
 
-    fn open_conetxt_menu(
+    fn open_context_menu(
         &mut self,
         _: &OpenContextMenu,
         window: &mut Window,
@@ -1248,13 +1248,10 @@ impl ProjectPanel {
         } else if let Some(entry_id) = self.state.last_worktree_root_id {
             entry_id
         } else {
-            return; // No entry to show context menu for
+            return;
         };
 
-        let mouse_pos = window.mouse_position();
-        let position = point(mouse_pos.x, mouse_pos.y);
-
-        self.deploy_context_menu(position, entry_id, window, cx);
+        self.deploy_context_menu(window.mouse_position(), entry_id, window, cx);
     }
 
     fn has_git_changes(&self, entry_id: ProjectEntryId) -> bool {
@@ -6315,7 +6312,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
-                .on_action(cx.listener(Self::open_conetxt_menu))
+                .on_action(cx.listener(Self::open_context_menu))
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
@@ -6559,7 +6556,6 @@ impl Render for ProjectPanel {
                         .child(
                             div()
                                 .id("project-panel-blank-area")
-                                .track_focus(&self.focus_handle(cx))
                                 .block_mouse_except_scroll()
                                 .flex_grow()
                                 .when(
