@@ -5336,7 +5336,7 @@ impl ProjectPanel {
                 .fold(parent, |parent, (index, component)| {
                     parent
                         .when(index != 0, |this| {
-                            self.render_path_details_seperator(
+                            self.render_path_details_separator(
                                 this,
                                 entry_id,
                                 index,
@@ -5463,7 +5463,7 @@ impl ProjectPanel {
         }
     }
 
-    fn render_path_details_seperator(
+    fn render_path_details_separator(
         &self,
         parent: Div,
         entry_id: ProjectEntryId,
