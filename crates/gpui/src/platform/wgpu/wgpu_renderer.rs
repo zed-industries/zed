@@ -142,18 +142,18 @@ impl WgpuRenderer {
         };
 
         let surface_caps = surface.get_capabilities(&context.adapter);
-        // Prefer non-sRGB format to avoid sRGB blending issues.
-        // The shader outputs linear values which will be displayed directly.
-        // Only allow Rgba16Unorm if TEXTURE_FORMAT_16BIT_NORM feature is enabled.
-        let surface_format = surface_caps
-            .formats
+        // Prefer standard 8-bit non-sRGB formats that don't require special features.
+        // Other formats like Rgba16Unorm require TEXTURE_FORMAT_16BIT_NORM which may
+        // not be available on all devices.
+        let preferred_formats = [
+            wgpu::TextureFormat::Bgra8Unorm,
+            wgpu::TextureFormat::Rgba8Unorm,
+        ];
+        let surface_format = preferred_formats
             .iter()
-            .find(|f| {
-                !f.is_srgb()
-                    && (**f != wgpu::TextureFormat::Rgba16Unorm
-                        || context.supports_texture_format_16bit_norm())
-            })
+            .find(|f| surface_caps.formats.contains(f))
             .copied()
+            .or_else(|| surface_caps.formats.iter().find(|f| !f.is_srgb()).copied())
             .unwrap_or(surface_caps.formats[0]);
 
         let alpha_mode = if config.transparent {

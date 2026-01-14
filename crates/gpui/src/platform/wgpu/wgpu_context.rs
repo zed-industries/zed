@@ -8,7 +8,6 @@ pub struct WgpuContext {
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
     dual_source_blending: bool,
-    texture_format_16bit_norm: bool,
 }
 
 impl WgpuContext {
@@ -44,10 +43,6 @@ impl WgpuContext {
             .features()
             .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
 
-        let texture_format_16bit_norm_available = adapter
-            .features()
-            .contains(wgpu::Features::TEXTURE_FORMAT_16BIT_NORM);
-
         let mut required_features = wgpu::Features::empty();
         if dual_source_blending_available {
             required_features |= wgpu::Features::DUAL_SOURCE_BLENDING;
@@ -56,9 +51,6 @@ impl WgpuContext {
                 "Dual-source blending not available on this GPU. \
                 Subpixel text antialiasing will be disabled."
             );
-        }
-        if texture_format_16bit_norm_available {
-            required_features |= wgpu::Features::TEXTURE_FORMAT_16BIT_NORM;
         }
 
         let (device, queue) = smol::block_on(adapter.request_device(
@@ -79,7 +71,6 @@ impl WgpuContext {
             device: Arc::new(device),
             queue: Arc::new(queue),
             dual_source_blending: dual_source_blending_available,
-            texture_format_16bit_norm: texture_format_16bit_norm_available,
         })
     }
 
@@ -134,10 +125,6 @@ impl WgpuContext {
 
     pub fn supports_dual_source_blending(&self) -> bool {
         self.dual_source_blending
-    }
-
-    pub fn supports_texture_format_16bit_norm(&self) -> bool {
-        self.texture_format_16bit_norm
     }
 }
 
