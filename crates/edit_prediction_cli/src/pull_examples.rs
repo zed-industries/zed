@@ -1,9 +1,13 @@
 use anyhow::{Context as _, Result};
+use flate2::read::GzDecoder;
+use gpui::BackgroundExecutor;
 use http_client::{AsyncBody, HttpClient, Method, Request};
 use indoc::indoc;
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
+use std::io::Read;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::{
     example::Example,
@@ -12,9 +16,12 @@ use crate::{
 use edit_prediction::example_spec::ExampleSpec;
 
 const SNOWFLAKE_SUCCESS_CODE: &str = "090001";
+const SNOWFLAKE_ASYNC_IN_PROGRESS_CODE: &str = "333334";
 const EDIT_PREDICTION_EXAMPLE_CAPTURED_EVENT: &str = "Edit Prediction Example Captured";
 
 const DEFAULT_STATEMENT_TIMEOUT_SECONDS: u64 = 120;
+const POLL_INTERVAL: Duration = Duration::from_secs(2);
+const MAX_POLL_ATTEMPTS: usize = 120;
 
 /// Parse an input token of the form `captured-after:{timestamp}`.
 pub fn parse_captured_after_input(input: &str) -> Option<&str> {
@@ -25,6 +32,7 @@ pub async fn fetch_captured_examples_after(
     http_client: Arc<dyn HttpClient>,
     after_timestamps: &[String],
     max_rows_per_timestamp: usize,
+    background_executor: BackgroundExecutor,
 ) -> Result<Vec<Example>> {
     if after_timestamps.is_empty() {
         return Ok(Vec::new());
@@ -70,12 +78,59 @@ pub async fn fetch_captured_examples_after(
             }
         });
 
-        let response = run_sql(http_client.clone(), &base_url, &token, &request).await?;
+        let response = run_sql_with_polling(
+            http_client.clone(),
+            &base_url,
+            &token,
+            &request,
+            &step_progress,
+            background_executor.clone(),
+        )
+        .await?;
 
-        step_progress.set_info(format!("{} rows", response.data.len()), InfoStyle::Normal);
+        let total_rows = response
+            .result_set_meta_data
+            .as_ref()
+            .and_then(|m| m.num_rows)
+            .unwrap_or(response.data.len() as i64);
+
+        let num_partitions = response
+            .result_set_meta_data
+            .as_ref()
+            .map(|m| m.partition_info.len())
+            .unwrap_or(1)
+            .max(1);
+
+        step_progress.set_info(format!("{} rows", total_rows), InfoStyle::Normal);
         step_progress.set_substatus("parsing");
 
         all_examples.extend(examples_from_response(&response)?);
+
+        if num_partitions > 1 {
+            let statement_handle = response
+                .statement_handle
+                .as_ref()
+                .context("response has multiple partitions but no statementHandle")?;
+
+            for partition in 1..num_partitions {
+                step_progress.set_substatus(format!(
+                    "fetching partition {}/{}",
+                    partition + 1,
+                    num_partitions
+                ));
+
+                let partition_response = fetch_partition(
+                    http_client.clone(),
+                    &base_url,
+                    &token,
+                    statement_handle,
+                    partition,
+                )
+                .await?;
+
+                all_examples.extend(examples_from_response(&partition_response)?);
+            }
+        }
 
         step_progress.set_substatus("done");
     }
@@ -84,6 +139,7 @@ pub async fn fetch_captured_examples_after(
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SnowflakeStatementResponse {
     #[serde(default)]
     data: Vec<Vec<JsonValue>>,
@@ -93,13 +149,24 @@ struct SnowflakeStatementResponse {
     code: Option<String>,
     #[serde(default)]
     message: Option<String>,
+    #[serde(default)]
+    statement_handle: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SnowflakeResultSetMetaData {
     #[serde(default, rename = "rowType")]
     row_type: Vec<SnowflakeColumnMeta>,
+    #[serde(default)]
+    num_rows: Option<i64>,
+    #[serde(default)]
+    partition_info: Vec<SnowflakePartitionInfo>,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SnowflakePartitionInfo {}
 
 #[derive(Debug, Clone, Deserialize)]
 struct SnowflakeColumnMeta {
@@ -109,7 +176,7 @@ struct SnowflakeColumnMeta {
 
 fn examples_from_response(
     response: &SnowflakeStatementResponse,
-) -> Result<impl Iterator<Item = Example>> {
+) -> Result<impl Iterator<Item = Example> + '_> {
     if let Some(code) = &response.code {
         if code != SNOWFLAKE_SUCCESS_CODE {
             anyhow::bail!(
@@ -169,6 +236,136 @@ fn examples_from_response(
     Ok(iter)
 }
 
+async fn run_sql_with_polling(
+    http_client: Arc<dyn HttpClient>,
+    base_url: &str,
+    token: &str,
+    request: &serde_json::Value,
+    step_progress: &crate::progress::StepProgress,
+    background_executor: BackgroundExecutor,
+) -> Result<SnowflakeStatementResponse> {
+    let mut response = run_sql(http_client.clone(), base_url, token, request).await?;
+
+    if response.code.as_deref() == Some(SNOWFLAKE_ASYNC_IN_PROGRESS_CODE) {
+        let statement_handle = response
+            .statement_handle
+            .as_ref()
+            .context("async query response missing statementHandle")?
+            .clone();
+
+        for attempt in 1..=MAX_POLL_ATTEMPTS {
+            step_progress.set_substatus(format!("polling ({attempt})"));
+
+            background_executor.timer(POLL_INTERVAL).await;
+
+            response =
+                fetch_partition(http_client.clone(), base_url, token, &statement_handle, 0).await?;
+
+            if response.code.as_deref() != Some(SNOWFLAKE_ASYNC_IN_PROGRESS_CODE) {
+                break;
+            }
+        }
+
+        if response.code.as_deref() == Some(SNOWFLAKE_ASYNC_IN_PROGRESS_CODE) {
+            anyhow::bail!(
+                "query still running after {} poll attempts ({} seconds)",
+                MAX_POLL_ATTEMPTS,
+                MAX_POLL_ATTEMPTS as u64 * POLL_INTERVAL.as_secs()
+            );
+        }
+    }
+
+    Ok(response)
+}
+
+async fn fetch_partition(
+    http_client: Arc<dyn HttpClient>,
+    base_url: &str,
+    token: &str,
+    statement_handle: &str,
+    partition: usize,
+) -> Result<SnowflakeStatementResponse> {
+    let url = format!(
+        "{}/api/v2/statements/{}?partition={}",
+        base_url.trim_end_matches('/'),
+        statement_handle,
+        partition
+    );
+
+    let http_request = Request::builder()
+        .method(Method::GET)
+        .uri(url.as_str())
+        .header("Authorization", format!("Bearer {token}"))
+        .header(
+            "X-Snowflake-Authorization-Token-Type",
+            "PROGRAMMATIC_ACCESS_TOKEN",
+        )
+        .header("Accept", "application/json")
+        .header("Accept-Encoding", "gzip")
+        .body(AsyncBody::empty())?;
+
+    let response = http_client
+        .send(http_request)
+        .await
+        .context("failed to send partition request to Snowflake SQL API")?;
+
+    let status = response.status();
+    let content_encoding = response
+        .headers()
+        .get("content-encoding")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_lowercase());
+
+    let body_bytes = {
+        use futures::AsyncReadExt as _;
+
+        let mut body = response.into_body();
+        let mut bytes = Vec::new();
+        body.read_to_end(&mut bytes)
+            .await
+            .context("failed to read Snowflake SQL API partition response body")?;
+        bytes
+    };
+
+    let body_bytes = if content_encoding.as_deref() == Some("gzip") {
+        let mut decoder = GzDecoder::new(&body_bytes[..]);
+        let mut decompressed = Vec::new();
+        decoder
+            .read_to_end(&mut decompressed)
+            .context("failed to decompress gzip response")?;
+        decompressed
+    } else {
+        body_bytes
+    };
+
+    if !status.is_success() && status.as_u16() != 202 {
+        let body_text = String::from_utf8_lossy(&body_bytes);
+        anyhow::bail!(
+            "snowflake sql api partition request http {}: {}",
+            status.as_u16(),
+            body_text
+        );
+    }
+
+    if body_bytes.is_empty() {
+        anyhow::bail!(
+            "snowflake sql api partition {} returned empty response body (http {})",
+            partition,
+            status.as_u16()
+        );
+    }
+
+    serde_json::from_slice::<SnowflakeStatementResponse>(&body_bytes).with_context(|| {
+        let body_preview = String::from_utf8_lossy(&body_bytes[..body_bytes.len().min(500)]);
+        format!(
+            "failed to parse Snowflake SQL API partition {} response JSON (http {}): {}",
+            partition,
+            status.as_u16(),
+            body_preview
+        )
+    })
+}
+
 async fn run_sql(
     http_client: Arc<dyn HttpClient>,
     base_url: &str,
@@ -209,7 +406,7 @@ async fn run_sql(
         bytes
     };
 
-    if !status.is_success() {
+    if !status.is_success() && status.as_u16() != 202 {
         let body_text = String::from_utf8_lossy(&body_bytes);
         anyhow::bail!("snowflake sql api http {}: {}", status.as_u16(), body_text);
     }

@@ -329,6 +329,10 @@ impl LanguageModel for OpenAiLanguageModel {
         }
     }
 
+    fn supports_split_token_display(&self) -> bool {
+        true
+    }
+
     fn telemetry_id(&self) -> String {
         format!("openai/{}", self.model.id())
     }
