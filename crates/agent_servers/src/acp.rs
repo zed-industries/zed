@@ -358,6 +358,7 @@ impl AgentConnection for AcpConnection {
         let default_config_options = self.default_config_options.clone();
         let cwd = cwd.to_path_buf();
         let context_server_store = project.read(cx).context_server_store().read(cx);
+        let is_local = project.read(cx).is_local();
         let mcp_servers = context_server_store
             .configured_server_ids()
             .iter()
@@ -366,14 +367,14 @@ impl AgentConnection for AcpConnection {
                 match &*configuration {
                     project::context_server_store::ContextServerConfiguration::Custom {
                         command,
-                        remote: true,
+                        remote,
                         ..
                     }
                     | project::context_server_store::ContextServerConfiguration::Extension {
                         command,
-                        remote: true,
+                        remote,
                         ..
-                    } => Some(acp::McpServer::Stdio(
+                    } if is_local || *remote => Some(acp::McpServer::Stdio(
                         acp::McpServerStdio::new(id.0.to_string(), &command.path)
                             .args(command.args.clone())
                             .env(if let Some(env) = command.env.as_ref() {
