@@ -1518,6 +1518,12 @@ impl AcpThread {
                     .push(ToolCallContent::Terminal(update.terminal));
             }
             ToolCallUpdate::UpdateSubagentThread(update) => {
+                debug_assert!(
+                    !call.content.iter().any(|c| {
+                        matches!(c, ToolCallContent::SubagentThread(existing) if existing == &update.thread)
+                    }),
+                    "Duplicate SubagentThread update for the same AcpThread entity"
+                );
                 call.content
                     .push(ToolCallContent::SubagentThread(update.thread));
             }

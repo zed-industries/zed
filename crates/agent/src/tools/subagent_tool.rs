@@ -31,10 +31,10 @@ const CONTEXT_LOW_THRESHOLD: f32 = 0.25;
 /// Spawns one or more subagents with their own context windows to perform delegated tasks.
 /// Multiple subagents run in parallel.
 ///
-/// Use this tool when you need to:
-/// - Perform research that would consume too many tokens in the main context
-/// - Execute complex subtasks independently
-/// - Run multiple parallel investigations
+/// Use this tool when you want to do any of the following:
+/// - Perform an investigation where all you need to know is the outcome, not the research that led to that outcome.
+/// - Complete a self-contained task where you need to know if it succeeded or failed (and how), but none of its intermediate output.
+/// - Run multiple tasks in parallel that would take significantly longer to run sequentially.
 ///
 /// You control what each subagent does by providing:
 /// 1. A task prompt describing what the subagent should do
@@ -44,11 +44,11 @@ const CONTEXT_LOW_THRESHOLD: f32 = 0.25;
 /// Each subagent has access to the same tools you do. You can optionally restrict
 /// which tools each subagent can use.
 ///
-/// IMPORTANT:
+/// Note:
 /// - Maximum 8 subagents can run in parallel
 /// - Subagents cannot use tools you don't have access to
 /// - If spawning multiple subagents that might write to the filesystem, provide
-///   guidance on how to avoid conflicts (e.g., assign each to different directories)
+///   guidance on how to avoid conflicts (e.g. assign each to different directories)
 /// - Instruct subagents to be concise in their summaries to conserve your context
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SubagentToolInput {
