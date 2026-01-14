@@ -3465,19 +3465,7 @@ impl AcpThreadView {
                                     diff_stats.lines_removed as usize,
                                 )),
                         )
-                    })
-                    .child(
-                        IconButton::new(
-                            SharedString::from(format!(
-                                "expand-subagent-btn-{}-{}",
-                                entry_ix, context_ix
-                            )),
-                            IconName::Maximize,
-                        )
-                        .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Outlined)
-                        .tooltip(Tooltip::text("Expand Subagent")),
-                    ),
+                    }),
             )
             .when(is_expanded, |this| {
                 this.child(self.render_subagent_expanded_content(
