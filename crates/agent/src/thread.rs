@@ -12,7 +12,7 @@ use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
 use agent_client_protocol as acp;
 use agent_settings::{
     AgentProfileId, AgentProfileSettings, AgentSettings, CompletionMode,
-    SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT, builtin_profiles,
+    SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -2172,21 +2172,13 @@ impl Thread {
             }
         }
 
-        let subagent_enabled_by_default = cx.has_flag::<SubagentsFeatureFlag>()
-            && (self.profile_id.as_str() == builtin_profiles::WRITE
-                || self.profile_id.as_str() == builtin_profiles::ASK);
-
         let mut tools = self
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
-                let is_enabled = if tool_name.as_ref() == acp_thread::SUBAGENT_TOOL_NAME {
-                    profile.is_tool_enabled(tool_name) || subagent_enabled_by_default
-                } else {
-                    profile.is_tool_enabled(tool_name)
-                };
-
-                if tool.supports_provider(&model.provider_id()) && is_enabled {
+                if tool.supports_provider(&model.provider_id())
+                    && profile.is_tool_enabled(tool_name)
+                {
                     Some((truncate(tool_name), tool.clone()))
                 } else {
                     None

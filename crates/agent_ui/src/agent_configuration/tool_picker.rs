@@ -1,8 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use agent::ContextServerRegistry;
-use agent_settings::{AgentProfileId, AgentProfileSettings, builtin_profiles};
-use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
+use agent_settings::{AgentProfileId, AgentProfileSettings};
 use fs::Fs;
 use gpui::{App, Context, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, Window};
 use picker::{Picker, PickerDelegate};
@@ -369,13 +368,11 @@ impl PickerDelegate for ToolPickerDelegate {
                         .copied()
                         .unwrap_or(self.profile_settings.enable_all_context_servers)
                 } else {
-                    let explicitly_enabled = self.profile_settings.tools.get(name).copied();
-                    let subagent_enabled_by_default = name.as_ref()
-                        == acp_thread::SUBAGENT_TOOL_NAME
-                        && cx.has_flag::<SubagentsFeatureFlag>()
-                        && (self.profile_id.as_str() == builtin_profiles::WRITE
-                            || self.profile_id.as_str() == builtin_profiles::ASK);
-                    explicitly_enabled.unwrap_or(subagent_enabled_by_default)
+                    self.profile_settings
+                        .tools
+                        .get(name)
+                        .copied()
+                        .unwrap_or(false)
                 };
 
                 Some(
