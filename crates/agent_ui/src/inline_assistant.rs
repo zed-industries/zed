@@ -2210,7 +2210,7 @@ pub mod evals {
     use eval_utils::{EvalOutput, NoProcessor};
     use gpui::TestAppContext;
     use language_model::{LanguageModelRegistry, SelectedModel};
-    use rand::{SeedableRng as _, rngs::StdRng};
+
 
     use crate::inline_assistant::test::{InlineAssistantOutput, run_inline_assistant_test};
 
@@ -2312,7 +2312,7 @@ pub mod evals {
         let prompt = prompt.into();
 
         eval_utils::eval(iterations, expected_pass_ratio, NoProcessor, move || {
-            let dispatcher = gpui::TestDispatcher::new(StdRng::from_os_rng());
+            let dispatcher = gpui::TestDispatcher::new(rand::random());
             let mut cx = TestAppContext::build(dispatcher, None);
             cx.skip_drawing();
 

@@ -591,17 +591,21 @@ async fn test_remote_server_debugger(
     server_cx: &mut TestAppContext,
     executor: BackgroundExecutor,
 ) {
+    eprintln!("[DEBUG] test_remote_server_debugger: START");
     cx_a.update(|cx| {
         release_channel::init(semver::Version::new(0, 0, 0), cx);
         command_palette_hooks::init(cx);
         zlog::init_test();
         dap_adapters::init(cx);
     });
+    eprintln!("[DEBUG] test_remote_server_debugger: cx_a init done");
     server_cx.update(|cx| {
         release_channel::init(semver::Version::new(0, 0, 0), cx);
         dap_adapters::init(cx);
     });
+    eprintln!("[DEBUG] test_remote_server_debugger: server_cx init done");
     let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
+    eprintln!("[DEBUG] test_remote_server_debugger: fake_server created");
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
@@ -611,6 +615,7 @@ async fn test_remote_server_debugger(
             }),
         )
         .await;
+    eprintln!("[DEBUG] test_remote_server_debugger: insert_tree done");
 
     // User A connects to the remote project via SSH.
     server_cx.update(HeadlessProject::init);
@@ -631,32 +636,43 @@ async fn test_remote_server_debugger(
             cx,
         )
     });
+    eprintln!("[DEBUG] test_remote_server_debugger: headless_project created");
 
     let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
+    eprintln!("[DEBUG] test_remote_server_debugger: fake_client created");
+    eprintln!("[DEBUG] test_remote_server_debugger: starting TestServer");
     let mut server = TestServer::start(server_cx.executor()).await;
+    eprintln!("[DEBUG] test_remote_server_debugger: TestServer started");
     let client_a = server.create_client(cx_a, "user_a").await;
+    eprintln!("[DEBUG] test_remote_server_debugger: client_a created");
     cx_a.update(|cx| {
         debugger_ui::init(cx);
         command_palette_hooks::init(cx);
     });
+    eprintln!("[DEBUG] test_remote_server_debugger: building ssh project");
     let (project_a, _) = client_a
         .build_ssh_project(path!("/code"), client_ssh.clone(), false, cx_a)
         .await;
+    eprintln!("[DEBUG] test_remote_server_debugger: ssh project built");
 
     let (workspace, cx_a) = client_a.build_workspace(&project_a, cx_a);
 
+    eprintln!("[DEBUG] test_remote_server_debugger: loading debugger panel");
     let debugger_panel = workspace
         .update_in(cx_a, |_workspace, window, cx| {
             cx.spawn_in(window, DebugPanel::load)
         })
         .await
         .unwrap();
+    eprintln!("[DEBUG] test_remote_server_debugger: debugger panel loaded");
 
     workspace.update_in(cx_a, |workspace, window, cx| {
         workspace.add_panel(debugger_panel, window, cx);
     });
 
+    eprintln!("[DEBUG] test_remote_server_debugger: calling run_until_parked (1)");
     cx_a.run_until_parked();
+    eprintln!("[DEBUG] test_remote_server_debugger: run_until_parked (1) done");
     let debug_panel = workspace
         .update(cx_a, |workspace, cx| workspace.panel::<DebugPanel>(cx))
         .unwrap();
@@ -666,8 +682,13 @@ async fn test_remote_server_debugger(
         .downcast::<workspace::Workspace>()
         .unwrap();
 
+    eprintln!("[DEBUG] test_remote_server_debugger: calling start_debug_session");
     let session = debugger_ui::tests::start_debug_session(&workspace_window, cx_a, |_| {}).unwrap();
+    eprintln!(
+        "[DEBUG] test_remote_server_debugger: start_debug_session returned, calling run_until_parked (2)"
+    );
     cx_a.run_until_parked();
+    eprintln!("[DEBUG] test_remote_server_debugger: run_until_parked (2) done");
     debug_panel.update(cx_a, |debug_panel, cx| {
         assert_eq!(
             debug_panel.active_session().unwrap().read(cx).session(cx),
@@ -679,6 +700,7 @@ async fn test_remote_server_debugger(
         assert_eq!(session.binary().unwrap().command.as_deref(), Some("ssh"));
     });
 
+    eprintln!("[DEBUG] test_remote_server_debugger: shutting down session");
     let shutdown_session = workspace.update(cx_a, |workspace, cx| {
         workspace.project().update(cx, |project, cx| {
             project.dap_store().update(cx, |dap_store, cx| {
@@ -691,7 +713,9 @@ async fn test_remote_server_debugger(
         a.shutdown_processes(Some(proto::ShutdownRemoteServer {}), executor)
     });
 
+    eprintln!("[DEBUG] test_remote_server_debugger: awaiting shutdown_session");
     shutdown_session.await.unwrap();
+    eprintln!("[DEBUG] test_remote_server_debugger: DONE");
 }
 
 #[gpui::test]
