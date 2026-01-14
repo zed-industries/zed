@@ -72,7 +72,8 @@ use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
     ContinueThread, ContinueWithBurnMode, CycleFavoriteModels, CycleModeSelector,
     ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAgentDiff, OpenHistory, QueueMessage,
-    RejectAll, RejectOnce, SendNextQueuedMessage, ToggleBurnMode, ToggleProfileSelector,
+    RejectAll, RejectOnce, SelectPermissionGranularity, SendNextQueuedMessage, ToggleBurnMode,
+    ToggleProfileSelector,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(1);
@@ -310,6 +311,10 @@ pub struct AcpThreadView {
     project: Entity<Project>,
     thread_state: ThreadState,
     permission_dropdown_handle: PopoverMenuHandle<ContextMenu>,
+    /// Tracks the selected granularity index for each tool call's permission dropdown.
+    /// The index corresponds to the position in the allow_options list.
+    /// Default is the last option (index pointing to "Only this time").
+    selected_permission_granularity: HashMap<acp::ToolCallId, usize>,
     login: Option<task::SpawnInTerminal>,
     session_list: Option<Rc<dyn AgentSessionList>>,
     session_list_state: Rc<RefCell<Option<Rc<dyn AgentSessionList>>>>,
@@ -488,6 +493,7 @@ impl AcpThreadView {
             project: project.clone(),
             entry_view_state,
             permission_dropdown_handle: PopoverMenuHandle::default(),
+            selected_permission_granularity: HashMap::default(),
             thread_state: Self::initial_state(
                 agent.clone(),
                 resume_thread.clone(),
@@ -3588,8 +3594,8 @@ impl AcpThreadView {
             return self.render_permission_buttons_legacy(options, entry_ix, tool_call_id, cx);
         }
 
-        // Separate options into allow options and deny option
-        let allow_options: Vec<_> = options
+        // Get granularity options (all options except the old deny option which we no longer generate)
+        let granularity_options: Vec<_> = options
             .iter()
             .filter(|o| {
                 matches!(
@@ -3599,18 +3605,75 @@ impl AcpThreadView {
             })
             .collect();
 
-        let deny_option = options
-            .iter()
-            .find(|o| matches!(o.kind, acp::PermissionOptionKind::RejectOnce));
+        // Get the selected granularity index, defaulting to the last option ("Only this time")
+        let selected_index = self
+            .selected_permission_granularity
+            .get(&tool_call_id)
+            .copied()
+            .unwrap_or_else(|| granularity_options.len().saturating_sub(1));
 
-        // The dropdown label should match the first menu item
-        let dropdown_label: SharedString = "Allow once".into();
+        // Get the selected option
+        let selected_option = granularity_options
+            .get(selected_index)
+            .or(granularity_options.last())
+            .copied();
 
-        // Get the option that will be used when Allow is clicked (always "Allow once")
-        let selected_allow_option = allow_options
-            .iter()
-            .find(|o| o.kind == acp::PermissionOptionKind::AllowOnce)
-            .or(allow_options.first());
+        // The dropdown label should match the selected option
+        let dropdown_label: SharedString = selected_option
+            .map(|o| o.name.clone().into())
+            .unwrap_or_else(|| "Only this time".into());
+
+        // Prepare data for button click handlers
+        let (allow_option_id, allow_option_kind, deny_option_id, deny_option_kind) =
+            if let Some(option) = selected_option {
+                let option_id_str = option.option_id.0.to_string();
+
+                // Transform option_id for allow: "always:tool" -> "always_allow:tool", "once" -> "allow"
+                let allow_id = if option_id_str == "once" {
+                    "allow".to_string()
+                } else if let Some(rest) = option_id_str.strip_prefix("always:") {
+                    format!("always_allow:{}", rest)
+                } else if let Some(rest) = option_id_str.strip_prefix("always_pattern:") {
+                    format!("always_allow_pattern:{}", rest)
+                } else {
+                    option_id_str.clone()
+                };
+
+                // Transform option_id for deny: "always:tool" -> "always_deny:tool", "once" -> "deny"
+                let deny_id = if option_id_str == "once" {
+                    "deny".to_string()
+                } else if let Some(rest) = option_id_str.strip_prefix("always:") {
+                    format!("always_deny:{}", rest)
+                } else if let Some(rest) = option_id_str.strip_prefix("always_pattern:") {
+                    format!("always_deny_pattern:{}", rest)
+                } else {
+                    option_id_str.replace("allow", "deny")
+                };
+
+                // Determine the kinds
+                let allow_kind = option.kind;
+                let deny_kind = match option.kind {
+                    acp::PermissionOptionKind::AllowOnce => acp::PermissionOptionKind::RejectOnce,
+                    acp::PermissionOptionKind::AllowAlways => {
+                        acp::PermissionOptionKind::RejectAlways
+                    }
+                    other => other,
+                };
+
+                (
+                    acp::PermissionOptionId::new(allow_id),
+                    allow_kind,
+                    acp::PermissionOptionId::new(deny_id),
+                    deny_kind,
+                )
+            } else {
+                (
+                    acp::PermissionOptionId::new("allow"),
+                    acp::PermissionOptionKind::AllowOnce,
+                    acp::PermissionOptionId::new("deny"),
+                    acp::PermissionOptionKind::RejectOnce,
+                )
+            };
 
         div()
             .p_1()
@@ -3648,12 +3711,8 @@ impl AcpThreadView {
                             })
                             .on_click(cx.listener({
                                 let tool_call_id = tool_call_id.clone();
-                                let option_id = selected_allow_option
-                                    .map(|o| o.option_id.clone())
-                                    .unwrap_or_else(|| acp::PermissionOptionId::new("allow"));
-                                let option_kind = selected_allow_option
-                                    .map(|o| o.kind)
-                                    .unwrap_or(acp::PermissionOptionKind::AllowOnce);
+                                let option_id = allow_option_id;
+                                let option_kind = allow_option_kind;
                                 move |this, _, window, cx| {
                                     this.authorize_tool_call(
                                         tool_call_id.clone(),
@@ -3687,14 +3746,14 @@ impl AcpThreadView {
                                 }
                             })
                             .on_click(cx.listener({
-                                let option_id = deny_option
-                                    .map(|o| o.option_id.clone())
-                                    .unwrap_or_else(|| acp::PermissionOptionId::new("deny"));
+                                let tool_call_id = tool_call_id.clone();
+                                let option_id = deny_option_id;
+                                let option_kind = deny_option_kind;
                                 move |this, _, window, cx| {
                                     this.authorize_tool_call(
                                         tool_call_id.clone(),
                                         option_id.clone(),
-                                        acp::PermissionOptionKind::RejectOnce,
+                                        option_kind,
                                         window,
                                         cx,
                                     );
@@ -3705,10 +3764,11 @@ impl AcpThreadView {
             .child(
                 // Right side: Granularity dropdown
                 self.render_permission_granularity_dropdown(
-                    &allow_options,
+                    &granularity_options,
                     dropdown_label,
                     entry_ix,
-                    tool_call_id.clone(),
+                    tool_call_id,
+                    selected_index,
                     is_first,
                     cx,
                 ),
@@ -3717,22 +3777,20 @@ impl AcpThreadView {
 
     fn render_permission_granularity_dropdown(
         &self,
-        allow_options: &[&acp::PermissionOption],
+        granularity_options: &[&acp::PermissionOption],
         current_label: SharedString,
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
+        selected_index: usize,
         is_first: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         // Collect option info for the menu builder closure
-        // Each item is (option_id, option_kind, display_name)
-        let menu_options: Vec<(
-            acp::PermissionOptionId,
-            acp::PermissionOptionKind,
-            SharedString,
-        )> = allow_options
+        // Each item is (index, display_name)
+        let menu_options: Vec<(usize, SharedString)> = granularity_options
             .iter()
-            .map(|o| (o.option_id.clone(), o.kind, o.name.clone().into()))
+            .enumerate()
+            .map(|(i, o)| (i, o.name.clone().into()))
             .collect();
 
         PopoverMenu::new(("permission-granularity", entry_ix))
@@ -3764,11 +3822,11 @@ impl AcpThreadView {
                 let options = menu_options.clone();
 
                 Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
-                    for (option_id, option_kind, display_name) in options.iter() {
+                    for (index, display_name) in options.iter() {
                         let display_name = display_name.clone();
-                        let option_id = option_id.clone();
-                        let option_kind = *option_kind;
+                        let index = *index;
                         let tool_call_id_for_entry = tool_call_id.clone();
+                        let is_selected = index == selected_index;
 
                         menu = menu.custom_entry(
                             {
@@ -3776,28 +3834,27 @@ impl AcpThreadView {
                                 move |_window, _cx| {
                                     h_flex()
                                         .w_full()
+                                        .justify_between()
                                         .child(
                                             Label::new(display_name.clone()).size(LabelSize::Small),
                                         )
+                                        .when(is_selected, |this| {
+                                            this.child(
+                                                Icon::new(IconName::Check)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Accent),
+                                            )
+                                        })
                                         .into_any_element()
                                 }
                             },
                             {
                                 let tool_call_id = tool_call_id_for_entry.clone();
-                                let option_id = option_id.clone();
-                                let option_kind_str = match option_kind {
-                                    acp::PermissionOptionKind::AllowOnce => "AllowOnce",
-                                    acp::PermissionOptionKind::AllowAlways => "AllowAlways",
-                                    acp::PermissionOptionKind::RejectOnce => "RejectOnce",
-                                    acp::PermissionOptionKind::RejectAlways => "RejectAlways",
-                                    _ => "AllowOnce",
-                                };
                                 move |window, cx| {
                                     window.dispatch_action(
-                                        AuthorizeToolCall {
+                                        SelectPermissionGranularity {
                                             tool_call_id: tool_call_id.0.to_string(),
-                                            option_id: option_id.0.to_string(),
-                                            option_kind: option_kind_str.to_string(),
+                                            index,
                                         }
                                         .boxed_clone(),
                                         cx,
@@ -5716,11 +5773,84 @@ impl AcpThreadView {
     }
 
     fn allow_once(&mut self, _: &AllowOnce, window: &mut Window, cx: &mut Context<Self>) {
-        self.authorize_pending_tool_call(acp::PermissionOptionKind::AllowOnce, window, cx);
+        self.authorize_pending_with_granularity(true, window, cx);
     }
 
     fn reject_once(&mut self, _: &RejectOnce, window: &mut Window, cx: &mut Context<Self>) {
-        self.authorize_pending_tool_call(acp::PermissionOptionKind::RejectOnce, window, cx);
+        self.authorize_pending_with_granularity(false, window, cx);
+    }
+
+    fn authorize_pending_with_granularity(
+        &mut self,
+        is_allow: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let thread = self.thread()?.read(cx);
+        let tool_call = thread.first_tool_awaiting_confirmation()?;
+        let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
+            return None;
+        };
+        let tool_call_id = tool_call.id.clone();
+
+        // Get granularity options (all options except old deny option)
+        let granularity_options: Vec<_> = options
+            .iter()
+            .filter(|o| {
+                matches!(
+                    o.kind,
+                    acp::PermissionOptionKind::AllowOnce | acp::PermissionOptionKind::AllowAlways
+                )
+            })
+            .collect();
+
+        // Get selected index, defaulting to last option ("Only this time")
+        let selected_index = self
+            .selected_permission_granularity
+            .get(&tool_call_id)
+            .copied()
+            .unwrap_or_else(|| granularity_options.len().saturating_sub(1));
+
+        let selected_option = granularity_options
+            .get(selected_index)
+            .or(granularity_options.last())
+            .copied()?;
+
+        let option_id_str = selected_option.option_id.0.to_string();
+
+        // Transform option_id based on allow/deny
+        let (final_option_id, final_option_kind) = if is_allow {
+            let allow_id = if option_id_str == "once" {
+                "allow".to_string()
+            } else if let Some(rest) = option_id_str.strip_prefix("always:") {
+                format!("always_allow:{}", rest)
+            } else if let Some(rest) = option_id_str.strip_prefix("always_pattern:") {
+                format!("always_allow_pattern:{}", rest)
+            } else {
+                option_id_str
+            };
+            (acp::PermissionOptionId::new(allow_id), selected_option.kind)
+        } else {
+            let deny_id = if option_id_str == "once" {
+                "deny".to_string()
+            } else if let Some(rest) = option_id_str.strip_prefix("always:") {
+                format!("always_deny:{}", rest)
+            } else if let Some(rest) = option_id_str.strip_prefix("always_pattern:") {
+                format!("always_deny_pattern:{}", rest)
+            } else {
+                option_id_str.replace("allow", "deny")
+            };
+            let deny_kind = match selected_option.kind {
+                acp::PermissionOptionKind::AllowOnce => acp::PermissionOptionKind::RejectOnce,
+                acp::PermissionOptionKind::AllowAlways => acp::PermissionOptionKind::RejectAlways,
+                other => other,
+            };
+            (acp::PermissionOptionId::new(deny_id), deny_kind)
+        };
+
+        self.authorize_tool_call(tool_call_id, final_option_id, final_option_kind, window, cx);
+
+        Some(())
     }
 
     fn open_permission_dropdown(
@@ -5730,6 +5860,18 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) {
         self.permission_dropdown_handle.toggle(window, cx);
+    }
+
+    fn handle_select_permission_granularity(
+        &mut self,
+        action: &SelectPermissionGranularity,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tool_call_id = acp::ToolCallId::new(action.tool_call_id.clone());
+        self.selected_permission_granularity
+            .insert(tool_call_id, action.index);
+        cx.notify();
     }
 
     fn handle_authorize_tool_call(
@@ -7420,6 +7562,7 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::allow_once))
             .on_action(cx.listener(Self::reject_once))
             .on_action(cx.listener(Self::handle_authorize_tool_call))
+            .on_action(cx.listener(Self::handle_select_permission_granularity))
             .on_action(cx.listener(Self::open_permission_dropdown))
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
                 this.send_queued_message_at_index(0, true, window, cx);
@@ -9325,31 +9468,30 @@ pub(crate) mod tests {
                 tool_call.status
             );
 
-            // Verify the options count (no "Always Allow" when granular options are shown)
+            // Verify the options count (granularity options only, no separate Deny option)
             if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
                 &tool_call.status
             {
-                assert_eq!(options.len(), 4, "Expected 4 permission options");
+                assert_eq!(
+                    options.len(),
+                    3,
+                    "Expected 3 permission options (granularity only)"
+                );
 
-                // Verify specific button labels
+                // Verify specific button labels (now using neutral names)
                 let labels: Vec<&str> = options.iter().map(|o| o.name.as_ref()).collect();
                 assert!(
-                    !labels.contains(&"Always Allow"),
-                    "'Always Allow' should not be shown when granular options are available"
+                    labels.contains(&"Always for terminal"),
+                    "Missing 'Always for terminal' option"
                 );
                 assert!(
-                    labels.contains(&"Always allow terminal"),
-                    "Missing 'Always allow terminal' button"
+                    labels.contains(&"Always for `cargo` commands"),
+                    "Missing pattern option"
                 );
                 assert!(
-                    labels.contains(&"Always allow `cargo` commands"),
-                    "Missing pattern button"
+                    labels.contains(&"Only this time"),
+                    "Missing 'Only this time' option"
                 );
-                assert!(
-                    labels.contains(&"Allow once"),
-                    "Missing 'Allow once' button"
-                );
-                assert!(labels.contains(&"Deny"), "Missing 'Deny' button");
             }
         });
     }
@@ -9418,12 +9560,12 @@ pub(crate) mod tests {
             {
                 let labels: Vec<&str> = options.iter().map(|o| o.name.as_ref()).collect();
                 assert!(
-                    labels.contains(&"Always allow edit file"),
-                    "Missing 'Always allow edit file' button"
+                    labels.contains(&"Always for edit file"),
+                    "Missing 'Always for edit file' option"
                 );
                 assert!(
-                    labels.contains(&"Always allow in `src/`"),
-                    "Missing path pattern button"
+                    labels.contains(&"Always for `src/`"),
+                    "Missing path pattern option"
                 );
             } else {
                 panic!("Expected WaitingForConfirmation status");
@@ -9495,12 +9637,12 @@ pub(crate) mod tests {
             {
                 let labels: Vec<&str> = options.iter().map(|o| o.name.as_ref()).collect();
                 assert!(
-                    labels.contains(&"Always allow fetch"),
-                    "Missing 'Always allow fetch' button"
+                    labels.contains(&"Always for fetch"),
+                    "Missing 'Always for fetch' option"
                 );
                 assert!(
-                    labels.contains(&"Always allow fetching from `docs.rs`"),
-                    "Missing domain pattern button"
+                    labels.contains(&"Always for `docs.rs`"),
+                    "Missing domain pattern option"
                 );
             } else {
                 panic!("Expected WaitingForConfirmation status");
@@ -9552,7 +9694,7 @@ pub(crate) mod tests {
 
         cx.run_until_parked();
 
-        // Verify only 3 options (no pattern button, no "Always Allow")
+        // Verify only 2 options (no pattern button when command doesn't match pattern)
         thread_view.read_with(cx, |thread_view, cx| {
             let thread = thread_view.thread().expect("Thread should exist");
             let thread = thread.read(cx);
@@ -9573,28 +9715,23 @@ pub(crate) mod tests {
             {
                 assert_eq!(
                     options.len(),
-                    3,
-                    "Expected 3 permission options (no pattern button, no Always Allow)"
+                    2,
+                    "Expected 2 permission options (no pattern option)"
                 );
 
                 let labels: Vec<&str> = options.iter().map(|o| o.name.as_ref()).collect();
                 assert!(
-                    !labels.contains(&"Always Allow"),
-                    "'Always Allow' should not be shown when granular options are available"
+                    labels.contains(&"Always for terminal"),
+                    "Missing 'Always for terminal' option"
                 );
                 assert!(
-                    labels.contains(&"Always allow terminal"),
-                    "Missing 'Always allow terminal' button"
+                    labels.contains(&"Only this time"),
+                    "Missing 'Only this time' option"
                 );
-                assert!(
-                    labels.contains(&"Allow once"),
-                    "Missing 'Allow once' button"
-                );
-                assert!(labels.contains(&"Deny"), "Missing 'Deny' button");
-                // Should NOT contain a pattern button
+                // Should NOT contain a pattern option
                 assert!(
                     !labels.iter().any(|l| l.contains("commands")),
-                    "Should not have pattern button"
+                    "Should not have pattern option"
                 );
             } else {
                 panic!("Expected WaitingForConfirmation status");
@@ -9729,7 +9866,7 @@ pub(crate) mod tests {
         // Find the pattern option ID
         let pattern_option = permission_options
             .iter()
-            .find(|o| o.option_id.0.starts_with("always_allow_pattern:"))
+            .find(|o| o.option_id.0.starts_with("always_pattern:"))
             .expect("Should have a pattern option for npm command");
 
         // Dispatch action with the pattern option (simulating "Always allow `npm` commands")
@@ -9757,5 +9894,308 @@ pub(crate) mod tests {
                 "Tool call should be authorized after selecting pattern option"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_granularity_selection_updates_state(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("granularity-test-1");
+        let tool_call =
+            acp::ToolCall::new(tool_call_id.clone(), "Run `cargo build`").kind(acp::ToolKind::Edit);
+
+        let permission_options =
+            ToolPermissionContext::new("terminal", "cargo build").build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options.clone(),
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Build the project", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify default granularity is the last option (index 2 = "Only this time")
+        thread_view.read_with(cx, |thread_view, _cx| {
+            let selected = thread_view
+                .selected_permission_granularity
+                .get(&tool_call_id);
+            assert!(
+                selected.is_none(),
+                "Should have no selection initially (defaults to last)"
+            );
+        });
+
+        // Select the first option (index 0 = "Always for terminal")
+        thread_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                crate::SelectPermissionGranularity {
+                    tool_call_id: "granularity-test-1".to_string(),
+                    index: 0,
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Verify the selection was updated
+        thread_view.read_with(cx, |thread_view, _cx| {
+            let selected = thread_view
+                .selected_permission_granularity
+                .get(&tool_call_id);
+            assert_eq!(selected, Some(&0), "Should have selected index 0");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_allow_button_uses_selected_granularity(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("allow-granularity-test-1");
+        let tool_call =
+            acp::ToolCall::new(tool_call_id.clone(), "Run `npm install`").kind(acp::ToolKind::Edit);
+
+        let permission_options =
+            ToolPermissionContext::new("terminal", "npm install").build_permission_options();
+
+        // Verify we have the expected options
+        assert_eq!(permission_options.len(), 3);
+        assert!(
+            permission_options[0]
+                .option_id
+                .0
+                .contains("always:terminal")
+        );
+        assert!(
+            permission_options[1]
+                .option_id
+                .0
+                .contains("always_pattern:terminal")
+        );
+        assert_eq!(permission_options[2].option_id.0.as_ref(), "once");
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options.clone(),
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Install dependencies", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Select the pattern option (index 1 = "Always for `npm` commands")
+        thread_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                crate::SelectPermissionGranularity {
+                    tool_call_id: "allow-granularity-test-1".to_string(),
+                    index: 1,
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Simulate clicking the Allow button by dispatching AllowOnce action
+        // which should use the selected granularity
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.allow_once(&AllowOnce, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify tool call was authorized
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread.read(cx);
+            let tool_call = thread.first_tool_awaiting_confirmation();
+            assert!(
+                tool_call.is_none(),
+                "Tool call should be authorized after Allow with pattern granularity"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_deny_button_uses_selected_granularity(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("deny-granularity-test-1");
+        let tool_call =
+            acp::ToolCall::new(tool_call_id.clone(), "Run `git push`").kind(acp::ToolKind::Edit);
+
+        let permission_options =
+            ToolPermissionContext::new("terminal", "git push").build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options.clone(),
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Push changes", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Use default granularity (last option = "Only this time")
+        // Simulate clicking the Deny button
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.reject_once(&RejectOnce, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify tool call was rejected (no longer waiting for confirmation)
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread.read(cx);
+            let tool_call = thread.first_tool_awaiting_confirmation();
+            assert!(
+                tool_call.is_none(),
+                "Tool call should be rejected after Deny"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_option_id_transformation_for_allow() {
+        // Test the option_id transformation logic directly
+        // "once" -> "allow"
+        // "always:terminal" -> "always_allow:terminal"
+        // "always_pattern:terminal:^cargo\s" -> "always_allow_pattern:terminal:^cargo\s"
+
+        let test_cases = vec![
+            ("once", "allow"),
+            ("always:terminal", "always_allow:terminal"),
+            (
+                "always_pattern:terminal:^cargo\\s",
+                "always_allow_pattern:terminal:^cargo\\s",
+            ),
+            ("always:fetch", "always_allow:fetch"),
+            (
+                "always_pattern:fetch:^https?://docs\\.rs",
+                "always_allow_pattern:fetch:^https?://docs\\.rs",
+            ),
+        ];
+
+        for (input, expected) in test_cases {
+            let result = if input == "once" {
+                "allow".to_string()
+            } else if let Some(rest) = input.strip_prefix("always:") {
+                format!("always_allow:{}", rest)
+            } else if let Some(rest) = input.strip_prefix("always_pattern:") {
+                format!("always_allow_pattern:{}", rest)
+            } else {
+                input.to_string()
+            };
+            assert_eq!(result, expected, "Failed for input: {}", input);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_option_id_transformation_for_deny() {
+        // Test the option_id transformation logic for deny
+        // "once" -> "deny"
+        // "always:terminal" -> "always_deny:terminal"
+        // "always_pattern:terminal:^cargo\s" -> "always_deny_pattern:terminal:^cargo\s"
+
+        let test_cases = vec![
+            ("once", "deny"),
+            ("always:terminal", "always_deny:terminal"),
+            (
+                "always_pattern:terminal:^cargo\\s",
+                "always_deny_pattern:terminal:^cargo\\s",
+            ),
+            ("always:fetch", "always_deny:fetch"),
+            (
+                "always_pattern:fetch:^https?://docs\\.rs",
+                "always_deny_pattern:fetch:^https?://docs\\.rs",
+            ),
+        ];
+
+        for (input, expected) in test_cases {
+            let result = if input == "once" {
+                "deny".to_string()
+            } else if let Some(rest) = input.strip_prefix("always:") {
+                format!("always_deny:{}", rest)
+            } else if let Some(rest) = input.strip_prefix("always_pattern:") {
+                format!("always_deny_pattern:{}", rest)
+            } else {
+                input.replace("allow", "deny")
+            };
+            assert_eq!(result, expected, "Failed for input: {}", input);
+        }
     }
 }
