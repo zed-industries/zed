@@ -15,7 +15,6 @@ use crate::serialize_f32_with_two_decimal_places;
 pub struct FontFeaturesContent(pub IndexMap<String, u32>);
 
 impl FontFeaturesContent {
-    /// Creates an empty font features map.
     pub fn new() -> Self {
         Self(IndexMap::default())
     }
