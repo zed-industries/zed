@@ -331,7 +331,9 @@ impl TerminalView {
 
     /// Gets the current marked range (UTF-16).
     pub(crate) fn marked_text_range(&self) -> Option<Range<usize>> {
-        self.ime_state.as_ref().map(|_| 0..1)
+        self.ime_state
+            .as_ref()
+            .map(|state| 0..state.marked_text.encode_utf16().count())
     }
 
     /// Clears the marked (pre-edit) text state.
