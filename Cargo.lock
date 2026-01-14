@@ -12,6 +12,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "buffer_diff",
+ "chrono",
  "collections",
  "editor",
  "env_logger 0.11.8",
@@ -289,7 +290,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "task",
  "tempfile",
  "terminal",
@@ -362,6 +362,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "fuzzy",
+ "git_ui",
  "gpui",
  "gpui_tokio",
  "html_to_markdown",
@@ -427,28 +428,23 @@ dependencies = [
 name = "agent_ui_v2"
 version = "0.1.0"
 dependencies = [
+ "acp_thread",
  "agent",
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
  "agent_ui",
  "anyhow",
- "chrono",
  "db",
- "editor",
  "feature_flags",
  "fs",
- "fuzzy",
  "gpui",
- "menu",
+ "log",
  "project",
  "prompt_store",
  "serde",
  "serde_json",
  "settings",
- "text",
- "time",
- "time_format",
  "ui",
  "util",
  "workspace",
@@ -3259,7 +3255,6 @@ dependencies = [
  "mistral",
  "serde",
  "serde_json",
- "smol",
  "text",
 ]
 
@@ -5338,6 +5333,7 @@ name = "edit_prediction_context"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clock",
  "cloud_llm_client",
  "collections",
  "env_logger 0.11.8",
@@ -6152,7 +6148,6 @@ version = "0.1.0"
 dependencies = [
  "futures 0.3.31",
  "gpui",
- "smol",
 ]
 
 [[package]]
@@ -7125,6 +7120,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
+ "ztracing",
 ]
 
 [[package]]
@@ -7381,7 +7377,6 @@ dependencies = [
  "env_logger 0.11.8",
  "etagere",
  "filedescriptor",
- "flume",
  "foreign-types 0.5.0",
  "futures 0.3.31",
  "gpui_macros",
@@ -14401,6 +14396,7 @@ dependencies = [
  "async-task",
  "backtrace",
  "chrono",
+ "flume",
  "futures 0.3.31",
  "parking_lot",
  "rand 0.9.2",
@@ -16583,6 +16579,7 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
+ "parking_lot",
  "rand 0.9.2",
  "regex",
  "release_channel",
@@ -16965,6 +16962,7 @@ dependencies = [
  "git_ui",
  "gpui",
  "http_client",
+ "menu",
  "notifications",
  "pretty_assertions",
  "project",
@@ -21215,7 +21213,9 @@ dependencies = [
 name = "zeta_prompt"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "serde",
+ "strum 0.27.2",
 ]
 
 [[package]]

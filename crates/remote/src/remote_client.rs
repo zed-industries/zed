@@ -112,6 +112,15 @@ pub struct CommandTemplate {
     pub env: HashMap<String, String>,
 }
 
+/// Whether a command should be run with TTY allocation for interactive use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Interactive {
+    /// Allocate a pseudo-TTY for interactive terminal use.
+    Yes,
+    /// Do not allocate a TTY - for commands that communicate via piped stdio.
+    No,
+}
+
 pub trait RemoteClientDelegate: Send + Sync {
     fn ask_password(
         &self,
@@ -142,7 +151,7 @@ const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
 const INITIAL_CONNECTION_TIMEOUT: Duration =
     Duration::from_secs(if cfg!(debug_assertions) { 5 } else { 60 });
 
-const MAX_RECONNECT_ATTEMPTS: usize = 3;
+pub const MAX_RECONNECT_ATTEMPTS: usize = 3;
 
 enum State {
     Connecting,
@@ -241,7 +250,7 @@ impl State {
                 heartbeat_task,
                 ..
             } => Self::Connected {
-                remote_connection: remote_connection,
+                remote_connection,
                 delegate,
                 multiplex_task,
                 heartbeat_task,
@@ -533,13 +542,17 @@ impl RemoteClient {
             .map(|state| state.can_reconnect())
             .unwrap_or(false);
         if !can_reconnect {
-            log::info!("aborting reconnect, because not in state that allows reconnecting");
-            let error = if let Some(state) = self.state.as_ref() {
-                format!("invalid state, cannot reconnect while in state {state}")
+            let state = if let Some(state) = self.state.as_ref() {
+                state.to_string()
             } else {
                 "no state set".to_string()
             };
-            anyhow::bail!(error);
+            log::info!(
+                "aborting reconnect, because not in state that allows reconnecting: {state}"
+            );
+            anyhow::bail!(
+                "aborting reconnect, because not in state that allows reconnecting: {state}"
+            );
         }
 
         let state = self.state.take().unwrap();
@@ -654,7 +667,7 @@ impl RemoteClient {
             };
 
             State::Connected {
-                remote_connection: remote_connection,
+                remote_connection,
                 delegate,
                 multiplex_task,
                 heartbeat_task: Self::heartbeat(this.clone(), connection_activity_rx, cx),
@@ -894,10 +907,29 @@ impl RemoteClient {
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
+        self.build_command_with_options(
+            program,
+            args,
+            env,
+            working_dir,
+            port_forward,
+            Interactive::Yes,
+        )
+    }
+
+    pub fn build_command_with_options(
+        &self,
+        program: Option<String>,
+        args: &[String],
+        env: &HashMap<String, String>,
+        working_dir: Option<String>,
+        port_forward: Option<(u16, String, u16)>,
+        interactive: Interactive,
+    ) -> Result<CommandTemplate> {
         let Some(connection) = self.remote_connection() else {
             return Err(anyhow!("no remote connection"));
         };
-        connection.build_command(program, args, env, working_dir, port_forward)
+        connection.build_command(program, args, env, working_dir, port_forward, interactive)
     }
 
     pub fn build_forward_ports_command(
@@ -954,6 +986,64 @@ impl RemoteClient {
 
     pub fn path_style(&self) -> PathStyle {
         self.path_style
+    }
+
+    /// Forcibly disconnects from the remote server by killing the underlying connection.
+    /// This will trigger the reconnection logic if reconnection attempts remain.
+    /// Useful for testing reconnection behavior in real environments.
+    pub fn force_disconnect(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let Some(connection) = self.remote_connection() else {
+            return Task::ready(Err(anyhow!("no active remote connection to disconnect")));
+        };
+
+        log::info!("force_disconnect: killing remote connection");
+
+        cx.spawn(async move |_, _| {
+            connection.kill().await?;
+            Ok(())
+        })
+    }
+
+    /// Simulates a timeout by pausing heartbeat responses.
+    /// This will cause heartbeat failures and eventually trigger reconnection
+    /// after MAX_MISSED_HEARTBEATS are missed.
+    /// Useful for testing timeout behavior in real environments.
+    pub fn force_heartbeat_timeout(&mut self, attempts: usize, cx: &mut Context<Self>) {
+        log::info!("force_heartbeat_timeout: triggering heartbeat failure state");
+
+        if let Some(State::Connected {
+            remote_connection,
+            delegate,
+            multiplex_task,
+            heartbeat_task,
+        }) = self.state.take()
+        {
+            self.set_state(
+                if attempts == 0 {
+                    State::HeartbeatMissed {
+                        missed_heartbeats: MAX_MISSED_HEARTBEATS,
+                        remote_connection,
+                        delegate,
+                        multiplex_task,
+                        heartbeat_task,
+                    }
+                } else {
+                    State::ReconnectFailed {
+                        remote_connection,
+                        delegate,
+                        error: anyhow!("forced heartbeat timeout"),
+                        attempts,
+                    }
+                },
+                cx,
+            );
+
+            self.reconnect(cx)
+                .context("failed to start reconnect after forced timeout")
+                .log_err();
+        } else {
+            log::warn!("force_heartbeat_timeout: not in Connected state, ignoring");
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1220,6 +1310,7 @@ pub trait RemoteConnection: Send + Sync {
         env: &HashMap<String, String>,
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
+        interactive: Interactive,
     ) -> Result<CommandTemplate>;
     fn build_forward_ports_command(
         &self,
@@ -1279,6 +1370,7 @@ pub(crate) struct ChannelClient {
     task: Mutex<Task<Result<()>>>,
     remote_started: Signal<()>,
     has_wsl_interop: bool,
+    executor: BackgroundExecutor,
 }
 
 impl ChannelClient {
@@ -1297,6 +1389,7 @@ impl ChannelClient {
             message_handlers: Default::default(),
             buffer: Mutex::new(VecDeque::new()),
             name,
+            executor: cx.background_executor().clone(),
             task: Mutex::new(Self::start_handling_messages(
                 this.clone(),
                 incoming_rx,
@@ -1480,7 +1573,7 @@ impl ChannelClient {
                 Ok(())
             },
             async {
-                smol::Timer::after(timeout).await;
+                self.executor.timer(timeout).await;
                 anyhow::bail!("Timed out resyncing remote client")
             },
         )
@@ -1494,7 +1587,7 @@ impl ChannelClient {
                 Ok(())
             },
             async {
-                smol::Timer::after(timeout).await;
+                self.executor.timer(timeout).await;
                 anyhow::bail!("Timed out pinging remote client")
             },
         )

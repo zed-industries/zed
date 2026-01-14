@@ -1,33 +1,34 @@
 use crate::{
-    PromptFormat,
+    FormatPromptArgs, PredictionProvider,
     example::{Example, ExamplePrompt},
     headless::EpAppState,
-    load_project::run_load_project,
     progress::{Progress, Step},
     retrieve_context::run_context_retrieval,
 };
 use anyhow::{Context as _, Result};
-use edit_prediction::{
-    EditPredictionStore,
-    zeta2::{zeta2_output_for_patch, zeta2_prompt_input},
-};
-use gpui::{AsyncApp, Entity};
+use gpui::AsyncApp;
+use similar::DiffableStr;
 use std::fmt::Write as _;
 use std::sync::Arc;
 use zeta_prompt::format_zeta_prompt;
 
 pub async fn run_format_prompt(
     example: &mut Example,
-    prompt_format: PromptFormat,
+    args: &FormatPromptArgs,
     app_state: Arc<EpAppState>,
-    mut cx: AsyncApp,
+    cx: AsyncApp,
 ) -> Result<()> {
-    run_context_retrieval(example, app_state.clone(), cx.clone()).await?;
+    run_context_retrieval(example, app_state, cx).await?;
 
     let step_progress = Progress::global().start(Step::FormatPrompt, &example.spec.name);
 
-    match prompt_format {
-        PromptFormat::Teacher => {
+    let prompt_inputs = example
+        .prompt_inputs
+        .as_ref()
+        .context("prompt_inputs must be set after context retrieval")?;
+
+    match args.provider {
+        PredictionProvider::Teacher | PredictionProvider::TeacherNonBatching => {
             step_progress.set_substatus("formatting teacher prompt");
             let prompt = TeacherPrompt::format_prompt(example);
             example.prompt = Some(ExamplePrompt {
@@ -38,47 +39,27 @@ pub async fn run_format_prompt(
                     .first()
                     .cloned()
                     .unwrap_or_default(),
-                format: prompt_format,
+                provider: args.provider,
             });
         }
-        PromptFormat::Zeta2 => {
-            step_progress.set_substatus("loading project");
-            run_load_project(example, app_state, cx.clone()).await?;
-
+        PredictionProvider::Zeta2 => {
             step_progress.set_substatus("formatting zeta2 prompt");
 
-            let ep_store: Entity<EditPredictionStore> = cx.update(|cx| {
-                EditPredictionStore::try_global(cx).context("EditPredictionStore not initialized")
-            })?;
-
-            let state = example.state.as_ref().context("state must be set")?;
-            let snapshot = state.buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-            let project = state.project.clone();
-            let (_, input) =
-                ep_store.update(&mut cx, |ep_store: &mut EditPredictionStore, cx| {
-                    let events = ep_store
-                        .edit_history_for_project(&project, cx)
-                        .into_iter()
-                        .map(|e| e.event)
-                        .collect();
-                    anyhow::Ok(zeta2_prompt_input(
-                        &snapshot,
-                        example
-                            .context
-                            .as_ref()
-                            .context("context must be set")?
-                            .files
-                            .clone(),
-                        events,
-                        example.spec.cursor_path.clone(),
-                        example
-                            .buffer
-                            .as_ref()
-                            .context("buffer must be set")?
-                            .cursor_offset,
-                    ))
-                })?;
-            let prompt = format_zeta_prompt(&input);
+            let context_start = prompt_inputs.context_range.start;
+            let cursor_offset_in_excerpt = prompt_inputs.cursor_offset - context_start;
+            let editable_range_in_excerpt = (prompt_inputs.editable_range.start - context_start)
+                ..(prompt_inputs.editable_range.end - context_start);
+            let input = zeta_prompt::ZetaPromptInput {
+                cursor_path: example.spec.cursor_path.clone(),
+                cursor_excerpt: prompt_inputs.content[prompt_inputs.context_range.clone()]
+                    .to_string()
+                    .into(),
+                editable_range_in_excerpt,
+                cursor_offset_in_excerpt,
+                events: prompt_inputs.edit_history.clone(),
+                related_files: prompt_inputs.related_files.clone().unwrap_or_default(),
+            };
+            let prompt = format_zeta_prompt(&input, args.version);
             let expected_output = zeta2_output_for_patch(
                 &input,
                 &example
@@ -91,11 +72,30 @@ pub async fn run_format_prompt(
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
                 expected_output,
-                format: prompt_format,
+                provider: args.provider,
             });
+        }
+        _ => {
+            panic!("Cannot format prompt for {:?}", args.provider);
         }
     };
     Ok(())
+}
+
+pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str) -> Result<String> {
+    let mut old_editable_region =
+        input.cursor_excerpt[input.editable_range_in_excerpt.clone()].to_string();
+
+    if !old_editable_region.ends_with_newline() {
+        old_editable_region.push('\n');
+    }
+
+    edit_prediction::udiff::apply_diff_to_string(patch, &old_editable_region).with_context(|| {
+        format!(
+            "Patch:\n```\n{}```\n\nEditable region:\n```\n{}```",
+            patch, old_editable_region
+        )
+    })
 }
 
 pub struct TeacherPrompt;
@@ -130,10 +130,10 @@ impl TeacherPrompt {
         // 2. Context retriever just didn't include cursor line.
         //
         // In that case, fallback to using `cursor_position` as excerpt.
-        let example_buffer = example
-            .buffer
+        let prompt_inputs = example
+            .prompt_inputs
             .as_ref()
-            .context("`buffer` should be filled in in the context collection step")?;
+            .context("`prompt_inputs` should be filled in in the context collection step")?;
 
         // Extract updated (new) editable region from the model response.
         // The model may include editable region markers in its output, so we need to strip them.
@@ -141,7 +141,7 @@ impl TeacherPrompt {
         let mut new_editable_region = Self::extract_editable_region(&new_editable_region);
 
         let old_editable_region =
-            example_buffer.content[example_buffer.editable_range.clone()].to_string();
+            prompt_inputs.content[prompt_inputs.editable_range.clone()].to_string();
 
         // Normalize leading newlines: if old starts with newline but new doesn't,
         // prepend newline to new to preserve whitespace structure.
@@ -150,8 +150,8 @@ impl TeacherPrompt {
             new_editable_region.insert(0, '\n');
         }
 
-        let editable_region_start_line = example_buffer.content
-            [..example_buffer.editable_range.start]
+        let editable_region_start_line = prompt_inputs.content
+            [..prompt_inputs.editable_range.start]
             .matches('\n')
             .count();
 
@@ -194,17 +194,21 @@ impl TeacherPrompt {
     }
 
     fn format_context(example: &Example) -> String {
-        let context = example
-            .context
+        let related_files = example
+            .prompt_inputs
             .as_ref()
-            .expect("Missing context retriever step");
+            .and_then(|pi| pi.related_files.as_ref());
 
-        if context.files.is_empty() {
+        let Some(related_files) = related_files else {
+            return "(No context)".to_string();
+        };
+
+        if related_files.is_empty() {
             return "(No context)".to_string();
         }
 
         let mut prompt = String::new();
-        for file in context.files.as_ref() {
+        for file in related_files {
             let path_str = file.path.to_string_lossy();
             writeln!(&mut prompt, "`````{path_str}").ok();
             let mut prev_row = 0;
@@ -228,28 +232,26 @@ impl TeacherPrompt {
     fn format_cursor_excerpt(example: &Example) -> String {
         let mut result = String::new();
 
-        let example_buffer = example.buffer.as_ref().unwrap();
+        let prompt_inputs = example.prompt_inputs.as_ref().unwrap();
 
         let path_str = example.spec.cursor_path.to_string_lossy();
         result.push_str(&format!("`````{path_str}\n"));
         result.push_str(
-            &example_buffer.content
-                [example_buffer.context_range.start..example_buffer.editable_range.start],
+            &prompt_inputs.content
+                [prompt_inputs.context_range.start..prompt_inputs.editable_range.start],
         );
         result.push_str(Self::EDITABLE_REGION_START);
         result.push_str(
-            &example_buffer.content
-                [example_buffer.editable_range.start..example_buffer.cursor_offset],
+            &prompt_inputs.content[prompt_inputs.editable_range.start..prompt_inputs.cursor_offset],
         );
         result.push_str(Self::USER_CURSOR_MARKER);
         result.push_str(
-            &example_buffer.content
-                [example_buffer.cursor_offset..example_buffer.editable_range.end],
+            &prompt_inputs.content[prompt_inputs.cursor_offset..prompt_inputs.editable_range.end],
         );
         result.push_str(Self::EDITABLE_REGION_END);
         result.push_str(
-            &example_buffer.content
-                [example_buffer.editable_range.end..example_buffer.context_range.end],
+            &prompt_inputs.content
+                [prompt_inputs.editable_range.end..prompt_inputs.context_range.end],
         );
         result.push_str("\n`````");
 

@@ -95,10 +95,22 @@ impl TestScheduler {
                 pending_traces: BTreeMap::new(),
                 next_trace_id: TraceId(0),
                 is_main_thread: true,
+                non_determinism_error: None,
+                finished: false,
+                parking_allowed_once: false,
+                unparked: false,
             })),
             clock: Arc::new(TestClock::new()),
             thread: thread::current(),
         }
+    }
+
+    pub fn end_test(&self) {
+        let mut state = self.state.lock();
+        if let Some((message, backtrace)) = &state.non_determinism_error {
+            panic!("{}\n{:?}", message, backtrace)
+        }
+        state.finished = true;
     }
 
     pub fn clock(&self) -> Arc<TestClock> {
@@ -114,7 +126,9 @@ impl TestScheduler {
     }
 
     pub fn allow_parking(&self) {
-        self.state.lock().allow_parking = true;
+        let mut state = self.state.lock();
+        state.allow_parking = true;
+        state.parking_allowed_once = true;
     }
 
     pub fn forbid_parking(&self) {
@@ -159,12 +173,6 @@ impl TestScheduler {
 
     pub fn run(&self) {
         while self.step() {
-            // Continue until no work remains
-        }
-    }
-
-    pub fn run_with_clock_advancement(&self) {
-        while self.step() || self.advance_clock_to_next_timer() {
             // Continue until no work remains
         }
     }
@@ -370,14 +378,59 @@ impl TestScheduler {
 
     fn park(&self, deadline: Option<Instant>) -> bool {
         if self.state.lock().allow_parking {
-            if let Some(deadline) = deadline {
+            let start = Instant::now();
+            // Enforce a hard timeout to prevent tests from hanging indefinitely
+            let hard_deadline = start + Duration::from_secs(15);
+
+            // Use the earlier of the provided deadline or the hard timeout deadline
+            let effective_deadline = deadline
+                .map(|d| d.min(hard_deadline))
+                .unwrap_or(hard_deadline);
+
+            // Park in small intervals to allow checking both deadlines
+            const PARK_INTERVAL: Duration = Duration::from_millis(100);
+            loop {
                 let now = Instant::now();
-                let timeout = deadline.saturating_duration_since(now);
-                thread::park_timeout(timeout);
-                now.elapsed() < timeout
-            } else {
-                thread::park();
-                true
+                if now >= effective_deadline {
+                    // Check if we hit the hard timeout
+                    if now >= hard_deadline {
+                        panic!(
+                            "Test timed out after 15 seconds while parking. \
+                            This may indicate a deadlock or missing waker.",
+                        );
+                    }
+                    // Hit the provided deadline
+                    return false;
+                }
+
+                let remaining = effective_deadline.saturating_duration_since(now);
+                let park_duration = remaining.min(PARK_INTERVAL);
+                let before_park = Instant::now();
+                thread::park_timeout(park_duration);
+                let elapsed = before_park.elapsed();
+
+                // Advance the test clock by the real elapsed time while parking
+                self.clock.advance(elapsed);
+
+                // Check if any timers have expired after advancing the clock.
+                // If so, return so the caller can process them.
+                if self
+                    .state
+                    .lock()
+                    .timers
+                    .first()
+                    .map_or(false, |t| t.expiration <= self.clock.now())
+                {
+                    return true;
+                }
+
+                // Check if we were woken up by a different thread.
+                // We use a flag because timing-based detection is unreliable:
+                // OS scheduling delays can cause elapsed >= park_duration even when
+                // we were woken early by unpark().
+                if std::mem::take(&mut self.state.lock().unparked) {
+                    return true;
+                }
             }
         } else if deadline.is_some() {
             false
@@ -392,6 +445,31 @@ impl TestScheduler {
                 "Parking forbidden. Re-run with {PENDING_TRACES_VAR_NAME}=1 to show pending traces"
             );
         }
+    }
+}
+
+fn assert_correct_thread(expected: &Thread, state: &Arc<Mutex<SchedulerState>>) {
+    let current_thread = thread::current();
+    let mut state = state.lock();
+    if state.parking_allowed_once {
+        return;
+    }
+    if current_thread.id() == expected.id() {
+        return;
+    }
+
+    let message = format!(
+        "Detected activity on thread {:?} {:?}, but test scheduler is running on {:?} {:?}. Your test is not deterministic.",
+        current_thread.name(),
+        current_thread.id(),
+        expected.name(),
+        expected.id(),
+    );
+    let backtrace = Backtrace::new();
+    if state.finished {
+        panic!("{}", message);
+    } else {
+        state.non_determinism_error = Some((message, backtrace))
     }
 }
 
@@ -453,8 +531,12 @@ impl Scheduler for TestScheduler {
 
             let stepped = stepped.unwrap_or(true);
             let awoken = awoken.swap(false, SeqCst);
-            if !stepped && !awoken && !self.advance_clock_to_next_timer() {
-                if !self.park(deadline) {
+            if !stepped && !awoken {
+                let parking_allowed = self.state.lock().allow_parking;
+                // In deterministic mode (parking forbidden), instantly jump to the next timer.
+                // In non-deterministic mode (parking allowed), let real time pass instead.
+                let advanced_to_timer = !parking_allowed && self.advance_clock_to_next_timer();
+                if !advanced_to_timer && !self.park(deadline) {
                     break;
                 }
             }
@@ -468,6 +550,7 @@ impl Scheduler for TestScheduler {
     }
 
     fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable<RunnableMeta>) {
+        assert_correct_thread(&self.thread, &self.state);
         let mut state = self.state.lock();
         let ix = if state.randomize_order {
             let start_ix = state
@@ -489,6 +572,7 @@ impl Scheduler for TestScheduler {
                 runnable,
             },
         );
+        state.unparked = true;
         drop(state);
         self.thread.unpark();
     }
@@ -498,6 +582,7 @@ impl Scheduler for TestScheduler {
         runnable: Runnable<RunnableMeta>,
         priority: Priority,
     ) {
+        assert_correct_thread(&self.thread, &self.state);
         let mut state = self.state.lock();
         let ix = if state.randomize_order {
             self.rng.lock().random_range(0..=state.runnables.len())
@@ -512,8 +597,15 @@ impl Scheduler for TestScheduler {
                 runnable,
             },
         );
+        state.unparked = true;
         drop(state);
         self.thread.unpark();
+    }
+
+    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
+        std::thread::spawn(move || {
+            f();
+        });
     }
 
     fn timer(&self, duration: Duration) -> Timer {
@@ -562,7 +654,7 @@ impl Default for TestSchedulerConfig {
             allow_parking: false,
             capture_pending_traces: env::var(PENDING_TRACES_VAR_NAME)
                 .map_or(false, |var| var == "1" || var == "true"),
-            timeout_ticks: 0..=1000,
+            timeout_ticks: 1..=1000,
         }
     }
 }
@@ -596,6 +688,10 @@ struct SchedulerState {
     next_trace_id: TraceId,
     pending_traces: BTreeMap<TraceId, Backtrace>,
     is_main_thread: bool,
+    non_determinism_error: Option<(String, Backtrace)>,
+    parking_allowed_once: bool,
+    finished: bool,
+    unparked: bool,
 }
 
 const WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
@@ -637,6 +733,8 @@ impl Clone for TracingWaker {
 
 impl Drop for TracingWaker {
     fn drop(&mut self) {
+        assert_correct_thread(&self.thread, &self.state);
+
         if let Some(id) = self.id {
             self.state.lock().pending_traces.remove(&id);
         }
@@ -649,9 +747,14 @@ impl TracingWaker {
     }
 
     fn wake_by_ref(&self) {
+        assert_correct_thread(&self.thread, &self.state);
+
+        let mut state = self.state.lock();
         if let Some(id) = self.id {
-            self.state.lock().pending_traces.remove(&id);
+            state.pending_traces.remove(&id);
         }
+        state.unparked = true;
+        drop(state);
         self.awoken.store(true, SeqCst);
         self.thread.unpark();
     }
