@@ -35,12 +35,11 @@ impl Render for EditPredictionSetupPage {
             .read(cx)
             .original_window
             .as_ref()
-            .map(|window| {
+            .and_then(|window| {
                 window
                     .read_with(cx, |workspace, _| workspace.project().clone())
                     .ok()
-            })
-            .flatten();
+            });
         let providers = [
             project.and_then(|project| {
                 Some(render_github_copilot_provider(project, window, cx)?.into_any_element())
