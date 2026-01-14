@@ -145,15 +145,12 @@ impl ProjectDropdown {
                 let workspace_for_remove = workspace.clone();
                 let menu_shell_for_remove = menu_shell.clone();
 
-                let menu_focus_handle = menu.focus_handle(cx);
-
                 menu = menu.custom_entry(
                     move |_window, _cx| {
                         let name = name.clone();
                         let branch = branch.clone();
                         let workspace_for_remove = workspace_for_remove.clone();
                         let menu_shell = menu_shell_for_remove.clone();
-                        let menu_focus_handle = menu_focus_handle.clone();
 
                         h_flex()
                             .group(name.clone())
@@ -178,13 +175,21 @@ impl ProjectDropdown {
                                 .visible_on_hover(name)
                                 .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
-                                .tooltip(move |_, cx| {
-                                    Tooltip::for_action_in(
-                                        "Remove Folder",
-                                        &RemoveSelectedFolder,
-                                        &menu_focus_handle,
-                                        cx,
-                                    )
+                                .tooltip({
+                                    let menu_shell = menu_shell.clone();
+                                    move |window, cx| {
+                                        if let Some(menu_entity) = menu_shell.borrow().as_ref() {
+                                            let focus_handle = menu_entity.focus_handle(cx);
+                                            Tooltip::for_action_in(
+                                                "Remove Folder",
+                                                &RemoveSelectedFolder,
+                                                &focus_handle,
+                                                cx,
+                                            )
+                                        } else {
+                                            Tooltip::text("Remove Folder")(window, cx)
+                                        }
+                                    }
                                 })
                                 .on_click({
                                     let workspace = workspace_for_remove;
