@@ -9,7 +9,7 @@ use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, Context, Div, Element, ElementId, Entity,
     HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Modifiers,
     ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle, WeakEntity,
-    Window, div, img, px, rems,
+    Window, div, img, rems,
 };
 use settings::Settings;
 use std::{
