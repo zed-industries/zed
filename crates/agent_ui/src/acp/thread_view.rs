@@ -3149,10 +3149,38 @@ impl AcpThreadView {
                                 cx,
                             ))
                             .when(is_collapsible || failed_or_canceled, |this| {
+                                let is_cancelled_edit = is_edit
+                                    && matches!(tool_call.status, ToolCallStatus::Canceled);
+                                let diff_for_discard =
+                                    if is_cancelled_edit && cx.has_flag::<AgentV2FeatureFlag>() {
+                                        tool_call.diffs().next().cloned()
+                                    } else {
+                                        None
+                                    };
                                 this.child(
                                     h_flex()
                                         .px_1()
-                                        .gap_px()
+                                        .gap_1()
+                                        .when_some(diff_for_discard, |this, diff| {
+                                            this.child(
+                                                Button::new(
+                                                    ("discard-partial-edit", entry_ix),
+                                                    "Discard",
+                                                )
+                                                .label_size(LabelSize::Small)
+                                                .tooltip(Tooltip::text(
+                                                    "Discard partial edits and restore the original file content",
+                                                ))
+                                                .on_click(cx.listener(move |_this, _, _window, cx| {
+                                                    let diff_data = diff.read(cx);
+                                                    let base_text = diff_data.base_text().clone();
+                                                    let buffer = diff_data.buffer().clone();
+                                                    buffer.update(cx, |buffer, cx| {
+                                                        buffer.set_text(base_text.as_ref(), cx);
+                                                    });
+                                                })),
+                                            )
+                                        })
                                         .when(is_collapsible, |this| {
                                             this.child(
                                             Disclosure::new(("expand-output", entry_ix), is_open)
@@ -3173,11 +3201,24 @@ impl AcpThreadView {
                                         )
                                         })
                                         .when(failed_or_canceled, |this| {
-                                            this.child(
-                                                Icon::new(IconName::Close)
-                                                    .color(Color::Error)
-                                                    .size(IconSize::Small),
-                                            )
+                                            if is_cancelled_edit {
+                                                this.child(
+                                                    div()
+                                                        .id(("tool-call-status-icon", entry_ix))
+                                                        .child(
+                                                            Icon::new(IconName::Warning)
+                                                                .color(Color::Error)
+                                                                .size(IconSize::Small),
+                                                        )
+                                                        .tooltip(Tooltip::text("Edit Interrupted")),
+                                                )
+                                            } else {
+                                                this.child(
+                                                    Icon::new(IconName::Close)
+                                                        .color(Color::Error)
+                                                        .size(IconSize::Small),
+                                                )
+                                            }
                                         }),
                                 )
                             }),

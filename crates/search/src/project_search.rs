@@ -2268,11 +2268,11 @@ impl Render for ProjectSearchBar {
             h_flex()
                 .w_full()
                 .gap_2()
+                .child(alignment_element())
                 .child(
                     h_flex()
-                        .gap_2()
                         .w(input_width)
-                        .child(alignment_element())
+                        .gap_2()
                         .child(include)
                         .child(exclude),
                 )

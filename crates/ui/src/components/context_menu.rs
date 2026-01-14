@@ -833,6 +833,10 @@ impl ContextMenu {
         self
     }
 
+    pub fn selected_index(&self) -> Option<usize> {
+        self.selected_index
+    }
+
     pub fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ix) = self.selected_index else {
             return;

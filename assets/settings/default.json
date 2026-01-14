@@ -2284,11 +2284,15 @@
     "use_smartcase_find": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},
-    // Cursor shape for the each mode.
-    // Specify the mode as the key and the shape as the value.
-    // The mode can be one of the following: "normal", "replace", "insert", "visual".
+    // Cursor shape for each mode.
     // The shape can be one of the following: "block", "bar", "underline", "hollow".
-    "cursor_shape": {},
+    "cursor_shape": {
+      "normal": "block",
+      "replace": "underline",
+      "visual": "block",
+      // Set to "inherit" to use the editor's cursor_shape.
+      "insert": "inherit",
+    },
   },
   // Which-key popup settings
   "which_key": {

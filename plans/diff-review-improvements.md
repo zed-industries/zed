@@ -109,7 +109,7 @@ Replace `DisplayRow` with an `Anchor`. Anchors are buffer positions that automat
        self.stored_review_comments
            .iter()
            .find(|(k, _)| {
-               k.file_path == key.file_path && 
+               k.file_path == key.file_path &&
                k.hunk_start_anchor.to_point(snapshot) == key_point
            })
            .map(|(_, comments)| comments)
@@ -162,35 +162,35 @@ Add a method to validate and clean orphaned comments, and call it when the buffe
    ```rust
    /// Removes review comments whose anchors are no longer valid or whose
    /// associated diff hunks no longer exist.
-   /// 
+   ///
    /// This should be called when the buffer changes to prevent orphaned comments
    /// from accumulating.
    pub fn cleanup_orphaned_review_comments(&mut self, cx: &mut Context<Self>) {
        let snapshot = self.buffer.read(cx).snapshot(cx);
-       
+
        // Remove comments with invalid anchors
        self.stored_review_comments.retain(|(hunk_key, comments)| {
            // Check if the hunk anchor is still valid (not pointing to deleted text)
            let anchor_valid = hunk_key.hunk_start_anchor.is_valid(&snapshot);
-           
+
            if !anchor_valid {
                return false; // Remove this entire hunk's comments
            }
-           
+
            true
        });
-       
+
        // Also clean up individual comments with invalid anchor ranges
        for (_, comments) in &mut self.stored_review_comments {
            comments.retain(|comment| {
-               comment.anchor_range.start.is_valid(&snapshot) && 
+               comment.anchor_range.start.is_valid(&snapshot) &&
                comment.anchor_range.end.is_valid(&snapshot)
            });
        }
-       
+
        // Remove empty hunk entries
        self.stored_review_comments.retain(|(_, comments)| !comments.is_empty());
-       
+
        cx.notify();
    }
    ```
@@ -224,7 +224,7 @@ Add a method to validate and clean orphaned comments, and call it when the buffe
    #[gpui::test]
    fn test_orphaned_comments_are_cleaned_up(cx: &mut TestAppContext) {
        init_test(cx, |_| {});
-       
+
        // Create an editor with some text
        let editor = cx.add_window(|window, cx| {
            let buffer = cx.new(|cx| {
@@ -233,7 +233,7 @@ Add a method to validate and clean orphaned comments, and call it when the buffe
            let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
            Editor::new(EditorMode::Full, multi_buffer, None, false, window, cx)
        });
-       
+
        // Add a comment
        editor.update(cx, |editor, _window, cx| {
            let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -245,13 +245,13 @@ Add a method to validate and clean orphaned comments, and call it when the buffe
            add_test_comment(editor, key, "Comment on line 2", 1, cx);
            assert_eq!(editor.total_review_comment_count(), 1);
        }).unwrap();
-       
+
        // Delete line 2 (this should orphan the comment)
        editor.update(cx, |editor, window, cx| {
            editor.select_all(&SelectAll, window, cx);
            editor.insert("completely new content", window, cx);
        }).unwrap();
-       
+
        // Trigger cleanup
        editor.update(cx, |editor, _window, cx| {
            editor.cleanup_orphaned_review_comments(cx);
@@ -435,7 +435,7 @@ Add an `EditorEvent` that fires when review comments change, and observe it in `
        self.next_review_comment_id += 1;
 
        let stored_comment = StoredReviewComment::new(id, comment, display_row, anchor_range);
-       
+
        // ... add to storage ...
 
        cx.emit(EditorEvent::ReviewCommentsChanged {

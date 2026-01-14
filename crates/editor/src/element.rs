@@ -382,6 +382,8 @@ impl EditorElement {
         register_action(editor, window, Editor::select_next_syntax_node);
         register_action(editor, window, Editor::select_prev_syntax_node);
         register_action(editor, window, Editor::unwrap_syntax_node);
+        register_action(editor, window, Editor::move_to_start_of_larger_syntax_node);
+        register_action(editor, window, Editor::move_to_end_of_larger_syntax_node);
         register_action(editor, window, Editor::select_enclosing_symbol);
         register_action(editor, window, Editor::move_to_enclosing_bracket);
         register_action(editor, window, Editor::undo_selection);
@@ -3037,7 +3039,6 @@ impl EditorElement {
         scroll_position: gpui::Point<ScrollOffset>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
-        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         snapshot: &EditorSnapshot,
         breakpoints: HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         row_infos: &[RowInfo],
@@ -3079,7 +3080,6 @@ impl EditorElement {
                         gutter_dimensions,
                         scroll_position,
                         gutter_hitbox,
-                        display_hunks,
                         window,
                         cx,
                     );
@@ -3094,7 +3094,7 @@ impl EditorElement {
         range: Range<DisplayRow>,
         row_infos: &[RowInfo],
         cx: &App,
-    ) -> Option<DisplayRow> {
+    ) -> Option<(DisplayRow, Option<u32>)> {
         if !cx.has_flag::<DiffReviewFeatureFlag>() {
             return None;
         }
@@ -3110,16 +3110,16 @@ impl EditorElement {
         }
 
         let display_row = indicator.display_row;
+        let row_index = (display_row.0.saturating_sub(range.start.0)) as usize;
 
         // Don't show on rows with expand excerpt buttons
-        if row_infos
-            .get((display_row.0.saturating_sub(range.start.0)) as usize)
-            .is_some_and(|row_info| row_info.expand_info.is_some())
-        {
+        let row_info = row_infos.get(row_index);
+        if row_info.is_some_and(|row_info| row_info.expand_info.is_some()) {
             return None;
         }
 
-        Some(display_row)
+        let buffer_row = row_info.and_then(|info| info.buffer_row);
+        Some((display_row, buffer_row))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3131,7 +3131,6 @@ impl EditorElement {
         scroll_position: gpui::Point<ScrollOffset>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
-        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         snapshot: &EditorSnapshot,
         breakpoints: &mut HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         window: &mut Window,
@@ -3224,7 +3223,6 @@ impl EditorElement {
                         gutter_dimensions,
                         scroll_position,
                         gutter_hitbox,
-                        display_hunks,
                         window,
                         cx,
                     );
@@ -3293,14 +3291,13 @@ impl EditorElement {
                     || gutter_dimensions.right_padding == px(0.);
 
                 let width = if is_wide {
-                    available_width - px(2.)
+                    available_width - px(5.)
                 } else {
-                    available_width + em_width - px(2.)
+                    available_width + em_width - px(5.)
                 };
 
                 let toggle = IconButton::new(("expand", ix), icon_name)
                     .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
-                    .selected_icon_color(Color::Custom(cx.theme().colors().editor_foreground))
                     .icon_size(IconSize::Custom(rems(editor_font_size / window.rem_size())))
                     .width(width)
                     .on_click(move |_, window, cx| {
@@ -8349,7 +8346,6 @@ fn prepaint_gutter_button(
     gutter_dimensions: &GutterDimensions,
     scroll_position: gpui::Point<ScrollOffset>,
     gutter_hitbox: &Hitbox,
-    display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -8358,28 +8354,12 @@ fn prepaint_gutter_button(
         AvailableSpace::Definite(line_height),
     );
     let indicator_size = button.layout_as_root(available_space, window, cx);
+    let git_gutter_width = EditorElement::gutter_strip_width(line_height)
+        + gutter_dimensions
+            .git_blame_entries_width
+            .unwrap_or_default();
 
-    let blame_width = gutter_dimensions.git_blame_entries_width;
-    let gutter_width = display_hunks
-        .binary_search_by(|(hunk, _)| match hunk {
-            DisplayDiffHunk::Folded { display_row } => display_row.cmp(&row),
-            DisplayDiffHunk::Unfolded {
-                display_row_range, ..
-            } => {
-                if display_row_range.end <= row {
-                    Ordering::Less
-                } else if display_row_range.start > row {
-                    Ordering::Greater
-                } else {
-                    Ordering::Equal
-                }
-            }
-        })
-        .ok()
-        .and_then(|ix| Some(display_hunks[ix].1.as_ref()?.size.width));
-    let left_offset = blame_width.max(gutter_width).unwrap_or_default();
-
-    let x = left_offset;
+    let x = git_gutter_width + px(2.);
 
     let mut y =
         Pixels::from((row.as_f64() - scroll_position.y) * ScrollPixelOffset::from(line_height));
@@ -10404,7 +10384,6 @@ impl Element for EditorElement {
                             scroll_position,
                             &gutter_dimensions,
                             &gutter_hitbox,
-                            &display_hunks,
                             &snapshot,
                             &mut breakpoint_rows,
                             window,
@@ -10424,7 +10403,6 @@ impl Element for EditorElement {
                             scroll_position,
                             &gutter_dimensions,
                             &gutter_hitbox,
-                            &display_hunks,
                             &snapshot,
                             breakpoint_rows,
                             &row_infos,
@@ -10437,7 +10415,7 @@ impl Element for EditorElement {
 
                     let diff_review_button = self
                         .should_render_diff_review_button(start_row..end_row, &row_infos, cx)
-                        .map(|display_row| {
+                        .map(|(display_row, _buffer_row)| {
                             let button = self.editor.update(cx, |editor, cx| {
                                 editor
                                     .render_diff_review_button(display_row, cx)
@@ -10450,7 +10428,6 @@ impl Element for EditorElement {
                                 &gutter_dimensions,
                                 scroll_position,
                                 &gutter_hitbox,
-                                &display_hunks,
                                 window,
                                 cx,
                             )
