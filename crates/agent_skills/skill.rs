@@ -231,8 +231,8 @@ async fn load_single_skill(
 }
 
 /// Returns the path to the global skills directory.
-pub fn global_skills_dir() -> PathBuf {
-    paths::config_dir().join("skills")
+pub fn global_skills_dir() -> &'static PathBuf {
+    paths::skills_dir()
 }
 
 /// Returns the relative path to the skills directory within a project.

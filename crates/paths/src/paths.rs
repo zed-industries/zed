@@ -419,6 +419,13 @@ pub fn local_settings_folder_name() -> &'static str {
     ".zed"
 }
 
+/// Returns the path to the global skills directory.
+/// This is where user-defined agent skills are stored.
+pub fn skills_dir() -> &'static PathBuf {
+    static SKILLS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    SKILLS_DIR.get_or_init(|| config_dir().join("skills"))
+}
+
 /// Returns the relative path to a `.vscode` folder within a project.
 pub fn local_vscode_folder_name() -> &'static str {
     ".vscode"

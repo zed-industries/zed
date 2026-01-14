@@ -4633,6 +4633,7 @@ async fn test_allowed_tools_rejects_unknown_tool(cx: &mut TestAppContext) {
     let tool = Arc::new(SubagentTool::new(
         parent.downgrade(),
         project,
+        Arc::new(Vec::new()),
         project_context,
         context_server_registry,
         Templates::new(),
@@ -4949,6 +4950,7 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
     let tool = Arc::new(SubagentTool::new(
         parent.downgrade(),
         project.clone(),
+        Arc::new(Vec::new()),
         project_context,
         context_server_registry,
         Templates::new(),
