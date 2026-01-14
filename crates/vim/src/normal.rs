@@ -1951,11 +1951,7 @@ mod test {
         cx.assert_binding_normal("e", indoc! {"ˇassert_binding"}, indoc! {"asserˇt_binding"});
 
         // Subword end should stop at EOL
-        cx.assert_binding_normal(
-            "e",
-            indoc! {"foo_bˇar\nbaz"},
-            indoc! {"foo_baˇr\nbaz"},
-        );
+        cx.assert_binding_normal("e", indoc! {"foo_bˇar\nbaz"}, indoc! {"foo_baˇr\nbaz"});
 
         // Already at subword end, should move to next subword on next line
         cx.assert_binding_normal(
@@ -1965,11 +1961,7 @@ mod test {
         );
 
         // CamelCase at EOL
-        cx.assert_binding_normal(
-            "e",
-            indoc! {"fooˇBar\nbaz"},
-            indoc! {"fooBaˇr\nbaz"},
-        );
+        cx.assert_binding_normal("e", indoc! {"fooˇBar\nbaz"}, indoc! {"fooBaˇr\nbaz"});
 
         cx.assert_binding_normal("b", indoc! {"assert_ˇbinding"}, indoc! {"ˇassert_binding"});
 
