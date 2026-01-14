@@ -22062,37 +22062,8 @@ impl Editor {
                     )
                     .into_any_element()
             } else {
-                // Display mode: show edit and delete buttons
-                h_flex()
-                    .gap_1()
-                    .child(
-                        IconButton::new(format!("diff-review-edit-{comment_id}"), IconName::Pencil)
-                            .icon_color(ui::Color::Muted)
-                            .icon_size(action_icon_size)
-                            .tooltip(Tooltip::text("Edit"))
-                            .on_click(move |_, window, cx| {
-                                window.dispatch_action(
-                                    Box::new(crate::actions::EditReviewComment { id: comment_id }),
-                                    cx,
-                                );
-                            }),
-                    )
-                    .child(
-                        IconButton::new(
-                            format!("diff-review-delete-{comment_id}"),
-                            IconName::Trash,
-                        )
-                        .icon_color(ui::Color::Muted)
-                        .icon_size(action_icon_size)
-                        .tooltip(Tooltip::text("Delete"))
-                        .on_click(move |_, window, cx| {
-                            window.dispatch_action(
-                                Box::new(crate::actions::DeleteReviewComment { id: comment_id }),
-                                cx,
-                            );
-                        }),
-                    )
-                    .into_any_element()
+                // Display mode: no action buttons for now (edit/delete not yet implemented)
+                gpui::Empty.into_any_element()
             })
     }
 
