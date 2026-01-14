@@ -1,6 +1,6 @@
 use crate::{
     RemoteArch, RemoteClientDelegate, RemoteOs, RemotePlatform,
-    remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
+    remote_client::{CommandTemplate, Interactive, RemoteConnection, RemoteConnectionOptions},
     transport::{parse_platform, parse_shell},
 };
 use anyhow::{Context, Result, anyhow, bail};
@@ -65,7 +65,7 @@ impl WslRemoteConnection {
             connection_options.user
         );
         let (release_channel, version) =
-            cx.update(|cx| (ReleaseChannel::global(cx), AppVersion::global(cx)))?;
+            cx.update(|cx| (ReleaseChannel::global(cx), AppVersion::global(cx)));
 
         let mut this = Self {
             connection_options,
@@ -181,7 +181,7 @@ impl WslRemoteConnection {
                 .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
         }
 
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
         if let Some(remote_server_path) =
             super::build_remote_server_from_source(&self.platform, delegate.as_ref(), cx).await?
         {
@@ -210,7 +210,7 @@ impl WslRemoteConnection {
 
         let wanted_version = match release_channel {
             ReleaseChannel::Nightly | ReleaseChannel::Dev => None,
-            _ => Some(cx.update(|cx| AppVersion::global(cx))?),
+            _ => Some(cx.update(|cx| AppVersion::global(cx))),
         };
 
         let src_path = delegate
@@ -421,6 +421,7 @@ impl RemoteConnection for WslRemoteConnection {
         env: &HashMap<String, String>,
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
+        _interactive: Interactive,
     ) -> Result<CommandTemplate> {
         if port_forward.is_some() {
             bail!("WSL shares the network interface with the host system");

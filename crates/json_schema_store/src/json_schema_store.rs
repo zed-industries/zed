@@ -3,8 +3,7 @@ use std::{str::FromStr, sync::Arc};
 
 use anyhow::{Context as _, Result};
 use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, Task, WeakEntity};
-use language::{LanguageRegistry, language_settings::all_language_settings};
-use lsp::LanguageServerBinaryOptions;
+use language::{LanguageRegistry, LspAdapterDelegate, language_settings::all_language_settings};
 use project::{LspStore, lsp_store::LocalLspAdapterDelegate};
 use settings::LSP_SETTINGS_SCHEMA_URL_PREFIX;
 use util::schemars::{AllowTrailingCommas, DefaultDenyUnknownFields};
@@ -80,7 +79,6 @@ fn handle_schema_request(
 ) -> Task<Result<String>> {
     let languages = lsp_store.read_with(cx, |lsp_store, _| lsp_store.languages.clone());
     cx.spawn(async move |cx| {
-        let languages = languages?;
         let schema = resolve_schema_request(&languages, lsp_store, uri, cx).await?;
         serde_json::to_string(&schema).context("Failed to serialize schema")
     })
@@ -123,56 +121,28 @@ pub async fn resolve_schema_request_inner(
                 .find(|adapter| adapter.name().as_ref() as &str == lsp_name)
                 .with_context(|| format!("LSP adapter not found: {}", lsp_name))?;
 
-            let delegate = cx
+            let delegate: Arc<dyn LspAdapterDelegate> = cx
                 .update(|inner_cx| {
-                    lsp_store.update(inner_cx, |lsp_store, inner_cx| {
+                    lsp_store.update(inner_cx, |lsp_store, cx| {
                         let Some(local) = lsp_store.as_local() else {
                             return None;
                         };
-                        let Some(worktree) = local.worktree_store.read(inner_cx).worktrees().next()
+                        let Some(worktree) = local.worktree_store.read(cx).worktrees().next()
                         else {
                             return None;
                         };
                         Some(LocalLspAdapterDelegate::from_local_lsp(
-                            local, &worktree, inner_cx,
+                            local, &worktree, cx,
                         ))
                     })
-                })?
+                })
                 .context(concat!(
                     "Failed to create adapter delegate - ",
                     "either LSP store is not in local mode or no worktree is available"
                 ))?;
 
-            let adapter_for_schema = adapter.clone();
-
-            let binary = adapter
-                .get_language_server_command(
-                    delegate,
-                    None,
-                    LanguageServerBinaryOptions {
-                        allow_path_lookup: true,
-                        allow_binary_download: false,
-                        pre_release: false,
-                    },
-                    cx,
-                )
-                .await
-                .await
-                .0
-                .with_context(|| {
-                    format!(
-                        concat!(
-                            "Failed to find language server {} ",
-                            "to generate initialization params schema"
-                        ),
-                        lsp_name
-                    )
-                })?;
-
-            adapter_for_schema
-                .adapter
-                .clone()
-                .initialization_options_schema(&binary)
+            adapter
+                .initialization_options_schema(&delegate, cx)
                 .await
                 .unwrap_or_else(|| {
                     serde_json::json!({
@@ -219,16 +189,16 @@ pub async fn resolve_schema_request_inner(
                         lsp_adapter_names: &lsp_adapter_names,
                     },
                 )
-            })?
+            })
         }
-        "keymap" => cx.update(settings::KeymapFile::generate_json_schema_for_registered_actions)?,
+        "keymap" => cx.update(settings::KeymapFile::generate_json_schema_for_registered_actions),
         "action" => {
             let normalized_action_name = rest.context("No Action name provided")?;
             let action_name = denormalize_action_name(normalized_action_name);
             let mut generator = settings::KeymapFile::action_schema_generator();
             let schema = cx
                 // PERF: cx.action_schema_by_name(action_name, &mut generator)
-                .update(|cx| cx.action_schemas(&mut generator))?
+                .update(|cx| cx.action_schemas(&mut generator))
                 .into_iter()
                 .find_map(|(name, schema)| (name == action_name).then_some(schema))
                 .flatten();
@@ -238,7 +208,7 @@ pub async fn resolve_schema_request_inner(
         "debug_tasks" => {
             let adapter_schemas = cx.read_global::<dap::DapRegistry, _>(|dap_registry, _| {
                 dap_registry.adapters_schema()
-            })?;
+            });
             task::DebugTaskFile::generate_json_schema(&adapter_schemas)
         }
         "package_json" => package_json_schema(),

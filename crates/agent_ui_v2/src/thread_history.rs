@@ -1,4 +1,5 @@
-use agent::{HistoryEntry, HistoryStore};
+use acp_thread::{AgentSessionInfo, AgentSessionList, AgentSessionListRequest};
+use agent_client_protocol as acp;
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
@@ -6,13 +7,23 @@ use gpui::{
     App, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Task,
     UniformListScrollHandle, Window, actions, uniform_list,
 };
-use std::{fmt::Display, ops::Range};
+use std::{fmt::Display, ops::Range, rc::Rc};
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
     HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tab, Tooltip, WithScrollbar,
     prelude::*,
 };
+
+const DEFAULT_TITLE: &SharedString = &SharedString::new_static("New Thread");
+
+fn thread_title(entry: &AgentSessionInfo) -> &SharedString {
+    entry
+        .title
+        .as_ref()
+        .filter(|title| !title.is_empty())
+        .unwrap_or(DEFAULT_TITLE)
+}
 
 actions!(
     agents,
@@ -25,7 +36,8 @@ actions!(
 );
 
 pub struct AcpThreadHistory {
-    pub(crate) history_store: Entity<HistoryStore>,
+    session_list: Option<Rc<dyn AgentSessionList>>,
+    sessions: Vec<AgentSessionInfo>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
     hovered_index: Option<usize>,
@@ -35,23 +47,24 @@ pub struct AcpThreadHistory {
     local_timezone: UtcOffset,
     confirming_delete_history: bool,
     _update_task: Task<()>,
+    _watch_task: Option<Task<()>>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
 enum ListItemType {
     BucketSeparator(TimeBucket),
     Entry {
-        entry: HistoryEntry,
+        entry: AgentSessionInfo,
         format: EntryTimeFormat,
     },
     SearchResult {
-        entry: HistoryEntry,
+        entry: AgentSessionInfo,
         positions: Vec<usize>,
     },
 }
 
 impl ListItemType {
-    fn history_entry(&self) -> Option<&HistoryEntry> {
+    fn history_entry(&self) -> Option<&AgentSessionInfo> {
         match self {
             ListItemType::Entry { entry, .. } => Some(entry),
             ListItemType::SearchResult { entry, .. } => Some(entry),
@@ -62,14 +75,14 @@ impl ListItemType {
 
 #[allow(dead_code)]
 pub enum ThreadHistoryEvent {
-    Open(HistoryEntry),
+    Open(AgentSessionInfo),
 }
 
 impl EventEmitter<ThreadHistoryEvent> for AcpThreadHistory {}
 
 impl AcpThreadHistory {
     pub fn new(
-        history_store: Entity<agent::HistoryStore>,
+        session_list: Option<Rc<dyn AgentSessionList>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -90,14 +103,11 @@ impl AcpThreadHistory {
                 }
             });
 
-        let history_store_subscription = cx.observe(&history_store, |this, _, cx| {
-            this.update_visible_items(true, cx);
-        });
-
         let scroll_handle = UniformListScrollHandle::default();
 
         let mut this = Self {
-            history_store,
+            session_list: None,
+            sessions: Vec::new(),
             scroll_handle,
             selected_index: 0,
             hovered_index: None,
@@ -109,17 +119,16 @@ impl AcpThreadHistory {
             .unwrap(),
             search_query: SharedString::default(),
             confirming_delete_history: false,
-            _subscriptions: vec![search_editor_subscription, history_store_subscription],
+            _subscriptions: vec![search_editor_subscription],
             _update_task: Task::ready(()),
+            _watch_task: None,
         };
-        this.update_visible_items(false, cx);
+        this.set_session_list(session_list, cx);
         this
     }
 
     fn update_visible_items(&mut self, preserve_selected_item: bool, cx: &mut Context<Self>) {
-        let entries = self
-            .history_store
-            .update(cx, |store, _| store.entries().collect());
+        let entries = self.sessions.clone();
         let new_list_items = if self.search_query.is_empty() {
             self.add_list_separators(entries, cx)
         } else {
@@ -135,13 +144,12 @@ impl AcpThreadHistory {
             let new_visible_items = new_list_items.await;
             this.update(cx, |this, cx| {
                 let new_selected_index = if let Some(history_entry) = selected_history_entry {
-                    let history_entry_id = history_entry.id();
                     new_visible_items
                         .iter()
                         .position(|visible_entry| {
                             visible_entry
                                 .history_entry()
-                                .is_some_and(|entry| entry.id() == history_entry_id)
+                                .is_some_and(|entry| entry.session_id == history_entry.session_id)
                         })
                         .unwrap_or(0)
                 } else {
@@ -156,19 +164,127 @@ impl AcpThreadHistory {
         });
     }
 
-    fn add_list_separators(&self, entries: Vec<HistoryEntry>, cx: &App) -> Task<Vec<ListItemType>> {
+    pub(crate) fn set_session_list(
+        &mut self,
+        session_list: Option<Rc<dyn AgentSessionList>>,
+        cx: &mut Context<Self>,
+    ) {
+        if let (Some(current), Some(next)) = (&self.session_list, &session_list)
+            && Rc::ptr_eq(current, next)
+        {
+            return;
+        }
+
+        self.session_list = session_list;
+        self.sessions.clear();
+        self.visible_items.clear();
+        self.selected_index = 0;
+        self.refresh_sessions(false, cx);
+
+        self._watch_task = self.session_list.as_ref().and_then(|session_list| {
+            let mut rx = session_list.watch(cx)?;
+            Some(cx.spawn(async move |this, cx| {
+                while let Ok(()) = rx.recv().await {
+                    this.update(cx, |this, cx| {
+                        this.refresh_sessions(true, cx);
+                    })
+                    .ok();
+                }
+            }))
+        });
+    }
+
+    fn refresh_sessions(&mut self, preserve_selected_item: bool, cx: &mut Context<Self>) {
+        let Some(session_list) = self.session_list.clone() else {
+            self.update_visible_items(preserve_selected_item, cx);
+            return;
+        };
+
+        self._update_task = cx.spawn(async move |this, cx| {
+            let mut cursor: Option<String> = None;
+            let mut is_first_page = true;
+
+            loop {
+                let request = AgentSessionListRequest {
+                    cursor: cursor.clone(),
+                    ..Default::default()
+                };
+                let task = cx.update(|cx| session_list.list_sessions(request, cx));
+                let response = match task.await {
+                    Ok(response) => response,
+                    Err(error) => {
+                        log::error!("Failed to load session history: {error:#}");
+                        return;
+                    }
+                };
+
+                let acp_thread::AgentSessionListResponse {
+                    sessions: page_sessions,
+                    next_cursor,
+                    ..
+                } = response;
+
+                this.update(cx, |this, cx| {
+                    if is_first_page {
+                        this.sessions = page_sessions;
+                    } else {
+                        this.sessions.extend(page_sessions);
+                    }
+                    this.update_visible_items(preserve_selected_item, cx);
+                })
+                .ok();
+
+                is_first_page = false;
+                match next_cursor {
+                    Some(next_cursor) => {
+                        if cursor.as_ref() == Some(&next_cursor) {
+                            log::warn!(
+                                "Session list pagination returned the same cursor; stopping to avoid a loop."
+                            );
+                            break;
+                        }
+                        cursor = Some(next_cursor);
+                    }
+                    None => break,
+                }
+            }
+        });
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.sessions.is_empty()
+    }
+
+    pub(crate) fn session_for_id(&self, session_id: &acp::SessionId) -> Option<AgentSessionInfo> {
+        self.sessions
+            .iter()
+            .find(|entry| &entry.session_id == session_id)
+            .cloned()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn sessions(&self) -> &[AgentSessionInfo] {
+        &self.sessions
+    }
+
+    fn add_list_separators(
+        &self,
+        entries: Vec<AgentSessionInfo>,
+        cx: &App,
+    ) -> Task<Vec<ListItemType>> {
         cx.background_spawn(async move {
             let mut items = Vec::with_capacity(entries.len() + 1);
             let mut bucket = None;
             let today = Local::now().naive_local().date();
 
             for entry in entries.into_iter() {
-                let entry_date = entry
-                    .updated_at()
-                    .with_timezone(&Local)
-                    .naive_local()
-                    .date();
-                let entry_bucket = TimeBucket::from_dates(today, entry_date);
+                let entry_bucket = entry
+                    .updated_at
+                    .map(|timestamp| {
+                        let entry_date = timestamp.with_timezone(&Local).naive_local().date();
+                        TimeBucket::from_dates(today, entry_date)
+                    })
+                    .unwrap_or(TimeBucket::All);
 
                 if Some(entry_bucket) != bucket {
                     bucket = Some(entry_bucket);
@@ -186,7 +302,7 @@ impl AcpThreadHistory {
 
     fn filter_search_results(
         &self,
-        entries: Vec<HistoryEntry>,
+        entries: Vec<AgentSessionInfo>,
         cx: &App,
     ) -> Task<Vec<ListItemType>> {
         let query = self.search_query.clone();
@@ -196,7 +312,7 @@ impl AcpThreadHistory {
                 let mut candidates = Vec::with_capacity(entries.len());
 
                 for (idx, entry) in entries.iter().enumerate() {
-                    candidates.push(StringMatchCandidate::new(idx, entry.title()));
+                    candidates.push(StringMatchCandidate::new(idx, thread_title(entry)));
                 }
 
                 const MAX_MATCHES: usize = 100;
@@ -227,11 +343,11 @@ impl AcpThreadHistory {
         self.visible_items.is_empty() && !self.search_query.is_empty()
     }
 
-    fn selected_history_entry(&self) -> Option<&HistoryEntry> {
+    fn selected_history_entry(&self) -> Option<&AgentSessionInfo> {
         self.get_history_entry(self.selected_index)
     }
 
-    fn get_history_entry(&self, visible_items_ix: usize) -> Option<&HistoryEntry> {
+    fn get_history_entry(&self, visible_items_ix: usize) -> Option<&AgentSessionInfo> {
         self.visible_items.get(visible_items_ix)?.history_entry()
     }
 
@@ -330,22 +446,17 @@ impl AcpThreadHistory {
         let Some(entry) = self.get_history_entry(visible_item_ix) else {
             return;
         };
-
-        let task = match entry {
-            HistoryEntry::AcpThread(thread) => self
-                .history_store
-                .update(cx, |this, cx| this.delete_thread(thread.id.clone(), cx)),
-            HistoryEntry::TextThread(text_thread) => self.history_store.update(cx, |this, cx| {
-                this.delete_text_thread(text_thread.path.clone(), cx)
-            }),
+        let Some(session_list) = self.session_list.as_ref() else {
+            return;
         };
+        let task = session_list.delete_session(&entry.session_id, cx);
         task.detach_and_log_err(cx);
     }
 
     fn remove_history(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.history_store.update(cx, |store, cx| {
-            store.delete_threads(cx).detach_and_log_err(cx)
-        });
+        if let Some(session_list) = self.session_list.as_ref() {
+            session_list.delete_sessions(cx).detach_and_log_err(cx);
+        }
         self.confirming_delete_history = false;
         cx.notify();
     }
@@ -402,7 +513,7 @@ impl AcpThreadHistory {
 
     fn render_history_entry(
         &self,
-        entry: &HistoryEntry,
+        entry: &AgentSessionInfo,
         format: EntryTimeFormat,
         ix: usize,
         highlight_positions: Vec<usize>,
@@ -410,23 +521,27 @@ impl AcpThreadHistory {
     ) -> AnyElement {
         let selected = ix == self.selected_index;
         let hovered = Some(ix) == self.hovered_index;
-        let timestamp = entry.updated_at().timestamp();
-
-        let display_text = match format {
-            EntryTimeFormat::DateAndTime => {
-                let entry_time = entry.updated_at();
+        let display_text = match (format, entry.updated_at) {
+            (EntryTimeFormat::DateAndTime, Some(entry_time)) => {
                 let now = Utc::now();
                 let duration = now.signed_duration_since(entry_time);
                 let days = duration.num_days();
 
                 format!("{}d", days)
             }
-            EntryTimeFormat::TimeOnly => format.format_timestamp(timestamp, self.local_timezone),
+            (EntryTimeFormat::TimeOnly, Some(entry_time)) => {
+                format.format_timestamp(entry_time.timestamp(), self.local_timezone)
+            }
+            (_, None) => "—".to_string(),
         };
 
-        let title = entry.title().clone();
-        let full_date =
-            EntryTimeFormat::DateAndTime.format_timestamp(timestamp, self.local_timezone);
+        let title = thread_title(entry).clone();
+        let full_date = entry
+            .updated_at
+            .map(|time| {
+                EntryTimeFormat::DateAndTime.format_timestamp(time.timestamp(), self.local_timezone)
+            })
+            .unwrap_or_else(|| "Unknown".to_string());
 
         h_flex()
             .w_full()
@@ -442,7 +557,7 @@ impl AcpThreadHistory {
                             .gap_2()
                             .justify_between()
                             .child(
-                                HighlightedLabel::new(entry.title(), highlight_positions)
+                                HighlightedLabel::new(thread_title(entry), highlight_positions)
                                     .size(LabelSize::Small)
                                     .truncate(),
                             )
@@ -495,7 +610,7 @@ impl Focusable for AcpThreadHistory {
 
 impl Render for AcpThreadHistory {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_no_history = self.history_store.read(cx).is_empty(cx);
+        let has_no_history = self.is_empty();
 
         v_flex()
             .key_context("ThreadHistory")

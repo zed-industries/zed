@@ -2,7 +2,7 @@ use crate::{Copilot, CopilotEditPrediction};
 use anyhow::Result;
 use edit_prediction_types::{EditPrediction, EditPredictionDelegate, interpolate_edits};
 use gpui::{App, Context, Entity, Task};
-use language::{Anchor, Buffer, EditPreview, OffsetRangeExt};
+use language::{Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt};
 use std::{ops::Range, sync::Arc, time::Duration};
 
 pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
@@ -75,24 +75,26 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
             let completions = copilot
                 .update(cx, |copilot, cx| {
                     copilot.completions(&buffer, cursor_position, cx)
-                })?
+                })
                 .await?;
 
             if let Some(mut completion) = completions.into_iter().next()
-                && let Some(trimmed_completion) = cx
-                    .update(|cx| trim_completion(&completion, cx))
-                    .ok()
-                    .flatten()
+                && let Some((trimmed_range, trimmed_text, snapshot)) =
+                    cx.update(|cx| trim_completion(&completion, cx))
             {
                 let preview = buffer
                     .update(cx, |this, cx| {
-                        this.preview_edits(Arc::from(std::slice::from_ref(&trimmed_completion)), cx)
-                    })?
+                        this.preview_edits(
+                            Arc::from([(trimmed_range.clone(), trimmed_text.clone())].as_slice()),
+                            cx,
+                        )
+                    })
                     .await;
                 this.update(cx, |this, cx| {
                     this.pending_refresh = None;
-                    completion.range = trimmed_completion.0;
-                    completion.text = trimmed_completion.1.to_string();
+                    completion.range = trimmed_range;
+                    completion.text = trimmed_text.to_string();
+                    completion.snapshot = snapshot;
                     this.completion = Some((completion, preview));
 
                     cx.notify();
@@ -147,7 +149,7 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
 fn trim_completion(
     completion: &CopilotEditPrediction,
     cx: &mut App,
-) -> Option<(Range<Anchor>, Arc<str>)> {
+) -> Option<(Range<Anchor>, Arc<str>, BufferSnapshot)> {
     let buffer = completion.buffer.read(cx);
     let mut completion_range = completion.range.to_offset(buffer);
     let prefix_len = common_prefix(
@@ -164,10 +166,11 @@ fn trim_completion(
     if completion_text.trim().is_empty() {
         None
     } else {
-        let completion_range =
-            buffer.anchor_after(completion_range.start)..buffer.anchor_after(completion_range.end);
+        let snapshot = buffer.snapshot();
+        let completion_range = snapshot.anchor_after(completion_range.start)
+            ..snapshot.anchor_after(completion_range.end);
 
-        Some((completion_range, Arc::from(completion_text)))
+        Some((completion_range, Arc::from(completion_text), snapshot))
     }
 }
 

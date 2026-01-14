@@ -13,8 +13,10 @@ use serde::Deserialize;
 use settings::Settings as _;
 use task::ShellBuilder;
 use util::ResultExt as _;
+use util::process::Child;
 
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::{any::Any, cell::RefCell};
 use std::{path::Path, rc::Rc};
 use thiserror::Error;
@@ -41,9 +43,7 @@ pub struct AcpConnection {
     default_model: Option<acp::ModelId>,
     default_config_options: HashMap<String, String>,
     root_dir: PathBuf,
-    // NB: Don't move this into the wait_task, since we need to ensure the process is
-    // killed on drop (setting kill_on_drop on the command seems to not always work).
-    child: smol::process::Child,
+    child: Child,
     _io_task: Task<Result<(), acp::Error>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
@@ -111,19 +111,15 @@ impl AcpConnection {
         is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone())?;
+        let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone());
         let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
         let mut child =
-            builder.build_command(Some(command.path.display().to_string()), &command.args);
-        child
-            .envs(command.env.iter().flatten())
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            builder.build_std_command(Some(command.path.display().to_string()), &command.args);
+        child.envs(command.env.iter().flatten());
         if !is_remote {
             child.current_dir(root_dir);
         }
-        let mut child = child.spawn()?;
+        let mut child = Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
 
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
@@ -137,13 +133,13 @@ impl AcpConnection {
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
 
-        let (release_channel, version) = cx.update(|cx| {
+        let (release_channel, version): (Option<&str>, String) = cx.update(|cx| {
             (
                 release_channel::ReleaseChannel::try_global(cx)
                     .map(|release_channel| release_channel.display_name()),
                 release_channel::AppVersion::global(cx).to_string(),
             )
-        })?;
+        });
 
         let client = ClientDelegate {
             sessions: sessions.clone(),
@@ -195,7 +191,7 @@ impl AcpConnection {
             AcpConnectionRegistry::default_global(cx).update(cx, |registry, cx| {
                 registry.set_active_connection(server_name.clone(), &connection, cx)
             });
-        })?;
+        });
 
         let response = connection
             .initialize(
@@ -259,7 +255,6 @@ impl AcpConnection {
 
 impl Drop for AcpConnection {
     fn drop(&mut self) {
-        // See the comment on the child field.
         self.child.kill().log_err();
     }
 }
@@ -311,6 +306,7 @@ impl AgentConnection for AcpConnection {
                         project::context_server_store::ContextServerConfiguration::Http {
                             url,
                             headers,
+                            timeout: _,
                         } => Some(acp::McpServer::Http(
                             acp::McpServerHttp::new(id.0.to_string(), url.to_string()).headers(
                                 headers
@@ -347,7 +343,7 @@ impl AgentConnection for AcpConnection {
                     }
                 })?;
 
-            let use_config_options = cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>())?;
+            let use_config_options = cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>());
 
             // Config options take precedence over legacy modes/models
             let (modes, models, config_options) = if use_config_options && let Some(opts) = response.config_options {
@@ -536,8 +532,8 @@ impl AgentConnection for AcpConnection {
             }
 
             let session_id = response.session_id;
-            let action_log = cx.new(|_| ActionLog::new(project.clone()))?;
-            let thread = cx.new(|cx| {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let thread: Entity<AcpThread> = cx.new(|cx| {
                 AcpThread::new(
                     self.server_name.clone(),
                     self.clone(),
@@ -548,7 +544,7 @@ impl AgentConnection for AcpConnection {
                     watch::Receiver::constant(self.agent_capabilities.prompt_capabilities.clone()),
                     cx,
                 )
-            })?;
+            });
 
 
             let session = AcpSession {
@@ -1108,8 +1104,7 @@ impl acp::Client for ClientDelegate {
                 cx,
             )
         })?;
-        let terminal_id =
-            terminal_entity.read_with(&self.cx, |terminal, _| terminal.id().clone())?;
+        let terminal_id = terminal_entity.read_with(&self.cx, |terminal, _| terminal.id().clone());
         Ok(acp::CreateTerminalResponse::new(terminal_id))
     }
 

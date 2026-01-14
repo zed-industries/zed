@@ -62,7 +62,11 @@ use ui::{
     ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
     v_flex,
 };
-use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths, rel_path::RelPath};
+use util::{
+    ResultExt, TakeUntilExt, TryFutureExt, maybe,
+    paths::compare_paths,
+    rel_path::{RelPath, RelPathBuf},
+};
 use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     SplitDirection, Workspace,
@@ -367,6 +371,19 @@ impl FoldedAncestors {
         self.max_ancestor_depth()
             .saturating_sub(1)
             .saturating_sub(self.current_ancestor_depth)
+    }
+
+    fn set_active_index(&mut self, index: usize) -> bool {
+        let new_depth = self
+            .max_ancestor_depth()
+            .saturating_sub(1)
+            .saturating_sub(index);
+        if self.current_ancestor_depth != new_depth {
+            self.current_ancestor_depth = new_depth;
+            true
+        } else {
+            false
+        }
     }
 
     fn active_component(&self, file_name: &str) -> Option<String> {
@@ -2163,7 +2180,7 @@ impl ProjectPanel {
         cx: &mut Context<ProjectPanel>,
     ) {
         maybe!({
-            let items_to_delete = self.disjoint_entries(cx);
+            let items_to_delete = self.disjoint_effective_entries(cx);
             if items_to_delete.is_empty() {
                 return None;
             }
@@ -2817,7 +2834,7 @@ impl ProjectPanel {
     }
 
     fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
-        let entries = self.disjoint_entries(cx);
+        let entries = self.disjoint_effective_entries(cx);
         if !entries.is_empty() {
             self.clipboard = Some(ClipboardEntry::Cut(entries));
             cx.notify();
@@ -2825,7 +2842,7 @@ impl ProjectPanel {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        let entries = self.disjoint_entries(cx);
+        let entries = self.disjoint_effective_entries(cx);
         if !entries.is_empty() {
             self.clipboard = Some(ClipboardEntry::Copied(entries));
             cx.notify();
@@ -3139,7 +3156,11 @@ impl ProjectPanel {
             };
             if let Some(working_directory) = working_directory {
                 window.dispatch_action(
-                    workspace::OpenTerminal { working_directory }.boxed_clone(),
+                    workspace::OpenTerminal {
+                        working_directory,
+                        local: false,
+                    }
+                    .boxed_clone(),
                     cx,
                 )
             }
@@ -3199,13 +3220,14 @@ impl ProjectPanel {
         destination: ProjectEntryId,
         destination_is_file: bool,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<Task<Result<CreatedEntry>>> {
         if self
             .project
             .read(cx)
             .entry_is_worktree_root(entry_to_move, cx)
         {
-            self.move_worktree_root(entry_to_move, destination, cx)
+            self.move_worktree_root(entry_to_move, destination, cx);
+            None
         } else {
             self.move_worktree_entry(entry_to_move, destination, destination_is_file, cx)
         }
@@ -3240,53 +3262,75 @@ impl ProjectPanel {
         destination_entry: ProjectEntryId,
         destination_is_file: bool,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<Task<Result<CreatedEntry>>> {
         if entry_to_move == destination_entry {
-            return;
+            return None;
         }
 
-        let destination_worktree = self.project.update(cx, |project, cx| {
-            let source_path = project.path_for_entry(entry_to_move, cx)?;
-            let destination_path = project.path_for_entry(destination_entry, cx)?;
+        let (destination_worktree, rename_task) = self.project.update(cx, |project, cx| {
+            let Some(source_path) = project.path_for_entry(entry_to_move, cx) else {
+                return (None, None);
+            };
+            let Some(destination_path) = project.path_for_entry(destination_entry, cx) else {
+                return (None, None);
+            };
             let destination_worktree_id = destination_path.worktree_id;
 
-            let mut destination_path = destination_path.path.as_ref();
-            if destination_is_file {
-                destination_path = destination_path.parent()?;
-            }
+            let destination_dir = if destination_is_file {
+                destination_path.path.parent().unwrap_or(RelPath::empty())
+            } else {
+                destination_path.path.as_ref()
+            };
 
-            let mut new_path = destination_path.to_rel_path_buf();
-            new_path.push(RelPath::unix(source_path.path.file_name()?).unwrap());
-            if new_path.as_rel_path() != source_path.path.as_ref() {
-                let task = project.rename_entry(
+            let Some(source_name) = source_path.path.file_name() else {
+                return (None, None);
+            };
+            let Ok(source_name) = RelPath::unix(source_name) else {
+                return (None, None);
+            };
+
+            let mut new_path = destination_dir.to_rel_path_buf();
+            new_path.push(source_name);
+            let rename_task = (new_path.as_rel_path() != source_path.path.as_ref()).then(|| {
+                project.rename_entry(
                     entry_to_move,
                     (destination_worktree_id, new_path).into(),
                     cx,
-                );
-                cx.foreground_executor().spawn(task).detach_and_log_err(cx);
-            }
+                )
+            });
 
-            project.worktree_id_for_entry(destination_entry, cx)
+            (
+                project.worktree_id_for_entry(destination_entry, cx),
+                rename_task,
+            )
         });
 
         if let Some(destination_worktree) = destination_worktree {
             self.expand_entry(destination_worktree, destination_entry, cx);
         }
+        rename_task
     }
 
     fn index_for_selection(&self, selection: SelectedEntry) -> Option<(usize, usize, usize)> {
         self.index_for_entry(selection.entry_id, selection.worktree_id)
     }
 
-    fn disjoint_entries(&self, cx: &App) -> BTreeSet<SelectedEntry> {
-        let marked_entries = self.effective_entries();
+    fn disjoint_effective_entries(&self, cx: &App) -> BTreeSet<SelectedEntry> {
+        self.disjoint_entries(self.effective_entries(), cx)
+    }
+
+    fn disjoint_entries(
+        &self,
+        entries: BTreeSet<SelectedEntry>,
+        cx: &App,
+    ) -> BTreeSet<SelectedEntry> {
         let mut sanitized_entries = BTreeSet::new();
-        if marked_entries.is_empty() {
+        if entries.is_empty() {
             return sanitized_entries;
         }
 
         let project = self.project.read(cx);
-        let marked_entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> = marked_entries
+        let entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> = entries
             .into_iter()
             .filter(|entry| !project.entry_is_worktree_root(entry.entry_id, cx))
             .fold(HashMap::default(), |mut map, entry| {
@@ -3294,10 +3338,10 @@ impl ProjectPanel {
                 map
             });
 
-        for (worktree_id, marked_entries) in marked_entries_by_worktree {
+        for (worktree_id, worktree_entries) in entries_by_worktree {
             if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
                 let worktree = worktree.read(cx);
-                let marked_dir_paths = marked_entries
+                let dir_paths = worktree_entries
                     .iter()
                     .filter_map(|entry| {
                         worktree.entry_for_id(entry.entry_id).and_then(|entry| {
@@ -3310,15 +3354,15 @@ impl ProjectPanel {
                     })
                     .collect::<BTreeSet<_>>();
 
-                sanitized_entries.extend(marked_entries.into_iter().filter(|entry| {
+                sanitized_entries.extend(worktree_entries.into_iter().filter(|entry| {
                     let Some(entry_info) = worktree.entry_for_id(entry.entry_id) else {
                         return false;
                     };
                     let entry_path = entry_info.path.as_ref();
-                    let inside_marked_dir = marked_dir_paths.iter().any(|&marked_dir_path| {
-                        entry_path != marked_dir_path && entry_path.starts_with(marked_dir_path)
+                    let inside_selected_dir = dir_paths.iter().any(|&dir_path| {
+                        entry_path != dir_path && entry_path.starts_with(dir_path)
                     });
-                    !inside_marked_dir
+                    !inside_selected_dir
                 }));
             }
         }
@@ -3859,9 +3903,9 @@ impl ProjectPanel {
 
                 let task = worktree.update(cx, |worktree, cx| {
                     worktree.copy_external_entries(target_directory, paths, fs, cx)
-                })?;
+                });
 
-                let opened_entries = task
+                let opened_entries: Vec<_> = task
                     .await
                     .with_context(|| "failed to copy external paths")?;
                 this.update(cx, |this, cx| {
@@ -3910,6 +3954,15 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let resolved_selections = selections
+            .items()
+            .map(|entry| SelectedEntry {
+                entry_id: self.resolve_entry(entry.entry_id),
+                worktree_id: entry.worktree_id,
+            })
+            .collect::<BTreeSet<SelectedEntry>>();
+        let entries = self.disjoint_entries(resolved_selections, cx);
+
         if Self::is_copy_modifier_set(&window.modifiers()) {
             let _ = maybe!({
                 let project = self.project.read(cx);
@@ -3922,7 +3975,7 @@ impl ProjectPanel {
 
                 let mut copy_tasks = Vec::new();
                 let mut disambiguation_range = None;
-                for selection in selections.items() {
+                for selection in &entries {
                     let (new_path, new_disambiguation_range) = self.create_paste_path(
                         selection,
                         (target_worktree.clone(), &target_entry),
@@ -3966,8 +4019,122 @@ impl ProjectPanel {
                 Some(())
             });
         } else {
-            for selection in selections.items() {
-                self.move_entry(selection.entry_id, target_entry_id, is_file, cx);
+            let update_marks = !self.marked_entries.is_empty();
+            let active_selection = selections.active_selection;
+
+            // For folded selections, track the leaf suffix relative to the resolved
+            // entry so we can refresh it after the move completes.
+            let (folded_selection_info, folded_selection_entries): (
+                Vec<(ProjectEntryId, RelPathBuf)>,
+                HashSet<SelectedEntry>,
+            ) = {
+                let project = self.project.read(cx);
+                let mut info = Vec::new();
+                let mut folded_entries = HashSet::default();
+
+                for selection in selections.items() {
+                    let resolved_id = self.resolve_entry(selection.entry_id);
+                    if resolved_id == selection.entry_id {
+                        continue;
+                    }
+                    folded_entries.insert(*selection);
+                    let Some(source_path) = project.path_for_entry(resolved_id, cx) else {
+                        continue;
+                    };
+                    let Some(leaf_path) = project.path_for_entry(selection.entry_id, cx) else {
+                        continue;
+                    };
+                    let Ok(suffix) = leaf_path.path.strip_prefix(source_path.path.as_ref()) else {
+                        continue;
+                    };
+                    if suffix.as_unix_str().is_empty() {
+                        continue;
+                    }
+
+                    info.push((resolved_id, suffix.to_rel_path_buf()));
+                }
+                (info, folded_entries)
+            };
+
+            // Collect move tasks paired with their source entry ID so we can correlate
+            // results with folded selections that need refreshing.
+            let mut move_tasks: Vec<(ProjectEntryId, Task<Result<CreatedEntry>>)> = Vec::new();
+            for entry in entries {
+                if let Some(task) = self.move_entry(entry.entry_id, target_entry_id, is_file, cx) {
+                    move_tasks.push((entry.entry_id, task));
+                }
+            }
+
+            if move_tasks.is_empty() {
+                return;
+            }
+
+            if folded_selection_info.is_empty() {
+                for (_, task) in move_tasks {
+                    task.detach_and_log_err(cx);
+                }
+            } else {
+                cx.spawn_in(window, async move |project_panel, cx| {
+                    // Await all move tasks and collect successful results
+                    let mut move_results: Vec<(ProjectEntryId, Entry)> = Vec::new();
+                    for (entry_id, task) in move_tasks {
+                        if let Some(CreatedEntry::Included(new_entry)) = task.await.log_err() {
+                            move_results.push((entry_id, new_entry));
+                        }
+                    }
+
+                    if move_results.is_empty() {
+                        return;
+                    }
+
+                    // For folded selections, we need to refresh the leaf paths (with suffixes)
+                    // because they may not be indexed yet after the parent directory was moved.
+                    // First collect the paths to refresh, then refresh them.
+                    let paths_to_refresh: Vec<(Entity<Worktree>, Arc<RelPath>)> = project_panel
+                        .update(cx, |project_panel, cx| {
+                            let project = project_panel.project.read(cx);
+                            folded_selection_info
+                                .iter()
+                                .filter_map(|(resolved_id, suffix)| {
+                                    let (_, new_entry) =
+                                        move_results.iter().find(|(id, _)| id == resolved_id)?;
+                                    let worktree = project.worktree_for_entry(new_entry.id, cx)?;
+                                    let leaf_path = new_entry.path.join(suffix);
+                                    Some((worktree, leaf_path))
+                                })
+                                .collect()
+                        })
+                        .ok()
+                        .unwrap_or_default();
+
+                    let refresh_tasks: Vec<_> = paths_to_refresh
+                        .into_iter()
+                        .filter_map(|(worktree, leaf_path)| {
+                            worktree.update(cx, |worktree, cx| {
+                                worktree
+                                    .as_local_mut()
+                                    .map(|local| local.refresh_entry(leaf_path, None, cx))
+                            })
+                        })
+                        .collect();
+
+                    for task in refresh_tasks {
+                        task.await.log_err();
+                    }
+
+                    if update_marks && !folded_selection_entries.is_empty() {
+                        project_panel
+                            .update(cx, |project_panel, cx| {
+                                project_panel.marked_entries.retain(|entry| {
+                                    !folded_selection_entries.contains(entry)
+                                        || *entry == active_selection
+                                });
+                                cx.notify();
+                            })
+                            .ok();
+                    }
+                })
+                .detach();
             }
         }
     }
@@ -4591,7 +4758,7 @@ impl ProjectPanel {
         let dragged_selection = DraggedSelection {
             active_selection: SelectedEntry {
                 worktree_id: selection.worktree_id,
-                entry_id: self.resolve_entry(selection.entry_id),
+                entry_id: selection.entry_id,
             },
             marked_selections: Arc::from(self.marked_entries.clone()),
         };
@@ -5101,6 +5268,9 @@ impl ProjectPanel {
                                         ));
                                         let label = div()
                                             .id(id)
+                                            .px_0p5()
+                                            .rounded_xs()
+                                            .hover(|style| style.bg(cx.theme().colors().element_active))
                                             .when(!is_sticky,| div| {
                                                 div
                                                 .when(index != components_len - 1, |div|{
@@ -5150,14 +5320,21 @@ impl ProjectPanel {
                                             .on_mouse_down(
                                                 MouseButton::Left,
                                                 cx.listener(move |this, _, _, cx| {
-                                                    if index != active_index
-                                                        && let Some(folds) =
-                                                            this.state.ancestors.get_mut(&entry_id)
-                                                        {
-                                                            folds.current_ancestor_depth =
-                                                                components_len - 1 - index;
+                                                    if let Some(folds) = this.state.ancestors.get_mut(&entry_id) {
+                                                        if folds.set_active_index(index) {
                                                             cx.notify();
                                                         }
+                                                    }
+                                                }),
+                                            )
+                                            .on_mouse_down(
+                                                MouseButton::Right,
+                                                cx.listener(move |this, _, _, cx| {
+                                                    if let Some(folds) = this.state.ancestors.get_mut(&entry_id) {
+                                                        if folds.set_active_index(index) {
+                                                            cx.notify();
+                                                        }
+                                                    }
                                                 }),
                                             )
                                             .child(

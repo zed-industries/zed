@@ -1867,6 +1867,24 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_percent_in_comment(cx: &mut TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate_at_each_offset("%", "// ˇconsole.logˇ(ˇvaˇrˇ)ˇ;")
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("%", "// ˇ{ ˇ{ˇ}ˇ }ˇ")
+            .await
+            .assert_matches();
+        // Template-style brackets (like Liquid {% %} and {{ }})
+        cx.simulate_at_each_offset("%", "ˇ{ˇ% block %ˇ}ˇ")
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("%", "ˇ{ˇ{ˇ var ˇ}ˇ}ˇ")
+            .await
+            .assert_matches();
+    }
+
+    #[gpui::test]
     async fn test_end_of_line_with_neovim(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 

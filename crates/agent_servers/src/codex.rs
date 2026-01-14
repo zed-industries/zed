@@ -20,7 +20,7 @@ pub struct Codex;
 pub(crate) mod tests {
     use super::*;
 
-    crate::common_e2e_tests!(async |_, _, _| Codex, allow_option_id = "proceed_once");
+    crate::common_e2e_tests!(async |_, _| Codex, allow_option_id = "proceed_once");
 }
 
 impl AgentServer for Codex {

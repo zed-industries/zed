@@ -13,9 +13,16 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
+pub enum CollapseDirection {
+    Collapsed,
+    Expanded,
+}
+
+#[derive(Clone, Debug)]
 pub enum SearchEvent {
     MatchesInvalidated,
     ActiveMatchChanged,
+    ResultsCollapsedChanged(CollapseDirection),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
