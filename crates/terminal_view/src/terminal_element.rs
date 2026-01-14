@@ -484,8 +484,11 @@ impl TerminalElement {
         }
 
         let layout_time = start_time.elapsed();
+
         log::debug!(
-            "Terminal layout_grid: {} cells processed, {} batched runs created, {} rects (from {} merged regions), layout took {:?}",
+            "Terminal layout_grid: {} cells processed, \
+            {} batched runs created, {} rects (from {} merged regions), \
+            layout took {:?}",
             cell_count,
             batched_runs.len(),
             rects.len(),
@@ -1309,13 +1312,12 @@ impl Element for TerminalElement {
                         rect.paint(origin, &layout.dimensions, window);
                     }
 
-                    for (relative_highlighted_range, color) in
-&                        layout.relative_highlighted_ranges
-                    {
+                    for (relative_highlighted_range, color) in &layout.relative_highlighted_ranges {
                         if let Some((start_y, highlighted_range_lines)) =
                             to_highlighted_range_lines(relative_highlighted_range, layout, origin)
                         {
-                            let corner_radius = if EditorSettings::get_global(cx).rounded_selection {
+                            let corner_radius = if EditorSettings::get_global(cx).rounded_selection
+                            {
                                 0.15 * layout.dimensions.line_height
                             } else {
                                 Pixels::ZERO
@@ -1340,50 +1342,54 @@ impl Element for TerminalElement {
 
                     if let Some(text_to_mark) = &marked_text_cloned
                         && !text_to_mark.is_empty()
-                            && let Some(ime_bounds) = layout.ime_cursor_bounds {
-                                let ime_position = (ime_bounds + origin).origin;
-                                let mut ime_style = layout.base_text_style.clone();
-                                ime_style.underline = Some(UnderlineStyle {
-                                    color: Some(ime_style.color),
-                                    thickness: px(1.0),
-                                    wavy: false,
-                                });
+                        && let Some(ime_bounds) = layout.ime_cursor_bounds
+                    {
+                        let ime_position = (ime_bounds + origin).origin;
+                        let mut ime_style = layout.base_text_style.clone();
+                        ime_style.underline = Some(UnderlineStyle {
+                            color: Some(ime_style.color),
+                            thickness: px(1.0),
+                            wavy: false,
+                        });
 
-                                let shaped_line = window.text_system().shape_line(
-                                    text_to_mark.clone().into(),
-                                    ime_style.font_size.to_pixels(window.rem_size()),
-                                    &[TextRun {
-                                        len: text_to_mark.len(),
-                                        font: ime_style.font(),
-                                        color: ime_style.color,
-                                        underline: ime_style.underline,
-                                        ..Default::default()
-                                    }],
-                                    None
-                                );
+                        let shaped_line = window.text_system().shape_line(
+                            text_to_mark.clone().into(),
+                            ime_style.font_size.to_pixels(window.rem_size()),
+                            &[TextRun {
+                                len: text_to_mark.len(),
+                                font: ime_style.font(),
+                                color: ime_style.color,
+                                underline: ime_style.underline,
+                                ..Default::default()
+                            }],
+                            None,
+                        );
 
-                                // Paint background to cover terminal text behind marked text
-                                let ime_background_bounds = Bounds::new(
-                                    ime_position,
-                                    size(shaped_line.width, layout.dimensions.line_height),
-                                );
-                                window.paint_quad(fill(ime_background_bounds, layout.background_color));
+                        // Paint background to cover terminal text behind marked text
+                        let ime_background_bounds = Bounds::new(
+                            ime_position,
+                            size(shaped_line.width, layout.dimensions.line_height),
+                        );
+                        window.paint_quad(fill(ime_background_bounds, layout.background_color));
 
-                                shaped_line.paint(
-                                    ime_position,
-                                    layout.dimensions.line_height,
-                                    gpui::TextAlign::Left,
-                                    None,
-                                    window,
-                                    cx,
-                                )
-                                    .log_err();
-                            }
+                        shaped_line
+                            .paint(
+                                ime_position,
+                                layout.dimensions.line_height,
+                                gpui::TextAlign::Left,
+                                None,
+                                window,
+                                cx,
+                            )
+                            .log_err();
+                    }
 
-                    if self.cursor_visible && marked_text_cloned.is_none()
-                        && let Some(mut cursor) = original_cursor {
-                            cursor.paint(origin, window, cx);
-                        }
+                    if self.cursor_visible
+                        && marked_text_cloned.is_none()
+                        && let Some(mut cursor) = original_cursor
+                    {
+                        cursor.paint(origin, window, cx);
+                    }
 
                     if let Some(mut element) = block_below_cursor_element {
                         element.paint(window, cx);
@@ -1392,13 +1398,14 @@ impl Element for TerminalElement {
                     if let Some(mut element) = hyperlink_tooltip {
                         element.paint(window, cx);
                     }
-                    let total_paint_time = paint_start.elapsed();
+
                     log::debug!(
-                        "Terminal paint: {} text runs, {} rects, text paint took {:?}, total paint took {:?}",
+                        "Terminal paint: {} text runs, {} rects, \
+                        text paint took {:?}, total paint took {total_paint_time:?}",
                         layout.batched_text_runs.len(),
                         layout.rects.len(),
                         text_paint_time,
-                        total_paint_time
+                        total_paint_time = paint_start.elapsed()
                     );
                 },
             );
