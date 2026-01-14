@@ -83,3 +83,22 @@ impl IntoGpui for FontFamilyName {
         SharedString::from(self.0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use gpui::FontWeight;
+    use settings_content::FontWeightContent;
+
+    #[test]
+    fn test_font_weight_content_constants_match_gpui() {
+        assert_eq!(FontWeightContent::THIN.0, FontWeight::THIN.0);
+        assert_eq!(FontWeightContent::EXTRA_LIGHT.0, FontWeight::EXTRA_LIGHT.0);
+        assert_eq!(FontWeightContent::LIGHT.0, FontWeight::LIGHT.0);
+        assert_eq!(FontWeightContent::NORMAL.0, FontWeight::NORMAL.0);
+        assert_eq!(FontWeightContent::MEDIUM.0, FontWeight::MEDIUM.0);
+        assert_eq!(FontWeightContent::SEMIBOLD.0, FontWeight::SEMIBOLD.0);
+        assert_eq!(FontWeightContent::BOLD.0, FontWeight::BOLD.0);
+        assert_eq!(FontWeightContent::EXTRA_BOLD.0, FontWeight::EXTRA_BOLD.0);
+        assert_eq!(FontWeightContent::BLACK.0, FontWeight::BLACK.0);
+    }
+}
