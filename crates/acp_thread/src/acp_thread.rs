@@ -227,7 +227,9 @@ impl ToolCall {
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Self> {
-        let title = if let Some((first_line, _)) = tool_call.title.split_once("\n") {
+        let title = if tool_call.kind == acp::ToolKind::Execute {
+            tool_call.title
+        } else if let Some((first_line, _)) = tool_call.title.split_once("\n") {
             first_line.to_owned() + "…"
         } else {
             tool_call.title
@@ -298,8 +300,10 @@ impl ToolCall {
 
         if let Some(title) = title {
             self.label.update(cx, |label, cx| {
-                if let Some((first_line, _)) = title.split_once("\n") {
-                    label.replace(first_line.to_owned() + "…", cx)
+                if self.kind == acp::ToolKind::Execute {
+                    label.replace(title, cx);
+                } else if let Some((first_line, _)) = title.split_once("\n") {
+                    label.replace(first_line.to_owned() + "…", cx);
                 } else {
                     label.replace(title, cx);
                 }
@@ -391,7 +395,7 @@ impl ToolCall {
                 .unwrap_or(false)
     }
 
-    fn to_markdown(&self, cx: &App) -> String {
+    pub fn to_markdown(&self, cx: &App) -> String {
         let mut markdown = format!(
             "**Tool Call: {}**\nStatus: {}\n\n",
             self.label.read(cx).source(),
@@ -1518,7 +1522,12 @@ impl AcpThread {
                     .push(ToolCallContent::Terminal(update.terminal));
             }
             ToolCallUpdate::UpdateSubagentThread(update) => {
-                call.content.clear();
+                debug_assert!(
+                    !call.content.iter().any(|c| {
+                        matches!(c, ToolCallContent::SubagentThread(existing) if existing == &update.thread)
+                    }),
+                    "Duplicate SubagentThread update for the same AcpThread entity"
+                );
                 call.content
                     .push(ToolCallContent::SubagentThread(update.thread));
             }
@@ -2810,7 +2819,8 @@ mod tests {
         });
 
         // Wait for the printf command to execute and produce output
-        smol::Timer::after(Duration::from_millis(500)).await;
+        // Use real time since parking is enabled
+        cx.executor().timer(Duration::from_millis(500)).await;
 
         // Get the acp_thread Terminal and kill it
         let wait_for_exit = thread.update(cx, |thread, cx| {
@@ -2828,7 +2838,7 @@ mod tests {
         // child never exited and wait_for_completed_task never completed.
         let exit_result = futures::select! {
             result = futures::FutureExt::fuse(wait_for_exit) => Some(result),
-            _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(5))) => None,
+            _ = futures::FutureExt::fuse(cx.background_executor.timer(Duration::from_secs(5))) => None,
         };
 
         assert!(
@@ -3810,7 +3820,7 @@ mod tests {
         });
 
         select! {
-            _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(10))) => {
+            _ = futures::FutureExt::fuse(cx.background_executor.timer(Duration::from_secs(10))) => {
                 panic!("Timeout waiting for tool call")
             }
             ix = rx.next().fuse() => {

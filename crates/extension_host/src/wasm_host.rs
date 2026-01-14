@@ -21,7 +21,7 @@ use futures::{
     },
     future::BoxFuture,
 };
-use gpui::{App, AsyncApp, BackgroundExecutor, Task, Timer};
+use gpui::{App, AsyncApp, BackgroundExecutor, Task};
 use http_client::HttpClient;
 use language::LanguageName;
 use lsp::LanguageServerName;
@@ -535,14 +535,15 @@ fn wasm_engine(executor: &BackgroundExecutor) -> wasmtime::Engine {
             // not have a dedicated thread just for this. If it becomes an issue, we can consider
             // creating a separate thread for epoch interruption.
             let engine_ref = engine.weak();
+            let executor2 = executor.clone();
             executor
                 .spawn(async move {
                     // Somewhat arbitrary interval, as it isn't a guaranteed interval.
                     // But this is a rough upper bound for how long the extension execution can block on
                     // `Future::poll`.
                     const EPOCH_INTERVAL: Duration = Duration::from_millis(100);
-                    let mut timer = Timer::interval(EPOCH_INTERVAL);
-                    while (timer.next().await).is_some() {
+                    loop {
+                        executor2.timer(EPOCH_INTERVAL).await;
                         // Exit the loop and thread once the engine is dropped.
                         let Some(engine) = engine_ref.upgrade() else {
                             break;

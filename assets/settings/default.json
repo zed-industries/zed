@@ -997,22 +997,6 @@
             // Privileged commands
             { "pattern": "sudo\\s" },
           ],
-          "always_allow": [
-            // Build and test commands
-            { "pattern": "^cargo\\s+(build|test|check|clippy|run)" },
-            { "pattern": "^npm\\s+(test|run|install)" },
-            { "pattern": "^pnpm\\s+(test|run|install)" },
-            { "pattern": "^yarn\\s+(test|run|install)" },
-            // Safe read-only commands
-            { "pattern": "^ls(\\s|$)" },
-            { "pattern": "^cat\\s" },
-            { "pattern": "^head\\s" },
-            { "pattern": "^tail\\s" },
-            { "pattern": "^grep\\s" },
-            { "pattern": "^find\\s" },
-            // Safe git commands
-            { "pattern": "^git\\s+(status|log|diff|branch|show)" },
-          ],
         },
         "edit_file": {
           "default_mode": "confirm",
@@ -1048,12 +1032,6 @@
         },
         "fetch": {
           "default_mode": "confirm",
-          "always_allow": [
-            // Common documentation sites
-            { "pattern": "^https://(docs\\.|api\\.)?github\\.com" },
-            { "pattern": "^https://docs\\.rs" },
-            { "pattern": "^https://crates\\.io" },
-          ],
         },
       },
     },
@@ -1083,6 +1061,7 @@
           "save_file": true,
           "open": true,
           "grep": true,
+          "subagent": true,
           "terminal": true,
           "thinking": true,
           "web_search": true,
@@ -1102,6 +1081,7 @@
           "read_file": true,
           "open": true,
           "grep": true,
+          "subagent": true,
           "thinking": true,
           "web_search": true,
         },

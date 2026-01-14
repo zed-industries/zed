@@ -131,7 +131,9 @@ pub enum ContextServerSettings {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
         enabled: bool,
-
+        /// If true, run this server on the remote server when using remote development.
+        #[serde(default)]
+        remote: bool,
         #[serde(flatten)]
         command: ContextServerCommand,
     },
@@ -151,6 +153,9 @@ pub enum ContextServerSettings {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
         enabled: bool,
+        /// If true, run this server on the remote server when using remote development.
+        #[serde(default)]
+        remote: bool,
         /// The settings for this context server specified by the extension.
         ///
         /// Consult the documentation for the context server to see what settings
@@ -162,12 +167,24 @@ pub enum ContextServerSettings {
 impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
     fn from(value: settings::ContextServerSettingsContent) -> Self {
         match value {
-            settings::ContextServerSettingsContent::Stdio { enabled, command } => {
-                ContextServerSettings::Stdio { enabled, command }
-            }
-            settings::ContextServerSettingsContent::Extension { enabled, settings } => {
-                ContextServerSettings::Extension { enabled, settings }
-            }
+            settings::ContextServerSettingsContent::Stdio {
+                enabled,
+                remote,
+                command,
+            } => ContextServerSettings::Stdio {
+                enabled,
+                remote,
+                command,
+            },
+            settings::ContextServerSettingsContent::Extension {
+                enabled,
+                remote,
+                settings,
+            } => ContextServerSettings::Extension {
+                enabled,
+                remote,
+                settings,
+            },
             settings::ContextServerSettingsContent::Http {
                 enabled,
                 url,
@@ -185,12 +202,24 @@ impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
 impl Into<settings::ContextServerSettingsContent> for ContextServerSettings {
     fn into(self) -> settings::ContextServerSettingsContent {
         match self {
-            ContextServerSettings::Stdio { enabled, command } => {
-                settings::ContextServerSettingsContent::Stdio { enabled, command }
-            }
-            ContextServerSettings::Extension { enabled, settings } => {
-                settings::ContextServerSettingsContent::Extension { enabled, settings }
-            }
+            ContextServerSettings::Stdio {
+                enabled,
+                remote,
+                command,
+            } => settings::ContextServerSettingsContent::Stdio {
+                enabled,
+                remote,
+                command,
+            },
+            ContextServerSettings::Extension {
+                enabled,
+                remote,
+                settings,
+            } => settings::ContextServerSettingsContent::Extension {
+                enabled,
+                remote,
+                settings,
+            },
             ContextServerSettings::Http {
                 enabled,
                 url,
@@ -210,6 +239,7 @@ impl ContextServerSettings {
     pub fn default_extension() -> Self {
         Self::Extension {
             enabled: true,
+            remote: false,
             settings: serde_json::json!({}),
         }
     }
@@ -1194,7 +1224,7 @@ impl SettingsObserver {
     ) -> Task<()> {
         let mut user_tasks_file_rx =
             watch_config_file(cx.background_executor(), fs, file_path.clone());
-        let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
+        let user_tasks_content = cx.foreground_executor().block_on(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
             let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
@@ -1245,7 +1275,7 @@ impl SettingsObserver {
     ) -> Task<()> {
         let mut user_tasks_file_rx =
             watch_config_file(cx.background_executor(), fs, file_path.clone());
-        let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
+        let user_tasks_content = cx.foreground_executor().block_on(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
             let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {

@@ -10,6 +10,7 @@ use cloud_llm_client::{
     PredictEditsRequestTrigger, RejectEditPredictionsBodyRef, ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet};
+use copilot::Copilot;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use edit_prediction_context::EditPredictionExcerptOptions;
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
@@ -291,6 +292,7 @@ struct ProjectState {
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
     user_actions: VecDeque<UserActionRecord>,
     _subscription: gpui::Subscription,
+    copilot: Option<Entity<Copilot>>,
 }
 
 impl ProjectState {
@@ -662,6 +664,7 @@ impl EditPredictionStore {
             },
             sweep_ai: SweepAi::new(cx),
             mercury: Mercury::new(cx),
+
             data_collection_choice,
             reject_predictions_tx: reject_tx,
             rated_predictions: Default::default(),
@@ -783,6 +786,38 @@ impl EditPredictionStore {
             .unwrap_or_default()
     }
 
+    pub fn copilot_for_project(&self, project: &Entity<Project>) -> Option<Entity<Copilot>> {
+        self.projects
+            .get(&project.entity_id())
+            .and_then(|project| project.copilot.clone())
+    }
+
+    pub fn start_copilot_for_project(
+        &mut self,
+        project: &Entity<Project>,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Copilot>> {
+        let state = self.get_or_init_project(project, cx);
+
+        if state.copilot.is_some() {
+            return state.copilot.clone();
+        }
+        let _project = project.clone();
+        let project = project.read(cx);
+
+        let node = project.node_runtime().cloned();
+        if let Some(node) = node {
+            let next_id = project.languages().next_language_server_id();
+            let fs = project.fs().clone();
+
+            let copilot = cx.new(|cx| Copilot::new(_project, next_id, fs, node, cx));
+            state.copilot = Some(copilot.clone());
+            Some(copilot)
+        } else {
+            None
+        }
+    }
+
     pub fn context_for_project_with_buffers<'a>(
         &'a self,
         project: &Entity<Project>,
@@ -853,6 +888,7 @@ impl EditPredictionStore {
                 license_detection_watchers: HashMap::default(),
                 user_actions: VecDeque::with_capacity(USER_ACTION_HISTORY_SIZE),
                 _subscription: cx.subscribe(&project, Self::handle_project_event),
+                copilot: None,
             })
     }
 
@@ -2019,7 +2055,9 @@ impl EditPredictionStore {
     {
         let http_client = client.http_client();
 
-        let mut token = if require_auth {
+        let mut token = if let Ok(custom_token) = std::env::var("ZED_PREDICT_EDITS_TOKEN") {
+            Some(custom_token)
+        } else if require_auth {
             Some(llm_token.acquire(&client).await?)
         } else {
             llm_token.acquire(&client).await.ok()
