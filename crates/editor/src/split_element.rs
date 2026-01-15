@@ -1,19 +1,16 @@
 use gpui::{
-    App, Background, Bounds, ContentMask, Context, Corners, Edges, Element, ElementInputHandler,
-    Entity, IntoElement, Length, PaintQuad, Pixels, Point, Rgba, Size, Style, colors::Colors, hsla,
-    px, relative, rgb, rgba,
+    App, AvailableSpace, Background, Bounds, Context, Corners, Edges, Element, Entity,
+    IntoElement, PaintQuad, Pixels, Point, Rgba, Size, Style, colors::Colors, hsla, px, relative,
+    rgba,
 };
-use multi_buffer::Anchor;
-use sum_tree::Dimension;
-use theme::ThemeColors;
 
-use crate::{Editor, EditorElement, EditorMode, EditorStyle, SplittableEditor, element::SplitSide};
+use crate::{Editor, EditorElement, EditorStyle, SplittableEditor, element::SplitSide};
 
 pub struct SplitEditorElement {
     editor: Entity<SplittableEditor>,
-    lhs: EditorElement,
-    rhs: EditorElement,
-    style: EditorStyle, // maybe redundant?
+    lhs: Entity<Editor>,
+    rhs: Entity<Editor>,
+    style: EditorStyle,
     lhs_width: Pixels,
 }
 
@@ -30,16 +27,10 @@ impl SplitEditorElement {
         style: EditorStyle,
         cx: &mut Context<SplittableEditor>,
     ) -> Self {
-        let mut lhs = EditorElement::new(lhs, style.clone());
-        let mut rhs = EditorElement::new(rhs, style.clone());
-
-        lhs.set_split_side(SplitSide::Left);
-        rhs.set_split_side(SplitSide::Right);
-
         Self {
             editor: cx.entity(),
-            lhs,
-            rhs,
+            lhs: lhs.clone(),
+            rhs: rhs.clone(),
             style,
             lhs_width: BEFORE_FIRST_PREPAINT,
         }
@@ -81,16 +72,17 @@ impl SplitEditorElement {
 }
 
 pub struct SplitEditorRequestLayoutState {
-    lhs: <EditorElement as Element>::RequestLayoutState,
-    rhs: <EditorElement as Element>::RequestLayoutState,
-}
-
-pub struct SplitEditorPrepaintState {
-    lhs: <EditorElement as Element>::PrepaintState,
-    rhs: <EditorElement as Element>::PrepaintState,
     lhs_bounds: Bounds<Pixels>,
     rhs_bounds: Bounds<Pixels>,
 }
+
+pub struct SplitEditorPrepaintState {
+    lhs_bounds: Bounds<Pixels>,
+    rhs_bounds: Bounds<Pixels>,
+}
+
+// `IntoElement`, `Element`, `Render`, `RenderOnce`
+// 
 
 impl IntoElement for SplitEditorElement {
     type Element = Self;
@@ -115,37 +107,32 @@ impl Element for SplitEditorElement {
 
     fn request_layout(
         &mut self,
-        id: Option<&gpui::GlobalElementId>,
-        inspector_id: Option<&gpui::InspectorElementId>,
+        _id: Option<&gpui::GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
         window: &mut ui::Window,
         cx: &mut ui::App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        // `EditorElement::request_layout` will later apply these styles to the
-        // underlying `Editor`s
-        self.lhs.set_style(self.style.clone());
-        self.rhs.set_style(self.style.clone());
-
-        let (lhs_id, lhs) = self.lhs.request_layout(id, inspector_id, window, cx);
-        let (rhs_id, rhs) = self.rhs.request_layout(id, inspector_id, window, cx);
-
         let mut style = Style::default();
         style.size.width = relative(1.).into();
         style.size.height = relative(1.).into();
 
-        let id = window.request_layout(style, [lhs_id, rhs_id], cx);
-        let state = SplitEditorRequestLayoutState { lhs, rhs };
+        let id = window.request_layout(style, [], cx);
+        let state = SplitEditorRequestLayoutState {
+            lhs_bounds: Bounds::default(),
+            rhs_bounds: Bounds::default(),
+        };
 
         (id, state)
     }
 
     fn prepaint(
         &mut self,
-        id: Option<&gpui::GlobalElementId>,
-        inspector_id: Option<&gpui::InspectorElementId>,
+        _id: Option<&gpui::GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: gpui::Bounds<ui::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        window: &mut ui::Window,
-        cx: &mut ui::App,
+        _window: &mut ui::Window,
+        _cx: &mut ui::App,
     ) -> Self::PrepaintState {
         if self.lhs_width == BEFORE_FIRST_PREPAINT {
             self.lhs_width = (bounds.size.width - SEPARATOR_WIDTH) / 2.0;
@@ -156,28 +143,10 @@ impl Element for SplitEditorElement {
         let lhs_bounds = self.lhs_bounds(lhs_width, bounds);
         let rhs_bounds = self.rhs_bounds(rhs_width, bounds);
 
-        // todo! id, inspector_id?
-        let lhs = self.lhs.prepaint(
-            id,
-            inspector_id,
-            lhs_bounds,
-            &mut request_layout.lhs,
-            window,
-            cx,
-        );
-        self.rhs.set_split_bounds(bounds);
-        let rhs = self.rhs.prepaint(
-            id,
-            inspector_id,
-            rhs_bounds,
-            &mut request_layout.rhs,
-            window,
-            cx,
-        );
+        request_layout.lhs_bounds = lhs_bounds;
+        request_layout.rhs_bounds = rhs_bounds;
 
         SplitEditorPrepaintState {
-            lhs,
-            rhs,
             lhs_bounds,
             rhs_bounds,
         }
@@ -185,33 +154,38 @@ impl Element for SplitEditorElement {
 
     fn paint(
         &mut self,
-        id: Option<&gpui::GlobalElementId>,
-        inspector_id: Option<&gpui::InspectorElementId>,
+        _id: Option<&gpui::GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: gpui::Bounds<ui::Pixels>,
-        request_layout: &mut Self::RequestLayoutState,
+        _request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut ui::Window,
         cx: &mut ui::App,
     ) {
-        // todo! id, inspector_id?
-        self.lhs.paint(
-            id,
-            inspector_id,
-            prepaint.lhs_bounds,
-            &mut request_layout.lhs,
-            &mut prepaint.lhs,
-            window,
-            cx,
-        );
-        self.rhs.paint(
-            id,
-            inspector_id,
-            prepaint.rhs_bounds,
-            &mut request_layout.rhs,
-            &mut prepaint.rhs,
-            window,
-            cx,
-        );
+        let mut lhs_element = EditorElement::new(&self.lhs, self.style.clone());
+        let mut rhs_element = EditorElement::new(&self.rhs, self.style.clone());
+
+        lhs_element.set_split_side(SplitSide::Left);
+        rhs_element.set_split_side(SplitSide::Right);
+        rhs_element.set_split_bounds(bounds);
+
+        let mut lhs_any = lhs_element.into_any_element();
+        let lhs_available_space = Size {
+            width: AvailableSpace::Definite(prepaint.lhs_bounds.size.width),
+            height: AvailableSpace::Definite(prepaint.lhs_bounds.size.height),
+        };
+        lhs_any.layout_as_root(lhs_available_space, window, cx);
+        lhs_any.prepaint_at(prepaint.lhs_bounds.origin, window, cx);
+        lhs_any.paint(window, cx);
+
+        let mut rhs_any = rhs_element.into_any_element();
+        let rhs_available_space = Size {
+            width: AvailableSpace::Definite(prepaint.rhs_bounds.size.width),
+            height: AvailableSpace::Definite(prepaint.rhs_bounds.size.height),
+        };
+        rhs_any.layout_as_root(rhs_available_space, window, cx);
+        rhs_any.prepaint_at(prepaint.rhs_bounds.origin, window, cx);
+        rhs_any.paint(window, cx);
 
         window.paint_quad(PaintQuad {
             background: Background::from(Colors::for_appearance(window).text),

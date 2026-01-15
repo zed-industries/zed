@@ -5,7 +5,7 @@ use collections::HashMap;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
     Action, AppContext as _, Entity, EventEmitter, Focusable, NoAction, Subscription, WeakEntity,
-    rgb,
+    relative, rgb,
 };
 use language::{Buffer, Capability};
 use multi_buffer::{
@@ -14,9 +14,10 @@ use multi_buffer::{
 use project::Project;
 use rope::Point;
 use text::OffsetRangeExt as _;
+use theme::ActiveTheme as _;
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
-    Styled as _, Window, div, v_flex,
+    Styled as _, Window, div, h_flex, px,
 };
 use workspace::{
     ActivePaneDecorator, Item, ItemHandle, Pane, PaneGroup, SplitDirection, Workspace,
@@ -25,7 +26,7 @@ use workspace::{
 use crate::{
     DisplayMap, Editor, EditorEvent,
     display_map::{Companion, convert_lhs_rows_to_rhs, convert_rhs_rows_to_lhs},
-    split_element::SplitEditorElement,
+    split_element::SplitEditorElement, split_render_once::SplitEditorWidget,
 };
 
 struct SplitDiffFeatureFlag;
@@ -968,24 +969,31 @@ impl Render for SplittableEditor {
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
         if let Some(secondary) = &self.secondary {
-            // todo! ugly hack
-            let style = self
-                .primary_editor
-                .clone()
-                .into_element()
-                .update(cx, |elem, cx| elem.style(cx).clone());
-
-            // return div().size_full().bg(rgb(0x0000FF)).into_any_element();
-            return v_flex()
-                .w_full()
-                .h_full()
+            return h_flex()
+                .id("split-editor")
+                // .on_action(cx.listener(Self::split))
+                // .on_action(cx.listener(Self::unsplit))
                 .size_full()
-                .child(SplitEditorElement::new(
-                    &self.primary_editor,
-                    &secondary.editor,
-                    style,
-                    cx,
-                ))
+                .child(
+                    div()
+                        .id("split-editor-left")
+                        .w(relative(0.5))
+                        .h_full()
+                        .child(secondary.editor.clone()),
+                )
+                .child(
+                    div()
+                        .w(px(1.))
+                        .h_full()
+                        .bg(cx.theme().colors().border),
+                )
+                .child(
+                    div()
+                        .id("split-editor-right")
+                        .flex_1()
+                        .h_full()
+                        .child(self.primary_editor.clone()),
+                )
                 .into_any_element();
         }
 

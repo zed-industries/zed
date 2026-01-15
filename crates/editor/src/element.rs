@@ -190,7 +190,7 @@ struct RenderBlocksOutput {
     resized_blocks: Option<HashMap<CustomBlockId, u32>>,
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum SplitSide {
     Left,
     Right,
@@ -9093,8 +9093,12 @@ impl Element for EditorElement {
 
         if !is_minimap {
             let focus_handle = self.editor.focus_handle(cx);
-            window.set_view_id(self.editor.entity_id());
-            window.set_focus_handle(&focus_handle, cx);
+            let is_focused = focus_handle.is_focused(window);
+            let should_register_focus = self.is_in_split.is_none() || is_focused;
+            if should_register_focus {
+                window.set_view_id(self.editor.entity_id());
+                window.set_focus_handle(&focus_handle, cx);
+            }
         }
 
         let rem_size = self.rem_size(cx);
@@ -9102,7 +9106,7 @@ impl Element for EditorElement {
             window.with_text_style(Some(text_style), |window| {
                 window.with_content_mask(
                     Some(ContentMask {
-                        bounds: dbg!(self.split_bounds).unwrap_or(bounds),
+                        bounds: self.split_bounds.unwrap_or(bounds),
                     }),
                     |window| {
                         let (mut snapshot, is_read_only) = self.editor.update(cx, |editor, cx| {
@@ -10370,18 +10374,22 @@ impl Element for EditorElement {
     ) {
         if !layout.mode.is_minimap() {
             let focus_handle = self.editor.focus_handle(cx);
-            let key_context = self
-                .editor
-                .update(cx, |editor, cx| editor.key_context(window, cx));
+            let is_focused = focus_handle.is_focused(window);
+            let should_register_input = self.is_in_split.is_none() || is_focused;
+            if should_register_input {
+                let key_context = self
+                    .editor
+                    .update(cx, |editor, cx| editor.key_context(window, cx));
 
-            window.set_key_context(key_context);
-            window.handle_input(
-                &focus_handle,
-                ElementInputHandler::new(bounds, self.editor.clone()),
-                cx,
-            );
-            self.register_actions(window, cx);
-            self.register_key_listeners(window, cx, layout);
+                window.set_key_context(key_context);
+                window.handle_input(
+                    &focus_handle,
+                    ElementInputHandler::new(bounds, self.editor.clone()),
+                    cx,
+                );
+                self.register_actions(window, cx);
+                self.register_key_listeners(window, cx, layout);
+            }
         }
 
         let text_style = TextStyleRefinement {
