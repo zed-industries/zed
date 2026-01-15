@@ -294,15 +294,6 @@ pub struct LanguageModelSelection {
     pub model: String,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum CompletionMode {
-    #[default]
-    Normal,
-    #[serde(alias = "max")]
-    Burn,
-}
-
 #[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct LanguageModelParameters {
