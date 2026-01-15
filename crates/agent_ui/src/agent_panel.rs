@@ -2517,8 +2517,6 @@ impl AgentPanel {
             return None;
         }
 
-        let plan = self.user_store.read(cx).plan()?;
-
         Some(
             v_flex()
                 .absolute()
@@ -2527,18 +2525,15 @@ impl AgentPanel {
                 .bg(cx.theme().colors().panel_background)
                 .opacity(0.85)
                 .block_mouse_except_scroll()
-                .child(EndTrialUpsell::new(
-                    plan,
-                    Arc::new({
-                        let this = cx.entity();
-                        move |_, cx| {
-                            this.update(cx, |_this, cx| {
-                                TrialEndUpsell::set_dismissed(true, cx);
-                                cx.notify();
-                            });
-                        }
-                    }),
-                )),
+                .child(EndTrialUpsell::new(Arc::new({
+                    let this = cx.entity();
+                    move |_, cx| {
+                        this.update(cx, |_this, cx| {
+                            TrialEndUpsell::set_dismissed(true, cx);
+                            cx.notify();
+                        });
+                    }
+                }))),
         )
     }
 
