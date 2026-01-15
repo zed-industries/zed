@@ -816,7 +816,7 @@ impl EditorElement {
                         ColumnarMode::FromSelection => false,
                     },
                     mode,
-                    goal_column: point_for_position.exact_unclipped.column(),
+                    column_overshoot: point_for_position.column_overshoot_after_line_end,
                 },
                 window,
                 cx,
@@ -903,7 +903,7 @@ impl EditorElement {
                 position,
                 reset: true,
                 mode: ColumnarMode::FromMouse,
-                goal_column: point_for_position.exact_unclipped.column(),
+                column_overshoot: point_for_position.column_overshoot_after_line_end,
             },
             window,
             cx,
@@ -1174,7 +1174,8 @@ impl EditorElement {
                         editor.select(
                             SelectPhase::Update {
                                 position: point_for_position.previous_valid,
-                                goal_column: point_for_position.exact_unclipped.column(),
+                                column_overshoot: point_for_position
+                                    .column_overshoot_after_line_end,
                                 scroll_delta,
                             },
                             window,
@@ -1188,7 +1189,7 @@ impl EditorElement {
             editor.select(
                 SelectPhase::Update {
                     position: point_for_position.previous_valid,
-                    goal_column: point_for_position.exact_unclipped.column(),
+                    column_overshoot: point_for_position.column_overshoot_after_line_end,
                     scroll_delta,
                 },
                 window,
