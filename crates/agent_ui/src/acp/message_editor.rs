@@ -40,6 +40,14 @@ use util::{ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, PasteRaw};
 
+enum UserSlashCommands {
+    Cached(collections::HashMap<String, user_slash_command::UserSlashCommand>),
+    FromFs {
+        fs: Arc<dyn fs::Fs>,
+        worktree_roots: Vec<std::path::PathBuf>,
+    },
+}
+
 pub struct MessageEditor {
     mention_set: Entity<MentionSet>,
     editor: Entity<Editor>,
@@ -408,29 +416,25 @@ impl MessageEditor {
     ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
         let text = self.editor.read(cx).text(cx);
         let available_commands = self.available_commands.borrow().clone();
-
-        let (cached_commands, fs, worktree_roots) = if let Some(cached) = cached_user_commands {
-            (Some(cached), None, Vec::new())
-        } else if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-            let workspace = self.workspace.upgrade();
-            let fs = workspace
-                .as_ref()
-                .map(|w| w.read(cx).project().read(cx).fs().clone());
-            let roots: Vec<std::path::PathBuf> = workspace
-                .map(|workspace| {
-                    workspace
-                        .read(cx)
-                        .visible_worktrees(cx)
-                        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                        .collect()
-                })
-                .unwrap_or_default();
-            (None, fs, roots)
-        } else {
-            (None, None, Vec::new())
-        };
-
         let agent_name = self.agent_name.clone();
+
+        let user_slash_commands = if let Some(cached) = cached_user_commands {
+            UserSlashCommands::Cached(cached)
+        } else if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+            if let Some(workspace) = self.workspace.upgrade() {
+                let fs = workspace.read(cx).project().read(cx).fs().clone();
+                let worktree_roots: Vec<std::path::PathBuf> = workspace
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                    .collect();
+                UserSlashCommands::FromFs { fs, worktree_roots }
+            } else {
+                UserSlashCommands::Cached(collections::HashMap::default())
+            }
+        } else {
+            UserSlashCommands::Cached(collections::HashMap::default())
+        };
 
         let contents = self
             .mention_set
@@ -439,21 +443,18 @@ impl MessageEditor {
         let supports_embedded_context = self.prompt_capabilities.borrow().embedded_context;
 
         cx.spawn(async move |_, cx| {
-            // Use cached commands or load asynchronously
-            let user_commands = if let Some(cached) = cached_commands {
-                cached
-            } else if let Some(fs) = fs {
-                let load_result =
-                    user_slash_command::load_all_commands_async(&fs, &worktree_roots).await;
+            let user_commands = match user_slash_commands {
+                UserSlashCommands::Cached(cached) => cached,
+                UserSlashCommands::FromFs { fs, worktree_roots } => {
+                    let load_result =
+                        user_slash_command::load_all_commands_async(&fs, &worktree_roots).await;
 
-                // Log any errors encountered while loading commands
-                for error in &load_result.errors {
-                    log::warn!("Failed to load slash command: {}", error);
+                    for error in &load_result.errors {
+                        log::warn!("Failed to load slash command: {}", error);
+                    }
+
+                    user_slash_command::commands_to_map(&load_result.commands)
                 }
-
-                user_slash_command::commands_to_map(&load_result.commands)
-            } else {
-                collections::HashMap::default()
             };
 
             // Check if this is a user-defined slash command and expand it
