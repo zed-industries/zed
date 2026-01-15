@@ -68,6 +68,9 @@ pub struct ProjectSettingsContent {
 
     /// The list of custom Git hosting providers.
     pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
+
+    /// Git-related settings.
+    pub git: Option<ProjectGitSettings>,
 }
 
 #[with_fallible_options]
@@ -325,9 +328,20 @@ impl std::fmt::Debug for ContextServerCommand {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ProjectGitSettings {
+    /// Whether or not to show git blame data inline in
+    /// the currently focused line.
+    ///
+    /// Default: on
+    pub inline_blame: Option<InlineBlameSettings>,
+}
+
 #[with_fallible_options]
 #[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitSettings {
+    #[serde(flatten)]
+    pub project: ProjectGitSettings,
     /// Whether or not to enable git integration.
     ///
     /// Default: true
@@ -341,11 +355,6 @@ pub struct GitSettings {
     ///
     /// Default: 0
     pub gutter_debounce: Option<u64>,
-    /// Whether or not to show git blame data inline in
-    /// the currently focused line.
-    ///
-    /// Default: on
-    pub inline_blame: Option<InlineBlameSettings>,
     /// Git blame settings.
     pub blame: Option<BlameSettings>,
     /// Which information to show in the branch picker.

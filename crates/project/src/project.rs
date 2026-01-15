@@ -102,7 +102,7 @@ pub use manifest_tree::ManifestProvidersStore;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
-use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
+use project_settings::{GitSettings, SettingsObserver, SettingsObserverEvent};
 use remote::{RemoteClient, RemoteConnectionOptions};
 use rpc::{
     AnyProtoClient, ErrorCode,
@@ -3513,8 +3513,8 @@ impl Project {
     ) {
         self.buffers_needing_diff.insert(buffer.downgrade());
         let first_insertion = self.buffers_needing_diff.len() == 1;
-        let settings = ProjectSettings::get_global(cx);
-        let delay = settings.git.gutter_debounce;
+        let settings = GitSettings::get_global(cx);
+        let delay = settings.gutter_debounce;
 
         if delay == 0 {
             if first_insertion {

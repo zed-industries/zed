@@ -12,7 +12,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
-use project::project_settings::ProjectSettings;
+use project::project_settings::GitSettings;
 use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
@@ -1031,8 +1031,7 @@ impl PickerDelegate for BranchListDelegate {
                                                     }
                                                     Entry::Branch { .. } => {
                                                         let show_author_name =
-                                                            ProjectSettings::get_global(cx)
-                                                                .git
+                                                            GitSettings::get_global(cx)
                                                                 .branch_picker
                                                                 .show_author_name;
 

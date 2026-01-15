@@ -162,7 +162,9 @@ use project::{
         CacheInlayHints, CompletionDocumentation, FormatTrigger, LspFormatTarget,
         OpenLspBufferHandle,
     },
-    project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
+    project_settings::{
+        DiagnosticSeverity, GitSettings, GoToDiagnosticSeverityFilter, ProjectSettings,
+    },
 };
 use rand::seq::SliceRandom;
 use regex::Regex;
@@ -2431,8 +2433,7 @@ impl Editor {
             show_git_blame_inline: false,
             show_selection_menu: None,
             show_git_blame_inline_delay_task: None,
-            git_blame_inline_enabled: full_mode
-                && ProjectSettings::get_global(cx).git.inline_blame.enabled,
+            git_blame_inline_enabled: full_mode && GitSettings::get_global(cx).inline_blame.enabled,
             render_diff_hunk_controls: Arc::new(render_diff_hunk_controls),
             buffer_serialization: is_minimap.not().then(|| {
                 BufferSerialization::new(
@@ -7047,7 +7048,7 @@ impl Editor {
     }
 
     fn start_inline_blame_timer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(delay) = ProjectSettings::get_global(cx).git.inline_blame_delay() {
+        if let Some(delay) = self.git_settings(cx).inline_blame_delay() {
             self.show_git_blame_inline = false;
 
             self.show_git_blame_inline_delay_task =
@@ -22333,6 +22334,10 @@ impl Editor {
         None
     }
 
+    pub fn git_settings(&self, cx: &App) -> GitSettings {
+        *GitSettings::get(self.settings_location(cx), cx)
+    }
+
     pub fn git_blame_inline_enabled(&self) -> bool {
         self.git_blame_inline_enabled
     }
@@ -22406,11 +22411,7 @@ impl Editor {
     ) {
         self.start_git_blame(user_triggered, window, cx);
 
-        if ProjectSettings::get_global(cx)
-            .git
-            .inline_blame_delay()
-            .is_some()
-        {
+        if self.git_settings(cx).inline_blame_delay().is_some() {
             self.start_inline_blame_timer(window, cx);
         } else {
             self.show_git_blame_inline = true
@@ -23707,7 +23708,7 @@ impl Editor {
 
         if self.mode.is_full() {
             let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;
-            let inline_blame_enabled = project_settings.git.inline_blame.enabled;
+            let inline_blame_enabled = self.git_settings(cx).inline_blame.enabled;
             if self.show_inline_diagnostics != show_inline_diagnostics {
                 self.show_inline_diagnostics = show_inline_diagnostics;
                 self.refresh_inline_diagnostics(false, window, cx);
@@ -23749,6 +23750,17 @@ impl Editor {
         }
 
         cx.notify();
+    }
+
+    fn settings_location<'a>(&self, cx: &'a App) -> Option<SettingsLocation<'a>> {
+        let location = self.buffer().read(cx).as_singleton().and_then(|buffer| {
+            let buffer = buffer.read(cx);
+            buffer.file().map(|file| SettingsLocation {
+                worktree_id: file.worktree_id(cx),
+                path: file.path().as_ref(),
+            })
+        });
+        location
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
@@ -26744,7 +26756,7 @@ impl EditorSnapshot {
         {
             let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
                 matches!(
-                    ProjectSettings::get_global(cx).git.git_gutter,
+                    GitSettings::get_global(cx).git_gutter,
                     GitGutterSetting::TrackedFiles
                 )
             });
