@@ -177,13 +177,13 @@ impl Display for Command {
 
 #[derive(Debug, Args, Clone)]
 struct FormatPromptArgs {
-    #[clap(long, short, default_value_t = PredictionProvider::default())]
+    #[clap(long, short('p'), default_value_t = PredictionProvider::default())]
     provider: PredictionProvider,
 }
 
 #[derive(Debug, Args, Clone)]
 struct PredictArgs {
-    #[clap(long, short, default_value_t = PredictionProvider::default())]
+    #[clap(long, short('p'), default_value_t = PredictionProvider::default())]
     provider: PredictionProvider,
     #[clap(long, default_value_t = 1)]
     repetitions: usize,
