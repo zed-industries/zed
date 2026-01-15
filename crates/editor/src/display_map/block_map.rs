@@ -1193,6 +1193,7 @@ impl BlockMap {
 
             let (last_boundary, _last_range) = boundaries.last().cloned().unwrap();
             if last_boundary == row_mapping.source_excerpt_end {
+                // FIXME these subtractions can underflow (repro: uncommit)
                 let companion_point = Point::new(
                     row_mapping.target_excerpt_end.0 - 1,
                     companion_buffer.line_len(MultiBufferRow(row_mapping.target_excerpt_end.0 - 1)),

@@ -5471,6 +5471,7 @@ dependencies = [
  "ui",
  "unicode-script",
  "unicode-segmentation",
+ "unicode-width",
  "unindent",
  "url",
  "util",

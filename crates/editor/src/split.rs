@@ -682,7 +682,7 @@ impl SplittableEditor {
                     .map(|hunk| {
                         let display_row = snapshot
                             .point_to_display_point(
-                                Point::new(hunk.row_range.start.0, 0),
+                                Point::new(hunk.row_range.end.0, 0),
                                 text::Bias::Left,
                             )
                             .row();
@@ -735,6 +735,7 @@ impl SplittableEditor {
         use crate::DisplayRow;
         use crate::display_map::Block;
         use buffer_diff::DiffHunkStatusKind;
+        use unicode_width::UnicodeWidthStr;
 
         assert!(
             self.secondary.is_some(),
@@ -801,28 +802,66 @@ impl SplittableEditor {
         let secondary_blocks = build_block_map(&secondary_snapshot, secondary_max_row);
         let primary_blocks = build_block_map(&primary_snapshot, primary_max_row);
 
-        // Helper to truncate a line with ellipsis if too long
+        fn display_width(s: &str) -> usize {
+            unicode_width::UnicodeWidthStr::width(s)
+        }
+
         fn truncate_line(line: &str, max_width: usize) -> String {
-            let char_count = line.chars().count();
-            if char_count <= max_width {
+            let line_width = display_width(line);
+            if line_width <= max_width {
                 return line.to_string();
             }
             if max_width < 9 {
-                return line.chars().take(max_width).collect();
+                let mut result = String::new();
+                let mut width = 0;
+                for c in line.chars() {
+                    let c_width = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+                    if width + c_width > max_width {
+                        break;
+                    }
+                    result.push(c);
+                    width += c_width;
+                }
+                return result;
             }
-            let prefix_len = 3;
-            let suffix_len = 3;
             let ellipsis = "...";
-            let prefix: String = line.chars().take(prefix_len).collect();
-            let suffix: String = line
-                .chars()
-                .rev()
-                .take(suffix_len)
-                .collect::<String>()
-                .chars()
-                .rev()
-                .collect();
+            let target_prefix_width = 3;
+            let target_suffix_width = 3;
+
+            let mut prefix = String::new();
+            let mut prefix_width = 0;
+            for c in line.chars() {
+                let c_width = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+                if prefix_width + c_width > target_prefix_width {
+                    break;
+                }
+                prefix.push(c);
+                prefix_width += c_width;
+            }
+
+            let mut suffix_chars: Vec<char> = Vec::new();
+            let mut suffix_width = 0;
+            for c in line.chars().rev() {
+                let c_width = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+                if suffix_width + c_width > target_suffix_width {
+                    break;
+                }
+                suffix_chars.push(c);
+                suffix_width += c_width;
+            }
+            suffix_chars.reverse();
+            let suffix: String = suffix_chars.into_iter().collect();
+
             format!("{}{}{}", prefix, ellipsis, suffix)
+        }
+
+        fn pad_to_width(s: &str, target_width: usize) -> String {
+            let current_width = display_width(s);
+            if current_width >= target_width {
+                s.to_string()
+            } else {
+                format!("{}{}", s, " ".repeat(target_width - current_width))
+            }
         }
 
         // Helper to format a single row for one side
@@ -888,13 +927,8 @@ impl SplittableEditor {
             let text_width = content_width.saturating_sub(info_prefix.len());
             let truncated_text = truncate_line(&line_text, text_width);
 
-            format!(
-                "{}{}{:<width$}",
-                line_prefix,
-                info_prefix,
-                truncated_text,
-                width = text_width
-            )
+            let text_part = pad_to_width(&truncated_text, text_width);
+            format!("{}{}{}", line_prefix, info_prefix, text_part)
         }
 
         // Collect row infos for both sides
@@ -1466,7 +1500,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_split_editor_block_alignment(cx: &mut gpui::TestAppContext) {
+    async fn test_basic_alignment(cx: &mut gpui::TestAppContext) {
         use rope::Point;
         use unindent::Unindent as _;
 
@@ -1561,7 +1595,6 @@ mod tests {
             &mut cx,
         );
 
-        // Recalculate diff to include the new lines in the diff
         let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
         diff.update(cx, |diff, cx| {
             diff.recalculate_diff_sync(&buffer_snapshot, cx);
