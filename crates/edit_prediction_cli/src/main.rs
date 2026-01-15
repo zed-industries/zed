@@ -21,7 +21,7 @@ use collections::HashSet;
 use edit_prediction::EditPredictionStore;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
-use gpui::{AppContext as _, Application};
+use gpui::{AppContext as _, Application, BackgroundExecutor};
 use zeta_prompt::ZetaVersion;
 
 use reqwest_client::ReqwestClient;
@@ -279,6 +279,7 @@ async fn load_examples(
     http_client: Arc<dyn http_client::HttpClient>,
     args: &EpArgs,
     output_path: Option<&PathBuf>,
+    background_executor: BackgroundExecutor,
 ) -> anyhow::Result<Vec<Example>> {
     let mut captured_after_timestamps = Vec::new();
     let mut file_inputs = Vec::new();
@@ -312,6 +313,7 @@ async fn load_examples(
             http_client,
             &captured_after_timestamps,
             max_rows_per_timestamp,
+            background_executor,
         )
         .await?;
         examples.append(&mut captured_examples);
@@ -465,8 +467,13 @@ fn main() {
 
         cx.spawn(async move |cx| {
             let result = async {
-                let mut examples =
-                    load_examples(app_state.client.http_client(), &args, output.as_ref()).await?;
+                let mut examples = load_examples(
+                    app_state.client.http_client(),
+                    &args,
+                    output.as_ref(),
+                    cx.background_executor().clone(),
+                )
+                .await?;
 
                 match &command {
                     Command::Predict(args) | Command::Score(args) | Command::Eval(args) => {

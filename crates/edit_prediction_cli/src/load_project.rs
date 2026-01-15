@@ -6,11 +6,10 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use edit_prediction::{
-    EditPredictionStore, cursor_excerpt::editable_and_context_ranges_for_cursor_position, zeta2,
-};
-use edit_prediction::{
-    udiff::{OpenedBuffers, refresh_worktree_entries},
-    zeta2::max_editable_tokens,
+    EditPredictionStore,
+    cursor_excerpt::editable_and_context_ranges_for_cursor_position,
+    udiff::{OpenedBuffers, refresh_worktree_entries, strip_diff_path_prefix},
+    zeta2,
 };
 use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity};
@@ -114,8 +113,16 @@ async fn cursor_position(
     }
 
     let cursor_path_str = example.spec.cursor_path.to_string_lossy();
+    // Also try cursor path with first component stripped - old examples may have
+    // paths like "zed/crates/foo.rs" instead of "crates/foo.rs".
+    let cursor_path_without_prefix: PathBuf =
+        example.spec.cursor_path.components().skip(1).collect();
+    let cursor_path_without_prefix_str = cursor_path_without_prefix.to_string_lossy();
+
     // We try open_buffers first because the file might be new and not saved to disk
-    let cursor_buffer = if let Some(buffer) = open_buffers.get(&cursor_path_str) {
+    let cursor_buffer = if let Some(buffer) = open_buffers.get(cursor_path_str.as_ref()) {
+        buffer.clone()
+    } else if let Some(buffer) = open_buffers.get(cursor_path_without_prefix_str.as_ref()) {
         buffer.clone()
     } else {
         // Since the worktree scanner is disabled, manually refresh entries for the cursor path.
@@ -125,7 +132,9 @@ async fn cursor_position(
 
         let cursor_path = project
             .read_with(cx, |project, cx| {
-                project.find_project_path(&example.spec.cursor_path, cx)
+                project
+                    .find_project_path(&example.spec.cursor_path, cx)
+                    .or_else(|| project.find_project_path(&cursor_path_without_prefix, cx))
             })
             .with_context(|| {
                 format!(
@@ -285,9 +294,13 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
     }
     drop(repo_lock);
 
-    // Apply the uncommitted diff for this example.
     if !example.spec.uncommitted_diff.is_empty() {
         step_progress.set_substatus("applying diff");
+
+        // old examples had full paths in the uncommitted diff.
+        let uncommitted_diff =
+            strip_diff_path_prefix(&example.spec.uncommitted_diff, &repo_name.name);
+
         let mut apply_process = smol::process::Command::new("git")
             .current_dir(&worktree_path)
             .args(&["apply", "-"])
@@ -295,9 +308,7 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
             .spawn()?;
 
         let mut stdin = apply_process.stdin.take().context("Failed to get stdin")?;
-        stdin
-            .write_all(example.spec.uncommitted_diff.as_bytes())
-            .await?;
+        stdin.write_all(uncommitted_diff.as_bytes()).await?;
         stdin.close().await?;
         drop(stdin);
 
