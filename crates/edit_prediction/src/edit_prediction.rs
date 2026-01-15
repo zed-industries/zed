@@ -2198,6 +2198,9 @@ impl EditPredictionStore {
     }
 
     fn configure_context_retrieval(&mut self, cx: &mut Context<'_, EditPredictionStore>) {
+        if cfg!(feature = "cli-support") {
+            return;
+        }
         self.use_context = cx.has_flag::<Zeta2FeatureFlag>()
             && all_language_settings(None, cx).edit_predictions.use_context;
     }
