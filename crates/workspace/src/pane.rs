@@ -2765,7 +2765,7 @@ impl Pane {
             .on_drop(
                 cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
                     this.drag_split_direction = None;
-                    this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
+                    this.handle_tab_drop(dragged_tab, ix, window, cx)
                 }),
             )
             .on_drop(
