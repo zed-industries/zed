@@ -19,9 +19,11 @@ pub use language::*;
 pub use language_model::*;
 pub use merge_from::MergeFrom as MergeFromTrait;
 pub use project::*;
+use serde::de::DeserializeOwned;
 pub use serde_helper::{
     serialize_f32_with_two_decimal_places, serialize_optional_f32_with_two_decimal_places,
 };
+use settings_json::parse_json_with_comments;
 pub use terminal::*;
 pub use theme::*;
 pub use workspace::*;
@@ -179,6 +181,39 @@ pub struct SettingsContent {
 impl SettingsContent {
     pub fn languages_mut(&mut self) -> &mut HashMap<String, LanguageSettingsContent> {
         &mut self.project.all_languages.languages.0
+    }
+}
+
+// These impls are there to optimize builds by avoiding monomorphization downstream. Yes, they're repetitive, but using default impls
+// break the optimization, for whatever reason.
+pub trait RootUserSettings: Sized + DeserializeOwned {
+    fn parse_json(json: &str) -> (Option<Self>, ParseStatus);
+    fn parse_json_with_comments(json: &str) -> anyhow::Result<Self>;
+}
+
+impl RootUserSettings for SettingsContent {
+    fn parse_json(json: &str) -> (Option<Self>, ParseStatus) {
+        fallible_options::parse_json(json)
+    }
+    fn parse_json_with_comments(json: &str) -> anyhow::Result<Self> {
+        parse_json_with_comments(json)
+    }
+}
+// Explicit opt-in instead of blanket impl to avoid monomorphizing downstream. Just a hunch though.
+impl RootUserSettings for Option<SettingsContent> {
+    fn parse_json(json: &str) -> (Option<Self>, ParseStatus) {
+        fallible_options::parse_json(json)
+    }
+    fn parse_json_with_comments(json: &str) -> anyhow::Result<Self> {
+        parse_json_with_comments(json)
+    }
+}
+impl RootUserSettings for UserSettingsContent {
+    fn parse_json(json: &str) -> (Option<Self>, ParseStatus) {
+        fallible_options::parse_json(json)
+    }
+    fn parse_json_with_comments(json: &str) -> anyhow::Result<Self> {
+        parse_json_with_comments(json)
     }
 }
 
