@@ -139,6 +139,13 @@ impl BackgroundExecutor {
         self.inner.close();
     }
 
+    /// Returns the underlying scheduler::BackgroundExecutor.
+    ///
+    /// This is used by Ex to pass the executor to thread/worktree code.
+    pub fn scheduler_executor(&self) -> scheduler::BackgroundExecutor {
+        self.inner.clone()
+    }
+
     /// Enqueues the given future to be run to completion on a background thread.
     #[track_caller]
     pub fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
