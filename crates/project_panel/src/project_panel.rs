@@ -36,6 +36,8 @@ use project::{
     git_store::{GitStoreEvent, RepositoryEvent, git_traversal::ChildEntriesGitIter},
     project_settings::GoToDiagnosticSeverityFilter,
 };
+#[cfg(target_os = "windows")]
+use remote::RemoteConnectionOptions;
 use project_panel_settings::ProjectPanelSettings;
 use rayon::slice::ParallelSliceMut;
 use schemars::JsonSchema;
@@ -3059,7 +3061,20 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            cx.reveal_path(&worktree.read(cx).absolutize(&entry.path));
+            let path = worktree.read(cx).absolutize(&entry.path);
+
+            #[cfg(target_os = "windows")]
+            let path = {
+                if let Some(RemoteConnectionOptions::Wsl(wsl_options)) =
+                    self.project.read(cx).remote_connection_options(cx)
+                {
+                    wsl_options.to_unc_path(&path)
+                } else {
+                    path
+                }
+            };
+
+            cx.reveal_path(&path);
         }
     }
 
