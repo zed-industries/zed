@@ -101,6 +101,8 @@ use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 use remote::{RemoteClient, RemoteConnectionOptions};
+#[cfg(target_os = "windows")]
+use remote::wsl_path_to_windows_path;
 use rpc::{
     AnyProtoClient, ErrorCode,
     proto::{LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID},
@@ -2065,6 +2067,28 @@ impl Project {
         self.remote_client
             .as_ref()
             .map(|remote| remote.read(cx).connection_options())
+    }
+
+    /// Reveals the given path in the system file manager.
+    ///
+    /// On Windows with a WSL remote connection, this converts the POSIX path
+    /// to a Windows UNC path before revealing.
+    pub fn reveal_path(&self, path: &Path, cx: &mut Context<Self>) {
+        #[cfg(target_os = "windows")]
+        if let Some(RemoteConnectionOptions::Wsl(wsl_options)) =
+            self.remote_connection_options(cx)
+        {
+            let path = path.to_path_buf();
+            cx.spawn(async move |_, cx| {
+                if let Ok(windows_path) = wsl_path_to_windows_path(&wsl_options, &path).await {
+                    cx.update(|cx| cx.reveal_path(&windows_path)).ok();
+                }
+            })
+            .detach_and_log_err(cx);
+            return;
+        }
+
+        cx.reveal_path(path);
     }
 
     #[inline]
