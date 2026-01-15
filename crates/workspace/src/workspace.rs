@@ -1303,12 +1303,15 @@ impl Workspace {
                     this.collaborator_left(*peer_id, window, cx);
                 }
 
-                project::Event::WorktreeRemoved(_) => {
-                    this.update_worktree_data(window, cx);
+                project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(..) => {
+                    this.update_window_title(window, cx);
+                    this.serialize_workspace(window, cx);
+                    this.update_history(cx);
                 }
 
-                project::Event::WorktreeUpdatedEntries(..) | project::Event::WorktreeAdded(..) => {
-                    this.update_worktree_data(window, cx);
+                project::Event::WorktreeUpdatedEntries(..) => {
+                    this.update_window_title(window, cx);
+                    this.serialize_workspace(window, cx);
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -6730,13 +6733,6 @@ impl Workspace {
                 });
             }
         }
-    }
-
-    fn update_worktree_data(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        self.update_window_title(window, cx);
-        self.serialize_workspace(window, cx);
-        // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
-        self.update_history(cx);
     }
 }
 
