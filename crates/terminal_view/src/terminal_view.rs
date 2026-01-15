@@ -134,6 +134,8 @@ pub struct TerminalView {
     scroll_top: Pixels,
     scroll_handle: TerminalScrollHandle,
     ime_state: Option<ImeState>,
+    /// When true, the cursor is permanently hidden. Used for completed embedded terminals.
+    cursor_hidden: bool,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -275,6 +277,7 @@ impl TerminalView {
             scroll_handle,
             cwd_serialized: false,
             ime_state: None,
+            cursor_hidden: false,
             _subscriptions,
             _terminal_subscriptions: terminal_subscriptions,
         }
@@ -631,6 +634,11 @@ impl TerminalView {
     }
 
     pub fn should_show_cursor(&self, focused: bool, cx: &mut Context<Self>) -> bool {
+        // Never show cursor if it's been permanently hidden (e.g., completed embedded terminal)
+        if self.cursor_hidden {
+            return false;
+        }
+
         // Always show cursor when not focused or in special modes
         if !focused
             || self
@@ -651,6 +659,12 @@ impl TerminalView {
             }
             TerminalBlink::On => self.blink_manager.read(cx).visible(),
         }
+    }
+
+    /// Permanently hides the cursor. Used for embedded terminals that have completed.
+    pub fn set_cursor_hidden(&mut self, hidden: bool, cx: &mut Context<Self>) {
+        self.cursor_hidden = hidden;
+        cx.notify();
     }
 
     pub fn pause_cursor_blinking(&mut self, _window: &mut Window, cx: &mut Context<Self>) {

@@ -147,24 +147,40 @@ impl EntryViewState {
                     matches!(tool_call.status, acp_thread::ToolCallStatus::Completed);
 
                 for terminal in terminals {
+                    let terminal_completed = terminal.read(cx).output().is_some();
                     match views.entry(terminal.entity_id()) {
                         collections::hash_map::Entry::Vacant(entry) => {
-                            let element = create_terminal(
+                            let terminal_view = create_terminal(
                                 self.workspace.clone(),
                                 self.project.clone(),
                                 terminal.clone(),
                                 window,
                                 cx,
-                            )
-                            .into_any();
+                            );
+                            // Hide cursor if terminal is already completed
+                            if terminal_completed {
+                                terminal_view.update(cx, |view, cx| {
+                                    view.set_cursor_hidden(true, cx);
+                                });
+                            }
                             cx.emit(EntryViewEvent {
                                 entry_index: index,
                                 view_event: ViewEvent::NewTerminal(id.clone()),
                             });
-                            entry.insert(element);
+                            entry.insert(terminal_view.into_any());
                         }
-                        collections::hash_map::Entry::Occupied(_entry) => {
-                            if is_tool_call_completed && terminal.read(cx).output().is_none() {
+                        collections::hash_map::Entry::Occupied(entry) => {
+                            // Hide cursor when terminal completes
+                            if terminal_completed {
+                                if let Ok(terminal_view) =
+                                    entry.get().clone().downcast::<TerminalView>()
+                                {
+                                    terminal_view.update(cx, |view: &mut TerminalView, cx| {
+                                        view.set_cursor_hidden(true, cx);
+                                    });
+                                }
+                            }
+                            if is_tool_call_completed && !terminal_completed {
                                 cx.emit(EntryViewEvent {
                                     entry_index: index,
                                     view_event: ViewEvent::TerminalMovedToBackground(id.clone()),
