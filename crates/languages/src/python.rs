@@ -1362,7 +1362,8 @@ impl ToolchainLister for PythonToolchainProvider {
                 PythonEnvironmentKind::Venv
                 | PythonEnvironmentKind::VirtualEnv
                 | PythonEnvironmentKind::Uv
-                | PythonEnvironmentKind::UvWorkspace,
+                | PythonEnvironmentKind::UvWorkspace
+                | PythonEnvironmentKind::Poetry,
             ) => {
                 if let Some(activation_scripts) = &toolchain.activation_scripts {
                     if let Some(activate_script_path) = activation_scripts.get(&shell) {
@@ -1424,7 +1425,8 @@ async fn venv_to_toolchain(venv: PythonEnvironment, fs: &dyn Fs) -> Option<Toolc
             PythonEnvironmentKind::Venv
             | PythonEnvironmentKind::VirtualEnv
             | PythonEnvironmentKind::Uv
-            | PythonEnvironmentKind::UvWorkspace,
+            | PythonEnvironmentKind::UvWorkspace
+            | PythonEnvironmentKind::Poetry,
         ) => resolve_venv_activation_scripts(&venv, fs, &mut activation_scripts).await,
         _ => {}
     }
