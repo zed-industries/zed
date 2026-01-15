@@ -39,19 +39,19 @@ mod windows;
 pub(crate) mod scap_screen_capture;
 
 use crate::{
-    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
+    hash, point, px, size, Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor,
+    Bounds, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
     ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, TaskTiming,
-    ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
+    ThreadTaskTimings, Window, WindowControlArea, DEFAULT_WINDOW_SIZE,
 };
 use anyhow::Result;
 use async_task::Runnable;
 use futures::channel::oneshot;
+use image::codecs::gif::GifDecoder;
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
-use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 pub use scheduler::RunnableMeta;
@@ -93,14 +93,12 @@ pub use linux::layer_shell;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
 
-
 // Re-export MacTextSystem publicly so consumers can use real font shaping
 #[cfg(target_os = "macos")]
 pub use mac::MacTextSystem;
 
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test::VisualTestPlatform;
-
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -205,7 +203,7 @@ pub(crate) trait Platform: 'static {
     }
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(&self)
-    -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>>;
+        -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>>;
     #[cfg(not(feature = "screen-capture"))]
     fn screen_capture_sources(
         &self,
@@ -612,9 +610,7 @@ pub trait PlatformDispatcher: Send + Sync {
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
 
-
     fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>);
-
 
     fn now(&self) -> Instant {
         Instant::now()
@@ -652,8 +648,9 @@ pub trait PlatformTextSystem: Send + Sync {
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     /// Layout a line of text with the given font runs.
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+    /// Returns the recommended text rendering mode for the given font and size.
     fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
-    -> TextRenderingMode;
+        -> TextRenderingMode;
 }
 
 pub(crate) struct NoopTextSystem;
