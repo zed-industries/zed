@@ -38,7 +38,6 @@ pub mod scroll;
 mod selections_collection;
 mod split;
 mod split_element;
-mod split_render_once;
 pub mod tasks;
 
 #[cfg(test)]

@@ -4,29 +4,28 @@ use buffer_diff::BufferDiff;
 use collections::HashMap;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
-    Action, AppContext as _, CursorStyle, Empty, Entity, EventEmitter, Focusable, NoAction, Pixels,
-    Subscription, WeakEntity, relative, rgb,
+    Action, AppContext as _, Entity, EventEmitter, Focusable, NoAction, Subscription, WeakEntity,
 };
 use language::{Buffer, Capability};
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, MultiBufferRow, PathKey,
+    Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, PathKey,
 };
 use project::Project;
 use rope::Point;
 use text::OffsetRangeExt as _;
-use theme::ActiveTheme as _;
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Window, div, h_flex, px,
+    Styled as _, Window, div,
 };
 use workspace::{
-    ActivePaneDecorator, Item, ItemHandle, Pane, PaneGroup, SplitDirection, Workspace,
+    ActivatePaneLeft, ActivatePaneRight, ActivePaneDecorator, Item, ItemHandle, Pane, PaneGroup,
+    SplitDirection, Workspace,
 };
 
 use crate::{
     DisplayMap, Editor, EditorEvent,
     display_map::{Companion, convert_lhs_rows_to_rhs, convert_rhs_rows_to_lhs},
-    split_element::SplitEditorElement, split_render_once::SplitEditorWidget,
+    split_element::SplitEditorElement,
 };
 
 struct SplitDiffFeatureFlag;
@@ -58,17 +57,11 @@ pub struct SplittableEditor {
     panes: PaneGroup,
     workspace: WeakEntity<Workspace>,
     split_ratio: f32,
+    dragging_divider: bool,
     _subscriptions: Vec<Subscription>,
 }
 
-#[derive(Debug, Clone)]
-struct DraggedSplitDivider;
 
-impl ui::Render for DraggedSplitDivider {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl ui::IntoElement {
-        Empty
-    }
-}
 
 struct SecondaryEditor {
     multibuffer: Entity<MultiBuffer>,
@@ -85,6 +78,23 @@ impl SplittableEditor {
 
     pub fn secondary_editor(&self) -> Option<&Entity<Editor>> {
         self.secondary.as_ref().map(|se| &se.editor)
+    }
+
+    pub fn split_ratio(&self) -> f32 {
+        self.split_ratio
+    }
+
+    pub fn set_split_ratio(&mut self, ratio: f32, cx: &mut Context<Self>) {
+        self.split_ratio = ratio;
+        cx.notify();
+    }
+
+    pub fn is_dragging_divider(&self) -> bool {
+        self.dragging_divider
+    }
+
+    pub fn set_dragging_divider(&mut self, dragging: bool) {
+        self.dragging_divider = dragging;
     }
 
     pub fn last_selected_editor(&self) -> &Entity<Editor> {
@@ -188,6 +198,7 @@ impl SplittableEditor {
             panes,
             workspace: workspace.downgrade(),
             split_ratio: 0.5,
+            dragging_divider: false,
             _subscriptions: subscriptions,
         }
     }
@@ -373,6 +384,36 @@ impl SplittableEditor {
             });
         });
         cx.notify();
+    }
+
+    fn activate_pane_left(
+        &mut self,
+        _: &ActivatePaneLeft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(secondary) = &mut self.secondary {
+            if !secondary.has_latest_selection {
+                secondary.has_latest_selection = true;
+                window.focus(&secondary.editor.focus_handle(cx), cx);
+                cx.stop_propagation();
+            }
+        }
+    }
+
+    fn activate_pane_right(
+        &mut self,
+        _: &ActivatePaneRight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(secondary) = &mut self.secondary {
+            if secondary.has_latest_selection {
+                secondary.has_latest_selection = false;
+                window.focus(&self.primary_editor.focus_handle(cx), cx);
+                cx.stop_propagation();
+            }
+        }
     }
 
     pub fn added_to_workspace(
@@ -973,9 +1014,6 @@ impl Focusable for SplittableEditor {
     }
 }
 
-const DIVIDER_WIDTH: Pixels = px(1.);
-const DIVIDER_HITBOX_WIDTH: Pixels = px(8.);
-
 impl Render for SplittableEditor {
     fn render(
         &mut self,
@@ -983,66 +1021,16 @@ impl Render for SplittableEditor {
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
         if let Some(secondary) = &self.secondary {
-            let split_ratio = self.split_ratio;
-            let left_width = relative(split_ratio);
-            let right_width = relative(1.0 - split_ratio);
-
-            return h_flex()
+            return div()
                 .id("split-editor")
                 .size_full()
-                .on_drag_move(cx.listener(
-                    |this, event: &gpui::DragMoveEvent<DraggedSplitDivider>, _window, cx| {
-                        let bounds = event.bounds;
-                        let bounds_width: f32 = bounds.size.width.into();
-                        if bounds_width <= 0.0 {
-                            return;
-                        }
-                        let bounds_left: f32 = bounds.origin.x.into();
-                        let mouse_x: f32 = event.event.position.x.into();
-                        let relative_x = mouse_x - bounds_left;
-                        let new_ratio = (relative_x / bounds_width).clamp(0.1, 0.9);
-                        this.split_ratio = new_ratio;
-                        cx.notify();
-                    },
+                .on_action(cx.listener(Self::activate_pane_left))
+                .on_action(cx.listener(Self::activate_pane_right))
+                .child(SplitEditorElement::new(
+                    &self.primary_editor,
+                    &secondary.editor,
+                    cx,
                 ))
-                .child(
-                    div()
-                        .id("split-editor-left")
-                        .w(left_width)
-                        .h_full()
-                        .child(secondary.editor.clone()),
-                )
-                .child(
-                    div()
-                        .id("split-divider")
-                        .group("split-divider")
-                        .relative()
-                        .w(DIVIDER_WIDTH)
-                        .h_full()
-                        .bg(cx.theme().colors().border)
-                        .group_hover("split-divider", |style| {
-                            style.bg(cx.theme().colors().border_focused)
-                        })
-                        .child(
-                            div()
-                                .id("split-divider-hitbox")
-                                .absolute()
-                                .left(-(DIVIDER_HITBOX_WIDTH - DIVIDER_WIDTH) / 2.0)
-                                .w(DIVIDER_HITBOX_WIDTH)
-                                .h_full()
-                                .cursor(CursorStyle::ResizeLeftRight)
-                                .on_drag(DraggedSplitDivider, |_, _, _, cx| {
-                                    cx.new(|_| DraggedSplitDivider)
-                                }),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("split-editor-right")
-                        .w(right_width)
-                        .h_full()
-                        .child(self.primary_editor.clone()),
-                )
                 .into_any_element();
         }
 
