@@ -2151,6 +2151,17 @@ impl EditPredictionStore {
             });
     }
 
+    #[cfg(feature = "cli-support")]
+    pub fn set_recent_paths_for_project(
+        &mut self,
+        project: &Entity<Project>,
+        paths: impl IntoIterator<Item = project::ProjectPath>,
+        cx: &mut Context<Self>,
+    ) {
+        let project_state = self.get_or_init_project(project, cx);
+        project_state.recent_paths = paths.into_iter().collect();
+    }
+
     fn is_file_open_source(
         &self,
         project: &Entity<Project>,
