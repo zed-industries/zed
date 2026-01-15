@@ -3,9 +3,9 @@ use crate::{
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
     Element, Empty, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
-    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions, app::GpuiMode,
+    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestPlatformWindow,
+    TestScreenCaptureSource, TextSystem, VisualContext, Window, WindowBounds, WindowHandle,
+    WindowOptions, app::GpuiMode,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -457,7 +457,7 @@ impl TestAppContext {
     }
 
     /// Returns the `TestWindow` backing the given handle.
-    pub(crate) fn test_window(&self, window: AnyWindowHandle) -> TestWindow {
+    pub(crate) fn test_window(&self, window: AnyWindowHandle) -> TestPlatformWindow {
         self.app
             .borrow_mut()
             .windows
