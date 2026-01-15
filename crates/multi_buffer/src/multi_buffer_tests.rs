@@ -4012,7 +4012,7 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
             diff.update_diff(
                 buffer.read(cx).text_snapshot(),
                 Some(base_text.into()),
-                false,
+                None,
                 None,
                 cx,
             )
@@ -4050,7 +4050,7 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
             diff.update_diff(
                 buffer.read(cx).text_snapshot(),
                 Some(base_text.into()),
-                false,
+                None,
                 None,
                 cx,
             )

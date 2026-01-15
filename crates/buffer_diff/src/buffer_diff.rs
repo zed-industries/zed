@@ -2,8 +2,8 @@ use futures::channel::oneshot;
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task, TaskLabel};
 use language::{
-    BufferRow, Capability, DiffOptions, File, Language, LanguageName, LanguageRegistry,
-    language_settings::language_settings, word_diff_ranges,
+    BufferRow, Capability, Diff, DiffOptions, File, Language, LanguageName, LanguageRegistry,
+    LineEnding, language_settings::language_settings, word_diff_ranges,
 };
 use rope::Rope;
 use std::{
@@ -74,9 +74,9 @@ impl std::fmt::Debug for BufferDiffSnapshot {
 
 #[derive(Clone)]
 pub struct BufferDiffUpdate {
-    base_text_changed: bool,
     inner: BufferDiffInner<Arc<str>>,
     buffer_version: clock::Global,
+    base_text_edits: Option<Diff>,
 }
 
 #[derive(Clone)]
@@ -1334,7 +1334,7 @@ impl BufferDiff {
         let inner = executor.block(this.update_diff(
             buffer.clone(),
             Some(Arc::from(base_text)),
-            true,
+            Some(true),
             None,
             cx,
         ));
@@ -1432,11 +1432,15 @@ impl BufferDiff {
         &self,
         buffer: text::BufferSnapshot,
         base_text: Option<Arc<str>>,
-        base_text_changed: bool,
+        base_text_change: Option<bool>,
         language: Option<Arc<Language>>,
         cx: &App,
     ) -> Task<BufferDiffUpdate> {
         let prev_base_text = self.base_text(cx).as_rope().clone();
+        let old_base_text_len = self.base_text(cx).len();
+        let base_version = self.base_text(cx).version().clone();
+        let base_text_changed = base_text_change.is_some();
+        let compute_base_text_edits = base_text_change == Some(true);
         let diff_options = build_diff_options(
             None,
             language.as_ref().map(|l| l.name()),
@@ -1445,39 +1449,74 @@ impl BufferDiff {
         );
         let buffer_version = buffer.version().clone();
 
-        cx.background_executor()
-            .spawn_labeled(*CALCULATE_DIFF_TASK, async move {
-                let base_text_rope = if let Some(base_text) = &base_text {
-                    if base_text_changed {
-                        Rope::from(base_text.as_ref())
+        let base_text_diff_task = if base_text_changed && compute_base_text_edits {
+            base_text
+                .as_ref()
+                .map(|new_text| self.inner.base_text.read(cx).diff(new_text.clone(), cx))
+        } else {
+            None
+        };
+
+        let hunk_task = cx
+            .background_executor()
+            .spawn_labeled(*CALCULATE_DIFF_TASK, {
+                let buffer_version = buffer_version.clone();
+                async move {
+                    let base_text_rope = if let Some(base_text) = &base_text {
+                        if base_text_changed {
+                            Rope::from(base_text.as_ref())
+                        } else {
+                            prev_base_text
+                        }
                     } else {
-                        prev_base_text
+                        Rope::new()
+                    };
+                    let base_text_exists = base_text.is_some();
+                    let hunks = compute_hunks(
+                        base_text
+                            .clone()
+                            .map(|base_text| (base_text, base_text_rope.clone())),
+                        buffer.clone(),
+                        diff_options,
+                    );
+                    let base_text = base_text.unwrap_or_default();
+                    BufferDiffInner {
+                        base_text,
+                        hunks,
+                        base_text_exists,
+                        pending_hunks: SumTree::new(&buffer),
+                        buffer_version,
                     }
-                } else {
-                    Rope::new()
-                };
-                let base_text_exists = base_text.is_some();
-                let hunks = compute_hunks(
-                    base_text
-                        .clone()
-                        .map(|base_text| (base_text, base_text_rope.clone())),
-                    buffer.clone(),
-                    diff_options,
-                );
-                let base_text = base_text.unwrap_or_default();
-                let inner = BufferDiffInner {
-                    base_text,
-                    hunks,
-                    base_text_exists,
-                    pending_hunks: SumTree::new(&buffer),
-                    buffer_version: buffer_version.clone(),
-                };
-                BufferDiffUpdate {
-                    inner,
-                    base_text_changed,
-                    buffer_version,
                 }
-            })
+            });
+
+        cx.background_executor().spawn(async move {
+            let (inner, base_text_edits) = match base_text_diff_task {
+                Some(diff_task) => {
+                    let (inner, diff) = futures::join!(hunk_task, diff_task);
+                    (inner, Some(diff))
+                }
+                None => {
+                    let inner = hunk_task.await;
+                    let edits = if base_text_changed {
+                        Some(Diff {
+                            base_version,
+                            line_ending: LineEnding::detect(&inner.base_text),
+                            edits: vec![(0..old_base_text_len, inner.base_text.clone())],
+                        })
+                    } else {
+                        None
+                    };
+                    (inner, edits)
+                }
+            };
+
+            BufferDiffUpdate {
+                inner,
+                buffer_version,
+                base_text_edits,
+            }
+        })
     }
 
     pub fn language_changed(
@@ -1516,10 +1555,12 @@ impl BufferDiff {
         let old_snapshot = self.snapshot(cx);
         let state = &mut self.inner;
         let new_state = update.inner;
+        let base_text_changed = update.base_text_edits.is_some();
+
         let (mut changed_range, mut base_text_changed_range) =
             match (state.base_text_exists, new_state.base_text_exists) {
                 (false, false) => (None, None),
-                (true, true) if !update.base_text_changed => {
+                (true, true) if !base_text_changed => {
                     compare_hunks(&new_state.hunks, &old_snapshot.inner.hunks, buffer)
                 }
                 _ => (
@@ -1549,10 +1590,10 @@ impl BufferDiff {
 
         let state = &mut self.inner;
         state.base_text_exists = new_state.base_text_exists;
-        let parsing_idle = if update.base_text_changed {
+        let parsing_idle = if let Some(diff) = update.base_text_edits {
             state.base_text.update(cx, |base_text, cx| {
                 base_text.set_capability(Capability::ReadWrite, cx);
-                base_text.set_text(new_state.base_text.clone(), cx);
+                base_text.apply_diff(diff, cx);
                 base_text.set_capability(Capability::ReadOnly, cx);
                 Some(base_text.parsing_idle())
             })
@@ -1561,7 +1602,7 @@ impl BufferDiff {
         };
         state.hunks = new_state.hunks;
         state.buffer_version = update.buffer_version;
-        if update.base_text_changed || clear_pending_hunks {
+        if base_text_changed || clear_pending_hunks {
             if let Some((first, last)) = state.pending_hunks.first().zip(state.pending_hunks.last())
             {
                 if let Some(range) = &mut changed_range {
@@ -1668,7 +1709,7 @@ impl BufferDiff {
         cx.spawn(async move |this, cx| {
             let Some(state) = this
                 .update(cx, |this, cx| {
-                    this.update_diff(buffer.clone(), base_text, true, language, cx)
+                    this.update_diff(buffer.clone(), base_text, Some(true), language, cx)
                 })
                 .log_err()
             else {
@@ -1697,7 +1738,7 @@ impl BufferDiff {
     pub fn recalculate_diff_sync(&mut self, buffer: &text::BufferSnapshot, cx: &mut Context<Self>) {
         let language = self.base_text(cx).language().cloned();
         let base_text = self.base_text_string(cx).map(|s| s.as_str().into());
-        let fut = self.update_diff(buffer.clone(), base_text, false, language, cx);
+        let fut = self.update_diff(buffer.clone(), base_text, None, language, cx);
         let executor = cx.background_executor().clone();
         let snapshot = executor.block(fut);
         let fut = self.set_snapshot_with_secondary_inner(snapshot, buffer, None, false, cx);
@@ -2780,7 +2821,7 @@ mod tests {
                 diff.update_diff(
                     snapshot.clone(),
                     Some(base_text.as_str().into()),
-                    false,
+                    None,
                     None,
                     cx,
                 )

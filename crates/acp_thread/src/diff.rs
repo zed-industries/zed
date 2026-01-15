@@ -206,7 +206,7 @@ impl PendingDiff {
                     diff.update_diff(
                         text_snapshot.clone(),
                         Some(base_text.clone()),
-                        false,
+                        None,
                         language,
                         cx,
                     )
@@ -377,7 +377,7 @@ async fn build_buffer_diff(
             secondary_diff.update_diff(
                 buffer.text.clone(),
                 Some(old_text),
-                true,
+                Some(true),
                 language.clone(),
                 cx,
             )
