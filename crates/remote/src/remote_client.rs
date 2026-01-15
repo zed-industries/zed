@@ -148,10 +148,21 @@ pub trait RemoteClientDelegate: Send + Sync {
 const MAX_MISSED_HEARTBEATS: usize = 5;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
-const INITIAL_CONNECTION_TIMEOUT: Duration =
+const DEFAULT_INITIAL_CONNECTION_TIMEOUT: Duration =
     Duration::from_secs(if cfg!(debug_assertions) { 5 } else { 60 });
+const WSL_INITIAL_CONNECTION_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub const MAX_RECONNECT_ATTEMPTS: usize = 3;
+
+fn initial_connection_timeout(options: &RemoteConnectionOptions) -> Duration {
+    if cfg!(debug_assertions) {
+        return Duration::from_secs(5);
+    }
+    match options {
+        RemoteConnectionOptions::Wsl(_) => WSL_INITIAL_CONNECTION_TIMEOUT,
+        _ => DEFAULT_INITIAL_CONNECTION_TIMEOUT,
+    }
+}
 
 enum State {
     Connecting,
@@ -403,10 +414,11 @@ impl RemoteClient {
                 });
 
                 let path_style = remote_connection.path_style();
+                let connection_options = remote_connection.connection_options();
                 let this = cx.new(|_| Self {
                     client: client.clone(),
                     unique_identifier: unique_identifier.clone(),
-                    connection_options: remote_connection.connection_options(),
+                    connection_options: connection_options.clone(),
                     path_style,
                     state: Some(State::Connecting),
                 });
@@ -421,9 +433,10 @@ impl RemoteClient {
                     cx,
                 );
 
+                let timeout = initial_connection_timeout(&connection_options);
                 let ready = client
                     .wait_for_remote_started()
-                    .with_timeout(INITIAL_CONNECTION_TIMEOUT, cx.background_executor())
+                    .with_timeout(timeout, cx.background_executor())
                     .await;
                 match ready {
                     Ok(Some(_)) => {}

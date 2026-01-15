@@ -43,6 +43,12 @@ pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
     *CACHED
 }
 
+/// Returns the path to the local remote server cache directory.
+pub fn remote_server_cache_dir() -> &'static PathBuf {
+    static REMOTE_SERVER_CACHE: OnceLock<PathBuf> = OnceLock::new();
+    REMOTE_SERVER_CACHE.get_or_init(|| data_dir().join("remote_server_cache"))
+}
+
 /// Sets a custom directory for all user data, overriding the default data directory.
 /// This function must be called before any other path operations that depend on the data directory.
 /// The directory's path will be canonicalized to an absolute path by a blocking FS operation.

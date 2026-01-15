@@ -23,6 +23,9 @@ use std::{
 use tempfile::NamedTempFile;
 use util::paths::PathWithPosition;
 
+#[cfg(target_os = "windows")]
+mod wsl_install;
+
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::io::IsTerminal;
 
@@ -112,6 +115,17 @@ struct Args {
     #[cfg(target_os = "windows")]
     #[arg(long, value_name = "USER@DISTRO")]
     wsl: Option<String>,
+    /// Install the `zed` CLI command inside WSL distributions.
+    ///
+    /// This creates a `zed` shim in `~/.local/bin` within WSL and updates
+    /// common shell config files to include that directory in PATH.
+    #[cfg(target_os = "windows")]
+    #[arg(long)]
+    install_wsl: bool,
+    /// Install the WSL CLI shim for a single distribution.
+    #[cfg(target_os = "windows")]
+    #[arg(long, value_name = "DISTRO")]
+    wsl_distro: Option<String>,
     /// Not supported in Zed CLI, only supported on Zed binary
     /// Will attempt to give the correct command to run
     #[arg(long)]
@@ -131,6 +145,11 @@ struct Args {
     /// by having Zed act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
     askpass: Option<String>,
+
+    /// Clear cached remote server binaries in WSL.
+    #[cfg(target_os = "windows")]
+    #[arg(long)]
+    clear_wsl_cache: bool,
 }
 
 /// Parses a path containing a position (e.g. `path:line:column`)
@@ -370,6 +389,12 @@ fn main() -> Result<()> {
     }
     let args = Args::parse();
 
+    #[cfg(target_os = "windows")]
+    if args.clear_wsl_cache {
+        wsl_install::clear_wsl_cache()?;
+        return Ok(());
+    }
+
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
     if let Some(socket) = &args.askpass {
         askpass::main(socket);
@@ -386,6 +411,13 @@ fn main() -> Result<()> {
     let args = flatpak::set_bin_if_no_escape(args);
 
     let app = Detect::detect(args.zed.as_deref()).context("Bundle detection")?;
+
+    #[cfg(target_os = "windows")]
+    if args.install_wsl {
+        let app_path = app.path();
+        wsl_install::install_wsl(&app_path, args.wsl_distro.as_deref())?;
+        return Ok(());
+    }
 
     if args.version {
         println!("{}", app.zed_version_string());

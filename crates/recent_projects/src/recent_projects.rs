@@ -9,6 +9,8 @@ use std::path::PathBuf;
 
 #[cfg(target_os = "windows")]
 mod wsl_picker;
+#[cfg(target_os = "windows")]
+mod wsl_welcome;
 
 use remote::RemoteConnectionOptions;
 pub use remote_connections::{RemoteConnectionModal, connect, open_remote_project};

@@ -274,7 +274,7 @@ impl ShellKind {
             "rc" => ShellKind::Rc,
             "xonsh" => ShellKind::Xonsh,
             "elvish" => ShellKind::Elvish,
-            "sh" | "bash" | "zsh" => ShellKind::Posix,
+            "wsl" | "sh" | "bash" | "zsh" => ShellKind::Posix,
             _ if is_windows => ShellKind::PowerShell,
             // Some other shell detected, the user might install and use a
             // unix-like shell.

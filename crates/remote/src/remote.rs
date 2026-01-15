@@ -2,6 +2,7 @@ pub mod json_log;
 pub mod protocol;
 pub mod proxy;
 pub mod remote_client;
+mod binary_cache;
 mod transport;
 
 #[cfg(target_os = "windows")]
