@@ -29,7 +29,6 @@ use open_ai::Model as OpenAiModel;
 use paths::text_threads_dir;
 use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     cmp::{Ordering, max},
@@ -688,7 +687,6 @@ pub struct TextThread {
     _subscriptions: Vec<Subscription>,
     language_registry: Arc<LanguageRegistry>,
     prompt_builder: Arc<PromptBuilder>,
-    completion_mode: agent_settings::CompletionMode,
 }
 
 trait ContextAnnotation {
@@ -719,14 +717,6 @@ impl TextThread {
             slash_commands,
             cx,
         )
-    }
-
-    pub fn completion_mode(&self) -> agent_settings::CompletionMode {
-        self.completion_mode
-    }
-
-    pub fn set_completion_mode(&mut self, completion_mode: agent_settings::CompletionMode) {
-        self.completion_mode = completion_mode;
     }
 
     pub fn new(
@@ -773,7 +763,6 @@ impl TextThread {
             pending_cache_warming_task: Task::ready(None),
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
-            completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             path: None,
             buffer,
             language_registry,
@@ -2274,7 +2263,6 @@ impl TextThread {
             thread_id: None,
             prompt_id: None,
             intent: Some(CompletionIntent::UserPrompt),
-            mode: None,
             messages: Vec::new(),
             tools: Vec::new(),
             tool_choice: None,
@@ -2333,15 +2321,7 @@ impl TextThread {
                 completion_request.messages.push(request_message);
             }
         }
-        let supports_burn_mode = if let Some(model) = model {
-            model.supports_burn_mode()
-        } else {
-            false
-        };
 
-        if supports_burn_mode {
-            completion_request.mode = Some(self.completion_mode.into());
-        }
         completion_request
     }
 
