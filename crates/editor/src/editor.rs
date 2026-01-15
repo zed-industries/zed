@@ -164,6 +164,8 @@ use project::{
 };
 use rand::seq::SliceRandom;
 use regex::Regex;
+#[cfg(target_os = "windows")]
+use remote::RemoteConnectionOptions;
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
@@ -20649,8 +20651,23 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(target) = self.target_file(cx) {
-            cx.reveal_path(&target.abs_path(cx));
+        if let Some(path) = self.target_file_abs_path(cx) {
+            #[cfg(target_os = "windows")]
+            let path = {
+                if let Some(project) = self.project() {
+                    if let Some(RemoteConnectionOptions::Wsl(wsl_options)) =
+                        project.read(cx).remote_connection_options(cx)
+                    {
+                        wsl_options.to_unc_path(&path)
+                    } else {
+                        path
+                    }
+                } else {
+                    path
+                }
+            };
+
+            cx.reveal_path(&path);
         }
     }
 
