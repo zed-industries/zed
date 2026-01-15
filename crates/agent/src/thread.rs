@@ -1781,9 +1781,6 @@ impl Thread {
                 );
                 self.update_token_usage(usage, cx);
             }
-            UsageUpdated { amount, limit } => {
-                // TODO: Remove `UsageUpdated` variant?
-            }
             Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
             Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
@@ -2012,9 +2009,6 @@ impl Thread {
                     let event = event.log_err()?;
                     let text = match event {
                         LanguageModelCompletionEvent::Text(text) => text,
-                        LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
-                            continue;
-                        }
                         _ => continue,
                     };
 
@@ -2073,9 +2067,6 @@ impl Thread {
                     let event = event?;
                     let text = match event {
                         LanguageModelCompletionEvent::Text(text) => text,
-                        LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
-                            continue;
-                        }
                         _ => continue,
                     };
 

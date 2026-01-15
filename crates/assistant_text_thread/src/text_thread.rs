@@ -2061,8 +2061,6 @@ impl TextThread {
                                 match event {
                                     LanguageModelCompletionEvent::Started |
                                     LanguageModelCompletionEvent::Queued {..} => {}
-                                    LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
-                                    }
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
                                     LanguageModelCompletionEvent::ReasoningDetails(_) => {
                                         // ReasoningDetails are metadata (signatures, encrypted data, format info)
