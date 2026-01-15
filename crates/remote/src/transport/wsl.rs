@@ -42,6 +42,22 @@ impl From<settings::WslConnection> for WslConnectionOptions {
     }
 }
 
+impl WslConnectionOptions {
+    /// Converts a POSIX path from WSL to a Windows UNC path.
+    ///
+    /// For example, `/home/user/project` with distro "Ubuntu" becomes
+    /// `\\wsl.localhost\Ubuntu\home\user\project`
+    pub fn to_unc_path(&self, posix_path: &Path) -> PathBuf {
+        let path_str = posix_path.to_string_lossy();
+        let path_without_leading_slash = path_str.strip_prefix('/').unwrap_or(&path_str);
+        PathBuf::from(format!(
+            "\\\\wsl.localhost\\{}\\{}",
+            self.distro_name,
+            path_without_leading_slash.replace('/', "\\")
+        ))
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct WslRemoteConnection {
     remote_binary_path: Option<Arc<RelPath>>,
