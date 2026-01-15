@@ -435,7 +435,7 @@
     },
   },
   {
-    "context": "QuickSearch",
+    "context": "QuickSearch || (QuickSearch > Picker > Editor)",
     "use_key_equivalents": true,
     "bindings": {
       "escape": "menu::Cancel",
@@ -446,6 +446,17 @@
       "alt-cmd-r": "search::ToggleReplace",
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPreviousMatch",
+      "cmd-shift-a": "quick_search::ToggleSplitMenu",
+    },
+  },
+  {
+    "context": "QuickSearch || (QuickSearch > Picker > Editor) || (QuickSearch > Picker > menu)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-h": "pane::SplitLeft",
+      "cmd-l": "pane::SplitRight",
+      "cmd-k": "pane::SplitUp",
+      "cmd-j": "pane::SplitDown",
     },
   },
   {
