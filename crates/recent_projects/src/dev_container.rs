@@ -11,8 +11,15 @@ use std::fmt::Debug;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use ui::ActiveTheme;
+use ui::Button;
+use ui::Clickable;
+use ui::FluentBuilder;
+use ui::KeyBinding;
 use ui::Switch;
 use ui::ToggleState;
+use ui::h_flex;
+use ui::rems_from_px;
 
 use ::dev_container::{DevContainerTemplate, get_templates};
 use gpui::{
@@ -625,6 +632,33 @@ impl PickerDelegate for TemplatePickerDelegate {
                 .into_any_element(),
         )
     }
+
+    fn render_footer(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        Some(
+            h_flex()
+                .w_full()
+                .p_1p5()
+                .gap_1()
+                .justify_start()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    Button::new("run-action", "Continue")
+                        .key_binding(
+                            KeyBinding::for_action(&menu::Confirm, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                        }),
+                )
+                .into_any_element(),
+        )
+    }
 }
 
 struct FeaturePickerDelegate {
@@ -770,6 +804,43 @@ impl PickerDelegate for FeaturePickerDelegate {
                     feature_entry.toggle_state,
                 ))
                 .child(Label::new(feature_entry.feature.name.clone()))
+                .into_any_element(),
+        )
+    }
+
+    fn render_footer(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        Some(
+            h_flex()
+                .w_full()
+                .p_1p5()
+                .gap_1()
+                .justify_start()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    Button::new("run-action", "Select Feature")
+                        .key_binding(
+                            KeyBinding::for_action(&menu::Confirm, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                        }),
+                )
+                .child(
+                    Button::new("run-action-secondary", "Confirm Selections")
+                        .key_binding(
+                            KeyBinding::for_action(&menu::SecondaryConfirm, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                        }),
+                )
                 .into_any_element(),
         )
     }
