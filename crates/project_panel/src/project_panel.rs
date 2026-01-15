@@ -637,7 +637,7 @@ impl ProjectPanel {
                         if *preview {
                             return;
                         }
-                        if this.state.open_paths.get(&path.worktree_id).is_none() {
+                        if !this.state.open_paths.contains_key(&path.worktree_id) {
                             this.state
                                 .open_paths
                                 .insert(path.worktree_id, RootPathTrie::<(), usize>::new());
