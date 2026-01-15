@@ -29,7 +29,6 @@ gpui.workspace = true
 menu.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
-remote.workspace = true
 schemars.workspace = true
 search.workspace = true
 serde.workspace = true
