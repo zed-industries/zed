@@ -17,8 +17,8 @@ use agent_settings::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
-use client::{ModelRequestUsage, RequestUsage, UserStore};
-use cloud_llm_client::{CompletionIntent, Plan, UsageLimit};
+use client::UserStore;
+use cloud_llm_client::{CompletionIntent, Plan};
 use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
 use futures::stream;
@@ -698,7 +698,6 @@ pub struct Thread {
     running_turn: Option<RunningTurn>,
     pending_message: Option<AgentMessage>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
-    tool_use_limit_reached: bool,
     request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
     #[allow(unused)]
     cumulative_token_usage: TokenUsage,
@@ -758,7 +757,6 @@ impl Thread {
             running_turn: None,
             pending_message: None,
             tools: BTreeMap::default(),
-            tool_use_limit_reached: false,
             request_token_usage: HashMap::default(),
             cumulative_token_usage: TokenUsage::default(),
             initial_project_snapshot: {
@@ -812,7 +810,6 @@ impl Thread {
             running_turn: None,
             pending_message: None,
             tools: parent_tools,
-            tool_use_limit_reached: false,
             request_token_usage: HashMap::default(),
             cumulative_token_usage: TokenUsage::default(),
             initial_project_snapshot: Task::ready(None).shared(),
@@ -1010,7 +1007,6 @@ impl Thread {
             running_turn: None,
             pending_message: None,
             tools: BTreeMap::default(),
-            tool_use_limit_reached: false,
             request_token_usage: db_thread.request_token_usage.clone(),
             cumulative_token_usage: db_thread.cumulative_token_usage,
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
@@ -1456,7 +1452,6 @@ impl Thread {
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream(events_tx);
         let message_ix = self.messages.len().saturating_sub(1);
-        self.tool_use_limit_reached = false;
         self.clear_summary();
         let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
         self.running_turn = Some(RunningTurn {
@@ -1656,8 +1651,6 @@ impl Thread {
                         }
                     }
                 })?;
-            } else if this.read_with(cx, |this, _| this.tool_use_limit_reached)? {
-                return Err(language_model::ToolUseLimitReachedError.into());
             } else if end_turn {
                 return Ok(());
             } else {
@@ -1680,7 +1673,6 @@ impl Thread {
         let auto_retry = if model.provider_id() == ZED_CLOUD_PROVIDER_ID {
             match plan {
                 Some(Plan::V2(_)) => true,
-                Some(Plan::V1(_)) => self.completion_mode == CompletionMode::Burn,
                 None => false,
             }
         } else {
@@ -1790,10 +1782,7 @@ impl Thread {
                 self.update_token_usage(usage, cx);
             }
             UsageUpdated { amount, limit } => {
-                self.update_model_request_usage(amount, limit, cx);
-            }
-            ToolUseLimitReached => {
-                self.tool_use_limit_reached = true;
+                // TODO: Remove `UsageUpdated` variant?
             }
             Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
             Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
@@ -1975,21 +1964,6 @@ impl Thread {
         }
     }
 
-    fn update_model_request_usage(&self, amount: usize, limit: UsageLimit, cx: &mut Context<Self>) {
-        self.project
-            .read(cx)
-            .user_store()
-            .update(cx, |user_store, cx| {
-                user_store.update_model_request_usage(
-                    ModelRequestUsage(RequestUsage {
-                        amount: amount as i32,
-                        limit,
-                    }),
-                    cx,
-                )
-            });
-    }
-
     pub fn title(&self) -> SharedString {
         self.title.clone().unwrap_or("New Thread".into())
     }
@@ -2039,10 +2013,6 @@ impl Thread {
                     let text = match event {
                         LanguageModelCompletionEvent::Text(text) => text,
                         LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
-                            this.update(cx, |thread, cx| {
-                                thread.update_model_request_usage(amount, limit, cx);
-                            })
-                            .ok()?;
                             continue;
                         }
                         _ => continue,
@@ -2104,9 +2074,6 @@ impl Thread {
                     let text = match event {
                         LanguageModelCompletionEvent::Text(text) => text,
                         LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
-                            this.update(cx, |thread, cx| {
-                                thread.update_model_request_usage(amount, limit, cx);
-                            })?;
                             continue;
                         }
                         _ => continue,

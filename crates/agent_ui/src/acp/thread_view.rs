@@ -14,7 +14,6 @@ use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use client::zed_urls;
-use cloud_llm_client::PlanV1;
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
 use editor::{
@@ -33,7 +32,6 @@ use gpui::{
     pulsating_between,
 };
 use language::Buffer;
-
 use language_model::LanguageModelRegistry;
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use project::{AgentServerStore, ExternalAgentServerName, Project, ProjectEntryId};
@@ -69,8 +67,7 @@ use crate::acp::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
-
-use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip, UsageCallout};
+use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
     ContinueThread, ContinueWithBurnMode, CycleFavoriteModels, CycleModeSelector,
@@ -92,8 +89,6 @@ enum ThreadFeedback {
 #[derive(Debug)]
 enum ThreadError {
     PaymentRequired,
-    ModelRequestLimitReached(cloud_llm_client::Plan),
-    ToolUseLimitReached,
     Refusal,
     AuthenticationRequired(SharedString),
     Other(SharedString),
@@ -103,12 +98,6 @@ impl ThreadError {
     fn from_err(error: anyhow::Error, agent: &Rc<dyn AgentServer>) -> Self {
         if error.is::<language_model::PaymentRequiredError>() {
             Self::PaymentRequired
-        } else if error.is::<language_model::ToolUseLimitReachedError>() {
-            Self::ToolUseLimitReached
-        } else if let Some(error) =
-            error.downcast_ref::<language_model::ModelRequestLimitReachedError>()
-        {
-            Self::ModelRequestLimitReached(error.plan)
         } else if let Some(acp_error) = error.downcast_ref::<acp::Error>()
             && acp_error.code == acp::ErrorCode::AuthRequired
         {

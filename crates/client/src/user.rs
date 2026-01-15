@@ -108,7 +108,6 @@ pub struct UserStore {
     by_github_login: HashMap<SharedString, u64>,
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
-    model_request_usage: Option<ModelRequestUsage>,
     edit_prediction_usage: Option<EditPredictionUsage>,
     plan_info: Option<PlanInfo>,
     current_user: watch::Receiver<Option<Arc<User>>>,
@@ -185,7 +184,6 @@ impl UserStore {
             by_github_login: Default::default(),
             current_user: current_user_rx,
             plan_info: None,
-            model_request_usage: None,
             edit_prediction_usage: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
@@ -725,26 +723,6 @@ impl UserStore {
             .unwrap_or_default()
     }
 
-    pub fn is_usage_based_billing_enabled(&self) -> bool {
-        self.plan_info
-            .as_ref()
-            .map(|plan| plan.is_usage_based_billing_enabled)
-            .unwrap_or_default()
-    }
-
-    pub fn model_request_usage(&self) -> Option<ModelRequestUsage> {
-        if self.plan().is_some_and(|plan| plan.is_v2()) {
-            return None;
-        }
-
-        self.model_request_usage
-    }
-
-    pub fn update_model_request_usage(&mut self, usage: ModelRequestUsage, cx: &mut Context<Self>) {
-        self.model_request_usage = Some(usage);
-        cx.notify();
-    }
-
     pub fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
         self.edit_prediction_usage
     }
@@ -760,7 +738,6 @@ impl UserStore {
 
     pub fn clear_plan_and_usage(&mut self) {
         self.plan_info = None;
-        self.model_request_usage = None;
         self.edit_prediction_usage = None;
     }
 
@@ -777,10 +754,6 @@ impl UserStore {
                 .set_authenticated_user_info(Some(response.user.metrics_id.clone()), staff);
         }
 
-        self.model_request_usage = Some(ModelRequestUsage(RequestUsage {
-            limit: response.plan.usage.model_requests.limit,
-            amount: response.plan.usage.model_requests.used as i32,
-        }));
         self.edit_prediction_usage = Some(EditPredictionUsage(RequestUsage {
             limit: response.plan.usage.edit_predictions.limit,
             amount: response.plan.usage.edit_predictions.used as i32,

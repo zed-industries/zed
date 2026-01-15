@@ -2068,14 +2068,8 @@ impl TextThread {
 
                                 match event {
                                     LanguageModelCompletionEvent::Started |
-                                    LanguageModelCompletionEvent::Queued {..} |
-                                    LanguageModelCompletionEvent::ToolUseLimitReached { .. } => {}
+                                    LanguageModelCompletionEvent::Queued {..} => {}
                                     LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
-                                        this.update_model_request_usage(
-                                            amount as u32,
-                                            limit,
-                                            cx,
-                                        );
                                     }
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
                                     LanguageModelCompletionEvent::ReasoningDetails(_) => {
@@ -2956,21 +2950,6 @@ impl TextThread {
         summary.done = true;
         summary.text = custom_summary;
         cx.emit(TextThreadEvent::SummaryChanged);
-    }
-
-    fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut App) {
-        let Some(project) = self.project.as_ref().and_then(|project| project.upgrade()) else {
-            return;
-        };
-        project.read(cx).user_store().update(cx, |user_store, cx| {
-            user_store.update_model_request_usage(
-                ModelRequestUsage(RequestUsage {
-                    amount: amount as i32,
-                    limit,
-                }),
-                cx,
-            )
-        });
     }
 }
 

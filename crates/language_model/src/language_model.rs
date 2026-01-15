@@ -81,7 +81,6 @@ pub enum LanguageModelCompletionEvent {
         amount: usize,
         limit: UsageLimit,
     },
-    ToolUseLimitReached,
     Stop(StopReason),
     Text(String),
     Thinking {
@@ -118,9 +117,9 @@ impl LanguageModelCompletionEvent {
             CompletionRequestStatus::UsageUpdated { amount, limit } => {
                 Ok(LanguageModelCompletionEvent::UsageUpdated { amount, limit })
             }
-            CompletionRequestStatus::ToolUseLimitReached => {
-                Ok(LanguageModelCompletionEvent::ToolUseLimitReached)
-            }
+            CompletionRequestStatus::ToolUseLimitReached => Err(
+                LanguageModelCompletionError::Other(anyhow!("Unexpected status: {status:?}")),
+            ),
             CompletionRequestStatus::Failed {
                 code,
                 message,
@@ -690,7 +689,6 @@ pub trait LanguageModel: Send + Sync {
                                 Ok(LanguageModelCompletionEvent::Queued { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Started) => None,
                                 Ok(LanguageModelCompletionEvent::UsageUpdated { .. }) => None,
-                                Ok(LanguageModelCompletionEvent::ToolUseLimitReached) => None,
                                 Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
