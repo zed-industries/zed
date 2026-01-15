@@ -619,6 +619,15 @@ impl VsCodeSettings {
                         ShowCloseButton::Hidden
                     }
                 }),
+            // Zed-specific fields controlling diagnostic tab behavior. We set these to
+            // `None` when importing VS Code settings; defaults will be used in
+            // `ItemSettings::from_settings`.
+            diagnostic_tab_coloring: None,
+            diagnostic_tab_counts: None,
+            diagnostic_tab_icons: None,
+            diagnostic_tab_text_use_diagnostics: None,
+            diagnostic_tab_show_zero_counts: None,
+            tab_filename_tint: None,
         })
     }
 

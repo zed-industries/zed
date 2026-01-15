@@ -3771,7 +3771,7 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn tab_settings_section() -> [SettingsPageItem; 4] {
+    fn tab_settings_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Tab Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3823,6 +3823,89 @@ fn window_and_layout_page() -> SettingsPage {
                             .tabs
                             .get_or_insert_default()
                             .show_close_button = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            // Diagnostic-based tab colouring is intentionally disabled. This placeholder
+            // setting has been removed from the UI but preserved here as a comment for
+            // future reference.
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Diagnostic Counts",
+                description: "Display the number of errors and warnings on each tab.",
+                field: Box::new(SettingField {
+                    json_path: Some("tabs.diagnostic_tab_counts"),
+                    pick: |settings_content| {
+                        settings_content.tabs.as_ref()?.diagnostic_tab_counts.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .tabs
+                            .get_or_insert_default()
+                            .diagnostic_tab_counts = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Diagnostic Icons",
+                description: "Display diagnostic icons (error/warning) alongside counts on each tab.",
+                field: Box::new(SettingField {
+                    json_path: Some("tabs.diagnostic_tab_icons"),
+                    pick: |settings_content| {
+                        settings_content.tabs.as_ref()?.diagnostic_tab_icons.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .tabs
+                            .get_or_insert_default()
+                            .diagnostic_tab_icons = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            // Allow displaying zero counts when no diagnostics are present
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Zero Diagnostic Counts",
+                description:
+                    "Display zero (0) counts for errors and warnings when a file has no diagnostics.",
+                field: Box::new(SettingField {
+                    json_path: Some("tabs.diagnostic_tab_show_zero_counts"),
+                    pick: |settings_content| {
+                        settings_content
+                            .tabs
+                            .as_ref()?
+                            .diagnostic_tab_show_zero_counts
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .tabs
+                            .get_or_insert_default()
+                            .diagnostic_tab_show_zero_counts = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            // Provide a tri-state tint option for the filename text
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Tab Filename Tint",
+                description:
+                    "Choose how to tint the tab's filename text: off, git, diagnostics, prefer git, or prefer diagnostics.",
+                field: Box::new(SettingField {
+                    json_path: Some("tabs.tab_filename_tint"),
+                    pick: |settings_content| {
+                        settings_content.tabs.as_ref()?.tab_filename_tint.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .tabs
+                            .get_or_insert_default()
+                            .tab_filename_tint = value;
                     },
                 }),
                 metadata: None,
