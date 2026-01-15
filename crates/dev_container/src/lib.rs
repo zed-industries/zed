@@ -395,7 +395,7 @@ impl Display for DevContainerError {
 #[derive(PartialEq, Clone, Deserialize, Default, Action)]
 #[action(namespace = containers)]
 #[serde(deny_unknown_fields)]
-pub struct InitDevContainer;
+struct InitDevContainer;
 
 pub fn init(cx: &mut App) {
     cx.on_action(|_: &InitDevContainer, cx| {
@@ -409,22 +409,21 @@ pub fn init(cx: &mut App) {
 }
 
 #[derive(Clone)]
-pub struct TemplateEntry {
+struct TemplateEntry {
     template: DevContainerTemplate,
     options_selected: HashMap<String, String>,
     next_option: Option<TemplateOptionSelection>,
-    features: Vec<FeatureEntry>,
     features_selected: HashMap<String, DevContainerFeature>,
 }
 
 #[derive(Clone)]
-pub struct FeatureEntry {
+struct FeatureEntry {
     feature: DevContainerFeature,
     toggle_state: ToggleState,
 }
 
 #[derive(Clone)]
-pub struct TemplateOptionSelection {
+struct TemplateOptionSelection {
     option_name: String,
     navigable_options: Vec<(String, NavigableEntry)>,
 }
@@ -460,30 +459,30 @@ impl Debug for FeatureEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DevContainerState {
+enum DevContainerState {
     Initial,
     QueryingTemplates,
     TemplateQueryReturned(Result<Vec<TemplateEntry>, String>), // TODO, it's either a successful query manifest or an error
     QueryingFeatures(TemplateEntry),
     FeaturesQueryReturned(TemplateEntry),
     UserOptionsSpecifying(TemplateEntry),
-    ConfirmingWriteDevContainer,
+    ConfirmingWriteDevContainer(TemplateEntry),
 }
 
 #[derive(Debug, Clone)]
-pub enum DevContainerMessage {
+enum DevContainerMessage {
     SearchTemplates,
     TemplatesRetrieved(Vec<DevContainerTemplate>),
     TemplateSelected(TemplateEntry),
     TemplateOptionsSpecified(TemplateEntry),
     TemplateOptionsCompleted(TemplateEntry),
     FeaturesRetrieved(Vec<DevContainerFeature>),
-    FeaturesSelecting(FeatureEntry),
     FeaturesSelected(TemplateEntry),
+    ConfirmWriteDevContainer(TemplateEntry),
     GoBack,
 }
 
-pub struct DevContainerModal {
+struct DevContainerModal {
     workspace: WeakEntity<Workspace>,
     picker: Option<Entity<Picker<TemplatePickerDelegate>>>,
     features_picker: Option<Entity<Picker<FeaturePickerDelegate>>>,
@@ -845,7 +844,7 @@ impl PickerDelegate for FeaturePickerDelegate {
 }
 
 impl DevContainerModal {
-    pub fn new(workspace: WeakEntity<Workspace>, _window: &mut Window, cx: &mut App) -> Self {
+    fn new(workspace: WeakEntity<Workspace>, _window: &mut Window, cx: &mut App) -> Self {
         DevContainerModal {
             workspace,
             picker: None,
@@ -1005,6 +1004,71 @@ impl DevContainerModal {
         }
     }
 
+    fn render_confirming_write_dev_container(
+        &self,
+        template_entry: TemplateEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        Navigable::new(
+            div()
+                .child(
+                    div().track_focus(&self.focus_handle).child(
+                        ModalHeader::new().child(
+                            Headline::new("Create Dev Container").size(HeadlineSize::XSmall),
+                        ),
+                    ),
+                )
+                .child(ListSeparator)
+                .child(
+                    div()
+                        .track_focus(&self.confirm_entry.focus_handle)
+                        .on_action(cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                            this.accept_message(
+                                DevContainerMessage::ConfirmWriteDevContainer(
+                                    template_entry.clone(),
+                                ),
+                                window,
+                                cx,
+                            );
+                        }))
+                        .child(
+                            ListItem::new("li-search-containers")
+                                .inset(true)
+                                .spacing(ui::ListItemSpacing::Sparse)
+                                .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                .toggle_state(
+                                    self.confirm_entry.focus_handle.contains_focused(window, cx),
+                                )
+                                .child(Label::new("Create dev container from template")),
+                        ),
+                )
+                .child(ListSeparator)
+                .child(
+                    div()
+                        .track_focus(&self.back_entry.focus_handle)
+                        .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                            this.accept_message(DevContainerMessage::GoBack, window, cx);
+                        }))
+                        .child(
+                            ListItem::new("li-goback")
+                                .inset(true)
+                                .spacing(ui::ListItemSpacing::Sparse)
+                                .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                .toggle_state(
+                                    self.back_entry.focus_handle.contains_focused(window, cx),
+                                )
+                                .child(Label::new("Go Back")),
+                        ),
+                )
+                .into_any_element(),
+        )
+        .entry(self.confirm_entry.clone())
+        .entry(self.back_entry.clone())
+        .render(window, cx)
+        .into_any_element()
+    }
+
     fn render_querying_templates(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         Navigable::new(
             div()
@@ -1130,6 +1194,9 @@ impl StatefulModal for DevContainerModal {
             DevContainerState::FeaturesQueryReturned(_) => {
                 self.render_features_query_returned(window, cx)
             }
+            DevContainerState::ConfirmingWriteDevContainer(template_entry) => {
+                self.render_confirming_write_dev_container(template_entry, window, cx)
+            }
             _ => div().into_any_element(),
         }
     }
@@ -1168,7 +1235,6 @@ impl StatefulModal for DevContainerModal {
                         template: item,
                         options_selected: HashMap::new(),
                         next_option: None,
-                        features: Vec::new(),
                         features_selected: HashMap::new(),
                     })
                     .collect::<Vec<TemplateEntry>>();
@@ -1306,33 +1372,10 @@ impl StatefulModal for DevContainerModal {
                     None
                 }
             }
-            DevContainerMessage::FeaturesSelecting(feature_entry) => {
-                if let DevContainerState::FeaturesQueryReturned(mut template_entry) =
-                    self.state.clone()
-                {
-                    for feature in &mut template_entry.features {
-                        if feature == &feature_entry {
-                            *feature = feature_entry.clone();
-                            if feature_entry.toggle_state == ToggleState::Selected {
-                                template_entry.features_selected.insert(
-                                    feature_entry.feature.name.clone(),
-                                    feature_entry.feature.clone(),
-                                );
-                            } else {
-                                template_entry
-                                    .features_selected
-                                    .remove(&feature_entry.feature.name);
-                            }
-                        }
-                    }
-                    Some(DevContainerState::FeaturesQueryReturned(template_entry))
-                } else {
-                    None
-                }
-            }
             DevContainerMessage::FeaturesSelected(template_entry) => {
                 let workspace = self.workspace.upgrade().expect("TODO");
 
+                // let found_existing_configuration = false;
                 workspace.update(cx, |workspace, cx| {
                     let project = workspace.project().clone();
 
@@ -1352,12 +1395,24 @@ impl StatefulModal for DevContainerModal {
                                 .unwrap();
                             let (path_to_devcontainer_cli, found_in_path) =
                                 ensure_devcontainer_cli(&node_runtime).await.unwrap();
+
+                            // if dev_container_manifest_exists(
+                            //     &path_to_devcontainer_cli,
+                            //     found_in_path,
+                            //     &node_runtime,
+                            //     &root_path,
+                            // )
+                            // .await
+                            // {
+                            //     return;
+                            // }
+
                             let files = apply_dev_container_template(
-                                template_entry,
+                                &template_entry,
                                 &path_to_devcontainer_cli,
                                 found_in_path,
-                                node_runtime,
-                                root_path,
+                                &node_runtime,
+                                &root_path,
                             )
                             .await
                             .unwrap();
@@ -1387,6 +1442,10 @@ impl StatefulModal for DevContainerModal {
                 self.dismiss(&menu::Cancel, window, cx);
                 None
             }
+            DevContainerMessage::ConfirmWriteDevContainer(template_entry) => {
+                // TODO
+                None
+            }
         };
         if let Some(state) = new_state {
             self.state = state;
@@ -1409,7 +1468,7 @@ impl Render for DevContainerModal {
     }
 }
 
-pub trait StatefulModal: ModalView + EventEmitter<DismissEvent> + Render {
+trait StatefulModal: ModalView + EventEmitter<DismissEvent> + Render {
     type State;
     type Message;
 
@@ -1444,12 +1503,21 @@ pub trait StatefulModal: ModalView + EventEmitter<DismissEvent> + Render {
     }
 }
 
-async fn apply_dev_container_template(
-    template_entry: TemplateEntry,
+async fn dev_container_manifest_exists(
     path_to_cli: &PathBuf,
     found_in_path: bool,
-    node_runtime: NodeRuntime,
-    path: Arc<Path>,
+    node_runtime: &NodeRuntime,
+    path: &Arc<Path>,
+) -> bool {
+    true // TODO
+}
+
+async fn apply_dev_container_template(
+    template_entry: &TemplateEntry,
+    path_to_cli: &PathBuf,
+    found_in_path: bool,
+    node_runtime: &NodeRuntime,
+    path: &Arc<Path>,
 ) -> Result<DevContainerApply, DevContainerError> {
     let Ok(node_runtime_path) = node_runtime.binary_path().await else {
         log::error!("Unable to find node runtime path");
@@ -1490,7 +1558,7 @@ async fn apply_dev_container_template(
     command.arg("--template-args");
     command.arg(serialized_options);
     command.arg("--features");
-    command.arg(template_features_to_json(template_entry.features_selected));
+    command.arg(template_features_to_json(&template_entry.features_selected));
     log::debug!("Running full devcontainer apply command: {:?}", command);
 
     match command.output().await {
@@ -1523,7 +1591,7 @@ async fn apply_dev_container_template(
     }
 }
 
-fn template_features_to_json(features_selected: HashMap<String, DevContainerFeature>) -> String {
+fn template_features_to_json(features_selected: &HashMap<String, DevContainerFeature>) -> String {
     let things = features_selected
         .iter()
         .map(|(_, v)| {
@@ -1545,7 +1613,7 @@ fn template_features_to_json(features_selected: HashMap<String, DevContainerFeat
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GithubTokenResponse {
+struct GithubTokenResponse {
     token: String,
 }
 
@@ -1567,22 +1635,22 @@ fn devcontainer_features_repository() -> &'static str {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ManifestLayer {
+struct ManifestLayer {
     digest: String,
 }
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct TemplateOptions {
+struct TemplateOptions {
     #[serde(rename = "type")]
-    pub option_type: String,
-    pub description: Option<String>,
-    pub proposals: Option<Vec<String>>,
+    option_type: String,
+    description: Option<String>,
+    proposals: Option<Vec<String>>,
     #[serde(rename = "enum")]
-    pub enum_values: Option<Vec<String>>,
+    enum_values: Option<Vec<String>>,
     // Different repositories surface "default: 'true'" or "default: true",
     // so we need to be flexible in deserializing
     #[serde(deserialize_with = "deserialize_string_or_bool")]
-    pub default: String,
+    default: String,
 }
 
 fn deserialize_string_or_bool<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -1606,7 +1674,7 @@ where
 
 impl TemplateOptions {
     // TODO put this under test
-    pub fn possible_values(&self) -> Vec<String> {
+    fn possible_values(&self) -> Vec<String> {
         match self.option_type.as_str() {
             "string" => self
                 .enum_values
@@ -1628,22 +1696,21 @@ impl TemplateOptions {
 // https://distribution.github.io/distribution/spec/api/#pulling-an-image-manifest
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DockerManifestsResponse {
+struct DockerManifestsResponse {
     layers: Vec<ManifestLayer>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct DevContainerFeature {
-    pub id: String,
-    pub version: String,
-    pub name: String,
-    pub options: Option<HashMap<String, TemplateOptions>>,
-    pub source_repository: Option<String>,
+struct DevContainerFeature {
+    id: String,
+    version: String,
+    name: String,
+    source_repository: Option<String>,
 }
 
 impl DevContainerFeature {
-    pub fn major_version(&self) -> String {
+    fn major_version(&self) -> String {
         let Some(mv) = self.version.get(..1) else {
             return "".to_string();
         };
@@ -1653,27 +1720,27 @@ impl DevContainerFeature {
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct DevContainerTemplate {
-    pub id: String,
-    pub name: String,
-    pub options: Option<HashMap<String, TemplateOptions>>,
-    pub source_repository: Option<String>,
+struct DevContainerTemplate {
+    id: String,
+    name: String,
+    options: Option<HashMap<String, TemplateOptions>>,
+    source_repository: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DevContainerFeaturesResponse {
-    pub features: Vec<DevContainerFeature>,
+struct DevContainerFeaturesResponse {
+    features: Vec<DevContainerFeature>,
 }
 
 // https://ghcr.io/v2/devcontainers/templates/blobs/sha256:035e9c9fd9bd61f6d3965fa4bf11f3ddfd2490a8cf324f152c13cc3724d67d09
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DevContainerTemplatesResponse {
-    pub templates: Vec<DevContainerTemplate>,
+struct DevContainerTemplatesResponse {
+    templates: Vec<DevContainerTemplate>,
 }
 
-pub async fn get_templates(
+async fn get_templates(
     client: Arc<dyn HttpClient>,
 ) -> Result<DevContainerTemplatesResponse, String> {
     let token = get_ghcr_token(&client).await?;
@@ -1692,9 +1759,7 @@ pub async fn get_templates(
     Ok(template_response)
 }
 
-pub async fn get_features(
-    client: Arc<dyn HttpClient>,
-) -> Result<DevContainerFeaturesResponse, String> {
+async fn get_features(client: Arc<dyn HttpClient>) -> Result<DevContainerFeaturesResponse, String> {
     let token = get_ghcr_token(&client).await?;
     let manifest = get_latest_feature_manifest(&token.token, &client).await?;
 
@@ -1717,7 +1782,7 @@ pub async fn get_features(
 // As opposed to "application/vnd.devcontainers.collection.layer.v1+json" for the list of templates
 // Get the content (sent as a tarball) for the layer, e.g. https://ghcr.io/v2/devcontainers/templates/alpine/blobs/sha256:723fb0b5fc6eedd76957710cd45b287ef31362f900ea61190c1472910317bcb1
 
-pub async fn get_ghcr_token(client: &Arc<dyn HttpClient>) -> Result<GithubTokenResponse, String> {
+async fn get_ghcr_token(client: &Arc<dyn HttpClient>) -> Result<GithubTokenResponse, String> {
     let url = format!(
         "{}/token?service=ghcr.io&scope=repository:{}:pull",
         ghcr_url(),
@@ -1726,7 +1791,7 @@ pub async fn get_ghcr_token(client: &Arc<dyn HttpClient>) -> Result<GithubTokenR
     get_deserialized_response("", &url, client).await
 }
 
-pub async fn get_latest_feature_manifest(
+async fn get_latest_feature_manifest(
     token: &str,
     client: &Arc<dyn HttpClient>,
 ) -> Result<DockerManifestsResponse, String> {
@@ -1738,7 +1803,7 @@ pub async fn get_latest_feature_manifest(
     get_deserialized_response(token, &url, client).await
 }
 
-pub async fn get_latest_manifest(
+async fn get_latest_manifest(
     token: &str,
     client: &Arc<dyn HttpClient>,
 ) -> Result<DockerManifestsResponse, String> {
@@ -1750,7 +1815,7 @@ pub async fn get_latest_manifest(
     get_deserialized_response(token, &url, client).await
 }
 
-pub async fn get_devcontainer_features(
+async fn get_devcontainer_features(
     token: &str,
     blob_digest: &str,
     client: &Arc<dyn HttpClient>,
@@ -1764,7 +1829,7 @@ pub async fn get_devcontainer_features(
     get_deserialized_response(token, &url, client).await
 }
 
-pub async fn get_devcontainer_templates(
+async fn get_devcontainer_templates(
     token: &str,
     blob_digest: &str,
     client: &Arc<dyn HttpClient>,
@@ -1778,7 +1843,7 @@ pub async fn get_devcontainer_templates(
     get_deserialized_response(token, &url, client).await
 }
 
-pub async fn get_deserialized_response<T>(
+async fn get_deserialized_response<T>(
     token: &str,
     url: &str,
     client: &Arc<dyn HttpClient>,
