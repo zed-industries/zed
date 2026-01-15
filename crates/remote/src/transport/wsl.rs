@@ -42,21 +42,6 @@ impl From<settings::WslConnection> for WslConnectionOptions {
     }
 }
 
-impl WslConnectionOptions {
-    /// Converts a POSIX path from WSL to a Windows UNC path.
-    ///
-    /// For example, `/home/user/project` with distro "Ubuntu" becomes
-    /// `\\wsl.localhost\Ubuntu\home\user\project`
-    pub fn to_unc_path(&self, posix_path: &Path) -> PathBuf {
-        let path_str = posix_path.to_string_lossy();
-        let path_without_leading_slash = path_str.strip_prefix('/').unwrap_or(&path_str);
-        PathBuf::from(format!(
-            "\\\\wsl.localhost\\{}\\{}",
-            self.distro_name,
-            path_without_leading_slash.replace('/', "\\")
-        ))
-    }
-}
 
 #[derive(Debug)]
 pub(crate) struct WslRemoteConnection {
@@ -566,6 +551,19 @@ async fn windows_path_to_wsl_path_impl(
 ) -> Result<String> {
     let source = sanitize_path(source).await?;
     run_wsl_command_with_output_impl(options, "wslpath", &["-u", &source]).await
+}
+
+/// Converts a WSL/POSIX path to a Windows path using `wslpath -w`.
+///
+/// For example, `/home/user/project` becomes `\\wsl.localhost\Ubuntu\home\user\project`
+pub async fn wsl_path_to_windows_path(
+    options: &WslConnectionOptions,
+    wsl_path: &Path,
+) -> Result<PathBuf> {
+    let wsl_path_str = wsl_path.to_string_lossy();
+    let windows_path =
+        run_wsl_command_with_output_impl(options, "wslpath", &["-w", &wsl_path_str]).await?;
+    Ok(PathBuf::from(windows_path))
 }
 
 async fn run_wsl_command_impl(
