@@ -368,16 +368,10 @@ impl MessageEditor {
     fn validate_slash_commands(
         text: &str,
         available_commands: &[acp::AvailableCommand],
-        user_commands: &collections::HashMap<String, user_slash_command::UserSlashCommand>,
         agent_name: &str,
     ) -> Result<()> {
         if let Some(parsed_command) = SlashCommandCompletion::try_parse(text, 0) {
             if let Some(command_name) = parsed_command.command {
-                // Check if this is a user-defined slash command
-                if user_slash_command::has_command(&command_name, user_commands) {
-                    return Ok(());
-                }
-
                 // Check if this command is in the list of available commands from the server
                 let is_supported = available_commands
                     .iter()
@@ -404,44 +398,6 @@ impl MessageEditor {
         Ok(())
     }
 
-    /// Resolves user commands, either from cache or by preparing for async loading.
-    /// Returns a tuple of (cached_commands, fs, worktree_roots).
-    fn prepare_user_command_resolution(
-        &self,
-        cached_user_commands: Option<
-            collections::HashMap<String, user_slash_command::UserSlashCommand>,
-        >,
-        cx: &gpui::App,
-    ) -> (
-        Option<collections::HashMap<String, user_slash_command::UserSlashCommand>>,
-        Option<Arc<dyn fs::Fs>>,
-        Vec<std::path::PathBuf>,
-    ) {
-        if let Some(cached) = cached_user_commands {
-            return (Some(cached), None, Vec::new());
-        }
-
-        if !cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-            return (None, None, Vec::new());
-        }
-
-        let workspace = self.workspace.upgrade();
-        let fs = workspace
-            .as_ref()
-            .map(|w| w.read(cx).project().read(cx).fs().clone());
-        let roots: Vec<std::path::PathBuf> = workspace
-            .map(|workspace| {
-                workspace
-                    .read(cx)
-                    .visible_worktrees(cx)
-                    .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        (None, fs, roots)
-    }
-
     pub fn contents(
         &self,
         full_mention_content: bool,
@@ -453,8 +409,26 @@ impl MessageEditor {
         let text = self.editor.read(cx).text(cx);
         let available_commands = self.available_commands.borrow().clone();
 
-        let (cached_commands, fs, worktree_roots) =
-            self.prepare_user_command_resolution(cached_user_commands, cx);
+        let (cached_commands, fs, worktree_roots) = if let Some(cached) = cached_user_commands {
+            (Some(cached), None, Vec::new())
+        } else if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+            let workspace = self.workspace.upgrade();
+            let fs = workspace
+                .as_ref()
+                .map(|w| w.read(cx).project().read(cx).fs().clone());
+            let roots: Vec<std::path::PathBuf> = workspace
+                .map(|workspace| {
+                    workspace
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                        .collect()
+                })
+                .unwrap_or_default();
+            (None, fs, roots)
+        } else {
+            (None, None, Vec::new())
+        };
 
         let agent_name = self.agent_name.clone();
 
@@ -489,12 +463,8 @@ impl MessageEditor {
                 Ok(None) => {} // Not a user command, continue with normal processing
             }
 
-            if let Err(err) = Self::validate_slash_commands(
-                &text,
-                &available_commands,
-                &user_commands,
-                &agent_name,
-            ) {
+            if let Err(err) = Self::validate_slash_commands(&text, &available_commands, &agent_name)
+            {
                 return Err(err);
             }
 

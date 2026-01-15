@@ -695,11 +695,6 @@ pub fn try_expand_from_commands(
     Ok(Some(expanded))
 }
 
-/// Checks if a command name exists in the user commands.
-pub fn has_command(name: &str, commands: &HashMap<String, UserSlashCommand>) -> bool {
-    commands.contains_key(name)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
