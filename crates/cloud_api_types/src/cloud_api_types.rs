@@ -32,7 +32,6 @@ pub struct PlanInfo {
     pub subscription_period: Option<SubscriptionPeriod>,
     pub usage: cloud_llm_client::CurrentUsage,
     pub trial_started_at: Option<Timestamp>,
-    pub is_usage_based_billing_enabled: bool,
     pub is_account_too_young: bool,
     pub has_overdue_invoices: bool,
 }

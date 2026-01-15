@@ -361,7 +361,6 @@ pub struct ListModelsResponse {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct CurrentUsage {
-    pub model_requests: UsageData,
     pub edit_predictions: UsageData,
 }
 
