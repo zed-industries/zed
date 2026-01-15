@@ -380,14 +380,17 @@ actions!(
     ]
 );
 
-actions!(
-    go_to_line,
-    [
-        /// Toggles the go to line dialog.
-        #[action(name = "Toggle")]
-        ToggleGoToLine
-    ]
-);
+/// Toggles the go to line dialog.
+/// When `relative` is true, the line number entered is interpreted as an offset
+/// from the current cursor position (positive for down, negative for up).
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = go_to_line, name = "Toggle")]
+#[serde(deny_unknown_fields)]
+pub struct ToggleGoToLine {
+    /// If true, interpret the input as a relative offset from the current line.
+    #[serde(default)]
+    pub relative: bool,
+}
 
 actions!(
     editor,

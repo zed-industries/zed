@@ -235,7 +235,7 @@ impl Render for CursorPosition {
                                     && let Some((_, buffer, _)) = editor.read(cx).active_excerpt(cx)
                                 {
                                     workspace.toggle_modal(window, cx, |window, cx| {
-                                        crate::GoToLine::new(editor, buffer, window, cx)
+                                        crate::GoToLine::new(editor, buffer, false, window, cx)
                                     })
                                 }
                             });
@@ -244,13 +244,13 @@ impl Render for CursorPosition {
                     .tooltip(move |_window, cx| match context.as_ref() {
                         Some(context) => Tooltip::for_action_in(
                             "Go to Line/Column",
-                            &editor::actions::ToggleGoToLine,
+                            &editor::actions::ToggleGoToLine::default(),
                             context,
                             cx,
                         ),
                         None => Tooltip::for_action(
                             "Go to Line/Column",
-                            &editor::actions::ToggleGoToLine,
+                            &editor::actions::ToggleGoToLine::default(),
                             cx,
                         ),
                     }),

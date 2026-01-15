@@ -289,7 +289,7 @@ impl Render for QuickActionBar {
                             })
                             .separator()
                             .action("Go to Symbol", Box::new(ToggleOutline))
-                            .action("Go to Line/Column", Box::new(ToggleGoToLine))
+                            .action("Go to Line/Column", Box::new(ToggleGoToLine::default()))
                             .separator()
                             .action("Next Problem", Box::new(GoToDiagnostic::default()))
                             .action(

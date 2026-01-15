@@ -242,7 +242,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     "Go to Symbol in Editor...",
                     zed_actions::outline::ToggleOutline,
                 ),
-                MenuItem::action("Go to Line/Column...", editor::actions::ToggleGoToLine),
+                MenuItem::action("Go to Line/Column...", editor::actions::ToggleGoToLine::default()),
                 MenuItem::separator(),
                 MenuItem::action("Go to Definition", editor::actions::GoToDefinition),
                 MenuItem::action("Go to Declaration", editor::actions::GoToDeclaration),
