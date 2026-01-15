@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euxo pipefail
+set -euo pipefail
 
 # Function for displaying help info
 help_info() {
@@ -266,7 +266,7 @@ trap 'rm -rf "$workdir"' EXIT
 # Create directory structure in workdir
 pkg_root="${workdir}/pkg"
 mkdir -p "${pkg_root}/usr/bin"
-mkdir -p "${pkg_root}/usr/libexec/${binary_name}"
+mkdir -p "${pkg_root}/usr/libexec"
 mkdir -p "${pkg_root}/usr/share/applications"
 mkdir -p "${pkg_root}/usr/share/icons/hicolor/512x512/apps"
 mkdir -p "${pkg_root}/usr/share/icons/hicolor/1024x1024/apps"
@@ -277,8 +277,8 @@ mkdir -p "${pkg_root}/usr/share/doc/${doc_dir_name}"
 cp "${target_dir}/release/cli" "${pkg_root}/usr/bin/${binary_name}"
 chmod 755 "${pkg_root}/usr/bin/${binary_name}"
 
-cp "${target_dir}/release/zed" "${pkg_root}/usr/libexec/${binary_name}/zed-editor"
-chmod 755 "${pkg_root}/usr/libexec/${binary_name}/zed-editor"
+cp "${target_dir}/release/zed" "${pkg_root}/usr/libexec/zed-editor"
+chmod 755 "${pkg_root}/usr/libexec/zed-editor"
 
 # Copy desktop file
 cp "$desktop_file" "${pkg_root}/usr/share/applications/${desktop_name}"
