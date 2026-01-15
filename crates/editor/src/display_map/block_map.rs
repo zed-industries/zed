@@ -1125,13 +1125,17 @@ impl BlockMap {
                 let mut current_boundary = *boundary;
                 let mut current_range = range.clone();
 
-                let use_start = iter
+                if current_boundary == row_mapping.source_excerpt_end {
+                    break;
+                }
+
+                let align_at_start = iter
                     .peek()
                     .is_some_and(|(_, next_range)| next_range.end <= current_range.end);
                 let (new_delta, spacer) = determine_spacer(
                     Point::new(current_boundary.0, 0),
                     Point::new(
-                        if use_start {
+                        if align_at_start {
                             current_range.start.0
                         } else {
                             current_range.end.0
@@ -1152,6 +1156,10 @@ impl BlockMap {
                     ));
                 }
 
+                if iter.peek().is_none() && align_at_start {
+                    continue;
+                }
+
                 while iter
                     .peek()
                     .is_some_and(|(_, next_range)| next_range.end <= current_range.end)
@@ -1159,6 +1167,10 @@ impl BlockMap {
                     let (b, r) = iter.next().unwrap();
                     current_boundary = *b;
                     current_range = r.clone();
+                }
+
+                if current_boundary == row_mapping.source_excerpt_end {
+                    break;
                 }
 
                 let (new_delta, spacer) = determine_spacer(
@@ -1179,21 +1191,18 @@ impl BlockMap {
                 }
             }
 
-            let Some((last_boundary, last_range)) = boundaries.last() else {
-                continue;
-            };
-
-            let our_next_excerpt_boundary = our_buffer
-                .excerpt_boundaries_in_range(Point::new(last_boundary.0, 0)..)
-                .skip_while(|boundary| boundary.row == *last_boundary)
-                .next()
-                .map(|boundary| boundary.row);
-            if our_next_excerpt_boundary == Some(*last_boundary + 1)
-                || *last_boundary == our_buffer.max_row()
-            {
+            let (last_boundary, _last_range) = boundaries.last().cloned().unwrap();
+            if last_boundary == row_mapping.source_excerpt_end {
+                let companion_point = Point::new(
+                    row_mapping.target_excerpt_end.0 - 1,
+                    companion_buffer.line_len(MultiBufferRow(row_mapping.target_excerpt_end.0 - 1)),
+                );
                 let (_new_delta, spacer) = determine_spacer(
-                    Point::new(last_boundary.0, our_buffer.line_len(*last_boundary)),
-                    Point::new(last_range.end.0, companion_buffer.line_len(last_range.end)),
+                    Point::new(
+                        row_mapping.source_excerpt_end.0 - 1,
+                        our_buffer.line_len(MultiBufferRow(row_mapping.source_excerpt_end.0 - 1)),
+                    ),
+                    companion_point,
                     delta,
                 );
                 if let Some((wrap_row, height)) = spacer {

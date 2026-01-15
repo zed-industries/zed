@@ -389,9 +389,16 @@ impl BufferDiffSnapshot {
 
         let row_boundaries = rows.start..=rows.end;
         row_boundaries.map(move |row_boundary| {
-            let target_point = Point::new(row_boundary, 0);
-            let target = buffer.anchor_before(target_point);
             // Find the last hunk that starts before the target.
+            let buffer_max_point = buffer.max_point();
+            let (target_point, target) =
+                if row_boundary == buffer_max_point.row + 1 && buffer_max_point.column > 0 {
+                    (buffer_max_point, buffer.anchor_before(buffer_max_point))
+                } else {
+                    let p = Point::new(row_boundary, 0);
+                    (p, buffer.anchor_before(p))
+                };
+
             cursor.seek(&target, Bias::Left);
 
             if cursor
@@ -401,7 +408,7 @@ impl BufferDiffSnapshot {
                 cursor.prev();
             }
 
-            if let Some(hunk) = cursor.item()
+            let (start, end) = if let Some(hunk) = cursor.item()
                 && hunk.buffer_range.start.cmp(&target, buffer).is_le()
             {
                 // Found a hunk that starts before the target.
@@ -430,12 +437,12 @@ impl BufferDiffSnapshot {
                         + patch_old_to_new_with_bias(&patch, relative_target_point, Bias::Left);
                     let end = base
                         + patch_old_to_new_with_bias(&patch, relative_target_point, Bias::Right);
-                    start.row..end.row
+                    (start, end)
                 } else {
                     // Target boundary lies inside the added range of a hunk.
                     let start = hunk.diff_base_byte_range.start.to_point(self.base_text());
                     let end = hunk.diff_base_byte_range.end.to_point(self.base_text());
-                    start.row..end.row
+                    (start, end)
                 }
             } else {
                 // Target is before the added region for the first hunk.
@@ -459,6 +466,14 @@ impl BufferDiffSnapshot {
 
                 let start = patch_old_to_new_with_bias(&patch, target_point, Bias::Left);
                 let end = patch_old_to_new_with_bias(&patch, target_point, Bias::Right);
+                (start, end)
+            };
+
+            if start == end && end.column > 0 {
+                start.row + 1..end.row + 1
+            } else if end.column > 0 {
+                start.row..end.row + 1
+            } else {
                 start.row..end.row
             }
         })
@@ -473,8 +488,15 @@ impl BufferDiffSnapshot {
 
         let row_boundaries = rows.start..=rows.end;
         row_boundaries.map(move |row_boundary| {
-            let target_point = Point::new(row_boundary, 0);
-            let target = self.base_text().point_to_offset(target_point);
+            let base_max_point = self.base_text().max_point();
+            let (target_point, target) =
+                if row_boundary == base_max_point.row + 1 && base_max_point.column > 0 {
+                    (base_max_point, self.base_text().len())
+                } else {
+                    let p = Point::new(row_boundary, 0);
+                    (p, self.base_text().point_to_offset(p))
+                };
+
             cursor.seek(&target, Bias::Left);
 
             if cursor
@@ -484,7 +506,7 @@ impl BufferDiffSnapshot {
                 cursor.prev();
             }
 
-            if let Some(hunk) = cursor.item()
+            let (start, end) = if let Some(hunk) = cursor.item()
                 && hunk.diff_base_byte_range.start <= target
             {
                 // Found a hunk that starts before the target.
@@ -511,11 +533,11 @@ impl BufferDiffSnapshot {
                         + patch_old_to_new_with_bias(&patch, relative_target_point, Bias::Left);
                     let end = base
                         + patch_old_to_new_with_bias(&patch, relative_target_point, Bias::Right);
-                    start.row..end.row
+                    (start, end)
                 } else {
                     let buffer_start = hunk.buffer_range.start.to_point(buffer);
                     let buffer_end = hunk.buffer_range.end.to_point(buffer);
-                    buffer_start.row..buffer_end.row
+                    (buffer_start, buffer_end)
                 }
             } else {
                 debug_assert!(
@@ -539,6 +561,14 @@ impl BufferDiffSnapshot {
 
                 let start = patch_old_to_new_with_bias(&patch, target_point, Bias::Left);
                 let end = patch_old_to_new_with_bias(&patch, target_point, Bias::Right);
+                (start, end)
+            };
+
+            if start == end && end.column > 0 {
+                start.row + 1..end.row + 1
+            } else if end.column > 0 {
+                start.row..end.row + 1
+            } else {
                 start.row..end.row
             }
         })
@@ -2820,6 +2850,70 @@ mod tests {
             buffer_rows,
             vec![0..2, 3..6, 3..6, 3..6, 7..7, 8..8, 8..8, 8..8]
         );
+    }
+
+    #[gpui::test]
+    async fn test_row_translation_past_end_no_trailing_newline(cx: &mut gpui::TestAppContext) {
+        {
+            let text = "aaa\nbbb";
+            let buffer = Buffer::new(
+                ReplicaId::LOCAL,
+                BufferId::new(1).unwrap(),
+                text.to_string(),
+            );
+            let diff = BufferDiffSnapshot::new_sync(buffer.clone(), text.to_string(), cx);
+
+            let base_rows: Vec<_> = diff.rows_to_base_text_rows(0..2, &buffer).collect();
+            assert_eq!(base_rows, vec![0..0, 1..1, 2..2]);
+
+            let buffer_rows: Vec<_> = diff.base_text_rows_to_rows(0..2, &buffer).collect();
+            assert_eq!(buffer_rows, vec![0..0, 1..1, 2..2]);
+        }
+
+        {
+            let base = "aaa";
+            let text = "aaa\nNEW";
+            let buffer = Buffer::new(
+                ReplicaId::LOCAL,
+                BufferId::new(2).unwrap(),
+                text.to_string(),
+            );
+            let diff = BufferDiffSnapshot::new_sync(buffer.clone(), base.to_string(), cx);
+
+            let base_rows: Vec<_> = diff.rows_to_base_text_rows(0..2, &buffer).collect();
+            assert_eq!(base_rows, vec![0..1, 0..1, 0..1]);
+        }
+
+        {
+            let base = "aaa\nbbb\nccc";
+            let text = "XXX\nbbb\nccc";
+            let buffer = Buffer::new(
+                ReplicaId::LOCAL,
+                BufferId::new(3).unwrap(),
+                text.to_string(),
+            );
+            let diff = BufferDiffSnapshot::new_sync(buffer.clone(), base.to_string(), cx);
+
+            let base_rows: Vec<_> = diff.rows_to_base_text_rows(1..3, &buffer).collect();
+            assert_eq!(base_rows, vec![0..1, 2..2, 3..3]);
+
+            let buffer_rows: Vec<_> = diff.base_text_rows_to_rows(1..3, &buffer).collect();
+            assert_eq!(buffer_rows, vec![0..1, 2..2, 3..3]);
+        }
+
+        {
+            let base = "aaa\nbbb\nccc";
+            let text = "aaa";
+            let buffer = Buffer::new(
+                ReplicaId::LOCAL,
+                BufferId::new(4).unwrap(),
+                text.to_string(),
+            );
+            let diff = BufferDiffSnapshot::new_sync(buffer.clone(), base.to_string(), cx);
+
+            let buffer_rows: Vec<_> = diff.base_text_rows_to_rows(0..3, &buffer).collect();
+            assert_eq!(buffer_rows, vec![0..1, 0..1, 0..1, 0..1]);
+        }
     }
 
     #[gpui::test]

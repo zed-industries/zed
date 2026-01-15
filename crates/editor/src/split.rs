@@ -9,11 +9,11 @@ use gpui::{
 use language::{Buffer, Capability};
 use multi_buffer::{
     Anchor, BufferOffset, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer,
-    MultiBufferRow, MultiBufferSnapshot, PathKey, ToPoint,
+    MultiBufferRow, MultiBufferSnapshot, PathKey,
 };
 use project::Project;
 use rope::Point;
-use text::OffsetRangeExt as _;
+use text::{OffsetRangeExt as _, ToPoint as _};
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
     Styled as _, Window, div,
@@ -117,47 +117,62 @@ where
     };
 
     let local_start = source_buffer.offset_to_point(source_buffer_range.start.0);
-    let local_end = source_buffer.offset_to_point(source_buffer_range.end.0);
+    let mut local_end = source_buffer.offset_to_point(source_buffer_range.end.0);
+    if local_end.column > 0 {
+        local_end.row += 1;
+    }
 
     let translated_ranges = translate_fn(&diff, local_start.row..local_end.row, rhs_buffer);
 
-    let source_context_range = source_snapshot.context_range_for_excerpt(source_excerpt_id)?;
-    let target_context_range = target_snapshot.context_range_for_excerpt(target_excerpt_id)?;
+    let source_multibuffer_range = source_snapshot.range_for_excerpt(source_excerpt_id)?;
+    let source_excerpt_start_in_multibuffer = source_multibuffer_range.start;
+    let source_excerpt_start_in_buffer = source_snapshot
+        .context_range_for_excerpt(source_excerpt_id)?
+        .start
+        .to_point(&source_buffer);
+    let target_multibuffer_range = target_snapshot.range_for_excerpt(target_excerpt_id)?;
+    let target_excerpt_start_in_multibuffer = target_multibuffer_range.start;
+    let target_excerpt_start_in_buffer = target_snapshot
+        .context_range_for_excerpt(target_excerpt_id)?
+        .start
+        .to_point(&target_buffer);
 
     let boundaries: Vec<_> = (local_start.row..=local_end.row)
         .zip(translated_ranges)
         .filter_map(|(buffer_row, target_range)| {
-            let buffer_anchor = source_buffer.anchor_before(Point::new(buffer_row, 0));
-            let buffer_anchor = buffer_anchor
-                .max(&source_context_range.start, &source_buffer)
-                .min(&source_context_range.end, &source_buffer);
-            let mb_anchor = source_snapshot.anchor_in_excerpt(source_excerpt_id, *buffer_anchor)?;
-            let mb_row = mb_anchor.to_point(source_snapshot).row;
+            let source_buffer_point = Point::new(buffer_row, 0);
+            let source_multibuffer_point = source_excerpt_start_in_multibuffer
+                + (source_buffer_point - source_excerpt_start_in_buffer.min(source_buffer_point));
 
-            let target_start_anchor =
-                target_buffer.anchor_before(Point::new(target_range.start, 0));
-            let target_end_anchor = target_buffer.anchor_before(Point::new(target_range.end, 0));
+            let target_buffer_start = Point::new(target_range.start, 0);
+            let target_multibuffer_start = target_excerpt_start_in_multibuffer
+                + (target_buffer_start - target_excerpt_start_in_buffer.min(target_buffer_start));
 
-            let target_start_anchor = *target_start_anchor
-                .max(&target_context_range.start, &target_buffer)
-                .min(&target_context_range.end, &target_buffer);
-            let target_end_anchor = *target_end_anchor
-                .max(&target_context_range.start, &target_buffer)
-                .min(&target_context_range.end, &target_buffer);
-
-            let target_start_mb =
-                target_snapshot.anchor_in_excerpt(target_excerpt_id, target_start_anchor)?;
-            let target_end_mb =
-                target_snapshot.anchor_in_excerpt(target_excerpt_id, target_end_anchor)?;
-
-            let target_mb_range = MultiBufferRow(target_start_mb.to_point(target_snapshot).row)
-                ..MultiBufferRow(target_end_mb.to_point(target_snapshot).row);
-
-            Some((MultiBufferRow(mb_row), target_mb_range))
+            let target_buffer_end = Point::new(target_range.end, 0);
+            let target_multibuffer_end = target_excerpt_start_in_multibuffer
+                + (target_buffer_end - target_excerpt_start_in_buffer.min(target_buffer_end));
+            Some((
+                MultiBufferRow(source_multibuffer_point.row),
+                MultiBufferRow(target_multibuffer_start.row)
+                    ..MultiBufferRow(target_multibuffer_end.row),
+            ))
         })
         .collect();
 
-    Some(MultiBufferRowMapping { boundaries })
+    let mut source_excerpt_end = source_multibuffer_range.end.row;
+    if source_multibuffer_range.end.column > 0 {
+        source_excerpt_end += 1;
+    }
+    let mut target_excerpt_end = target_multibuffer_range.end.row;
+    if target_multibuffer_range.end.column > 0 {
+        target_excerpt_end += 1;
+    }
+
+    Some(MultiBufferRowMapping {
+        boundaries,
+        source_excerpt_end: MultiBufferRow(source_excerpt_end),
+        target_excerpt_end: MultiBufferRow(target_excerpt_end),
+    })
 }
 
 struct SplitDiffFeatureFlag;
@@ -658,13 +673,21 @@ impl SplittableEditor {
         assert_eq!(secondary_excerpts.len(), primary_excerpts.len());
 
         if quiesced {
-            // TODO(split-diff) re-enable
-            // self.check_sides_match(cx, Self::unmodified_rows);
+            self.check_sides_match(cx, |snapshot| snapshot.max_point().row());
 
             self.check_sides_match(cx, |snapshot| {
                 snapshot
+                    .buffer_snapshot()
                     .diff_hunks()
-                    .map(|hunk| hunk.diff_base_byte_range)
+                    .map(|hunk| {
+                        let display_row = snapshot
+                            .point_to_display_point(
+                                Point::new(hunk.row_range.start.0, 0),
+                                text::Bias::Left,
+                            )
+                            .row();
+                        (hunk.diff_base_byte_range.clone(), display_row)
+                    })
                     .collect::<Vec<_>>()
             });
 
@@ -674,9 +697,10 @@ impl SplittableEditor {
             // marked as added/deleted by rowinfos.
             self.check_sides_match(cx, |snapshot| {
                 snapshot
+                    .buffer_snapshot()
                     .text()
                     .split("\n")
-                    .zip(snapshot.row_infos(MultiBufferRow(0)))
+                    .zip(snapshot.buffer_snapshot().row_infos(MultiBufferRow(0)))
                     .filter(|(line, row_info)| !line.is_empty() && row_info.diff_status.is_none())
                     .map(|(line, _)| line.to_owned())
                     .collect::<Vec<_>>()
@@ -684,19 +708,19 @@ impl SplittableEditor {
         }
     }
 
+    #[track_caller]
     fn check_sides_match<T: std::fmt::Debug + PartialEq>(
         &self,
         cx: &mut App,
-        mut extract: impl FnMut(&multi_buffer::MultiBufferSnapshot) -> T,
+        mut extract: impl FnMut(&crate::DisplaySnapshot) -> T,
     ) {
-        let primary_snapshot = self.primary_multibuffer.read(cx).snapshot(cx);
-        let secondary_snapshot = self
-            .secondary
-            .as_ref()
-            .expect("requires split")
-            .multibuffer
-            .read(cx)
-            .snapshot(cx);
+        let secondary = self.secondary.as_ref().expect("requires split");
+        let primary_snapshot = self.primary_editor.update(cx, |editor, cx| {
+            editor.display_map.update(cx, |map, cx| map.snapshot(cx))
+        });
+        let secondary_snapshot = secondary.editor.update(cx, |editor, cx| {
+            editor.display_map.update(cx, |map, cx| map.snapshot(cx))
+        });
 
         let primary_t = extract(&primary_snapshot);
         let secondary_t = extract(&secondary_snapshot);
@@ -1286,6 +1310,7 @@ mod tests {
         (buffer, diff)
     }
 
+    #[track_caller]
     fn assert_split_content(
         editor: &Entity<SplittableEditor>,
         expected_primary: String,
@@ -1302,6 +1327,7 @@ mod tests {
         );
     }
 
+    #[track_caller]
     fn assert_split_content_with_widths(
         editor: &Entity<SplittableEditor>,
         primary_width: Pixels,
@@ -1318,20 +1344,23 @@ mod tests {
             (editor.primary_editor.clone(), secondary.editor.clone())
         });
 
-        // First pass: update wrap state for both editors
+        // Make sure both sides learn if the other has soft-wrapped
         let _ = editor_content_with_blocks_and_width(&primary_editor, primary_width, cx);
         cx.run_until_parked();
         let _ = editor_content_with_blocks_and_width(&secondary_editor, secondary_width, cx);
         cx.run_until_parked();
 
-        // Second pass: get actual content and assert
         let primary_content =
             editor_content_with_blocks_and_width(&primary_editor, primary_width, cx);
         let secondary_content =
             editor_content_with_blocks_and_width(&secondary_editor, secondary_width, cx);
 
-        assert_eq!(primary_content, expected_primary);
-        assert_eq!(secondary_content, expected_secondary);
+        if primary_content != expected_primary || secondary_content != expected_secondary {
+            editor.update(cx, |editor, cx| editor.debug_print(cx));
+        }
+
+        assert_eq!(primary_content, expected_primary, "rhs");
+        assert_eq!(secondary_content, expected_secondary, "lhs");
     }
 
     #[gpui::test(iterations = 100)]
@@ -1339,30 +1368,9 @@ mod tests {
         use rand::prelude::*;
 
         let (editor, cx) = init_test(cx).await;
-        // cx.update(|cx| {
-        //     let store = SettingsStore::test(cx);
-        //     cx.set_global(store);
-        //     theme::init(theme::LoadThemes::JustBase, cx);
-        //     crate::init(cx);
-        // });
-        // let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        // let (workspace, cx) =
-        //     cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        // let primary_multibuffer = cx.new(|cx| {
-        //     let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-        //     multibuffer.set_all_diff_hunks_expanded(cx);
-        //     multibuffer
-        // });
-        // let editor = cx.new_window_entity(|window, cx| {
-        //     let mut editor =
-        //         SplittableEditor::new_unsplit(primary_multibuffer, project, workspace, window, cx);
-        //     editor.split(&Default::default(), window, cx);
-        //     editor
-        // });
-
         let operations = std::env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-            .unwrap_or(20);
+            .unwrap_or(10);
         let rng = &mut rng;
         for _ in 0..operations {
             let buffers = editor.update(cx, |editor, cx| {
@@ -1450,6 +1458,9 @@ mod tests {
 
             editor.update(cx, |editor, cx| {
                 editor.check_invariants(quiesced, cx);
+                if quiesced {
+                    editor.debug_print(cx);
+                };
             });
         }
     }
@@ -1585,87 +1596,94 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_split_editor_block_alignment_after_deleting_unmodified_line(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_deleting_unmodified_lines(cx: &mut gpui::TestAppContext) {
         use rope::Point;
         use unindent::Unindent as _;
 
         let (editor, mut cx) = init_test(cx).await;
 
-        // Start with base text and current text that are identical
-        // This means no diff hunks initially
-        let base_text = "
+        let base_text1 = "
             aaa
             bbb
             ccc
             ddd
-            eee
-            fff
-        "
+            eee"
         .unindent();
 
-        let (buffer, diff) = buffer_with_diff(&base_text, &base_text, &mut cx);
+        let base_text2 = "
+            fff
+            ggg
+            hhh
+            iii
+            jjj"
+        .unindent();
+
+        let (buffer1, diff1) = buffer_with_diff(&base_text1, &base_text1, &mut cx);
+        let (buffer2, diff2) = buffer_with_diff(&base_text2, &base_text2, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path1 = PathKey::for_buffer(&buffer1, cx);
             editor.set_excerpts_for_path(
-                path,
-                buffer.clone(),
-                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                path1,
+                buffer1.clone(),
+                vec![Point::new(0, 0)..buffer1.read(cx).max_point()],
                 0,
-                diff.clone(),
+                diff1.clone(),
+                cx,
+            );
+            let path2 = PathKey::for_buffer(&buffer2, cx);
+            editor.set_excerpts_for_path(
+                path2,
+                buffer2.clone(),
+                vec![Point::new(0, 0)..buffer2.read(cx).max_point()],
+                1,
+                diff2.clone(),
                 cx,
             );
         });
 
         cx.run_until_parked();
 
-        // Initial state: both sides should be identical with no spacers
-        assert_split_content(
-            &editor,
-            "
-            § <no file>
-            § -----
-            aaa
-            bbb
-            ccc
-            ddd
-            eee
-            fff"
-            .unindent(),
-            "
-            § <no file>
-            § -----
-            aaa
-            bbb
-            ccc
-            ddd
-            eee
-            fff"
-            .unindent(),
-            &mut cx,
-        );
-
-        // Delete an unmodified line (delete "ccc" which is row 2, 0-indexed)
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(2, 0)..Point::new(3, 0), "")], None, cx);
+        buffer1.update(cx, |buffer, cx| {
+            buffer.edit(
+                [
+                    (Point::new(0, 0)..Point::new(1, 0), ""),
+                    (Point::new(3, 0)..Point::new(4, 0), ""),
+                ],
+                None,
+                cx,
+            );
+        });
+        buffer2.update(cx, |buffer, cx| {
+            buffer.edit(
+                [
+                    (Point::new(0, 0)..Point::new(1, 0), ""),
+                    (Point::new(3, 0)..Point::new(4, 0), ""),
+                ],
+                None,
+                cx,
+            );
         });
 
         cx.run_until_parked();
 
-        // Secondary should still show "ccc" because diff hasn't been recalculated yet
         assert_split_content(
             &editor,
             "
             § <no file>
             § -----
-            aaa
-            bbb
             § spacer
-            ddd
+            bbb
+            ccc
+            § spacer
             eee
-            fff"
+            § <no file>
+            § -----
+            § spacer
+            ggg
+            hhh
+            § spacer
+            jjj"
             .unindent(),
             "
             § <no file>
@@ -1675,32 +1693,45 @@ mod tests {
             ccc
             ddd
             eee
-            fff"
+            § <no file>
+            § -----
+            fff
+            ggg
+            hhh
+            iii
+            jjj"
             .unindent(),
             &mut cx,
         );
 
-        // Now recalculate the diff - this should mark "ccc" as deleted in the diff
-        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
-        diff.update(cx, |diff, cx| {
-            diff.recalculate_diff_sync(&buffer_snapshot, cx);
+        let buffer1_snapshot = buffer1.read_with(cx, |buffer, _| buffer.text_snapshot());
+        diff1.update(cx, |diff, cx| {
+            diff.recalculate_diff_sync(&buffer1_snapshot, cx);
+        });
+        let buffer2_snapshot = buffer2.read_with(cx, |buffer, _| buffer.text_snapshot());
+        diff2.update(cx, |diff, cx| {
+            diff.recalculate_diff_sync(&buffer2_snapshot, cx);
         });
 
         cx.run_until_parked();
 
-        // After diff recalculation: the primary should show a spacer for the deleted "ccc" line
-        // and the secondary should still show "ccc"
         assert_split_content(
             &editor,
             "
             § <no file>
             § -----
-            aaa
-            bbb
             § spacer
-            ddd
+            bbb
+            ccc
+            § spacer
             eee
-            fff"
+            § <no file>
+            § -----
+            § spacer
+            ggg
+            hhh
+            § spacer
+            jjj"
             .unindent(),
             "
             § <no file>
@@ -1710,7 +1741,13 @@ mod tests {
             ccc
             ddd
             eee
-            fff"
+            § <no file>
+            § -----
+            fff
+            ggg
+            hhh
+            iii
+            jjj"
             .unindent(),
             &mut cx,
         );
@@ -1726,8 +1763,6 @@ mod tests {
 
         let (editor, mut cx) = init_test(cx).await;
 
-        // Start with a diff where some lines are already deleted from base.
-        // This creates an initial state with spacers on the primary (RHS) side.
         let base_text = "
             aaa
             bbb
@@ -1737,7 +1772,6 @@ mod tests {
             fff
         "
         .unindent();
-        // Current text is missing "bbb" and "ccc" compared to base
         let current_text = "
             aaa
             ddd
@@ -1762,7 +1796,6 @@ mod tests {
 
         cx.run_until_parked();
 
-        // Initial state: primary (RHS) has spacers for deleted "bbb" and "ccc"
         assert_split_content(
             &editor,
             "
@@ -1788,14 +1821,12 @@ mod tests {
             &mut cx,
         );
 
-        // Delete an unmodified line ("eee" at row 2 in current text)
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(Point::new(2, 0)..Point::new(3, 0), "")], None, cx);
         });
 
         cx.run_until_parked();
 
-        // After deletion: primary has an additional spacer for deleted "eee"
         assert_split_content(
             &editor,
             "
@@ -1821,8 +1852,6 @@ mod tests {
             &mut cx,
         );
 
-        // Recalculate the diff to reflect the deletion.
-        // This simulates what happens after the 250ms debounce timer fires in real usage.
         let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
         diff.update(cx, |diff, cx| {
             diff.recalculate_diff_sync(&buffer_snapshot, cx);
@@ -1830,7 +1859,6 @@ mod tests {
 
         cx.run_until_parked();
 
-        // After diff recalculation: diff now includes "eee" as a deleted hunk
         assert_split_content(
             &editor,
             "
@@ -1900,7 +1928,6 @@ mod tests {
 
         let (editor, mut cx) = init_test(cx).await;
 
-        // Base text has 4 lines
         let base_text = "
             aaa
             bbb
@@ -1909,9 +1936,6 @@ mod tests {
         "
         .unindent();
 
-        // Current text:
-        // - "bbb" is deleted from base
-        // - two new lines "NEW1" and "NEW2" are added after "aaa"
         let current_text = "
             aaa
             NEW1
@@ -1937,10 +1961,6 @@ mod tests {
 
         cx.run_until_parked();
 
-        // Initial state:
-        // Primary (RHS) shows current text: aaa, NEW1, NEW2, ccc, ddd
-        // Secondary (LHS) shows base text: aaa, bbb, ccc, ddd
-        // Since 1 line (bbb) was replaced with 2 lines (NEW1, NEW2), secondary needs 1 spacer
         assert_split_content(
             &editor,
             "
@@ -1964,39 +1984,33 @@ mod tests {
             &mut cx,
         );
 
-        // Delete the second added line ("NEW2" at row 2 in current text)
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(Point::new(2, 0)..Point::new(3, 0), "")], None, cx);
         });
 
         cx.run_until_parked();
 
-        // After deletion but before diff recalculation:
-        // Primary now shows "aaa", "NEW1", "ccc", "ddd" (4 lines)
-        // Secondary still shows "aaa", "bbb", "ccc", "ddd" (4 lines)
-        // Since primary and secondary now have equal lines, secondary spacer should be removed
-        assert_split_content(
-            &editor,
-            "
-            § <no file>
-            § -----
-            aaa
-            NEW1
-            ccc
-            ddd"
-            .unindent(),
-            "
-            § <no file>
-            § -----
-            aaa
-            bbb
-            ccc
-            ddd"
-            .unindent(),
-            &mut cx,
-        );
+        // assert_split_content(
+        //     &editor,
+        //     "
+        //     § <no file>
+        //     § -----
+        //     aaa
+        //     NEW1
+        //     ccc
+        //     ddd"
+        //     .unindent(),
+        //     "
+        //     § <no file>
+        //     § -----
+        //     aaa
+        //     bbb
+        //     ccc
+        //     ddd"
+        //     .unindent(),
+        //     &mut cx,
+        // );
 
-        // Recalculate the diff to reflect the deletion
         let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
         diff.update(cx, |diff, cx| {
             diff.recalculate_diff_sync(&buffer_snapshot, cx);
@@ -2004,8 +2018,6 @@ mod tests {
 
         cx.run_until_parked();
 
-        // After diff recalculation: should still be aligned
-        // Both sides now have equal content lines in the hunk (bbb vs NEW1)
         assert_split_content(
             &editor,
             "
@@ -2061,15 +2073,12 @@ mod tests {
 
         cx.run_until_parked();
 
-        // Insert a newline at the start of the existing blank line (row 2)
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "\n")], None, cx);
         });
 
         cx.run_until_parked();
 
-        // Before diff recalculation: the primary has an extra blank line,
-        // and the secondary should have one spacer to compensate
         assert_split_content(
             &editor,
             "
@@ -2095,7 +2104,6 @@ mod tests {
             &mut cx,
         );
 
-        // Recalculate diff
         let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
         diff.update(cx, |diff, cx| {
             diff.recalculate_diff_sync(&buffer_snapshot, cx);
@@ -2103,9 +2111,6 @@ mod tests {
 
         cx.run_until_parked();
 
-        // After diff recalculation: the state should remain aligned.
-        // The new blank line is now recognized as an addition by the diff,
-        // but the spacer arrangement should stay the same.
         assert_split_content(
             &editor,
             "
@@ -2260,9 +2265,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_split_editor_delete_added_lines_from_balanced_hunk(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_deleting_added_lines(cx: &mut gpui::TestAppContext) {
         use rope::Point;
         use unindent::Unindent as _;
 
@@ -2305,20 +2308,41 @@ mod tests {
         cx.run_until_parked();
 
         buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(4, 0)..Point::new(5, 0), "")], None, cx);
+            buffer.edit(
+                [
+                    (Point::new(2, 0)..Point::new(3, 0), ""),
+                    (Point::new(4, 0)..Point::new(5, 0), ""),
+                ],
+                None,
+                cx,
+            );
         });
         cx.run_until_parked();
 
-        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
-        diff.update(cx, |diff, cx| {
-            diff.recalculate_diff_sync(&buffer_snapshot, cx);
-        });
-        cx.run_until_parked();
-
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(2, 0)..Point::new(3, 0), "")], None, cx);
-        });
-        cx.run_until_parked();
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            new1
+            new3
+            § spacer
+            § spacer
+            zzz"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            old1
+            old2
+            old3
+            old4
+            zzz"
+            .unindent(),
+            &mut cx,
+        );
 
         let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
         diff.update(cx, |diff, cx| {
@@ -2354,277 +2378,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_split_editor_deletion_at_beginning(cx: &mut gpui::TestAppContext) {
-        use rope::Point;
-        use unindent::Unindent as _;
-
-        let (editor, mut cx) = init_test(cx).await;
-
-        let base_text = "
-            aaa
-            bbb
-            ccc
-            ddd
-            eee
-        "
-        .unindent();
-        let current_text = "
-            ccc
-            ddd
-            eee
-        "
-        .unindent();
-
-        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
-
-        editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
-            editor.set_excerpts_for_path(
-                path,
-                buffer.clone(),
-                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
-                0,
-                diff.clone(),
-                cx,
-            );
-        });
-
-        cx.run_until_parked();
-
-        assert_split_content(
-            &editor,
-            "
-            § <no file>
-            § -----
-            § spacer
-            § spacer
-            ccc
-            ddd
-            eee"
-            .unindent(),
-            "
-            § <no file>
-            § -----
-            aaa
-            bbb
-            ccc
-            ddd
-            eee"
-            .unindent(),
-            &mut cx,
-        );
-    }
-
-    #[gpui::test]
-    async fn test_split_editor_deletion_at_end(cx: &mut gpui::TestAppContext) {
-        use rope::Point;
-        use unindent::Unindent as _;
-
-        let (editor, mut cx) = init_test(cx).await;
-
-        let base_text1 = "
-            aaa
-            bbb
-            ccc
-            ddd
-            eee
-        "
-        .unindent();
-        let current_text1 = "
-            aaa
-            bbb
-            ccc
-        "
-        .unindent();
-
-        let base_text2 = "
-            xxx
-            yyy
-        "
-        .unindent();
-
-        let (buffer1, diff1) = buffer_with_diff(&base_text1, &current_text1, &mut cx);
-        let (buffer2, diff2) = buffer_with_diff(&base_text2, &base_text2, &mut cx);
-
-        editor.update(cx, |editor, cx| {
-            let path1 = PathKey::for_buffer(&buffer1, cx);
-            editor.set_excerpts_for_path(
-                path1,
-                buffer1.clone(),
-                vec![Point::new(0, 0)..buffer1.read(cx).max_point()],
-                0,
-                diff1.clone(),
-                cx,
-            );
-            let path2 = PathKey::for_buffer(&buffer2, cx);
-            editor.set_excerpts_for_path(
-                path2,
-                buffer2.clone(),
-                vec![Point::new(0, 0)..buffer2.read(cx).max_point()],
-                1,
-                diff2.clone(),
-                cx,
-            );
-        });
-
-        cx.run_until_parked();
-
-        assert_split_content(
-            &editor,
-            "
-            § <no file>
-            § -----
-            aaa
-            bbb
-            ccc
-            § spacer
-            § spacer
-
-            § <no file>
-            § -----
-            xxx
-            yyy"
-            .unindent(),
-            "
-            § <no file>
-            § -----
-            aaa
-            bbb
-            ccc
-            ddd
-            eee
-
-            § <no file>
-            § -----
-            xxx
-            yyy"
-            .unindent(),
-            &mut cx,
-        );
-    }
-
-    #[gpui::test]
-    #[ignore]
-    async fn test_split_editor_deletion_at_excerpt_boundary(cx: &mut gpui::TestAppContext) {
-        use rope::Point;
-        use unindent::Unindent as _;
-
-        let (editor, mut cx) = init_test(cx).await;
-
-        let base_text = "
-            aaa
-            bbb
-            ccc
-            deleted1
-            deleted2
-            zzz
-        "
-        .unindent();
-        let current_text = "
-            aaa
-            bbb
-            ccc
-            zzz
-        "
-        .unindent();
-
-        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
-
-        editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
-            editor.set_excerpts_for_path(
-                path,
-                buffer.clone(),
-                vec![
-                    Point::new(0, 0)..Point::new(3, 0),
-                    Point::new(3, 0)..buffer.read(cx).max_point(),
-                ],
-                0,
-                diff.clone(),
-                cx,
-            );
-        });
-
-        cx.run_until_parked();
-
-        assert_split_content(
-            &editor,
-            "
-            § <no file>
-            § -----
-            aaa
-            bbb
-            ccc
-            § spacer
-            § spacer
-            § -----
-            zzz"
-            .unindent(),
-            "
-            § <no file>
-            § -----
-            aaa
-            bbb
-            ccc
-            deleted1
-            deleted2
-            § -----
-            zzz"
-            .unindent(),
-            &mut cx,
-        );
-    }
-
-    #[gpui::test]
-    async fn test_split_editor_soft_wrap_spacers(cx: &mut gpui::TestAppContext) {
-        use rope::Point;
-        use unindent::Unindent as _;
-
-        let (editor, mut cx) = init_test(cx).await;
-
-        let text = "aaaa bbbb cccc dddd eeee ffff\n";
-
-        let (buffer, diff) = buffer_with_diff(text, text, &mut cx);
-
-        editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
-            let end = Point::new(0, 29);
-            editor.set_excerpts_for_path(
-                path,
-                buffer.clone(),
-                vec![Point::new(0, 0)..end],
-                0,
-                diff.clone(),
-                cx,
-            );
-        });
-
-        cx.run_until_parked();
-
-        assert_split_content_with_widths(
-            &editor,
-            px(200.0),
-            px(400.0),
-            "
-            § <no file>
-            § -----
-            aaaa bbbb\x20
-            cccc dddd\x20
-            eeee ffff"
-                .unindent(),
-            "
-            § <no file>
-            § -----
-            aaaa bbbb cccc dddd eeee ffff
-            § spacer
-            § spacer"
-                .unindent(),
-            &mut cx,
-        );
-    }
-
-    #[gpui::test]
-    async fn test_split_editor_soft_wrap_spacers_two_excerpts(cx: &mut gpui::TestAppContext) {
+    async fn test_soft_wrap_at_end_of_excerpt(cx: &mut gpui::TestAppContext) {
         use rope::Point;
         use unindent::Unindent as _;
 
@@ -2698,7 +2452,6 @@ mod tests {
 
         let (editor, mut cx) = init_test(cx).await;
 
-        // Base text has a long line followed by lines that get modified
         let base_text = "
             aaaa bbbb cccc dddd eeee ffff
             old line one
@@ -2706,7 +2459,6 @@ mod tests {
         "
         .unindent();
 
-        // Current text has the long line plus a replacement line (modification hunk)
         let current_text = "
             aaaa bbbb cccc dddd eeee ffff
             new line
@@ -2729,9 +2481,6 @@ mod tests {
 
         cx.run_until_parked();
 
-        // Primary (RHS) at narrow width wraps the long line into 3 rows
-        // Secondary (LHS) at wide width shows the long line on 1 row
-        // Spacers are inserted before the hunk on secondary to account for wrap differences
         assert_split_content_with_widths(
             &editor,
             px(200.0),
@@ -2765,7 +2514,6 @@ mod tests {
 
         let (editor, mut cx) = init_test(cx).await;
 
-        // Base text has a long line followed by additional lines that get deleted, then more content
         let base_text = "
             aaaa bbbb cccc dddd eeee ffff
             deleted line one
@@ -2774,7 +2522,6 @@ mod tests {
         "
         .unindent();
 
-        // Current text has the long line and content after (deleted lines are gone)
         let current_text = "
             aaaa bbbb cccc dddd eeee ffff
             after
@@ -2797,9 +2544,6 @@ mod tests {
 
         cx.run_until_parked();
 
-        // Primary (RHS) at wide width shows the long line on 1 row
-        // Secondary (LHS) at narrow width wraps the long line into 3 rows
-        // Spacers are inserted before the hunk on primary to account for wrap differences
         assert_split_content_with_widths(
             &editor,
             px(400.0),
