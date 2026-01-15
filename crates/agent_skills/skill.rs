@@ -110,28 +110,25 @@ pub fn parse_skill(skill_file_path: &Path, content: &str, source: SkillSource) -
 }
 
 fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
-    let content = content.trim();
+    let content = content.trim_start();
 
     if !content.starts_with("---") {
-        anyhow::bail!("SKILL.md must start with YAML frontmatter (---)")
+        anyhow::bail!("SKILL.md must start with YAML frontmatter (---)");
     }
 
-    let after_first_delimiter = &content[3..];
-    let end_delimiter_pos = after_first_delimiter
-        .find("\n---")
-        .or_else(|| after_first_delimiter.find("\r\n---"))
-        .context("SKILL.md missing closing frontmatter delimiter (---)")?;
+    let after_opening = &content[3..];
+    let after_opening = after_opening.trim_start_matches([' ', '\t']);
+    let after_opening = after_opening.strip_prefix('\n').unwrap_or(after_opening);
 
-    let frontmatter_yaml = &after_first_delimiter[..end_delimiter_pos];
-    let body_start = end_delimiter_pos + 4; // Skip past \n---
-    let body = if body_start < after_first_delimiter.len() {
-        after_first_delimiter[body_start..].trim_start_matches(['\n', '\r'])
-    } else {
-        ""
+    let Some(end_idx) = after_opening.find("\n---") else {
+        anyhow::bail!("SKILL.md missing closing frontmatter delimiter (---)");
     };
 
+    let frontmatter_yaml = &after_opening[..end_idx];
+    let body = &after_opening[end_idx + 4..];
+
     let metadata: SkillMetadata =
-        serde_yaml::from_str(frontmatter_yaml).context("Failed to parse YAML frontmatter")?;
+        serde_yaml::from_str(frontmatter_yaml).context("Invalid YAML frontmatter")?;
 
     Ok((metadata, body))
 }
@@ -140,15 +137,18 @@ fn validate_name(name: &str) -> Result<()> {
     if name.is_empty() {
         anyhow::bail!("Skill name cannot be empty");
     }
+
     if name.len() > 64 {
         anyhow::bail!("Skill name must be at most 64 characters");
     }
+
     if !name
         .chars()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
     {
         anyhow::bail!("Skill name must contain only lowercase letters, numbers, and hyphens");
     }
+
     Ok(())
 }
 
@@ -156,57 +156,49 @@ fn validate_description(description: &str) -> Result<()> {
     if description.is_empty() {
         anyhow::bail!("Skill description cannot be empty");
     }
+
     if description.len() > 1024 {
         anyhow::bail!("Skill description must be at most 1024 characters");
     }
+
     Ok(())
 }
 
-/// Load all skills from a directory, recursively searching for SKILL.md files.
 pub async fn load_skills_from_directory(
     fs: &Arc<dyn Fs>,
-    dir: &Path,
+    directory: &Path,
     source: SkillSource,
 ) -> Vec<Result<Skill, SkillLoadError>> {
-    let mut results = Vec::new();
-
-    if !fs.is_dir(dir).await {
-        return results;
+    if !fs.is_dir(directory).await {
+        return Vec::new();
     }
 
-    let skill_files = find_skill_files(fs, dir).await;
+    let skill_files = find_skill_files(fs, directory).await;
 
-    let load_tasks: Vec<_> = skill_files
-        .into_iter()
-        .map(|path| {
-            let fs = fs.clone();
-            let source = source.clone();
-            async move { load_single_skill(&fs, &path, source).await }
-        })
-        .collect();
-
-    results.extend(future::join_all(load_tasks).await);
-    results
+    future::join_all(
+        skill_files
+            .into_iter()
+            .map(|path| load_single_skill(fs.clone(), path, source.clone())),
+    )
+    .await
 }
 
-async fn find_skill_files(fs: &Arc<dyn Fs>, dir: &Path) -> Vec<PathBuf> {
+async fn find_skill_files(fs: &Arc<dyn Fs>, directory: &Path) -> Vec<PathBuf> {
     let mut skill_files = Vec::new();
-    let mut dirs_to_visit = vec![dir.to_path_buf()];
 
-    while let Some(current_dir) = dirs_to_visit.pop() {
-        let Ok(mut entries) = fs.read_dir(&current_dir).await else {
+    let Ok(mut entries) = fs.read_dir(directory).await else {
+        return skill_files;
+    };
+
+    while let Some(entry) = entries.next().await {
+        let Ok(entry_path) = entry else {
             continue;
         };
 
-        while let Some(entry) = entries.next().await {
-            let Ok(entry_path) = entry else {
-                continue;
-            };
-
-            if fs.is_dir(&entry_path).await {
-                dirs_to_visit.push(entry_path);
-            } else if entry_path.file_name() == Some(std::ffi::OsStr::new(SKILL_FILE_NAME)) {
-                skill_files.push(entry_path);
+        if fs.is_dir(&entry_path).await {
+            let skill_file = entry_path.join(SKILL_FILE_NAME);
+            if fs.is_file(&skill_file).await {
+                skill_files.push(skill_file);
             }
         }
     }
@@ -215,27 +207,25 @@ async fn find_skill_files(fs: &Arc<dyn Fs>, dir: &Path) -> Vec<PathBuf> {
 }
 
 async fn load_single_skill(
-    fs: &Arc<dyn Fs>,
-    path: &Path,
+    fs: Arc<dyn Fs>,
+    path: PathBuf,
     source: SkillSource,
 ) -> Result<Skill, SkillLoadError> {
-    let content = fs.load(path).await.map_err(|e| SkillLoadError {
-        path: path.to_path_buf(),
-        message: format!("Failed to read file: {e}"),
+    let content = fs.load(&path).await.map_err(|e| SkillLoadError {
+        path: path.clone(),
+        message: format!("Failed to read file: {}", e),
     })?;
 
-    parse_skill(path, &content, source).map_err(|e| SkillLoadError {
-        path: path.to_path_buf(),
+    parse_skill(&path, &content, source).map_err(|e| SkillLoadError {
+        path: path.clone(),
         message: e.to_string(),
     })
 }
 
-/// Returns the path to the global skills directory.
 pub fn global_skills_dir() -> &'static PathBuf {
     paths::skills_dir()
 }
 
-/// Returns the relative path to the skills directory within a project.
 pub fn project_skills_relative_path() -> &'static str {
     ".zed/skills"
 }
@@ -328,6 +318,15 @@ Content here.
             SkillSource::Global,
         );
         assert!(result.is_err());
+        let err = result.unwrap_err();
+        let err_chain = format!("{:?}", err);
+        assert!(
+            err_chain.contains("missing field")
+                || err_chain.contains("name")
+                || err_chain.contains("Invalid YAML"),
+            "Error should mention missing name field or invalid YAML: {}",
+            err_chain
+        );
     }
 
     #[test]
@@ -345,6 +344,15 @@ Content here.
             SkillSource::Global,
         );
         assert!(result.is_err());
+        let err = result.unwrap_err();
+        let err_chain = format!("{:?}", err);
+        assert!(
+            err_chain.contains("missing field")
+                || err_chain.contains("description")
+                || err_chain.contains("Invalid YAML"),
+            "Error should mention missing description field or invalid YAML: {}",
+            err_chain
+        );
     }
 
     #[test]
@@ -465,6 +473,40 @@ description: Test skill
         assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
     }
 
+    #[test]
+    fn test_parse_empty_body_after_frontmatter() {
+        let content = r#"---
+name: minimal-skill
+description: A skill with no body content
+---
+"#;
+
+        let result = parse_skill(
+            Path::new("/skills/minimal/SKILL.md"),
+            content,
+            SkillSource::Global,
+        );
+
+        let skill = result.expect("Empty body should be allowed");
+        assert_eq!(skill.name, "minimal-skill");
+        assert_eq!(skill.description, "A skill with no body content");
+        assert!(skill.content.is_empty() || skill.content.trim().is_empty());
+    }
+
+    #[test]
+    fn test_parse_whitespace_only_body() {
+        let content = "---\nname: whitespace-skill\ndescription: Test\n---\n\n   \n\n   \n";
+
+        let result = parse_skill(
+            Path::new("/skills/ws/SKILL.md"),
+            content,
+            SkillSource::Global,
+        );
+
+        let skill = result.expect("Whitespace-only body should be allowed");
+        assert!(skill.content.trim().is_empty());
+    }
+
     #[gpui::test]
     async fn test_load_skills_from_empty_directory(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
@@ -498,15 +540,12 @@ description: Test skill
             SkillSource::Global,
         )
         .await;
-        assert_eq!(results.len(), 1);
 
-        let skill = results
-            .into_iter()
-            .next()
-            .unwrap()
-            .expect("Should load successfully");
+        assert_eq!(results.len(), 1);
+        let skill = results[0].as_ref().expect("Should load successfully");
         assert_eq!(skill.name, "my-skill");
         assert_eq!(skill.description, "Test skill");
+        assert!(skill.content.contains("# Instructions"));
     }
 
     #[gpui::test]
@@ -515,13 +554,11 @@ description: Test skill
         fs.insert_tree(
             "/skills",
             serde_json::json!({
-                "skill-a": {
-                    "SKILL.md": "---\nname: skill-a\ndescription: Skill A\n---\n\nContent A"
+                "skill-one": {
+                    "SKILL.md": "---\nname: skill-one\ndescription: First skill\n---\n\nContent one"
                 },
-                "nested": {
-                    "skill-b": {
-                        "SKILL.md": "---\nname: skill-b\ndescription: Skill B\n---\n\nContent B"
-                    }
+                "skill-two": {
+                    "SKILL.md": "---\nname: skill-two\ndescription: Second skill\n---\n\nContent two"
                 }
             }),
         )
@@ -533,15 +570,15 @@ description: Test skill
             SkillSource::Global,
         )
         .await;
-        assert_eq!(results.len(), 2);
 
-        let skills: Vec<_> = results
-            .into_iter()
-            .map(|r| r.expect("Should load"))
+        assert_eq!(results.len(), 2);
+        let names: Vec<&str> = results
+            .iter()
+            .filter_map(|r| r.as_ref().ok())
+            .map(|s| s.name.as_str())
             .collect();
-        let names: Vec<_> = skills.iter().map(|s| s.name.as_str()).collect();
-        assert!(names.contains(&"skill-a"));
-        assert!(names.contains(&"skill-b"));
+        assert!(names.contains(&"skill-one"));
+        assert!(names.contains(&"skill-two"));
     }
 
     #[gpui::test]
@@ -551,9 +588,11 @@ description: Test skill
             "/skills",
             serde_json::json!({
                 "my-skill": {
-                    "SKILL.md": "---\nname: my-skill\ndescription: Test\n---\n\nContent",
-                    "helper.md": "Some helper file",
-                    "README.md": "Readme content"
+                    "SKILL.md": "---\nname: my-skill\ndescription: Test\n---\n\nContent"
+                },
+                "not-a-skill.txt": "This is not a skill",
+                "some-dir": {
+                    "other-file.md": "Not a SKILL.md"
                 }
             }),
         )
@@ -565,7 +604,10 @@ description: Test skill
             SkillSource::Global,
         )
         .await;
+
         assert_eq!(results.len(), 1);
+        let skill = results[0].as_ref().expect("Should load successfully");
+        assert_eq!(skill.name, "my-skill");
     }
 
     #[gpui::test]
@@ -590,11 +632,16 @@ description: Test skill
             SkillSource::Global,
         )
         .await;
+
         assert_eq!(results.len(), 2);
 
-        let (successes, failures): (Vec<_>, Vec<_>) = results.into_iter().partition(|r| r.is_ok());
+        let (successes, errors): (Vec<_>, Vec<_>) = results.iter().partition(|r| r.is_ok());
+
         assert_eq!(successes.len(), 1);
-        assert_eq!(failures.len(), 1);
+        assert_eq!(errors.len(), 1);
+
+        let error = errors[0].as_ref().unwrap_err();
+        assert!(error.path.to_string_lossy().contains("invalid-skill"));
     }
 
     #[gpui::test]
@@ -607,6 +654,7 @@ description: Test skill
             SkillSource::Global,
         )
         .await;
+
         assert!(results.is_empty());
     }
 
@@ -614,15 +662,15 @@ description: Test skill
     fn test_skill_summary_from_skill() {
         let skill = Skill {
             name: "test-skill".to_string(),
-            description: "A test skill".to_string(),
+            description: "A test description".to_string(),
             source: SkillSource::Global,
             directory_path: PathBuf::from("/skills/test-skill"),
             skill_file_path: PathBuf::from("/skills/test-skill/SKILL.md"),
-            content: "Content here".to_string(),
+            content: "Instructions here".to_string(),
         };
 
         let summary = SkillSummary::from(&skill);
         assert_eq!(summary.name, "test-skill");
-        assert_eq!(summary.description, "A test skill");
+        assert_eq!(summary.description, "A test description");
     }
 }

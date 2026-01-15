@@ -5781,3 +5781,106 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
         "expected no authorization request for allowed docs.rs URL"
     );
 }
+
+#[gpui::test]
+async fn test_subagent_inherits_skills(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({ "file.txt": "hello" }))
+        .await;
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Create a skill
+    let skill = agent_skills::parse_skill(
+        Path::new("/skills/test-skill/SKILL.md"),
+        "---\nname: test-skill\ndescription: Test skill\n---\n\nInstructions",
+        agent_skills::SkillSource::Global,
+    )
+    .unwrap();
+    let skills = Arc::new(vec![skill]);
+
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let project_context = cx.new(|_| ProjectContext::default());
+    let model = Arc::new(FakeLanguageModel::default());
+
+    // Create parent thread with skills
+    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+    let environment = Rc::new(FakeThreadEnvironment { handle });
+
+    let parent = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project.clone(),
+            project_context.clone(),
+            skills.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        );
+        thread.add_default_tools(environment, cx);
+        thread
+    });
+
+    // Verify parent has skill tool
+    let parent_id = parent.read_with(cx, |thread, _| {
+        assert!(
+            thread.has_registered_tool("skill"),
+            "Parent should have skill tool"
+        );
+        thread.id().clone()
+    });
+
+    // Create parent_tools map with SkillTool (simulating what add_default_tools does)
+    let mut parent_tools: std::collections::BTreeMap<
+        gpui::SharedString,
+        Arc<dyn crate::AnyAgentTool>,
+    > = std::collections::BTreeMap::new();
+    parent_tools.insert(
+        "skill".into(),
+        SkillTool::new(skills.clone(), project.clone()).erase(),
+    );
+
+    // Create subagent context
+    let subagent_context = SubagentContext {
+        parent_thread_id: parent_id,
+        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
+        depth: 1,
+        summary_prompt: "Summarize".to_string(),
+        context_low_prompt: "Context low".to_string(),
+    };
+
+    let subagent = cx.new(|cx| {
+        Thread::new_subagent(
+            project.clone(),
+            project_context.clone(),
+            skills.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            model.clone(),
+            subagent_context,
+            parent_tools,
+            cx,
+        )
+    });
+
+    // Verify subagent also has skill tool (inherited from parent tools)
+    subagent.read_with(cx, |thread, _| {
+        assert!(
+            thread.has_registered_tool("skill"),
+            "Subagent should inherit skill tool"
+        );
+    });
+
+    // Verify subagent has same skills
+    subagent.read_with(cx, |thread, _| {
+        assert_eq!(thread.skills().len(), 1);
+        assert_eq!(thread.skills()[0].name, "test-skill");
+    });
+}

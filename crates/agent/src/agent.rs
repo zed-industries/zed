@@ -2094,6 +2094,176 @@ mod internal_tests {
             LanguageModelRegistry::test(cx);
         });
     }
+
+    #[test]
+    fn test_merge_skills_name_conflict() {
+        use agent_skills::{Skill, SkillSource};
+        use std::path::PathBuf;
+
+        let global_skill = Skill {
+            name: "my-skill".to_string(),
+            description: "Global version".to_string(),
+            source: SkillSource::Global,
+            directory_path: PathBuf::from("/global/skills/my-skill"),
+            skill_file_path: PathBuf::from("/global/skills/my-skill/SKILL.md"),
+            content: "Global content".to_string(),
+        };
+
+        let project_skill = Skill {
+            name: "my-skill".to_string(),
+            description: "Project version".to_string(),
+            source: SkillSource::ProjectLocal {
+                worktree_id: worktree::WorktreeId::from_usize(1),
+            },
+            directory_path: PathBuf::from("/project/.zed/skills/my-skill"),
+            skill_file_path: PathBuf::from("/project/.zed/skills/my-skill/SKILL.md"),
+            content: "Project content".to_string(),
+        };
+
+        let (skills, errors) =
+            merge_skills(vec![Ok(global_skill)], vec![Ok(project_skill)].into_iter());
+
+        // First skill wins, second produces error
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].description, "Global version");
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("conflicts with"));
+    }
+
+    #[gpui::test]
+    async fn test_build_project_context_loads_skills(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Create global skills directory at the path returned by paths::skills_dir()
+        let global_skills_dir = paths::skills_dir();
+        fs.insert_tree(
+            global_skills_dir,
+            json!({
+                "global-skill": {
+                    "SKILL.md": "---\nname: global-skill\ndescription: A global skill\n---\n\nGlobal instructions"
+                }
+            }),
+        )
+        .await;
+
+        // Create project with project-local skills
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".zed": {
+                    "skills": {
+                        "project-skill": {
+                            "SKILL.md": "---\nname: project-skill\ndescription: A project skill\n---\n\nProject instructions"
+                        }
+                    }
+                },
+                "src": {
+                    "main.rs": "fn main() {}"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        // Build project context (this is what we're testing)
+        let (project_context, skills, errors) = cx
+            .update(|cx| NativeAgent::build_project_context(&project, None, fs.clone(), cx))
+            .await;
+
+        // Verify no errors
+        assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+
+        // Verify both skills were loaded
+        assert_eq!(skills.len(), 2, "Should have loaded 2 skills");
+
+        let skill_names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+        assert!(
+            skill_names.contains(&"global-skill"),
+            "Should contain global-skill"
+        );
+        assert!(
+            skill_names.contains(&"project-skill"),
+            "Should contain project-skill"
+        );
+
+        // Verify skills appear in project context
+        assert!(project_context.has_skills);
+        assert_eq!(project_context.skills.len(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_skills_reload_on_project_context_refresh(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Create initial global skills directory with one skill
+        let global_skills_dir = paths::skills_dir();
+        fs.insert_tree(
+            global_skills_dir,
+            json!({
+                "skill-one": {
+                    "SKILL.md": "---\nname: skill-one\ndescription: First skill\n---\n\nContent one"
+                }
+            }),
+        )
+        .await;
+
+        // Create empty project
+        fs.insert_tree("/project", json!({ "file.txt": "hello" }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        // Create NativeAgent
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = NativeAgent::new(
+            project.clone(),
+            thread_store,
+            Templates::new(),
+            None,
+            fs.clone(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        // Verify initial skill count
+        agent.read_with(cx, |agent, _| {
+            assert_eq!(agent.skills.len(), 1);
+            assert_eq!(agent.skills[0].name, "skill-one");
+        });
+
+        // Add a new skill file to the global skills directory
+        let new_skill_dir = global_skills_dir.join("skill-two");
+        fs.create_dir(&new_skill_dir).await.unwrap();
+        fs.insert_file(
+            &new_skill_dir.join("SKILL.md"),
+            "---\nname: skill-two\ndescription: Second skill\n---\n\nContent two"
+                .as_bytes()
+                .to_vec(),
+        )
+        .await;
+
+        // Manually trigger a project context refresh
+        // This simulates what the file watcher would do when it detects changes
+        agent.update(cx, |agent, _cx| {
+            agent.project_context_needs_refresh.send(()).ok();
+        });
+
+        // Process the refresh
+        cx.run_until_parked();
+
+        // Verify skills were reloaded
+        agent.read_with(cx, |agent, _| {
+            assert_eq!(agent.skills.len(), 2, "Should have 2 skills after reload");
+            let names: Vec<&str> = agent.skills.iter().map(|s| s.name.as_str()).collect();
+            assert!(names.contains(&"skill-one"));
+            assert!(names.contains(&"skill-two"));
+        });
+    }
 }
 
 fn mcp_message_content_to_acp_content_block(

@@ -342,9 +342,12 @@ impl AgentTool for ListDirectoryTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, UpdateGlobal};
+    use crate::{ContextServerRegistry, Templates, Thread};
+    use gpui::{AppContext as _, TestAppContext, UpdateGlobal};
     use indoc::indoc;
+    use language_model::fake_provider::FakeLanguageModel;
     use project::{FakeFs, Project};
+    use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -793,6 +796,143 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("Cannot list directory"),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_list_skill_directory_when_enabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Create global skills directory with files
+        let skills_dir = paths::skills_dir();
+        let skill_content = "---\nname: my-skill\ndescription: Test\n---\n\nContent";
+        fs.insert_tree(
+            skills_dir,
+            json!({
+                "my-skill": {
+                    "SKILL.md": skill_content,
+                    "helper.py": "# helper script",
+                    "data": {
+                        "config.json": "{}"
+                    }
+                }
+            }),
+        )
+        .await;
+
+        // Create project
+        fs.insert_tree(path!("/project"), json!({ "file.txt": "hello" }))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        // Create a skill and a thread with skill tool enabled
+        let skill = agent_skills::parse_skill(
+            &skills_dir.join("my-skill/SKILL.md"),
+            skill_content,
+            agent_skills::SkillSource::Global,
+        )
+        .unwrap();
+
+        let skills = Arc::new(vec![skill]);
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+
+        let thread = cx.new(|cx| {
+            let mut thread = Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                skills.clone(),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            );
+            // Add skill tool to enable skill directory access
+            thread.add_tool(SkillTool::new(skills.clone(), project.clone()));
+            thread
+        });
+
+        let tool = Arc::new(ListDirectoryTool::new(project.clone(), thread.downgrade()));
+
+        // List the skill directory using absolute path
+        let skill_dir_path = skills_dir.join("my-skill");
+        let input = ListDirectoryToolInput {
+            path: skill_dir_path.to_string_lossy().to_string(),
+        };
+
+        let (event_stream, _) = ToolCallEventStream::test();
+        let result = cx.update(|cx| tool.run(input, event_stream, cx)).await;
+
+        assert!(
+            result.is_ok(),
+            "Should list skill directory: {:?}",
+            result.err()
+        );
+        let output = result.unwrap();
+
+        // Verify directory contents are listed
+        assert!(output.contains("SKILL.md"));
+        assert!(output.contains("helper.py"));
+        assert!(output.contains("data")); // subdirectory
+    }
+
+    #[gpui::test]
+    async fn test_list_skill_directory_denied_when_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Create global skills directory
+        let skills_dir = paths::skills_dir();
+        fs.insert_tree(
+            skills_dir,
+            json!({
+                "my-skill": {
+                    "SKILL.md": "---\nname: my-skill\ndescription: Test\n---\n\nContent"
+                }
+            }),
+        )
+        .await;
+
+        // Create project
+        fs.insert_tree(path!("/project"), json!({ "file.txt": "hello" }))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        // Create thread WITHOUT skill tool
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                Arc::new(Vec::new()), // No skills!
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+
+        let tool = Arc::new(ListDirectoryTool::new(project.clone(), thread.downgrade()));
+
+        // Try to list skill directory
+        let skill_dir_path = skills_dir.join("my-skill");
+        let input = ListDirectoryToolInput {
+            path: skill_dir_path.to_string_lossy().to_string(),
+        };
+
+        let (event_stream, _) = ToolCallEventStream::test();
+        let result = cx.update(|cx| tool.run(input, event_stream, cx)).await;
+
+        assert!(
+            result.is_err(),
+            "Should NOT be able to list skill directory when skill tool disabled"
         );
     }
 }

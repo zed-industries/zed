@@ -144,6 +144,58 @@ pub struct ContentPromptContextV2 {
     pub diagnostic_errors: Vec<ContentPromptDiagnosticContext>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_skills::SkillSource;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_skill_budget_limiting() {
+        let mut skills = Vec::new();
+        let mut total_size = 0;
+        let mut skill_count = 0;
+
+        let description = "x".repeat(1000);
+
+        while total_size < MAX_SKILL_DESCRIPTIONS_SIZE + 10_000 {
+            let name = format!("skill-{:04}", skill_count);
+            skills.push(Skill {
+                name: name.clone(),
+                description: description.clone(),
+                source: SkillSource::Global,
+                directory_path: PathBuf::from(format!("/skills/{}", name)),
+                skill_file_path: PathBuf::from(format!("/skills/{}/SKILL.md", name)),
+                content: "Content".to_string(),
+            });
+            total_size += name.len() + description.len();
+            skill_count += 1;
+        }
+
+        let context = ProjectContext::new(vec![], vec![], skills.clone());
+
+        assert!(
+            context.skills.len() < skills.len(),
+            "Some skills should be excluded due to budget"
+        );
+        assert!(context.has_skills);
+
+        let included_size: usize = context
+            .skills
+            .iter()
+            .map(|s| s.name.len() + s.description.len())
+            .sum();
+        assert!(included_size <= MAX_SKILL_DESCRIPTIONS_SIZE);
+    }
+
+    #[test]
+    fn test_empty_skills_sets_has_skills_false() {
+        let context = ProjectContext::new(vec![], vec![], vec![]);
+        assert!(!context.has_skills);
+        assert!(context.skills.is_empty());
+    }
+}
+
 #[derive(Serialize)]
 pub struct TerminalAssistantPromptContext {
     pub os: String,
