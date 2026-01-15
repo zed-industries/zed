@@ -197,7 +197,6 @@ pub async fn get_latest_feature_manifest(
         ghcr_url(),
         devcontainer_features_repository()
     );
-    dbg!(&url, token);
     get_deserialized_response(token, &url, client).await
 }
 
@@ -210,7 +209,6 @@ pub async fn get_latest_manifest(
         ghcr_url(),
         devcontainer_templates_repository()
     );
-    dbg!(&url, token);
     get_deserialized_response(token, &url, client).await
 }
 

@@ -11,7 +11,7 @@ use std::fmt::Debug;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use ui::SwitchField;
+use ui::Switch;
 use ui::ToggleState;
 
 use ::dev_container::{DevContainerTemplate, get_templates};
@@ -406,7 +406,6 @@ pub fn init(cx: &mut App) {
 #[derive(Clone)]
 pub struct TemplateEntry {
     template: DevContainerTemplate,
-    entry: NavigableEntry,
     options_selected: HashMap<String, String>,
     next_option: Option<TemplateOptionSelection>,
     features: Vec<FeatureEntry>,
@@ -417,7 +416,6 @@ pub struct TemplateEntry {
 pub struct FeatureEntry {
     feature: DevContainerFeature,
     toggle_state: ToggleState,
-    entry: NavigableEntry,
 }
 
 #[derive(Clone)]
@@ -482,19 +480,20 @@ pub enum DevContainerMessage {
 
 pub struct DevContainerModal {
     workspace: WeakEntity<Workspace>,
-    picker: Option<Entity<Picker<SimplePickerDelegate>>>,
+    picker: Option<Entity<Picker<TemplatePickerDelegate>>>,
+    features_picker: Option<Entity<Picker<FeaturePickerDelegate>>>,
     focus_handle: FocusHandle,
     confirm_entry: NavigableEntry,
     back_entry: NavigableEntry,
     state: DevContainerState,
 }
 
-struct SimplePickerDelegate {
+struct TemplatePickerDelegate {
     selected_index: usize,
     placeholder_text: String,
     stateful_modal: WeakEntity<DevContainerModal>,
-    all_elements: Vec<TemplateEntry>,
-    matches: Vec<usize>,
+    candidate_templates: Vec<TemplateEntry>,
+    matching_indices: Vec<usize>,
     on_confirm: Box<
         dyn FnMut(
             TemplateEntry,
@@ -505,7 +504,7 @@ struct SimplePickerDelegate {
     >,
 }
 
-impl SimplePickerDelegate {
+impl TemplatePickerDelegate {
     fn new(
         placeholder_text: String,
         stateful_modal: WeakEntity<DevContainerModal>,
@@ -523,18 +522,18 @@ impl SimplePickerDelegate {
             selected_index: 0,
             placeholder_text,
             stateful_modal,
-            all_elements: elements,
-            matches: Vec::new(),
+            candidate_templates: elements,
+            matching_indices: Vec::new(),
             on_confirm,
         }
     }
 }
 
-impl PickerDelegate for SimplePickerDelegate {
+impl PickerDelegate for TemplatePickerDelegate {
     type ListItem = AnyElement;
 
     fn match_count(&self) -> usize {
-        self.matches.len()
+        self.matching_indices.len()
     }
 
     fn selected_index(&self) -> usize {
@@ -560,8 +559,8 @@ impl PickerDelegate for SimplePickerDelegate {
         _window: &mut Window,
         _cx: &mut Context<picker::Picker<Self>>,
     ) -> gpui::Task<()> {
-        self.matches = self
-            .all_elements
+        self.matching_indices = self
+            .candidate_templates
             .iter()
             .enumerate()
             .filter(|(_, template_entry)| {
@@ -571,7 +570,10 @@ impl PickerDelegate for SimplePickerDelegate {
             .map(|(ix, _)| ix)
             .collect();
 
-        self.selected_index = std::cmp::min(self.selected_index, self.matches.len() - 1);
+        self.selected_index = std::cmp::min(
+            self.selected_index,
+            self.matching_indices.len().saturating_sub(1),
+        );
         Task::ready(())
     }
 
@@ -586,7 +588,7 @@ impl PickerDelegate for SimplePickerDelegate {
         self.stateful_modal
             .update(cx, |modal, cx| {
                 fun(
-                    self.all_elements[self.matches[self.selected_index]].clone(),
+                    self.candidate_templates[self.matching_indices[self.selected_index]].clone(),
                     modal,
                     window,
                     cx,
@@ -607,23 +609,167 @@ impl PickerDelegate for SimplePickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
-        cx: &mut Context<picker::Picker<Self>>,
+        _window: &mut Window,
+        _cx: &mut Context<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let Some(template_entry) = self.all_elements.get(self.matches[ix]) else {
+        let Some(template_entry) = self.candidate_templates.get(self.matching_indices[ix]) else {
             return None;
         };
         Some(
-            div()
-                .track_focus(&template_entry.entry.focus_handle)
-                .child(
-                    ListItem::new("li-todo")
-                        .inset(true)
-                        .spacing(ui::ListItemSpacing::Sparse)
-                        .start_slot(Icon::new(IconName::Box))
-                        .toggle_state(selected)
-                        .child(Label::new(template_entry.template.name.clone())),
-                )
+            ListItem::new("li-todo")
+                .inset(true)
+                .spacing(ui::ListItemSpacing::Sparse)
+                .start_slot(Icon::new(IconName::Box))
+                .toggle_state(selected)
+                .child(Label::new(template_entry.template.name.clone()))
+                .into_any_element(),
+        )
+    }
+}
+
+struct FeaturePickerDelegate {
+    selected_index: usize,
+    placeholder_text: String,
+    stateful_modal: WeakEntity<DevContainerModal>,
+    candidate_features: Vec<FeatureEntry>,
+    template_entry: TemplateEntry,
+    matching_indices: Vec<usize>,
+    on_confirm: Box<
+        dyn FnMut(
+            TemplateEntry,
+            &mut DevContainerModal,
+            &mut Window,
+            &mut Context<DevContainerModal>,
+        ),
+    >,
+}
+
+impl FeaturePickerDelegate {
+    fn new(
+        placeholder_text: String,
+        stateful_modal: WeakEntity<DevContainerModal>,
+        candidate_features: Vec<FeatureEntry>,
+        template_entry: TemplateEntry,
+        on_confirm: Box<
+            dyn FnMut(
+                TemplateEntry,
+                &mut DevContainerModal,
+                &mut Window,
+                &mut Context<DevContainerModal>,
+            ),
+        >,
+    ) -> Self {
+        Self {
+            selected_index: 0,
+            placeholder_text,
+            stateful_modal,
+            candidate_features,
+            template_entry,
+            matching_indices: Vec::new(),
+            on_confirm,
+        }
+    }
+}
+
+impl PickerDelegate for FeaturePickerDelegate {
+    type ListItem = AnyElement;
+
+    fn match_count(&self) -> usize {
+        self.matching_indices.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = ix;
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        self.placeholder_text.clone().into()
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        self.matching_indices = self
+            .candidate_features
+            .iter()
+            .enumerate()
+            .filter(|(_, feature_entry)| {
+                feature_entry.feature.id.contains(&query)
+                    || feature_entry.feature.name.contains(&query)
+            })
+            .map(|(ix, _)| ix)
+            .collect();
+        self.selected_index = std::cmp::min(
+            self.selected_index,
+            self.matching_indices.len().saturating_sub(1),
+        );
+        Task::ready(())
+    }
+
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if secondary {
+            self.stateful_modal
+                .update(cx, |modal, cx| {
+                    (self.on_confirm)(self.template_entry.clone(), modal, window, cx)
+                })
+                .log_err();
+        } else {
+            let current = &mut self.candidate_features[self.matching_indices[self.selected_index]];
+            current.toggle_state = match current.toggle_state {
+                ToggleState::Selected => {
+                    self.template_entry
+                        .features_selected
+                        .remove(&current.feature.id);
+                    ToggleState::Unselected
+                }
+                _ => {
+                    self.template_entry
+                        .features_selected
+                        .insert(current.feature.id.clone(), current.feature.clone());
+                    ToggleState::Selected
+                }
+            };
+        }
+    }
+
+    fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.stateful_modal
+            .update(cx, |modal, cx| {
+                modal.dismiss(&menu::Cancel, window, cx);
+            })
+            .log_err();
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let feature_entry = self.candidate_features[self.matching_indices[ix]].clone();
+
+        Some(
+            ListItem::new("li-what")
+                .inset(true)
+                .toggle_state(selected)
+                .start_slot(Switch::new(
+                    feature_entry.feature.id.clone(),
+                    feature_entry.toggle_state,
+                ))
+                .child(Label::new(feature_entry.feature.name.clone()))
                 .into_any_element(),
         )
     }
@@ -634,6 +780,7 @@ impl DevContainerModal {
         DevContainerModal {
             workspace,
             picker: None,
+            features_picker: None,
             state: DevContainerState::Initial,
             focus_handle: cx.focus_handle(),
             confirm_entry: NavigableEntry::focusable(cx),
@@ -774,107 +921,19 @@ impl DevContainerModal {
 
     fn render_features_query_returned(
         &self,
-        template_entry: TemplateEntry,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let mut view = Navigable::new(
-            div()
-                .child(
-                    div()
-                        .track_focus(&self.focus_handle)
-                        .child(
-                            ModalHeader::new().child(
-                                Headline::new("Selected additional features")
-                                    .size(HeadlineSize::XSmall),
-                            ),
-                        ),
-                )
-                .child(ListSeparator)
-                .children(template_entry.features.iter().map(|feature_entry| {
-                    div().track_focus(&feature_entry.entry.focus_handle).child(
-                        ListItem::new("li-what")
-                            .inset(true)
-                            .spacing(ui::ListItemSpacing::Sparse)
-                            .toggle_state(
-                                feature_entry
-                                    .entry
-                                    .focus_handle
-                                    .contains_focused(window, cx),
-                            )
-                            .child(SwitchField::new(
-                                feature_entry.feature.id.clone(),
-                                Some(feature_entry.feature.name.clone()),
-                                None,
-                                feature_entry.toggle_state,
-                                {
-                                    let _template = template_entry.clone();
-                                    let feature = feature_entry.clone();
-                                    let feature = feature.clone();
-                                    cx.listener(move |this, state: &ToggleState, window, cx| {
-                                        let mut feature = feature.clone();
-                                        feature.toggle_state = state.clone();
-                                        this.accept_message(
-                                            DevContainerMessage::FeaturesSelecting(feature),
-                                            window,
-                                            cx,
-                                        );
-                                    })
-                                },
-                            )),
-                    )
-                }))
-                .child(ListSeparator)
-                .child(
-                    div()
-                        .track_focus(&self.confirm_entry.focus_handle) // TODO
-                        .on_action({
-                            let template_entry = template_entry.clone();
-                            cx.listener(move |this, _: &menu::Confirm, window, cx| {
-                                this.accept_message(
-                                    DevContainerMessage::FeaturesSelected(template_entry.clone()),
-                                    window,
-                                    cx,
-                                );
-                            })
-                        })
-                        .child(
-                            ListItem::new("li-goback")
-                                .inset(true)
-                                .spacing(ui::ListItemSpacing::Sparse)
-                                .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
-                                .toggle_state(
-                                    self.confirm_entry.focus_handle.contains_focused(window, cx),
-                                )
-                                .child(Label::new("Confirm")),
-                        ),
-                )
-                .child(
-                    div()
-                        .track_focus(&self.back_entry.focus_handle)
-                        .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                            this.accept_message(DevContainerMessage::GoBack, window, cx);
-                        }))
-                        .child(
-                            ListItem::new("li-goback")
-                                .inset(true)
-                                .spacing(ui::ListItemSpacing::Sparse)
-                                .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
-                                .toggle_state(
-                                    self.back_entry.focus_handle.contains_focused(window, cx),
-                                )
-                                .child(Label::new("Go Back")),
-                        ),
-                )
-                .into_any_element(),
-        );
-
-        for feature in template_entry.features {
-            view = view.entry(feature.entry.clone());
+        if let Some(picker) = &self.features_picker {
+            let picker_element = div()
+                .track_focus(&self.focus_handle(cx))
+                .child(picker.clone().into_any_element())
+                .into_any_element();
+            picker.focus_handle(cx).focus(window, cx);
+            picker_element
+        } else {
+            div().into_any_element()
         }
-        view = view.entry(self.confirm_entry.clone());
-        view = view.entry(self.back_entry.clone());
-        view.render(window, cx).into_any_element()
     }
 
     fn render_querying_templates(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -999,8 +1058,8 @@ impl StatefulModal for DevContainerModal {
                 self.render_user_options_specifying(template_entry, window, cx)
             }
             DevContainerState::QueryingFeatures(_) => self.render_querying_features(window, cx),
-            DevContainerState::FeaturesQueryReturned(template_entry) => {
-                self.render_features_query_returned(template_entry, window, cx)
+            DevContainerState::FeaturesQueryReturned(_) => {
+                self.render_features_query_returned(window, cx)
             }
             _ => div().into_any_element(),
         }
@@ -1038,7 +1097,6 @@ impl StatefulModal for DevContainerModal {
                     .into_iter()
                     .map(|item| TemplateEntry {
                         template: item,
-                        entry: NavigableEntry::focusable(cx),
                         options_selected: HashMap::new(),
                         next_option: None,
                         features: Vec::new(),
@@ -1046,7 +1104,7 @@ impl StatefulModal for DevContainerModal {
                     })
                     .collect::<Vec<TemplateEntry>>();
                 if self.state == DevContainerState::QueryingTemplates {
-                    let delegate = SimplePickerDelegate::new(
+                    let delegate = TemplatePickerDelegate::new(
                         "Select a template".to_string(),
                         cx.weak_entity(),
                         items.clone(),
@@ -1149,16 +1207,31 @@ impl StatefulModal for DevContainerModal {
                 Some(DevContainerState::QueryingFeatures(template_entry))
             }
             DevContainerMessage::FeaturesRetrieved(features) => {
-                if let DevContainerState::QueryingFeatures(mut template_entry) = self.state.clone()
-                {
-                    template_entry.features = features
+                if let DevContainerState::QueryingFeatures(template_entry) = self.state.clone() {
+                    let features = features
                         .iter()
                         .map(|feature| FeatureEntry {
                             feature: feature.clone(),
                             toggle_state: ToggleState::Unselected,
-                            entry: NavigableEntry::focusable(cx),
                         })
-                        .collect();
+                        .collect::<Vec<FeatureEntry>>();
+                    let delegate = FeaturePickerDelegate::new(
+                        "Select features to add".to_string(),
+                        cx.weak_entity(),
+                        features.clone(),
+                        template_entry.clone(),
+                        Box::new(|entry, this, window, cx| {
+                            this.accept_message(
+                                DevContainerMessage::FeaturesSelected(entry),
+                                window,
+                                cx,
+                            );
+                        }),
+                    );
+
+                    let picker =
+                        cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+                    self.features_picker = Some(picker);
                     Some(DevContainerState::FeaturesQueryReturned(template_entry))
                 } else {
                     None
