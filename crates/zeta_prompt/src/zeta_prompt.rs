@@ -19,7 +19,17 @@ pub struct ZetaPromptInput {
 }
 
 #[derive(
-    Default, Clone, Copy, Debug, PartialEq, Eq, EnumIter, IntoStaticStr, Serialize, Deserialize,
+    Default,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    EnumIter,
+    IntoStaticStr,
+    Serialize,
+    Deserialize,
 )]
 #[allow(non_camel_case_types)]
 pub enum ZetaVersion {

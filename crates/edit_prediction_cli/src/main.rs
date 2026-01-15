@@ -25,7 +25,7 @@ use gpui::{AppContext as _, Application, BackgroundExecutor};
 use zeta_prompt::ZetaVersion;
 
 use reqwest_client::ReqwestClient;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::Display;
 use std::fs::{File, OpenOptions};
 use std::hash::{Hash, Hasher};
@@ -189,7 +189,7 @@ struct PredictArgs {
     repetitions: usize,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum PredictionProvider {
     Sweep,
     Mercury,
@@ -227,6 +227,7 @@ impl std::str::FromStr for PredictionProvider {
             "sweep" => Ok(PredictionProvider::Sweep),
             "mercury" => Ok(PredictionProvider::Mercury),
             "zeta1" => Ok(PredictionProvider::Zeta1),
+            // Handle both old format "zeta2" and new format with version
             "zeta2" => Ok(PredictionProvider::Zeta2(ZetaVersion::default())),
             "teacher" => Ok(PredictionProvider::Teacher),
             "teacher-non-batching" | "teacher_non_batching" | "teachernonbatching" => {
@@ -244,6 +245,25 @@ impl std::str::FromStr for PredictionProvider {
                 ZetaVersion::options_as_string()
             ),
         }
+    }
+}
+
+impl Serialize for PredictionProvider {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for PredictionProvider {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
     }
 }
 
