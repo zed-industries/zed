@@ -154,6 +154,7 @@ impl ShapedLine {
                     subpixel_variant,
                     scale_factor,
                     is_emoji: glyph.is_emoji,
+                    subpixel_rendering: false,
                 });
             }
         }

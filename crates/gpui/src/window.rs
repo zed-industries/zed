@@ -3567,6 +3567,7 @@ impl Window {
                     subpixel_variant,
                     scale_factor,
                     is_emoji: *is_emoji,
+                    subpixel_rendering: false,
                 }
             })
             .collect();
