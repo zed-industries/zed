@@ -5798,6 +5798,7 @@ impl AcpThreadView {
     ) -> impl IntoElement {
         let message_editor = self.message_editor.read(cx);
         let focus_handle = message_editor.focus_handle(cx);
+        let can_fast_track = self.can_fast_track_queue && !self.message_queue.is_empty();
 
         v_flex()
             .id("message_queue_list")
@@ -5876,9 +5877,16 @@ impl AcpThreadView {
                                             .style(ButtonStyle::Outlined)
                                             .label_size(LabelSize::Small)
                                             .when(is_next, |this| {
+                                                let action: Box<dyn gpui::Action> =
+                                                    if can_fast_track {
+                                                        Box::new(Chat)
+                                                    } else {
+                                                        Box::new(SendNextQueuedMessage)
+                                                    };
+
                                                 this.key_binding(
                                                     KeyBinding::for_action_in(
-                                                        &SendNextQueuedMessage,
+                                                        action.as_ref(),
                                                         &focus_handle.clone(),
                                                         cx,
                                                     )
