@@ -70,7 +70,7 @@ pub struct MultiBuffer {
     /// Use [`MultiBuffer::snapshot`] to get a up-to-date snapshot.
     snapshot: RefCell<MultiBufferSnapshot>,
     /// Contains the state of the buffers being edited
-    buffers: HashMap<BufferId, BufferState>,
+    buffers: BTreeMap<BufferId, BufferState>,
     /// Mapping from path keys to their excerpts.
     excerpts_by_path: BTreeMap<PathKey, Vec<ExcerptId>>,
     /// Mapping from excerpt IDs to their path key.
@@ -1144,7 +1144,7 @@ impl MultiBuffer {
     }
 
     pub fn clone(&self, new_cx: &mut Context<Self>) -> Self {
-        let mut buffers = HashMap::default();
+        let mut buffers = BTreeMap::default();
         let buffer_changed_since_sync = Rc::new(Cell::new(false));
         for (buffer_id, buffer_state) in self.buffers.iter() {
             buffer_state.buffer.update(new_cx, |buffer, _| {
@@ -1884,7 +1884,7 @@ impl MultiBuffer {
     pub fn clear(&mut self, cx: &mut Context<Self>) {
         self.sync_mut(cx);
         let ids = self.excerpt_ids();
-        let removed_buffer_ids = self.buffers.drain().map(|(id, _)| id).collect();
+        let removed_buffer_ids = std::mem::take(&mut self.buffers).into_keys().collect();
         self.excerpts_by_path.clear();
         self.paths_by_excerpt.clear();
         let MultiBufferSnapshot {
@@ -2968,7 +2968,7 @@ impl MultiBuffer {
 
     fn sync_from_buffer_changes(
         snapshot: &mut MultiBufferSnapshot,
-        buffers: &HashMap<BufferId, BufferState>,
+        buffers: &BTreeMap<BufferId, BufferState>,
         diffs: &HashMap<BufferId, DiffState>,
         cx: &App,
     ) -> Vec<Edit<MultiBufferOffset>> {
