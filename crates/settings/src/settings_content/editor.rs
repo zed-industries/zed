@@ -339,6 +339,10 @@ pub struct ScrollbarContent {
     pub cursors: Option<bool>,
     /// Forcefully enable or disable the scrollbar for each axis
     pub axes: Option<ScrollbarAxesContent>,
+    /// Whether to show markers indicating the start and end of the current scope in the scrollbar.
+    ///
+    /// Default: true
+    pub active_scope_markers: Option<bool>,
 }
 
 /// Sticky scroll related settings

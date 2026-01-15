@@ -3747,6 +3747,25 @@ impl Editor {
         }
         result
     }
+    
+    // Returns the start and end row of the current scope the cursor is in, if any
+    pub fn current_scope_boundary(&self, window: &Window, cx: &mut App) -> Option<(u32, u32)> {
+        let snapshot = self.snapshot(window, cx);
+        let buffer_snapshot = snapshot.buffer_snapshot();
+        
+        let head = self.selections.newest_anchor().head();
+        let cursor_offset = head.to_offset(&buffer_snapshot);
+        
+        let (open_range, close_range) = buffer_snapshot
+            .enclosing_bracket_ranges(cursor_offset..cursor_offset)?
+            .last()?;
+    
+        // Extract the row numbers
+        let start_row = open_range.start.to_point(&buffer_snapshot).row;
+        let end_row = close_range.start.to_point(&buffer_snapshot).row;
+    
+        Some((start_row, end_row))
+    }
 
     /// Defers the effects of selection change, so that the effects of multiple calls to
     /// `change_selections` are applied at the end. This way these intermediate states aren't added
