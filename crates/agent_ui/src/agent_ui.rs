@@ -123,6 +123,8 @@ actions!(
         SendImmediately,
         /// Sends the next queued message immediately.
         SendNextQueuedMessage,
+        /// Removes the first message from the queue (the next one to be sent).
+        RemoveFirstQueuedMessage,
         /// Clears all messages from the queue.
         ClearMessageQueue,
         /// Opens the permission granularity dropdown for the current tool call.

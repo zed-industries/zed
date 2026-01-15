@@ -71,8 +71,8 @@ use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
     CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread,
-    OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, SelectPermissionGranularity,
-    SendImmediately, SendNextQueuedMessage, ToggleProfileSelector,
+    OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage,
+    SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage, ToggleProfileSelector,
 };
 
 const MAX_COLLAPSED_LINES: usize = 3;
@@ -358,6 +358,7 @@ pub struct AcpThreadView {
     message_queue: Vec<QueuedMessage>,
     skip_queue_processing_count: usize,
     user_interrupted_generation: bool,
+    can_fast_track_queue: bool,
     turn_tokens: Option<u64>,
     last_turn_tokens: Option<u64>,
     turn_started_at: Option<Instant>,
@@ -553,6 +554,7 @@ impl AcpThreadView {
             message_queue: Vec::new(),
             skip_queue_processing_count: 0,
             user_interrupted_generation: false,
+            can_fast_track_queue: false,
             turn_tokens: None,
             last_turn_tokens: None,
             turn_started_at: None,
@@ -1007,6 +1009,7 @@ impl AcpThreadView {
     pub fn cancel_generation(&mut self, cx: &mut Context<Self>) {
         self.thread_error.take();
         self.thread_retry_status.take();
+        self.user_interrupted_generation = true;
 
         if let Some(thread) = self.thread() {
             self._cancel_task = Some(thread.update(cx, |thread, cx| thread.cancel(cx)));
@@ -1311,7 +1314,26 @@ impl AcpThreadView {
             return;
         }
 
-        if thread.read(cx).status() != ThreadStatus::Idle {
+        let is_editor_empty = self.message_editor.read(cx).is_empty(cx);
+        let is_generating = thread.read(cx).status() != ThreadStatus::Idle;
+
+        // Fast-track: if editor is empty, we're generating, and user can fast-track,
+        // send the first queued message immediately (interrupting current generation)
+        if is_editor_empty
+            && is_generating
+            && self.can_fast_track_queue
+            && !self.message_queue.is_empty()
+        {
+            self.can_fast_track_queue = false;
+            self.send_queued_message_at_index(0, true, window, cx);
+            return;
+        }
+
+        if is_editor_empty {
+            return;
+        }
+
+        if is_generating {
             self.queue_message(window, cx);
             return;
         }
@@ -1626,6 +1648,8 @@ impl AcpThreadView {
                     content,
                     tracked_buffers,
                 });
+                // Enable fast-track: user can press Enter again to send this queued message immediately
+                this.can_fast_track_queue = true;
                 message_editor.update(cx, |message_editor, cx| {
                     message_editor.clear(window, cx);
                 });
@@ -1656,13 +1680,14 @@ impl AcpThreadView {
         };
 
         // Only increment skip count for "Send Now" operations (out-of-order sends)
-        // Normal auto-processing from the Stopped handler doesn't need to skip
+        // Normal auto-processing from the Stopped handler doesn't need to skip.
+        // We only skip the Stopped event from the cancelled generation, NOT the
+        // Stopped event from the newly sent message (which should trigger queue processing).
         if is_send_now {
             let is_generating = thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
-            self.skip_queue_processing_count += if is_generating { 2 } else { 1 };
+            self.skip_queue_processing_count += if is_generating { 1 } else { 0 };
         }
 
-        // Ensure we don't end up with multiple concurrent generations
         let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
 
         let should_be_following = self.should_be_following;
@@ -5783,6 +5808,7 @@ impl AcpThreadView {
                     .key_binding(KeyBinding::for_action(&ClearMessageQueue, cx))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.message_queue.clear();
+                        this.can_fast_track_queue = false;
                         cx.notify();
                     })),
             )
@@ -5795,6 +5821,7 @@ impl AcpThreadView {
     ) -> impl IntoElement {
         let message_editor = self.message_editor.read(cx);
         let focus_handle = message_editor.focus_handle(cx);
+        let can_fast_track = self.can_fast_track_queue && !self.message_queue.is_empty();
 
         v_flex()
             .id("message_queue_list")
@@ -5857,10 +5884,21 @@ impl AcpThreadView {
                                 h_flex()
                                     .flex_none()
                                     .gap_1()
-                                    .visible_on_hover("queue_entry")
+                                    .when(!is_next, |this| this.visible_on_hover("queue_entry"))
                                     .child(
                                         Button::new(("delete", index), "Remove")
                                             .label_size(LabelSize::Small)
+                                            .tooltip(Tooltip::text("Remove Message from Queue"))
+                                            .when(is_next, |this| {
+                                                this.key_binding(
+                                                    KeyBinding::for_action_in(
+                                                        &RemoveFirstQueuedMessage,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                                )
+                                            })
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 if index < this.message_queue.len() {
                                                     this.message_queue.remove(index);
@@ -5870,12 +5908,18 @@ impl AcpThreadView {
                                     )
                                     .child(
                                         Button::new(("send_now", index), "Send Now")
-                                            .style(ButtonStyle::Outlined)
                                             .label_size(LabelSize::Small)
                                             .when(is_next, |this| {
-                                                this.key_binding(
+                                                let action: Box<dyn gpui::Action> =
+                                                    if can_fast_track {
+                                                        Box::new(Chat)
+                                                    } else {
+                                                        Box::new(SendNextQueuedMessage)
+                                                    };
+
+                                                this.style(ButtonStyle::Outlined).key_binding(
                                                     KeyBinding::for_action_in(
-                                                        &SendNextQueuedMessage,
+                                                        action.as_ref(),
                                                         &focus_handle.clone(),
                                                         cx,
                                                     )
@@ -7824,8 +7868,15 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
                 this.send_queued_message_at_index(0, true, window, cx);
             }))
+            .on_action(cx.listener(|this, _: &RemoveFirstQueuedMessage, _, cx| {
+                if !this.message_queue.is_empty() {
+                    this.message_queue.remove(0);
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
                 this.message_queue.clear();
+                this.can_fast_track_queue = false;
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
@@ -9099,20 +9150,23 @@ pub(crate) mod tests {
         add_to_workspace(thread_view.clone(), cx);
 
         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-        let mut events = cx.events(&message_editor);
         message_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("", window, cx);
         });
 
-        message_editor.update_in(cx, |_editor, window, cx| {
-            window.dispatch_action(Box::new(Chat), cx);
+        let thread = cx.read(|cx| thread_view.read(cx).thread().cloned().unwrap());
+        let entries_before = cx.read(|cx| thread.read(cx).entries().len());
+
+        thread_view.update_in(cx, |view, window, cx| {
+            view.send(window, cx);
         });
         cx.run_until_parked();
-        // We shouldn't have received any messages
-        assert!(matches!(
-            events.try_next(),
-            Err(futures::channel::mpsc::TryRecvError { .. })
-        ));
+
+        let entries_after = cx.read(|cx| thread.read(cx).entries().len());
+        assert_eq!(
+            entries_before, entries_after,
+            "No message should be sent when editor is empty"
+        );
     }
 
     #[gpui::test]
