@@ -2262,6 +2262,7 @@
     "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_smartcase_find": false,
+    "beam_jump": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},
     // Cursor shape for each mode.
