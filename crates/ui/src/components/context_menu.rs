@@ -296,14 +296,12 @@ impl ContextMenu {
                 this.cancel(&menu::Cancel, window, cx)
             },
         );
-        let _on_window_deactivate_subscription = cx.observe_window_activation(
-            window,
-            |this: &mut ContextMenu, window, cx| {
+        let _on_window_deactivate_subscription =
+            cx.observe_window_activation(window, |this: &mut ContextMenu, window, cx| {
                 if !window.is_window_active() {
                     this.cancel(&menu::Cancel, window, cx);
                 }
-            },
-        );
+            });
         window.refresh();
 
         f(
@@ -382,14 +380,12 @@ impl ContextMenu {
                     this.cancel(&menu::Cancel, window, cx)
                 },
             );
-            let _on_window_deactivate_subscription = cx.observe_window_activation(
-                window,
-                |this: &mut ContextMenu, window, cx| {
+            let _on_window_deactivate_subscription =
+                cx.observe_window_activation(window, |this: &mut ContextMenu, window, cx| {
                     if !window.is_window_active() {
                         this.cancel(&menu::Cancel, window, cx);
                     }
-                },
-            );
+                });
             window.refresh();
 
             (builder.clone())(
@@ -1233,14 +1229,12 @@ impl ContextMenu {
                 window,
                 |_this: &mut ContextMenu, _window, _cx| {},
             );
-            let _on_window_deactivate_subscription = cx.observe_window_activation(
-                window,
-                |this: &mut ContextMenu, window, cx| {
+            let _on_window_deactivate_subscription =
+                cx.observe_window_activation(window, |this: &mut ContextMenu, window, cx| {
                     if !window.is_window_active() {
                         this.cancel(&menu::Cancel, window, cx);
                     }
-                },
-            );
+                });
 
             let mut menu = ContextMenu {
                 builder: None,
