@@ -23,9 +23,33 @@ Your settings and extensions live in your user profile. When uninstalling, you c
 
 ## Remote Development (SSH)
 
-Zed supports remote development on Windows through both SSH and WSL. You can connect to remote servers via SSH or work with files inside WSL distributions directly from Zed.
+Zed supports remote development on Windows through both SSH and WSL. You can
+connect to remote servers via SSH or work with files inside WSL distributions
+directly from Zed.
 
-For detailed instructions on setting up and using remote development features, including SSH configuration, WSL setup, and troubleshooting, see the [Remote Development documentation](./remote-development.md).
+For detailed instructions on setting up and using remote development features,
+including SSH configuration, WSL setup, and troubleshooting, see the
+[Remote Development documentation](./remote-development.md).
+
+### WSL terminal workflow
+
+To run `zed` from a WSL terminal and open the Windows Zed app:
+
+```sh
+zed --install-wsl
+```
+
+Then, in WSL:
+
+```sh
+zed .
+```
+
+If you need to reset the WSL remote server binaries, run:
+
+```sh
+zed --clear-wsl-cache
+```
 
 ## Troubleshooting
 
