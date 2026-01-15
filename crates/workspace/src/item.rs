@@ -1493,7 +1493,7 @@ pub mod test {
 
         fn push_to_nav_history(&mut self, cx: &mut Context<Self>) {
             if let Some(history) = &mut self.nav_history {
-                history.push(Some(Box::new(self.state.clone())), cx);
+                history.push(Some(Box::new(self.state.clone())), None, cx);
             }
         }
     }

@@ -9793,6 +9793,128 @@ mod tests {
         });
     }
 
+    /// Tests that the navigation history deduplicates entries for the same item.
+    ///
+    /// When navigating back and forth between items (e.g., A -> B -> A -> B -> A -> B -> C),
+    /// the navigation history deduplicates by keeping only the most recent visit to each item,
+    /// resulting in [A, B, C] instead of [A, B, A, B, A, B, C]. This ensures that Go Back (Ctrl-O)
+    /// navigates through unique items efficiently: C -> B -> A, rather than bouncing between
+    /// repeated entries: C -> B -> A -> B -> A -> B -> A.
+    ///
+    /// This behavior prevents the navigation history from growing unnecessarily large and provides
+    /// a better user experience by eliminating redundant navigation steps when jumping between files.
+    #[gpui::test]
+    async fn test_navigation_history_deduplication(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let item_a = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "a.txt", cx)])
+        });
+        let item_b = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(2, "b.txt", cx)])
+        });
+        let item_c = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(3, "c.txt", cx)])
+        });
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_a.clone()), None, true, window, cx);
+            workspace.add_item_to_active_pane(Box::new(item_b.clone()), None, true, window, cx);
+            workspace.add_item_to_active_pane(Box::new(item_c.clone()), None, true, window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&item_a, false, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&item_b, false, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&item_a, false, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&item_b, false, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&item_a, false, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&item_b, false, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&item_c, false, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        let backward_count = pane.read_with(cx, |pane, cx| {
+            let mut count = 0;
+            pane.nav_history().for_each_entry(cx, |_, _| {
+                count += 1;
+            });
+            count
+        });
+        assert!(
+            backward_count <= 4,
+            "Should have at most 4 entries, got {}",
+            backward_count
+        );
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.go_back(pane.downgrade(), window, cx)
+            })
+            .await
+            .unwrap();
+
+        let active_item = workspace.read_with(cx, |workspace, cx| {
+            workspace.active_item(cx).unwrap().item_id()
+        });
+        assert_eq!(
+            active_item,
+            item_b.entity_id(),
+            "After first go_back, should be at item B"
+        );
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.go_back(pane.downgrade(), window, cx)
+            })
+            .await
+            .unwrap();
+
+        let active_item = workspace.read_with(cx, |workspace, cx| {
+            workspace.active_item(cx).unwrap().item_id()
+        });
+        assert_eq!(
+            active_item,
+            item_a.entity_id(),
+            "After second go_back, should be at item A"
+        );
+
+        pane.read_with(cx, |pane, _| {
+            assert!(pane.can_navigate_forward(), "Should be able to go forward");
+        });
+    }
+
     #[gpui::test]
     async fn test_toggle_docks_and_panels(cx: &mut gpui::TestAppContext) {
         init_test(cx);
