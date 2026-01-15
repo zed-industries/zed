@@ -922,6 +922,11 @@ pub struct LanguageConfig {
     #[serde(default, deserialize_with = "deserialize_regex")]
     #[schemars(schema_with = "regex_json_schema")]
     pub import_path_strip_regex: Option<Regex>,
+    /// Languages that should also have their LSPs triggered when this language is detected
+    /// as an injection. For example, Angular can delegate to HTML so that HTML LSPs (emmet,
+    /// html-language-server, tailwind) also activate for Angular templates.
+    #[serde(default)]
+    pub delegate_languages: Vec<LanguageName>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
@@ -1141,6 +1146,7 @@ impl Default for LanguageConfig {
             debuggers: Default::default(),
             ignored_import_segments: Default::default(),
             import_path_strip_regex: None,
+            delegate_languages: Default::default(),
         }
     }
 }
@@ -2034,6 +2040,12 @@ impl Language {
     }
     pub fn manifest(&self) -> Option<&ManifestName> {
         self.manifest_name.as_ref()
+    }
+
+    /// Returns languages that should also have their LSPs triggered when this language
+    /// is detected as an injection.
+    pub fn delegate_languages(&self) -> &[LanguageName] {
+        &self.config.delegate_languages
     }
 
     pub fn code_fence_block_name(&self) -> Arc<str> {

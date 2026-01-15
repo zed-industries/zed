@@ -99,6 +99,8 @@ pub struct LanguageSettings {
     pub jsx_tag_auto_close: bool,
     /// Whether to use language servers to provide code intelligence.
     pub enable_language_server: bool,
+    /// Whether to enable language servers for injection regions (embedded languages).
+    pub enable_injection_language_servers: bool,
     /// The list of language servers to use (or disable) for this language.
     ///
     /// This array should consist of language server IDs, as well as the following
@@ -564,6 +566,9 @@ impl settings::Settings for AllLanguageSettings {
                 },
                 jsx_tag_auto_close: settings.jsx_tag_auto_close.unwrap().enabled.unwrap(),
                 enable_language_server: settings.enable_language_server.unwrap(),
+                enable_injection_language_servers: settings
+                    .enable_injection_language_servers
+                    .unwrap_or(false),
                 language_servers: settings.language_servers.unwrap(),
                 allow_rewrap: settings.allow_rewrap.unwrap(),
                 show_edit_predictions: settings.show_edit_predictions.unwrap(),

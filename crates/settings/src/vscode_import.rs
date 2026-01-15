@@ -430,6 +430,7 @@ impl VsCodeSettings {
             debuggers: None,
             edit_predictions_disabled_in: None,
             enable_language_server: None,
+            enable_injection_language_servers: None,
             ensure_final_newline_on_save: self.read_bool("files.insertFinalNewline"),
             extend_comment_on_newline: None,
             extend_list_on_newline: None,

@@ -21,9 +21,9 @@ mod inlay_hint_cache;
 use self::inlay_hint_cache::BufferInlayHints;
 use crate::{
     CodeAction, ColorPresentation, Completion, CompletionDisplayOptions, CompletionResponse,
-    CompletionSource, CoreCompletion, DocumentColor, Hover, InlayHint, InlayId, LocationLink,
-    LspAction, LspPullDiagnostics, ManifestProvidersStore, Project, ProjectItem, ProjectPath,
-    ProjectTransaction, PulledDiagnostics, ResolveState, Symbol,
+    CompletionSource, CoreCompletion, DocumentColor, DocumentHighlight, Hover, InlayHint, InlayId,
+    LocationLink, LspAction, LspPullDiagnostics, ManifestProvidersStore, Project, ProjectItem,
+    ProjectPath, ProjectTransaction, PulledDiagnostics, ResolveState, Symbol,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -254,6 +254,59 @@ struct DynamicRegistrations {
     diagnostics: HashMap<Option<String>, DiagnosticServerCapabilities>,
 }
 
+/// Identifies a specific injection region within a buffer.
+/// Uses an index (0, 1, 2...) instead of byte offset to keep identity stable during typing.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct InjectionRegionId {
+    /// The language of this injection region.
+    pub language: LanguageName,
+    /// The index of this region among all regions of the same language.
+    pub region_index: usize,
+}
+
+/// Key for buffer registration lookup.
+/// Combines server ID with optional injection region to support multiple registrations.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RegistrationKey {
+    server_id: LanguageServerId,
+    injection_region: Option<InjectionRegionId>,
+}
+
+/// Tracks a buffer registration with a language server.
+#[derive(Debug, Clone)]
+struct BufferRegistration {
+    uri: lsp::Uri,
+    version: i32,
+}
+
+/// Represents a specific injection region in a buffer.
+struct InjectionRegion {
+    language: Arc<Language>,
+    region_index: usize,
+}
+
+/// Context for making LSP requests in an injection region.
+/// Contains all information needed to query injection servers.
+#[derive(Debug, Clone)]
+pub struct InjectionContext {
+    /// The identifier for this injection region.
+    pub region_id: InjectionRegionId,
+    /// The position transformed to injection-local coordinates.
+    pub transformed_position: lsp::Position,
+    /// The original position in the parent buffer.
+    pub original_position: PointUtf16,
+    /// The virtual URI used for this injection region.
+    pub virtual_uri: lsp::Uri,
+}
+
+/// Layer information extracted from syntax layers, sorted by start offset.
+struct SortedLayerInfo {
+    language_name: LanguageName,
+    language: Arc<Language>,
+    start_offset: usize,
+    ranges: Vec<(usize, usize)>,
+}
+
 pub struct LocalLspStore {
     weak: WeakEntity<LspStore>,
     pub worktree_store: Entity<WorktreeStore>,
@@ -291,6 +344,11 @@ pub struct LocalLspStore {
     lsp_tree: LanguageServerTree,
     registered_buffers: HashMap<BufferId, usize>,
     buffers_opened_in_servers: HashMap<BufferId, HashSet<LanguageServerId>>,
+    /// Unified tracking for buffer registrations with language servers.
+    /// Maps buffer_id -> registration_key -> registration info
+    /// Tracks both root documents and injection regions with their URIs and versions.
+    /// Using RegistrationKey allows multiple registrations per server for different injection regions.
+    buffer_registrations: HashMap<BufferId, HashMap<RegistrationKey, BufferRegistration>>,
     buffer_pull_diagnostics_result_ids: HashMap<
         LanguageServerId,
         HashMap<Option<SharedString>, HashMap<PathBuf, Option<SharedString>>>,
@@ -314,6 +372,457 @@ impl LocalLspStore {
             LanguageServerState::Running { server, .. } => Some(server),
             LanguageServerState::Starting { .. } => None,
         }
+    }
+
+    /// Create an embedded content URI for nested documents.
+    ///
+    /// Uses file:// scheme with a synthetic extension to look like a real file
+    /// that language servers can work with. This ensures servers like Emmet
+    /// can find workspace configs and treat it as a normal file.
+    ///
+    /// Format: file:///path/to/file.component.ts.__virtual__.{language}_{index}.{ext}
+    fn create_embedded_content_uri(
+        file_uri: &lsp::Uri,
+        region_id: &InjectionRegionId,
+        language: &Arc<Language>,
+    ) -> lsp::Uri {
+        let lang_name = region_id.language.0.to_lowercase();
+
+        // Get the file extension from the language's path_suffixes
+        // e.g., Angular has ["component.html", "ng.html"] -> "html"
+        //       CSS has ["css"] -> "css"
+        // This makes the code extension-driven instead of hardcoded
+        let extension = language
+            .path_suffixes()
+            .first()
+            .and_then(|suffix| {
+                // Extract extension from suffix (e.g., "component.html" -> "html")
+                Path::new(suffix).extension().and_then(|ext| ext.to_str())
+            })
+            .unwrap_or(&lang_name);
+
+        // Append virtual marker with index to uniquely identify each injection region
+        // e.g., file.ts.__virtual__.angular_0.html (first Angular region)
+        // Using index instead of byte offset keeps identity stable during typing
+        let uri_string = format!(
+            "{}.__virtual__.{}_{}.{}",
+            file_uri.as_str(),
+            lang_name,
+            region_id.region_index,
+            extension
+        );
+        uri_string.parse().unwrap_or_else(|_| file_uri.clone())
+    }
+
+    /// Collect syntax layers for a specific language, sorted by start offset.
+    /// Filters out root layers and deduplicates by start offset.
+    fn collect_sorted_layers_for_language(
+        buffer: &language::BufferSnapshot,
+        language_filter: Option<&LanguageName>,
+    ) -> Vec<SortedLayerInfo> {
+        let buffer_len = buffer.len();
+        let mut layers: Vec<SortedLayerInfo> = Vec::new();
+        let mut seen: HashSet<(LanguageName, usize)> = HashSet::default();
+
+        let root_language = buffer.language().map(|l| l.name());
+
+        for layer in buffer.syntax_layers_for_range(0..buffer_len, false) {
+            let node = layer.node();
+            let layer_start = node.start_byte();
+            let layer_end = node.end_byte();
+            let lang_name = layer.language.name();
+
+            // Skip root layer
+            let is_root_by_name = root_language.as_ref() == Some(&lang_name);
+            let is_root_by_coverage = layer_start == 0 && layer_end >= buffer_len.saturating_sub(1);
+            if is_root_by_name && is_root_by_coverage {
+                continue;
+            }
+
+            // Apply language filter if specified
+            if let Some(filter) = language_filter {
+                if &lang_name != filter {
+                    continue;
+                }
+            }
+
+            // Deduplicate by (language, start_offset)
+            if !seen.insert((lang_name.clone(), layer_start)) {
+                continue;
+            }
+
+            let ranges = match layer.included_sub_ranges {
+                Some(sub_ranges) => sub_ranges
+                    .iter()
+                    .map(|range| (range.start.to_offset(buffer), range.end.to_offset(buffer)))
+                    .collect(),
+                None => vec![(layer_start, layer_end)],
+            };
+
+            layers.push(SortedLayerInfo {
+                language_name: lang_name,
+                language: layer.language.clone(),
+                start_offset: layer_start,
+                ranges,
+            });
+        }
+
+        layers.sort_by_key(|info| info.start_offset);
+        layers
+    }
+
+    /// Collect all injection regions from a buffer's syntax layers.
+    /// Returns each region separately with stable indices based on document order.
+    fn collect_injection_regions(buffer: &language::BufferSnapshot) -> Vec<InjectionRegion> {
+        let layers = Self::collect_sorted_layers_for_language(buffer, None);
+
+        let mut regions = Vec::new();
+        let mut language_counts: HashMap<LanguageName, usize> = HashMap::default();
+
+        for layer_info in layers {
+            let region_index = language_counts.entry(layer_info.language_name).or_insert(0);
+            regions.push(InjectionRegion {
+                language: layer_info.language,
+                region_index: *region_index,
+            });
+            *region_index += 1;
+        }
+
+        regions
+    }
+
+    /// Extract content from a specific injection region.
+    fn extract_injection_content_for_region(
+        buffer: &language::BufferSnapshot,
+        region_id: &InjectionRegionId,
+    ) -> String {
+        let layers = Self::collect_sorted_layers_for_language(buffer, Some(&region_id.language));
+
+        let Some(info) = layers.get(region_id.region_index) else {
+            return String::new();
+        };
+
+        let mut content = String::new();
+        for (start, end) in &info.ranges {
+            content.push_str(&buffer.text_for_range(*start..*end).collect::<String>());
+            content.push('\n');
+        }
+        content
+    }
+
+    /// Map a position from the parent buffer to injection coordinates for a specific region.
+    fn map_position_to_injection_region(
+        parent_offset: usize,
+        buffer: &language::BufferSnapshot,
+        region_id: &InjectionRegionId,
+    ) -> Option<lsp::Position> {
+        let layers = Self::collect_sorted_layers_for_language(buffer, Some(&region_id.language));
+        let info = layers.get(region_id.region_index)?;
+
+        // Check if parent_offset is within this region and calculate the injection offset
+        let mut extracted_offset = 0usize;
+        for (start, end) in &info.ranges {
+            if parent_offset >= *start && parent_offset <= *end {
+                // Position is within this range
+                extracted_offset += parent_offset - start;
+
+                // Convert offset to line/column in extracted content
+                let content = Self::extract_injection_content_for_region(buffer, region_id);
+                return Self::offset_to_lsp_position(&content, extracted_offset);
+            } else if parent_offset > *end {
+                // Position is after this range - accumulate length + newline
+                extracted_offset += end - start + 1;
+            }
+        }
+
+        None
+    }
+
+    /// Find which injection region contains the given offset.
+    fn find_injection_region_at_offset(
+        parent_offset: usize,
+        buffer: &language::BufferSnapshot,
+    ) -> Option<InjectionRegionId> {
+        let layers = Self::collect_sorted_layers_for_language(buffer, None);
+        let mut language_counts: HashMap<LanguageName, usize> = HashMap::default();
+
+        for info in layers {
+            let region_index = language_counts
+                .entry(info.language_name.clone())
+                .or_insert(0);
+            let current_index = *region_index;
+            *region_index += 1;
+
+            for (start, end) in &info.ranges {
+                if parent_offset >= *start && parent_offset <= *end {
+                    return Some(InjectionRegionId {
+                        language: info.language_name,
+                        region_index: current_index,
+                    });
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Map a position from injection coordinates back to the parent buffer.
+    fn map_position_from_injection_region(
+        injection_offset: usize,
+        buffer: &language::BufferSnapshot,
+        region_id: &InjectionRegionId,
+    ) -> Option<usize> {
+        let layers = Self::collect_sorted_layers_for_language(buffer, Some(&region_id.language));
+        let info = layers.get(region_id.region_index)?;
+
+        let mut accumulated = 0usize;
+        for (start, end) in &info.ranges {
+            let range_len = end - start;
+            if injection_offset <= accumulated + range_len {
+                return Some(start + (injection_offset - accumulated));
+            }
+            accumulated += range_len + 1;
+        }
+
+        None
+    }
+
+    /// Convert a byte offset to LSP Position (line, character) in UTF-16.
+    fn offset_to_lsp_position(content: &str, offset: usize) -> Option<lsp::Position> {
+        let mut line = 0u32;
+        let mut col_utf16 = 0u32;
+        let mut current_offset = 0usize;
+
+        for ch in content.chars() {
+            if current_offset >= offset {
+                break;
+            }
+
+            if ch == '\n' {
+                line += 1;
+                col_utf16 = 0;
+            } else {
+                col_utf16 += ch.len_utf16() as u32;
+            }
+
+            current_offset += ch.len_utf8();
+        }
+
+        Some(lsp::Position {
+            line,
+            character: col_utf16,
+        })
+    }
+
+    /// Convert an LSP Position to byte offset in content.
+    fn lsp_position_to_offset(content: &str, position: lsp::Position) -> Option<usize> {
+        let mut current_line = 0u32;
+        let mut current_col_utf16 = 0u32;
+        let mut current_offset = 0usize;
+
+        for ch in content.chars() {
+            if current_line == position.line && current_col_utf16 == position.character {
+                return Some(current_offset);
+            }
+
+            if ch == '\n' {
+                if current_line == position.line {
+                    // End of target line - return current offset
+                    return Some(current_offset);
+                }
+                current_line += 1;
+                current_col_utf16 = 0;
+            } else {
+                current_col_utf16 += ch.len_utf16() as u32;
+            }
+
+            current_offset += ch.len_utf8();
+        }
+
+        // Handle end of content
+        if current_line == position.line && current_col_utf16 == position.character {
+            return Some(current_offset);
+        }
+
+        None
+    }
+
+    /// Collect injection servers for a specific region, filtered by capability.
+    /// Returns a list of (server_id, server, uri) tuples for servers that:
+    /// - Are registered for the given injection region
+    /// - Have the required capability
+    /// - Pass the scope language filter
+    /// - Are not in the exclude set
+    fn collect_injection_servers_for_region(
+        &self,
+        buffer_id: BufferId,
+        region_id: &InjectionRegionId,
+        exclude_server_ids: &HashSet<LanguageServerId>,
+        scope: &Option<language::LanguageScope>,
+        capability_check: impl Fn(&lsp::ServerCapabilities) -> bool,
+    ) -> Vec<(LanguageServerId, Arc<LanguageServer>, lsp::Uri)> {
+        let Some(registrations) = self.buffer_registrations.get(&buffer_id) else {
+            return Vec::new();
+        };
+
+        let mut seen_server_ids: HashSet<LanguageServerId> = HashSet::default();
+        registrations
+            .iter()
+            .filter(|(key, _)| key.injection_region.as_ref() == Some(region_id))
+            .filter_map(|(key, reg)| {
+                if exclude_server_ids.contains(&key.server_id) {
+                    return None;
+                }
+                if !seen_server_ids.insert(key.server_id) {
+                    return None;
+                }
+                if let Some(LanguageServerState::Running {
+                    server, adapter, ..
+                }) = self.language_servers.get(&key.server_id)
+                {
+                    if capability_check(&server.capabilities())
+                        && scope
+                            .as_ref()
+                            .map(|s: &language::LanguageScope| s.language_allowed(&adapter.name))
+                            .unwrap_or(true)
+                    {
+                        return Some((key.server_id, server.clone(), reg.uri.clone()));
+                    }
+                }
+                None
+            })
+            .collect()
+    }
+
+    /// Get the set of server IDs registered for the root document (non-injection) for a buffer.
+    fn root_server_ids_for_buffer(&self, buffer_id: BufferId) -> HashSet<LanguageServerId> {
+        self.buffer_registrations
+            .get(&buffer_id)
+            .map(|regs| {
+                regs.iter()
+                    .filter(|(key, _)| key.injection_region.is_none())
+                    .map(|(key, _)| key.server_id)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Transform an LSP range from injection coordinates to parent buffer coordinates.
+    /// Uses simple line/column offsets based on the position difference.
+    fn transform_injection_range_to_parent(
+        injection_range: lsp::Range,
+        row_offset: i32,
+        col_offset_first_line: i32,
+    ) -> lsp::Range {
+        let start_line = (injection_range.start.line as i32 + row_offset) as u32;
+        let end_line = (injection_range.end.line as i32 + row_offset) as u32;
+        let start_col = if injection_range.start.line == 0 {
+            (injection_range.start.character as i32 + col_offset_first_line) as u32
+        } else {
+            injection_range.start.character
+        };
+        let end_col = if injection_range.end.line == 0 {
+            (injection_range.end.character as i32 + col_offset_first_line) as u32
+        } else {
+            injection_range.end.character
+        };
+        lsp::Range {
+            start: lsp::Position {
+                line: start_line,
+                character: start_col,
+            },
+            end: lsp::Position {
+                line: end_line,
+                character: end_col,
+            },
+        }
+    }
+
+    /// Transform an LSP range from injection coordinates to parent buffer anchor range.
+    /// Combines range transformation and clipping to produce a valid anchor range.
+    fn transform_injection_range_to_anchor_range(
+        injection_range: lsp::Range,
+        row_offset: i32,
+        col_offset_first_line: i32,
+        buffer_snapshot: &language::BufferSnapshot,
+    ) -> Range<Anchor> {
+        let transformed = Self::transform_injection_range_to_parent(
+            injection_range,
+            row_offset,
+            col_offset_first_line,
+        );
+        let start = buffer_snapshot.clip_point_utf16(
+            Unclipped(PointUtf16::new(
+                transformed.start.line,
+                transformed.start.character,
+            )),
+            Bias::Left,
+        );
+        let end = buffer_snapshot.clip_point_utf16(
+            Unclipped(PointUtf16::new(
+                transformed.end.line,
+                transformed.end.character,
+            )),
+            Bias::Left,
+        );
+        buffer_snapshot.anchor_after(start)..buffer_snapshot.anchor_before(end)
+    }
+
+    /// Resolve injection context for a given position in a buffer.
+    /// Returns `Some(InjectionContext)` if the position is within an injection region
+    /// and injection language servers are enabled/registered, `None` otherwise.
+    fn resolve_injection_context(
+        &self,
+        buffer: &Entity<Buffer>,
+        position: PointUtf16,
+        cx: &App,
+    ) -> Option<InjectionContext> {
+        let buffer_ref = buffer.read(cx);
+
+        // Early exit if injection language servers are disabled
+        let injection_enabled = language_settings(
+            buffer_ref.language().map(|l| l.name()),
+            buffer_ref.file(),
+            cx,
+        )
+        .enable_injection_language_servers;
+        if !injection_enabled {
+            return None;
+        }
+
+        let snapshot = buffer_ref.snapshot();
+        let offset = position.to_offset(&snapshot);
+
+        // Check if we're in an injection region
+        let buffer_language = snapshot.language().map(|l| l.name());
+        let language_at_position = snapshot.language_at(offset).map(|l| l.name());
+
+        if buffer_language == language_at_position {
+            // Not in injection - position is in root document
+            return None;
+        }
+
+        // Find the injection region at this offset
+        let region_id = Self::find_injection_region_at_offset(offset, &snapshot)?;
+
+        // Map position to injection coordinates
+        let transformed_position =
+            Self::map_position_to_injection_region(offset, &snapshot, &region_id)?;
+
+        // Get the virtual URI for this region
+        let buffer_id = buffer.read(cx).remote_id();
+        let virtual_uri = self.buffer_registrations.get(&buffer_id).and_then(|regs| {
+            regs.iter()
+                .find(|(key, _)| key.injection_region.as_ref() == Some(&region_id))
+                .map(|(_, reg)| reg.uri.clone())
+        })?;
+
+        Some(InjectionContext {
+            region_id,
+            transformed_position,
+            original_position: position,
+            virtual_uri,
+        })
     }
 
     fn get_or_insert_language_server(
@@ -1294,15 +1803,36 @@ impl LocalLspStore {
         let delegate: Arc<dyn ManifestDelegate> =
             Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
 
-        self.lsp_tree
+        // Collect servers for the primary language
+        let mut server_ids: Vec<LanguageServerId> = self
+            .lsp_tree
             .get(
-                project_path,
+                project_path.clone(),
                 language.name(),
                 language.manifest(),
                 &delegate,
                 cx,
             )
-            .collect::<Vec<_>>()
+            .collect();
+
+        // Also include servers for delegate languages
+        // This allows languages like Angular to also get HTML LSP servers (emmet, tailwind, etc.)
+        for delegate_lang_name in language.delegate_languages() {
+            let delegate_servers = self.lsp_tree.get(
+                project_path.clone(),
+                delegate_lang_name.clone(),
+                None, // No manifest for delegate language lookup
+                &delegate,
+                cx,
+            );
+            for server_id in delegate_servers {
+                if !server_ids.contains(&server_id) {
+                    server_ids.push(server_id);
+                }
+            }
+        }
+
+        server_ids
     }
 
     fn language_server_ids_for_buffer(
@@ -2586,9 +3116,10 @@ impl LocalLspStore {
         let initial_snapshot = buffer.text_snapshot();
         let worktree_id = file.worktree_id(cx);
 
-        let Some(language) = buffer.language().cloned() else {
+        let Some(root_language) = buffer.language().cloned() else {
             return;
         };
+
         let path: Arc<RelPath> = file
             .path()
             .parent()
@@ -2601,135 +3132,295 @@ impl LocalLspStore {
         else {
             return;
         };
-        let language_name = language.name();
-        let (reused, delegate, servers) = self
-            .reuse_existing_language_server(&self.lsp_tree, &worktree, &language_name, cx)
-            .map(|(delegate, apply)| (true, delegate, apply(&mut self.lsp_tree)))
-            .unwrap_or_else(|| {
-                let lsp_delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
-                let delegate: Arc<dyn ManifestDelegate> =
-                    Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
 
-                let servers = self
-                    .lsp_tree
-                    .walk(
-                        ProjectPath { worktree_id, path },
-                        language.name(),
-                        language.manifest(),
-                        &delegate,
-                        cx,
-                    )
-                    .collect::<Vec<_>>();
-                (false, lsp_delegate, servers)
+        let buffer_snapshot = buffer_handle.read(cx).snapshot();
+
+        // Check if injection language servers are enabled
+        let injection_enabled = language_settings(Some(root_language.name()), buffer.file(), cx)
+            .enable_injection_language_servers;
+
+        // Collect all injection regions from tree-sitter (only if enabled)
+        let injection_regions = if injection_enabled {
+            Self::collect_injection_regions(&buffer_snapshot)
+        } else {
+            Vec::new()
+        };
+
+        // Build list of registration entries
+        // Each entry has: language_name, optional manifest source, optional injection region
+        struct RegistrationEntry {
+            language_name: LanguageName,
+            manifest_source: Option<Arc<Language>>,
+            injection_region: Option<InjectionRegionId>,
+            /// The language of the injection region (for URI creation).
+            /// Set for both injection entries and their delegate entries.
+            injection_language: Option<Arc<Language>>,
+        }
+
+        let mut entries: Vec<RegistrationEntry> = Vec::new();
+
+        // Root language
+        entries.push(RegistrationEntry {
+            language_name: root_language.name(),
+            manifest_source: Some(root_language.clone()),
+            injection_region: None,
+            injection_language: None,
+        });
+
+        // Root delegate languages (e.g., Angular -> HTML) - only if injection is enabled
+        if injection_enabled {
+            for delegate_name in root_language.delegate_languages() {
+                entries.push(RegistrationEntry {
+                    language_name: delegate_name.clone(),
+                    manifest_source: None, // Delegates use their own manifest lookup
+                    injection_region: None,
+                    injection_language: None,
+                });
+            }
+        }
+
+        // Injection regions and their delegates (only if injection is enabled)
+        // Each region is registered separately, even if they have the same language
+        for region in &injection_regions {
+            let region_id = InjectionRegionId {
+                language: region.language.name(),
+                region_index: region.region_index,
+            };
+
+            entries.push(RegistrationEntry {
+                language_name: region.language.name(),
+                manifest_source: Some(region.language.clone()),
+                injection_region: Some(region_id.clone()),
+                injection_language: Some(region.language.clone()),
             });
-        let servers_and_adapters = servers
-            .into_iter()
-            .filter_map(|server_node| {
+
+            for delegate_name in region.language.delegate_languages() {
+                entries.push(RegistrationEntry {
+                    language_name: delegate_name.clone(),
+                    manifest_source: None,
+                    injection_region: Some(region_id.clone()),
+                    injection_language: Some(region.language.clone()),
+                });
+            }
+        }
+
+        // Get delegate for server initialization
+        let (reused, lsp_delegate) = self
+            .reuse_existing_language_server(&self.lsp_tree, &worktree, &root_language.name(), cx)
+            .map(|(delegate, apply)| {
+                apply(&mut self.lsp_tree);
+                (true, delegate)
+            })
+            .unwrap_or_else(|| {
+                (
+                    false,
+                    LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx),
+                )
+            });
+
+        // Track servers registered for the root document
+        // These shouldn't be re-registered for injections (they handle injections natively)
+        let mut root_server_ids: HashSet<LanguageServerId> = HashSet::default();
+
+        for entry in entries {
+            let language_name = entry.language_name;
+            let injection_region = entry.injection_region;
+            let (content, registration_uri) = match (&injection_region, &entry.injection_language) {
+                (Some(region_id), Some(injection_lang)) => {
+                    // For injections, extract content from the specific region
+                    let extracted =
+                        Self::extract_injection_content_for_region(&buffer_snapshot, region_id);
+                    let virtual_uri =
+                        Self::create_embedded_content_uri(&uri, region_id, injection_lang);
+                    (extracted, virtual_uri)
+                }
+                _ => {
+                    // Root document uses original content and URI
+                    (initial_snapshot.text(), uri.clone())
+                }
+            };
+
+            // Skip empty injection content
+            if injection_region.is_some() && content.is_empty() {
+                continue;
+            }
+
+            // Walk LSP tree for this language
+            let manifest_delegate: Arc<dyn ManifestDelegate> =
+                Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
+            let servers = self
+                .lsp_tree
+                .walk(
+                    ProjectPath {
+                        worktree_id,
+                        path: path.clone(),
+                    },
+                    language_name.clone(),
+                    entry.manifest_source.as_ref().and_then(|l| l.manifest()),
+                    &manifest_delegate,
+                    cx,
+                )
+                .collect::<Vec<_>>();
+
+            for server_node in servers {
+                // Apply filter if specified
                 if reused && server_node.server_id().is_none() {
-                    return None;
+                    continue;
                 }
                 if !only_register_servers.is_empty() {
                     if let Some(server_id) = server_node.server_id()
                         && !only_register_servers.contains(&LanguageServerSelector::Id(server_id))
                     {
-                        return None;
+                        continue;
                     }
                     if let Some(name) = server_node.name()
                         && !only_register_servers.contains(&LanguageServerSelector::Name(name))
                     {
-                        return None;
+                        continue;
                     }
                 }
 
-                let server_id = server_node.server_id_or_init(|disposition| {
-                    let path = &disposition.path;
+                // Initialize or get server
+                let Some(server_id) = server_node.server_id_or_init(|disposition| {
+                    let server_path = &disposition.path;
+                    let workspace_uri =
+                        Uri::from_file_path(worktree.read(cx).absolutize(&server_path.path));
 
-                    {
-                        let uri = Uri::from_file_path(worktree.read(cx).absolutize(&path.path));
-
-                        let server_id = self.get_or_insert_language_server(
-                            &worktree,
-                            delegate.clone(),
-                            disposition,
-                            &language_name,
-                            cx,
-                        );
-
-                        if let Some(state) = self.language_servers.get(&server_id)
-                            && let Ok(uri) = uri
-                        {
-                            state.add_workspace_folder(uri);
-                        };
-                        server_id
-                    }
-                })?;
-                let server_state = self.language_servers.get(&server_id)?;
-                if let LanguageServerState::Running {
-                    server, adapter, ..
-                } = server_state
-                {
-                    Some((server.clone(), adapter.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        for (server, adapter) in servers_and_adapters {
-            buffer_handle.update(cx, |buffer, cx| {
-                buffer.set_completion_triggers(
-                    server.server_id(),
-                    server
-                        .capabilities()
-                        .completion_provider
-                        .as_ref()
-                        .and_then(|provider| {
-                            provider
-                                .trigger_characters
-                                .as_ref()
-                                .map(|characters| characters.iter().cloned().collect())
-                        })
-                        .unwrap_or_default(),
-                    cx,
-                );
-            });
-
-            let snapshot = LspBufferSnapshot {
-                version: 0,
-                snapshot: initial_snapshot.clone(),
-            };
-
-            let mut registered = false;
-            self.buffer_snapshots
-                .entry(buffer_id)
-                .or_default()
-                .entry(server.server_id())
-                .or_insert_with(|| {
-                    registered = true;
-                    server.register_buffer(
-                        uri.clone(),
-                        adapter.language_id(&language.name()),
-                        0,
-                        initial_snapshot.text(),
+                    let server_id = self.get_or_insert_language_server(
+                        &worktree,
+                        lsp_delegate.clone(),
+                        disposition,
+                        &language_name,
+                        cx,
                     );
 
-                    vec![snapshot]
+                    if let Some(state) = self.language_servers.get(&server_id)
+                        && let Ok(ws_uri) = workspace_uri
+                    {
+                        state.add_workspace_folder(ws_uri);
+                    }
+                    server_id
+                }) else {
+                    continue;
+                };
+
+                if injection_region.is_some() && root_server_ids.contains(&server_id) {
+                    continue;
+                }
+
+                let Some(server_state) = self.language_servers.get(&server_id) else {
+                    continue;
+                };
+
+                let (server, adapter) = match server_state {
+                    LanguageServerState::Running {
+                        server, adapter, ..
+                    } => (server.clone(), adapter.clone()),
+                    _ => continue,
+                };
+
+                // Track root document servers
+                if injection_region.is_none() {
+                    root_server_ids.insert(server_id);
+                }
+
+                // Set completion triggers
+                buffer_handle.update(cx, |buffer, cx| {
+                    buffer.set_completion_triggers(
+                        server.server_id(),
+                        server
+                            .capabilities()
+                            .completion_provider
+                            .as_ref()
+                            .and_then(|provider| {
+                                provider
+                                    .trigger_characters
+                                    .as_ref()
+                                    .map(|characters| characters.iter().cloned().collect())
+                            })
+                            .unwrap_or_default(),
+                        cx,
+                    );
                 });
 
-            self.buffers_opened_in_servers
-                .entry(buffer_id)
-                .or_default()
-                .insert(server.server_id());
-            if registered {
-                cx.emit(LspStoreEvent::LanguageServerUpdate {
-                    language_server_id: server.server_id(),
-                    name: None,
-                    message: proto::update_language_server::Variant::RegisteredForBuffer(
-                        proto::RegisteredForBuffer {
-                            buffer_abs_path: abs_path.to_string_lossy().into_owned(),
-                            buffer_id: buffer_id.to_proto(),
+                // Register buffer with server (deduplicated by buffer_snapshots for root)
+                let snapshot = LspBufferSnapshot {
+                    version: 0,
+                    snapshot: initial_snapshot.clone(),
+                };
+
+                // Create registration key for unified tracking
+                let reg_key = RegistrationKey {
+                    server_id: server.server_id(),
+                    injection_region: injection_region.clone(),
+                };
+
+                let injection_already_registered = injection_region.is_some()
+                    && self
+                        .buffer_registrations
+                        .get(&buffer_id)
+                        .is_some_and(|regs| regs.contains_key(&reg_key));
+
+                if injection_already_registered {
+                    continue;
+                }
+
+                let mut newly_registered = false;
+
+                if injection_region.is_some() {
+                    newly_registered = true;
+                    server.register_buffer(
+                        registration_uri.clone(),
+                        adapter.language_id(&language_name),
+                        0,
+                        content.clone(),
+                    );
+                } else {
+                    // For root documents, use buffer_snapshots for deduplication
+                    self.buffer_snapshots
+                        .entry(buffer_id)
+                        .or_default()
+                        .entry(server.server_id())
+                        .or_insert_with(|| {
+                            newly_registered = true;
+                            server.register_buffer(
+                                registration_uri.clone(),
+                                adapter.language_id(&language_name),
+                                0,
+                                content.clone(),
+                            );
+                            vec![snapshot]
+                        });
+                }
+
+                self.buffers_opened_in_servers
+                    .entry(buffer_id)
+                    .or_default()
+                    .insert(server.server_id());
+
+                self.buffer_registrations
+                    .entry(buffer_id)
+                    .or_default()
+                    .insert(
+                        reg_key,
+                        BufferRegistration {
+                            uri: registration_uri.clone(),
+                            version: 0,
                         },
-                    ),
-                });
+                    );
+
+                if newly_registered && injection_region.is_none() {
+                    cx.emit(LspStoreEvent::LanguageServerUpdate {
+                        language_server_id: server.server_id(),
+                        name: None,
+                        message: proto::update_language_server::Variant::RegisteredForBuffer(
+                            proto::RegisteredForBuffer {
+                                buffer_abs_path: abs_path.to_string_lossy().into_owned(),
+                                buffer_id: buffer_id.to_proto(),
+                            },
+                        ),
+                    });
+                }
             }
         }
     }
@@ -4075,6 +4766,7 @@ impl LspStore {
                 toolchain_store,
                 registered_buffers: HashMap::default(),
                 buffers_opened_in_servers: HashMap::default(),
+                buffer_registrations: HashMap::default(),
                 buffer_pull_diagnostics_result_ids: HashMap::default(),
                 workspace_pull_diagnostics_result_ids: HashMap::default(),
                 restricted_worktrees_tasks: HashMap::default(),
@@ -4282,6 +4974,10 @@ impl LspStore {
 
             language::BufferEvent::Saved => {
                 self.on_buffer_saved(buffer, cx);
+            }
+
+            language::BufferEvent::Reparsed => {
+                self.on_buffer_reparsed(buffer, cx);
             }
 
             _ => {}
@@ -4782,6 +5478,10 @@ impl LspStore {
                         .check_capabilities(server.adapter_server_capabilities())
                         .then(|| Arc::clone(server))
                 }),
+            // Injection regions are handled directly in the calling methods
+            // (document_highlights, hover, completions) which build params with
+            // virtual URIs and transform response ranges.
+            LanguageServerToQuery::InjectionRegion(_) => None,
         }) else {
             return Task::ready(Ok(Default::default()));
         };
@@ -6266,6 +6966,7 @@ impl LspStore {
             let offset = position.to_offset(&snapshot);
             let scope = snapshot.language_scope_at(offset);
             let language = snapshot.language().cloned();
+
             let completion_settings = language_settings(
                 language.as_ref().map(|language| language.name()),
                 buffer.read(cx).file(),
@@ -6277,7 +6978,8 @@ impl LspStore {
                 return Task::ready(Ok(Vec::new()));
             }
 
-            let server_ids: Vec<_> = buffer.update(cx, |buffer, cx| {
+            // Collect main server IDs (always query these)
+            let main_server_ids: Vec<LanguageServerId> = buffer.update(cx, |buffer, cx| {
                 local
                     .language_servers_for_buffer(buffer, cx)
                     .filter(|(_, server)| server.capabilities().completion_provider.is_some())
@@ -6291,39 +6993,76 @@ impl LspStore {
                     .collect()
             });
 
+            // Check if we're in an injection region and collect injection info
+            let injection_ctx = local.resolve_injection_context(buffer, position, cx);
+            let buffer_id = buffer.read(cx).remote_id();
+
+            let injection_info: Option<(
+                InjectionRegionId,
+                lsp::Position,
+                lsp::Uri,
+                Vec<(LanguageServerId, Arc<LanguageServer>)>,
+            )> = injection_ctx.and_then(|ctx| {
+                let main_server_set: HashSet<_> = main_server_ids.iter().cloned().collect();
+                let injection_servers = local.collect_injection_servers_for_region(
+                    buffer_id,
+                    &ctx.region_id,
+                    &main_server_set,
+                    &scope,
+                    |caps| caps.completion_provider.is_some(),
+                );
+
+                if injection_servers.is_empty() {
+                    return None;
+                }
+
+                let uri = injection_servers[0].2.clone();
+                let servers: Vec<_> = injection_servers
+                    .into_iter()
+                    .map(|(id, srv, _)| (id, srv))
+                    .collect();
+                Some((ctx.region_id, ctx.transformed_position, uri, servers))
+            });
+
             let buffer = buffer.clone();
             let lsp_timeout = completion_settings.lsp_fetch_timeout_ms;
-            let lsp_timeout = if lsp_timeout > 0 {
+            let lsp_timeout_duration = if lsp_timeout > 0 {
                 Some(Duration::from_millis(lsp_timeout))
             } else {
                 None
             };
-            cx.spawn(async move |this,  cx| {
-                let mut tasks = Vec::with_capacity(server_ids.len());
+
+            cx.spawn(async move |this, cx| {
+                // Build and execute main server tasks
+                let mut main_tasks = Vec::with_capacity(main_server_ids.len());
                 this.update(cx, |lsp_store, cx| {
-                    for server_id in server_ids {
+                    for server_id in main_server_ids {
                         let lsp_adapter = lsp_store.language_server_adapter_for_id(server_id);
-                        let lsp_timeout = lsp_timeout
+                        let lsp_timeout = lsp_timeout_duration
                             .map(|lsp_timeout| cx.background_executor().timer(lsp_timeout));
-                        let mut timeout = cx.background_spawn(async move {
-                            match lsp_timeout {
-                                Some(lsp_timeout) => {
-                                    lsp_timeout.await;
-                                    true
+                        let mut timeout = cx
+                            .background_spawn(async move {
+                                match lsp_timeout {
+                                    Some(lsp_timeout) => {
+                                        lsp_timeout.await;
+                                        true
+                                    }
+                                    None => false,
+                                }
+                            })
+                            .fuse();
+                        let mut lsp_request = lsp_store
+                            .request_lsp(
+                                buffer.clone(),
+                                LanguageServerToQuery::Other(server_id),
+                                GetCompletions {
+                                    position,
+                                    context: context.clone(),
+                                    server_id: Some(server_id),
                                 },
-                                None => false,
-                            }
-                        }).fuse();
-                        let mut lsp_request = lsp_store.request_lsp(
-                            buffer.clone(),
-                            LanguageServerToQuery::Other(server_id),
-                            GetCompletions {
-                                position,
-                                context: context.clone(),
-                                server_id: Some(server_id),
-                            },
-                            cx,
-                        ).fuse();
+                                cx,
+                            )
+                            .fuse();
                         let new_task = cx.background_spawn(async move {
                             select_biased! {
                                 response = lsp_request => anyhow::Ok(Some(response?)),
@@ -6338,18 +7077,18 @@ impl LspStore {
                                 },
                             }
                         });
-                        tasks.push((lsp_adapter, new_task));
+                        main_tasks.push((lsp_adapter, new_task));
                     }
                 })?;
 
-                let futures = tasks.into_iter().map(async |(lsp_adapter, task)| {
+                let main_futures = main_tasks.into_iter().map(async |(lsp_adapter, task)| {
                     let completion_response = task.await.ok()??;
                     let completions = populate_labels_for_completions(
-                            completion_response.completions,
-                            language.clone(),
-                            lsp_adapter,
-                        )
-                        .await;
+                        completion_response.completions,
+                        language.clone(),
+                        lsp_adapter,
+                    )
+                    .await;
                     Some(CompletionResponse {
                         completions,
                         display_options: CompletionDisplayOptions::default(),
@@ -6357,9 +7096,208 @@ impl LspStore {
                     })
                 });
 
-                let responses: Vec<Option<CompletionResponse>> = join_all(futures).await;
+                let mut responses: Vec<CompletionResponse> =
+                    join_all(main_futures).await.into_iter().flatten().collect();
 
-                Ok(responses.into_iter().flatten().collect())
+                // Also query injection servers if applicable
+                if let Some((region_id, transformed_pos, virtual_uri, injection_servers)) =
+                    injection_info
+                {
+                    let lsp_params = lsp::CompletionParams {
+                        text_document_position: lsp::TextDocumentPositionParams {
+                            text_document: lsp::TextDocumentIdentifier { uri: virtual_uri },
+                            position: transformed_pos,
+                        },
+                        context: Some(context),
+                        work_done_progress_params: Default::default(),
+                        partial_result_params: Default::default(),
+                    };
+
+                    let response_futures = injection_servers
+                        .into_iter()
+                        .map(|(server_id, server)| {
+                            let request =
+                                server.request::<lsp::request::Completion>(lsp_params.clone());
+                            async move {
+                                let response = request.await.into_response();
+                                let (completions, is_incomplete) = match &response {
+                                    Ok(Some(completions)) => match completions {
+                                        lsp::CompletionResponse::Array(items) => {
+                                            (items.clone(), false)
+                                        }
+                                        lsp::CompletionResponse::List(list) => {
+                                            (list.items.clone(), list.is_incomplete)
+                                        }
+                                    },
+                                    Ok(None) => (Vec::new(), false),
+                                    Err(_) => (Vec::new(), false),
+                                };
+                                (server_id, completions, is_incomplete)
+                            }
+                        })
+                        .collect::<FuturesUnordered<_>>();
+
+                    let injection_results: Vec<_> = response_futures.collect().await;
+
+                    for (server_id, lsp_completions, is_incomplete) in injection_results {
+                        if !lsp_completions.is_empty() {
+                            let completions = cx.update(|cx| {
+                                let snapshot = buffer.read(cx).snapshot();
+                                let default_offset = position.to_offset(&snapshot);
+
+                                let (word_range, word_kind) = snapshot.surrounding_word(
+                                    default_offset,
+                                    Some(language::CharScopeContext::Completion),
+                                );
+                                let word_replace_range =
+                                    if word_kind == Some(language::CharKind::Word) {
+                                        snapshot.anchor_before(word_range.start)
+                                            ..snapshot.anchor_after(word_range.end)
+                                    } else {
+                                        let anchor = snapshot.anchor_before(default_offset);
+                                        anchor..anchor
+                                    };
+
+                                let injection_content =
+                                    LocalLspStore::extract_injection_content_for_region(
+                                        &snapshot, &region_id,
+                                    );
+
+                                lsp_completions
+                                    .into_iter()
+                                    .map(|mut item| {
+                                        let new_text = match &item.text_edit {
+                                            Some(lsp::CompletionTextEdit::Edit(edit)) => {
+                                                edit.new_text.clone()
+                                            }
+                                            Some(lsp::CompletionTextEdit::InsertAndReplace(
+                                                edit,
+                                            )) => edit.new_text.clone(),
+                                            None => item
+                                                .insert_text
+                                                .clone()
+                                                .unwrap_or_else(|| item.label.clone()),
+                                        };
+
+                                        let replace_range =
+                                            if let Some(ref text_edit) = item.text_edit {
+                                                let virtual_range = match text_edit {
+                                                    lsp::CompletionTextEdit::Edit(edit) => {
+                                                        edit.range
+                                                    }
+                                                    lsp::CompletionTextEdit::InsertAndReplace(
+                                                        edit,
+                                                    ) => edit.replace,
+                                                };
+
+                                                let is_zero_length =
+                                                    virtual_range.start == virtual_range.end;
+
+                                                if is_zero_length {
+                                                    word_replace_range.clone()
+                                                } else {
+                                                    let start_offset =
+                                                        LocalLspStore::lsp_position_to_offset(
+                                                            &injection_content,
+                                                            virtual_range.start,
+                                                        );
+                                                    let end_offset =
+                                                        LocalLspStore::lsp_position_to_offset(
+                                                            &injection_content,
+                                                            virtual_range.end,
+                                                        );
+
+                                                    if let (
+                                                        Some(start_inj_offset),
+                                                        Some(end_inj_offset),
+                                                    ) = (start_offset, end_offset)
+                                                    {
+                                                        let start_parent = LocalLspStore::map_position_from_injection_region(start_inj_offset, &snapshot, &region_id);
+                                                        let end_parent = LocalLspStore::map_position_from_injection_region(end_inj_offset, &snapshot, &region_id);
+
+                                                        if let (Some(start_off), Some(end_off)) =
+                                                            (start_parent, end_parent)
+                                                        {
+                                                            let start_point = snapshot
+                                                                .offset_to_point_utf16(start_off);
+                                                            let end_point = snapshot
+                                                                .offset_to_point_utf16(end_off);
+
+                                                            let mapped_range = lsp::Range {
+                                                                start: lsp::Position {
+                                                                    line: start_point.row,
+                                                                    character: start_point.column,
+                                                                },
+                                                                end: lsp::Position {
+                                                                    line: end_point.row,
+                                                                    character: end_point.column,
+                                                                },
+                                                            };
+                                                            match &mut item.text_edit {
+                                                                Some(
+                                                                    lsp::CompletionTextEdit::Edit(
+                                                                        edit,
+                                                                    ),
+                                                                ) => {
+                                                                    edit.range = mapped_range;
+                                                                }
+                                                                Some(lsp::CompletionTextEdit::InsertAndReplace(edit)) => {
+                                                                    edit.replace = mapped_range;
+                                                                }
+                                                                None => {}
+                                                            }
+
+                                                            snapshot.anchor_before(start_point)
+                                                                ..snapshot.anchor_after(end_point)
+                                                        } else {
+                                                            word_replace_range.clone()
+                                                        }
+                                                    } else {
+                                                        word_replace_range.clone()
+                                                    }
+                                                }
+                                            } else {
+                                                word_replace_range.clone()
+                                            };
+
+                                        Completion {
+                                            replace_range,
+                                            new_text,
+                                            label: CodeLabel {
+                                                text: item.label.clone(),
+                                                runs: Vec::new(),
+                                                filter_range: 0..item.label.len(),
+                                            },
+                                            documentation: None,
+                                            source: CompletionSource::Lsp {
+                                                insert_range: None,
+                                                server_id,
+                                                lsp_completion: Box::new(item),
+                                                lsp_defaults: None,
+                                                resolved: false,
+                                            },
+                                            icon_path: None,
+                                            match_start: None,
+                                            snippet_deduplication_key: None,
+                                            insert_text_mode: None,
+                                            confirm: None,
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                            });
+
+                            if !completions.is_empty() {
+                                responses.push(CompletionResponse {
+                                    completions,
+                                    display_options: CompletionDisplayOptions::default(),
+                                    is_incomplete,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                Ok(responses)
             })
         } else {
             Task::ready(Err(anyhow!("No upstream client or local language server")))
@@ -7597,20 +8535,175 @@ impl LspStore {
         } else {
             let document_colors_task =
                 self.request_multiple_lsp_locally(buffer, None::<usize>, GetDocumentColor, cx);
-            cx.background_spawn(async move {
-                Ok(Some(
-                    document_colors_task
-                        .await
+
+            // Also query injection servers using buffer_registrations (region-aware)
+            let buffer_id = buffer.read(cx).remote_id();
+            let buffer_snapshot = buffer.read(cx).snapshot();
+            let injection_tasks: Vec<_> = self
+                .as_local()
+                .map(|local| {
+                    let main_server_ids = local.root_server_ids_for_buffer(buffer_id);
+
+                    // Group registrations by injection region
+                    let mut by_region: HashMap<
+                        InjectionRegionId,
+                        Vec<(LanguageServerId, Arc<LanguageServer>, lsp::Uri)>,
+                    > = HashMap::default();
+
+                    if let Some(regs) = local.buffer_registrations.get(&buffer_id) {
+                        for (key, reg) in regs {
+                            if let Some(ref region_id) = key.injection_region {
+                                if main_server_ids.contains(&key.server_id) {
+                                    continue;
+                                }
+                                if let Some(LanguageServerState::Running { server, .. }) =
+                                    local.language_servers.get(&key.server_id)
+                                {
+                                    let entry = by_region.entry(region_id.clone()).or_default();
+                                    if !entry.iter().any(|(id, _, _)| *id == key.server_id) {
+                                        entry.push((
+                                            key.server_id,
+                                            server.clone(),
+                                            reg.uri.clone(),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    by_region.into_iter().collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|(region_id, servers)| {
+                    let virtual_uri = servers.first().map(|(_, _, uri)| uri.clone())?;
+                    Some((region_id, virtual_uri, servers))
+                })
+                .map(|(region_id, virtual_uri, servers)| {
+                    // Send document color request to each injection server
+                    let lsp_params = lsp::DocumentColorParams {
+                        text_document: lsp::TextDocumentIdentifier { uri: virtual_uri },
+                        work_done_progress_params: Default::default(),
+                        partial_result_params: Default::default(),
+                    };
+
+                    let requests: Vec<_> = servers
                         .into_iter()
-                        .fold(HashMap::default(), |mut acc, (server_id, colors)| {
-                            acc.entry(server_id)
-                                .or_insert_with(HashSet::default)
-                                .extend(colors);
-                            acc
+                        .map(|(server_id, server, _)| {
+                            let request =
+                                server.request::<lsp::request::DocumentColor>(lsp_params.clone());
+                            async move {
+                                let response = request.await.into_response().ok();
+                                (server_id, response)
+                            }
                         })
-                        .into_iter()
-                        .collect(),
-                ))
+                        .collect();
+
+                    let buffer_snapshot = buffer_snapshot.clone();
+                    async move {
+                        let results = join_all(requests).await;
+                        let mut colors: Vec<(
+                            LanguageServerId,
+                            collections::HashSet<DocumentColor>,
+                        )> = Vec::new();
+
+                        // Get injection content for this specific region for position mapping
+                        let injection_content = LocalLspStore::extract_injection_content_for_region(
+                            &buffer_snapshot,
+                            &region_id,
+                        );
+
+                        for (server_id, response) in results {
+                            if let Some(color_infos) = response {
+                                let mut color_set = collections::HashSet::default();
+                                for color_info in color_infos {
+                                    // Map range from injection to parent coordinates using region-aware mapping
+                                    let start_offset = LocalLspStore::lsp_position_to_offset(
+                                        &injection_content,
+                                        color_info.range.start,
+                                    );
+                                    let end_offset = LocalLspStore::lsp_position_to_offset(
+                                        &injection_content,
+                                        color_info.range.end,
+                                    );
+
+                                    if let (Some(start_inj), Some(end_inj)) =
+                                        (start_offset, end_offset)
+                                    {
+                                        let start_parent =
+                                            LocalLspStore::map_position_from_injection_region(
+                                                start_inj,
+                                                &buffer_snapshot,
+                                                &region_id,
+                                            );
+                                        let end_parent =
+                                            LocalLspStore::map_position_from_injection_region(
+                                                end_inj,
+                                                &buffer_snapshot,
+                                                &region_id,
+                                            );
+
+                                        if let (Some(start_off), Some(end_off)) =
+                                            (start_parent, end_parent)
+                                        {
+                                            let start_point =
+                                                buffer_snapshot.offset_to_point_utf16(start_off);
+                                            let end_point =
+                                                buffer_snapshot.offset_to_point_utf16(end_off);
+
+                                            let mapped_range = lsp::Range {
+                                                start: lsp::Position {
+                                                    line: start_point.row,
+                                                    character: start_point.column,
+                                                },
+                                                end: lsp::Position {
+                                                    line: end_point.row,
+                                                    character: end_point.column,
+                                                },
+                                            };
+
+                                            color_set.insert(DocumentColor {
+                                                lsp_range: mapped_range,
+                                                color: color_info.color,
+                                                resolved: false,
+                                                color_presentations: Vec::new(),
+                                            });
+                                        }
+                                    }
+                                }
+                                colors.push((server_id, color_set));
+                            }
+                        }
+                        colors
+                    }
+                })
+                .collect();
+
+            cx.background_spawn(async move {
+                let main_colors = document_colors_task.await.into_iter().fold(
+                    HashMap::default(),
+                    |mut acc, (server_id, colors)| {
+                        acc.entry(server_id)
+                            .or_insert_with(HashSet::default)
+                            .extend(colors);
+                        acc
+                    },
+                );
+
+                // Merge injection server colors
+                let injection_results = join_all(injection_tasks).await;
+                let mut all_colors = main_colors;
+                for colors in injection_results {
+                    for (server_id, color_set) in colors {
+                        all_colors
+                            .entry(server_id)
+                            .or_insert_with(HashSet::default)
+                            .extend(color_set);
+                    }
+                }
+
+                Ok(Some(all_colors.into_iter().collect()))
             })
         }
     }
@@ -7732,23 +8825,270 @@ impl LspStore {
                 .collect();
                 Some(hovers)
             })
-        } else {
-            let all_actions_task = self.request_multiple_lsp_locally(
+        } else if let Some(local) = self.as_local() {
+            let snapshot = buffer.read(cx).snapshot();
+            let offset = position.to_offset(&snapshot);
+            let scope = snapshot.language_scope_at(offset);
+
+            // Check if we're in an injection region
+            let injection_ctx = local.resolve_injection_context(buffer, position, cx);
+            let buffer_id = buffer.read(cx).remote_id();
+
+            // Collect injection servers if in an injection region
+            let injection_info: Option<(
+                lsp::Position,
+                lsp::Uri,
+                Vec<(LanguageServerId, Arc<LanguageServer>)>,
+            )> = injection_ctx.and_then(|ctx| {
+                let main_server_ids = local.root_server_ids_for_buffer(buffer_id);
+                let injection_servers = local.collect_injection_servers_for_region(
+                    buffer_id,
+                    &ctx.region_id,
+                    &main_server_ids,
+                    &scope,
+                    |caps| caps.hover_provider.is_some(),
+                );
+
+                if injection_servers.is_empty() {
+                    return None;
+                }
+
+                let uri = injection_servers[0].2.clone();
+                let servers: Vec<_> = injection_servers
+                    .into_iter()
+                    .map(|(id, srv, _)| (id, srv))
+                    .collect();
+                Some((ctx.transformed_position, uri, servers))
+            });
+
+            // Query main language servers
+            let main_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(position),
                 GetHover { position },
                 cx,
             );
+
+            // Query injection language servers if applicable
+            let injection_task: Option<Task<Vec<(LanguageServerId, Option<Hover>)>>> =
+                if let Some((transformed_pos, ref virtual_uri, ref injection_servers)) =
+                    injection_info
+                {
+                    let lsp_params = lsp::HoverParams {
+                        text_document_position_params: lsp::TextDocumentPositionParams {
+                            text_document: lsp::TextDocumentIdentifier {
+                                uri: virtual_uri.clone(),
+                            },
+                            position: transformed_pos,
+                        },
+                        work_done_progress_params: Default::default(),
+                    };
+
+                    let row_offset = position.row as i32 - transformed_pos.line as i32;
+                    let col_offset_first_line =
+                        position.column as i32 - transformed_pos.character as i32;
+                    let buffer_snapshot = buffer.read(cx).snapshot();
+
+                    let response_results = injection_servers
+                        .iter()
+                        .map(|(server_id, server)| {
+                            let server_id = *server_id;
+                            let request =
+                                server.request::<lsp::request::HoverRequest>(lsp_params.clone());
+                            async move {
+                                let response = request.await.into_response().ok().flatten();
+                                (server_id, response)
+                            }
+                        })
+                        .collect::<FuturesUnordered<_>>();
+
+                    Some(cx.spawn(async move |_, _cx| {
+                        let mut responses: Vec<(LanguageServerId, Option<Hover>)> = Vec::new();
+                        let mut results = response_results;
+                        while let Some((server_id, lsp_hover)) = results.next().await {
+                            let hover = lsp_hover.and_then(|h| {
+                                let anchor_range = h.range.map(|range| {
+                                    LocalLspStore::transform_injection_range_to_anchor_range(
+                                        range,
+                                        row_offset,
+                                        col_offset_first_line,
+                                        &buffer_snapshot,
+                                    )
+                                });
+
+                                let contents = match h.contents {
+                                    lsp::HoverContents::Scalar(content) => {
+                                        vec![marked_string_to_hover_block(content)]
+                                    }
+                                    lsp::HoverContents::Array(contents) => contents
+                                        .into_iter()
+                                        .map(marked_string_to_hover_block)
+                                        .collect(),
+                                    lsp::HoverContents::Markup(content) => {
+                                        vec![crate::HoverBlock {
+                                            text: content.value,
+                                            kind: if content.kind == lsp::MarkupKind::Markdown {
+                                                crate::HoverBlockKind::Markdown
+                                            } else {
+                                                crate::HoverBlockKind::PlainText
+                                            },
+                                        }]
+                                    }
+                                };
+
+                                if contents.iter().all(|b| b.text.is_empty()) {
+                                    None
+                                } else {
+                                    Some(Hover {
+                                        contents,
+                                        range: anchor_range,
+                                        language: None,
+                                    })
+                                }
+                            });
+                            responses.push((server_id, hover));
+                        }
+                        responses
+                    }))
+                } else {
+                    None
+                };
+
             cx.background_spawn(async move {
-                Some(
-                    all_actions_task
+                let mut hovers: Vec<Hover> = main_task
+                    .await
+                    .into_iter()
+                    .filter_map(|(_, hover)| remove_empty_hover_blocks(hover?))
+                    .collect();
+
+                // Add injection hovers
+                if let Some(injection_task) = injection_task {
+                    let injection_hovers: Vec<Hover> = injection_task
                         .await
                         .into_iter()
                         .filter_map(|(_, hover)| remove_empty_hover_blocks(hover?))
-                        .collect::<Vec<Hover>>(),
-                )
+                        .collect();
+                    hovers.extend(injection_hovers);
+                }
+
+                if hovers.is_empty() {
+                    None
+                } else {
+                    Some(hovers)
+                }
             })
+        } else {
+            Task::ready(None)
         }
+    }
+
+    /// Get document highlights for the given position.
+    /// When cursor is in an injection region (e.g., HTML inside TypeScript's @Component template),
+    /// this queries only the injection language server to avoid the parent language server
+    /// returning highlights that span the entire injection content.
+    pub fn document_highlights(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: PointUtf16,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<DocumentHighlight>>> {
+        // For remote/upstream, use the existing request_lsp path
+        if self.upstream_client().is_some() {
+            return self.request_lsp(
+                buffer.clone(),
+                LanguageServerToQuery::FirstCapable,
+                GetDocumentHighlights { position },
+                cx,
+            );
+        }
+
+        let Some(local) = self.as_local() else {
+            return Task::ready(Ok(Vec::new()));
+        };
+
+        // Check if we're in an injection region
+        let Some(injection_ctx) = local.resolve_injection_context(buffer, position, cx) else {
+            // Not in injection - use normal path
+            return self.request_lsp(
+                buffer.clone(),
+                LanguageServerToQuery::FirstCapable,
+                GetDocumentHighlights { position },
+                cx,
+            );
+        };
+        let buffer_id = buffer.read(cx).remote_id();
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let scope = buffer_snapshot
+            .language_scope_at(injection_ctx.original_position.to_offset(&buffer_snapshot));
+
+        // In injection region - query only injection servers to avoid whole-template highlighting
+        let injection_servers = local.collect_injection_servers_for_region(
+            buffer_id,
+            &injection_ctx.region_id,
+            &HashSet::default(),
+            &scope,
+            |caps| caps.document_highlight_provider.is_some(),
+        );
+
+        if injection_servers.is_empty() {
+            return Task::ready(Ok(Vec::new()));
+        }
+
+        let servers: Vec<_> = injection_servers
+            .into_iter()
+            .map(|(id, srv, _)| (id, srv))
+            .collect();
+
+        let lsp_params = lsp::DocumentHighlightParams {
+            text_document_position_params: lsp::TextDocumentPositionParams {
+                text_document: lsp::TextDocumentIdentifier {
+                    uri: injection_ctx.virtual_uri.clone(),
+                },
+                position: injection_ctx.transformed_position,
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        let row_offset = position.row as i32 - injection_ctx.transformed_position.line as i32;
+        let col_offset_first_line =
+            position.column as i32 - injection_ctx.transformed_position.character as i32;
+
+        let response_futures = servers
+            .into_iter()
+            .map(|(server_id, server)| {
+                let request =
+                    server.request::<lsp::request::DocumentHighlightRequest>(lsp_params.clone());
+                async move { (server_id, request.await.into_response().ok().flatten()) }
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        cx.background_spawn(async move {
+            let mut highlights: Vec<DocumentHighlight> = Vec::new();
+            let mut results = response_futures;
+
+            while let Some((_server_id, lsp_highlights)) = results.next().await {
+                let Some(lsp_highlights) = lsp_highlights else {
+                    continue;
+                };
+                for lsp_highlight in lsp_highlights {
+                    let range = LocalLspStore::transform_injection_range_to_anchor_range(
+                        lsp_highlight.range,
+                        row_offset,
+                        col_offset_first_line,
+                        &buffer_snapshot,
+                    );
+                    highlights.push(DocumentHighlight {
+                        range,
+                        kind: lsp_highlight
+                            .kind
+                            .unwrap_or(lsp::DocumentHighlightKind::READ),
+                    });
+                }
+            }
+
+            Ok(highlights)
+        })
     }
 
     pub fn symbols(&self, query: &str, cx: &mut Context<Self>) -> Task<Result<Vec<Symbol>>> {
@@ -8119,7 +9459,319 @@ impl LspStore {
             self.pull_workspace_diagnostics(language_server.server_id());
         }
 
+        // Sync injection content immediately with current snapshot.
+        // Even if the syntax tree is slightly stale, injection servers need
+        // updated content for completions to work correctly.
+        // on_buffer_reparsed will correct any issues after tree-sitter finishes.
+        let buffer_id = buffer.remote_id();
+        let full_snapshot = buffer.snapshot();
+        self.sync_injection_registrations_on_edit(buffer_id, &full_snapshot);
+
         None
+    }
+
+    fn sync_injection_registrations_on_edit(
+        &mut self,
+        buffer_id: text::BufferId,
+        full_snapshot: &language::BufferSnapshot,
+    ) {
+        let Some(local) = self.as_local_mut() else {
+            return;
+        };
+
+        // Collect injection registrations from buffer_registrations
+        // Each registration has a unique RegistrationKey that includes the region ID
+        let injection_registrations: Vec<(RegistrationKey, lsp::Uri)> = local
+            .buffer_registrations
+            .get(&buffer_id)
+            .map(|regs| {
+                regs.iter()
+                    .filter_map(|(key, reg)| {
+                        // Only include registrations with injection regions
+                        if key.injection_region.is_some() {
+                            Some((key.clone(), reg.uri.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if injection_registrations.is_empty() {
+            return;
+        }
+
+        for (reg_key, uri) in injection_registrations {
+            let Some(ref region_id) = reg_key.injection_region else {
+                continue;
+            };
+
+            let content =
+                LocalLspStore::extract_injection_content_for_region(full_snapshot, region_id);
+
+            let version = local
+                .buffer_registrations
+                .get_mut(&buffer_id)
+                .and_then(|regs| regs.get_mut(&reg_key))
+                .map(|reg| {
+                    reg.version += 1;
+                    reg.version
+                })
+                .unwrap_or(1);
+
+            if let Some(LanguageServerState::Running { server, .. }) =
+                local.language_servers.get(&reg_key.server_id)
+            {
+                server
+                    .notify::<lsp::notification::DidChangeTextDocument>(
+                        lsp::DidChangeTextDocumentParams {
+                            text_document: lsp::VersionedTextDocumentIdentifier::new(uri, version),
+                            content_changes: vec![lsp::TextDocumentContentChangeEvent {
+                                range: None,
+                                range_length: None,
+                                text: content,
+                            }],
+                        },
+                    )
+                    .ok();
+            }
+        }
+    }
+
+    fn on_buffer_reparsed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        let buffer_read = buffer.read(cx);
+        let Some(file) = File::from_dyn(buffer_read.file()).and_then(|f| f.as_local()) else {
+            return;
+        };
+
+        // Check if injection language servers are enabled
+        let language_name = buffer_read.language().map(|l| l.name());
+        let settings = language_settings(language_name, buffer_read.file(), cx);
+        if !settings.enable_injection_language_servers {
+            return;
+        }
+
+        let buffer_id = buffer_read.remote_id();
+        let buffer_snapshot = buffer_read.snapshot();
+        let abs_path = file.abs_path(cx);
+        let worktree_id = file.worktree_id(cx);
+        let path: Arc<RelPath> = file
+            .path()
+            .parent()
+            .map(Arc::from)
+            .unwrap_or_else(|| file.path().clone());
+
+        let Ok(uri) = lsp::Uri::from_file_path(&abs_path) else {
+            return;
+        };
+
+        let Some(worktree) = self
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+        else {
+            return;
+        };
+
+        let Some(local) = self.as_local_mut() else {
+            return;
+        };
+
+        // Collect injection regions using tree-sitter
+        let injection_regions = LocalLspStore::collect_injection_regions(&buffer_snapshot);
+
+        // Build set of current valid region IDs
+        let current_region_ids: HashSet<InjectionRegionId> = injection_regions
+            .iter()
+            .map(|r| InjectionRegionId {
+                language: r.language.name(),
+                region_index: r.region_index,
+            })
+            .collect();
+
+        if let Some(registrations) = local.buffer_registrations.get_mut(&buffer_id) {
+            let stale_keys: Vec<RegistrationKey> = registrations
+                .keys()
+                .filter(|key| {
+                    key.injection_region
+                        .as_ref()
+                        .is_some_and(|region_id| !current_region_ids.contains(region_id))
+                })
+                .cloned()
+                .collect();
+
+            for key in stale_keys {
+                if let Some(reg) = registrations.remove(&key) {
+                    if let Some(LanguageServerState::Running { server, .. }) =
+                        local.language_servers.get(&key.server_id)
+                    {
+                        server
+                            .notify::<lsp::notification::DidCloseTextDocument>(
+                                lsp::DidCloseTextDocumentParams {
+                                    text_document: lsp::TextDocumentIdentifier { uri: reg.uri },
+                                },
+                            )
+                            .ok();
+                    }
+                }
+            }
+        }
+
+        if injection_regions.is_empty() {
+            return;
+        }
+
+        let lsp_delegate = LocalLspAdapterDelegate::from_local_lsp(local, &worktree, cx);
+        let root_server_ids: HashSet<LanguageServerId> = local
+            .buffer_registrations
+            .get(&buffer_id)
+            .map(|regs| {
+                regs.iter()
+                    .filter(|(key, _)| key.injection_region.is_none())
+                    .map(|(key, _)| key.server_id)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for region in injection_regions {
+            let region_id = InjectionRegionId {
+                language: region.language.name(),
+                region_index: region.region_index,
+            };
+
+            let content =
+                LocalLspStore::extract_injection_content_for_region(&buffer_snapshot, &region_id);
+            if content.is_empty() {
+                continue;
+            }
+            let virtual_uri =
+                LocalLspStore::create_embedded_content_uri(&uri, &region_id, &region.language);
+
+            let mut languages_to_register = vec![region.language.name()];
+            languages_to_register.extend(region.language.delegate_languages().iter().cloned());
+
+            for target_lang_name in languages_to_register {
+                let manifest_delegate: Arc<dyn ManifestDelegate> =
+                    Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
+                let servers = local
+                    .lsp_tree
+                    .walk(
+                        ProjectPath {
+                            worktree_id,
+                            path: path.clone(),
+                        },
+                        target_lang_name.clone(),
+                        region.language.manifest(),
+                        &manifest_delegate,
+                        cx,
+                    )
+                    .collect::<Vec<_>>();
+
+                for server_node in servers {
+                    let Some(server_id) = server_node.server_id_or_init(|disposition| {
+                        local.get_or_insert_language_server(
+                            &worktree,
+                            lsp_delegate.clone(),
+                            disposition,
+                            &target_lang_name,
+                            cx,
+                        )
+                    }) else {
+                        continue;
+                    };
+
+                    if root_server_ids.contains(&server_id) {
+                        continue;
+                    }
+
+                    let Some(server_state) = local.language_servers.get(&server_id) else {
+                        continue;
+                    };
+
+                    let (server, adapter) = match server_state {
+                        LanguageServerState::Running {
+                            server, adapter, ..
+                        } => (server.clone(), adapter.clone()),
+                        _ => continue,
+                    };
+
+                    let reg_key = RegistrationKey {
+                        server_id,
+                        injection_region: Some(region_id.clone()),
+                    };
+
+                    let existing_reg = local
+                        .buffer_registrations
+                        .get(&buffer_id)
+                        .and_then(|regs| regs.get(&reg_key));
+
+                    if let Some(existing) = existing_reg {
+                        // Already registered - send didChange with updated content
+                        let new_version = existing.version + 1;
+                        server
+                            .notify::<lsp::notification::DidChangeTextDocument>(
+                                lsp::DidChangeTextDocumentParams {
+                                    text_document: lsp::VersionedTextDocumentIdentifier::new(
+                                        existing.uri.clone(),
+                                        new_version,
+                                    ),
+                                    content_changes: vec![lsp::TextDocumentContentChangeEvent {
+                                        range: None,
+                                        range_length: None,
+                                        text: content.clone(),
+                                    }],
+                                },
+                            )
+                            .ok();
+
+                        // Update version
+                        if let Some(regs) = local.buffer_registrations.get_mut(&buffer_id) {
+                            if let Some(reg) = regs.get_mut(&reg_key) {
+                                reg.version = new_version;
+                            }
+                        }
+                    } else {
+                        // Not registered yet - send didOpen
+                        server.register_buffer(
+                            virtual_uri.clone(),
+                            adapter.language_id(&target_lang_name),
+                            0,
+                            content.clone(),
+                        );
+
+                        local
+                            .buffer_registrations
+                            .entry(buffer_id)
+                            .or_default()
+                            .insert(
+                                reg_key,
+                                BufferRegistration {
+                                    uri: virtual_uri.clone(),
+                                    version: 0,
+                                },
+                            );
+
+                        local
+                            .buffers_opened_in_servers
+                            .entry(buffer_id)
+                            .or_default()
+                            .insert(server_id);
+
+                        cx.emit(LspStoreEvent::LanguageServerUpdate {
+                            language_server_id: server_id,
+                            name: Some(adapter.name()),
+                            message: proto::update_language_server::Variant::RegisteredForBuffer(
+                                proto::RegisteredForBuffer {
+                                    buffer_abs_path: abs_path.to_string_lossy().into_owned(),
+                                    buffer_id: buffer_id.to_proto(),
+                                },
+                            ),
+                        });
+                    }
+                }
+            }
+        }
     }
 
     pub fn on_buffer_saved(
@@ -11571,15 +13223,134 @@ impl LspStore {
                     None => continue,
                 };
 
-                if !worktrees_using_server.contains(&file.worktree.read(cx).id())
-                    || !lsp_adapters
-                        .entry(language.name())
-                        .or_insert_with(|| self.languages.lsp_adapters(&language.name()))
-                        .iter()
-                        .any(|a| a.name == key.name)
-                {
+                if !worktrees_using_server.contains(&file.worktree.read(cx).id()) {
                     continue;
                 }
+
+                // Check if this server should handle this buffer:
+                // 1. Direct match: buffer's language has adapter for this server
+                // 2. Delegate match: buffer's language delegates to a language that has adapter for this server (only if injection enabled)
+                // 3. Injection match: buffer contains an injection whose language (or its delegates) has adapter for this server (only if injection enabled)
+                let direct_match = lsp_adapters
+                    .entry(language.name())
+                    .or_insert_with(|| self.languages.lsp_adapters(&language.name()))
+                    .iter()
+                    .any(|a| a.name == key.name);
+
+                // Check if injection language servers are enabled
+                let injection_enabled = language_settings(
+                    Some(language.name()),
+                    buffer.file(),
+                    cx,
+                ).enable_injection_language_servers;
+
+                // Find which delegate language matches, if any (only if injection enabled)
+                let delegate_languages = language.delegate_languages();
+                let matching_delegate_lang = if injection_enabled {
+                    delegate_languages.iter().find(|delegate_lang| {
+                        let adapters = lsp_adapters
+                            .entry((*delegate_lang).clone())
+                            .or_insert_with(|| self.languages.lsp_adapters(delegate_lang));
+                        let has_match = adapters.iter().any(|a| a.name == key.name);
+                        log::debug!(
+                            "[virtual_document] Server '{}' checking delegate '{}' for buffer lang '{}': adapters={:?}, match={}",
+                            key.name.0,
+                            delegate_lang.0.as_ref(),
+                            language.name().0.as_ref(),
+                            adapters.iter().map(|a| a.name.0.as_ref()).collect::<Vec<_>>(),
+                            has_match
+                        );
+                        has_match
+                    }).cloned()
+                } else {
+                    None
+                };
+
+                let matching_injection_info: Option<(LanguageName, LanguageName)> = if injection_enabled && !direct_match && matching_delegate_lang.is_none() {
+                    // Get injection languages from buffer's syntax layers
+                    let buffer_snapshot = buffer.snapshot();
+                    let buffer_len = buffer_snapshot.len();
+                    let mut injection_match: Option<(LanguageName, LanguageName)> = None;
+
+                    for layer in buffer_snapshot.syntax_layers_for_range(0..buffer_len, false) {
+                        let layer_lang = &layer.language;
+                        let layer_start = layer.node().start_byte();
+                        let layer_end = layer.node().end_byte();
+
+                        // Skip if it covers the entire buffer (not an injection)
+                        if layer_start == 0 && layer_end >= buffer_len {
+                            continue;
+                        }
+
+                        // Check if injection language directly matches
+                        let injection_adapters = lsp_adapters
+                            .entry(layer_lang.name())
+                            .or_insert_with(|| self.languages.lsp_adapters(&layer_lang.name()));
+                        if injection_adapters.iter().any(|a| a.name == key.name) {
+                            log::debug!(
+                                "[virtual_document] Server '{}' matches injection language '{}'",
+                                key.name.0,
+                                layer_lang.name().0.as_ref()
+                            );
+                            // (language_for_id, injection_source_lang)
+                            injection_match = Some((layer_lang.name(), layer_lang.name()));
+                            break;
+                        }
+
+                        // Check if injection language's delegates match
+                        for delegate_lang in layer_lang.delegate_languages() {
+                            let delegate_lang_name: LanguageName = delegate_lang.clone();
+                            let delegate_adapters = lsp_adapters
+                                .entry(delegate_lang_name.clone())
+                                .or_insert_with(|| self.languages.lsp_adapters(&delegate_lang_name));
+                            if delegate_adapters.iter().any(|a| a.name == key.name) {
+                                log::debug!(
+                                    "[virtual_document] Server '{}' matches via injection '{}' delegate '{}'",
+                                    key.name.0,
+                                    layer_lang.name().0.as_ref(),
+                                    delegate_lang.0.as_ref()
+                                );
+                                // (language_for_id is the delegate, injection_source is the injection lang)
+                                injection_match = Some((delegate_lang_name, layer_lang.name()));
+                                break;
+                            }
+                        }
+                        if injection_match.is_some() {
+                            break;
+                        }
+                    }
+                    injection_match
+                } else {
+                    None
+                };
+
+                if !direct_match && matching_delegate_lang.is_none() && matching_injection_info.is_none() {
+                    if !delegate_languages.is_empty() {
+                        log::debug!(
+                            "[virtual_document] Server '{}' skipping buffer with lang '{}' (delegates: {:?})",
+                            key.name.0,
+                            language.name().0.as_ref(),
+                            delegate_languages.iter().map(|l| l.0.as_ref()).collect::<Vec<_>>()
+                        );
+                    }
+                    continue;
+                }
+
+                log::info!(
+                    "[virtual_document] Server '{}' will register buffer with lang '{}' (direct={}, delegate={:?}, injection={:?})",
+                    key.name.0,
+                    language.name().0.as_ref(),
+                    direct_match,
+                    matching_delegate_lang.as_ref().map(|l| l.0.as_ref()),
+                    matching_injection_info.as_ref().map(|(lang_id, src)| format!("{}(from {})", lang_id.0.as_ref(), src.0.as_ref()))
+                );
+
+                // Use the matching language for language_id (prioritize: delegate > injection > buffer language)
+                let buffer_language_name = language.name();
+                let language_for_id = matching_delegate_lang
+                    .as_ref()
+                    .or(matching_injection_info.as_ref().map(|(lang_id, _)| lang_id))
+                    .unwrap_or(&buffer_language_name);
                 // didOpen
                 let file = match file.as_local() {
                     Some(file) => file,
@@ -11590,40 +13361,136 @@ impl LspStore {
 
                 let buffer_id = buffer.remote_id();
                 if local.registered_buffers.contains_key(&buffer_id) {
-                    let versions = local
-                        .buffer_snapshots
-                        .entry(buffer_id)
-                        .or_default()
-                        .entry(server_id)
-                        .and_modify(|_| {
-                            assert!(
-                            false,
-                            "There should not be an existing snapshot for a newly inserted buffer"
-                        )
-                        })
-                        .or_insert_with(|| {
-                            vec![LspBufferSnapshot {
-                                version: 0,
-                                snapshot: buffer.text_snapshot(),
-                            }]
-                        });
+                    let file_uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
 
-                    let snapshot = versions.last().unwrap();
-                    let version = snapshot.version;
-                    let initial_snapshot = &snapshot.snapshot;
-                    let uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
+                    // For injection matches, use extracted content and virtual URI
+                    // For direct/delegate matches, use the whole buffer content and file URI
+                    let (content_to_register, uri_to_register, version, injection_region_for_key) = if let Some((_language_for_id, injection_source_lang)) = &matching_injection_info {
+                        let buffer_snapshot = buffer.snapshot();
+
+                        // Find injection regions for this language and get the first one
+                        let injection_regions = LocalLspStore::collect_injection_regions(&buffer_snapshot);
+                        let matching_region = injection_regions.iter().find(|r| &r.language.name() == injection_source_lang);
+
+                        if let Some(region) = matching_region {
+                            let region_id = InjectionRegionId {
+                                language: region.language.name(),
+                                region_index: region.region_index,
+                            };
+
+                            // Check if already registered in buffer_registrations
+                            let reg_key = RegistrationKey {
+                                server_id,
+                                injection_region: Some(region_id.clone()),
+                            };
+                            let existing_reg = local.buffer_registrations
+                                .get(&buffer_id)
+                                .and_then(|regs| regs.get(&reg_key))
+                                .map(|reg| (reg.uri.clone(), reg.version));
+
+                            if let Some((uri, version)) = existing_reg {
+                                // Use existing registration - extract fresh content
+                                let content = LocalLspStore::extract_injection_content_for_region(&buffer_snapshot, &region_id);
+                                log::info!(
+                                    "[lsp_registration] Using existing registration ({} bytes) for injection '{}_{}' with server '{}' using URI: {}",
+                                    content.len(),
+                                    injection_source_lang.0.as_ref(),
+                                    region.region_index,
+                                    adapter.name.0.as_ref(),
+                                    uri.as_str()
+                                );
+                                (content, uri, version, Some(region_id))
+                            } else {
+                                // Create registration on demand
+                                log::info!(
+                                    "[lsp_registration] Creating on-demand registration for injection '{}_{}' in buffer {}",
+                                    injection_source_lang.0.as_ref(),
+                                    region.region_index,
+                                    buffer_id
+                                );
+
+                                let content = LocalLspStore::extract_injection_content_for_region(&buffer_snapshot, &region_id);
+
+                                if content.is_empty() {
+                                    log::warn!(
+                                        "[lsp_registration] Could not extract content for injection '{}_{}', skipping",
+                                        injection_source_lang.0.as_ref(),
+                                        region.region_index
+                                    );
+                                    continue;
+                                }
+
+                                let virtual_uri = LocalLspStore::create_embedded_content_uri(&file_uri, &region_id, &region.language);
+
+                                log::info!(
+                                    "[lsp_registration] Created on-demand registration ({} bytes) for injection '{}_{}' with virtual URI: {}",
+                                    content.len(),
+                                    injection_source_lang.0.as_ref(),
+                                    region.region_index,
+                                    virtual_uri.as_str()
+                                );
+
+                                (content, virtual_uri, 0, Some(region_id))
+                            }
+                        } else {
+                            log::warn!(
+                                "[lsp_registration] Could not find injection region for language '{}', skipping",
+                                injection_source_lang.0.as_ref()
+                            );
+                            continue;
+                        }
+                    } else {
+                        // Direct or delegate match - use whole buffer
+                        let versions = local
+                            .buffer_snapshots
+                            .entry(buffer_id)
+                            .or_default()
+                            .entry(server_id)
+                            .and_modify(|_| {
+                                assert!(
+                                    false,
+                                    "There should not be an existing snapshot for a newly inserted buffer"
+                                )
+                            })
+                            .or_insert_with(|| {
+                                vec![LspBufferSnapshot {
+                                    version: 0,
+                                    snapshot: buffer.text_snapshot(),
+                                }]
+                            });
+
+                        let snapshot = versions.last().unwrap();
+                        (snapshot.snapshot.text().to_string(), file_uri.clone(), snapshot.version, None)
+                    };
+
                     language_server.register_buffer(
-                        uri,
-                        adapter.language_id(&language.name()),
+                        uri_to_register.clone(),
+                        adapter.language_id(language_for_id),
                         version,
-                        initial_snapshot.text(),
+                        content_to_register,
                     );
                     buffer_paths_registered.push((buffer_id, file.abs_path(cx)));
+
+                    // Track in both old and new systems
                     local
                         .buffers_opened_in_servers
                         .entry(buffer_id)
                         .or_default()
                         .insert(server_id);
+
+                    // Track in buffer_registrations with RegistrationKey
+                    let reg_key = RegistrationKey {
+                        server_id,
+                        injection_region: injection_region_for_key,
+                    };
+                    local.buffer_registrations
+                        .entry(buffer_id)
+                        .or_default()
+                        .entry(reg_key)
+                        .or_insert_with(|| BufferRegistration {
+                            uri: uri_to_register,
+                            version,
+                        });
                 }
                 buffer_handle.update(cx, |buffer, cx| {
                     buffer.set_completion_triggers(
@@ -13476,6 +15343,21 @@ fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
     }
 }
 
+fn marked_string_to_hover_block(marked_string: lsp::MarkedString) -> crate::HoverBlock {
+    match marked_string {
+        lsp::MarkedString::String(text) => crate::HoverBlock {
+            text,
+            kind: crate::HoverBlockKind::Markdown,
+        },
+        lsp::MarkedString::LanguageString(lsp::LanguageString { language, value }) => {
+            crate::HoverBlock {
+                text: value,
+                kind: crate::HoverBlockKind::Code { language },
+            }
+        }
+    }
+}
+
 async fn populate_labels_for_completions(
     new_completions: Vec<CoreCompletion>,
     language: Option<Arc<Language>>,
@@ -13553,6 +15435,9 @@ pub enum LanguageServerToQuery {
     FirstCapable,
     /// Query a specific language server.
     Other(LanguageServerId),
+    /// Query servers registered for a specific injection region.
+    /// Used when the cursor is within an injection (e.g., HTML inside TypeScript's @Component template).
+    InjectionRegion(InjectionContext),
 }
 
 #[derive(Default)]

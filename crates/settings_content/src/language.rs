@@ -351,6 +351,15 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub enable_language_server: Option<bool>,
+    /// Whether to enable language servers for injection regions (embedded languages).
+    ///
+    /// When enabled, language servers will be started for embedded language content,
+    /// such as HTML templates inside Angular components or CSS in style blocks.
+    /// This provides completions, hover info, and other LSP features for the
+    /// embedded language content.
+    ///
+    /// Default: false
+    pub enable_injection_language_servers: Option<bool>,
     /// The list of language servers to use (or disable) for this language.
     ///
     /// This array should consist of language server IDs, as well as the following

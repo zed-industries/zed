@@ -1127,6 +1127,10 @@
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.
   "enable_language_server": true,
+  // Whether to enable language servers for injection regions (embedded languages).
+  // When enabled, language servers will be started for embedded language content,
+  // such as HTML templates inside Angular components or CSS in style blocks.
+  "enable_injection_language_servers": false,
   // Whether to perform linked edits of associated ranges, if the language server supports it.
   // For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well.
   "linked_edits": true,

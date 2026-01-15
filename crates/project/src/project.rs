@@ -3889,12 +3889,9 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<DocumentHighlight>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::FirstCapable,
-            GetDocumentHighlights { position },
-            cx,
-        )
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.document_highlights(buffer, position, cx)
+        })
     }
 
     pub fn document_symbols(
