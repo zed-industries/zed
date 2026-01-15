@@ -357,6 +357,9 @@ pub struct AcpThreadView {
     skip_queue_processing_count: usize,
     user_interrupted_generation: bool,
     can_fast_track_queue: bool,
+    /// Saved focus handle to restore after tool authorization is complete.
+    /// Set when we steal focus for a permission request, cleared after auth action.
+    saved_focus_for_tool_auth: Option<FocusHandle>,
     turn_tokens: Option<u64>,
     last_turn_tokens: Option<u64>,
     turn_started_at: Option<Instant>,
@@ -549,6 +552,7 @@ impl AcpThreadView {
             skip_queue_processing_count: 0,
             user_interrupted_generation: false,
             can_fast_track_queue: false,
+            saved_focus_for_tool_auth: None,
             turn_tokens: None,
             last_turn_tokens: None,
             turn_started_at: None,
@@ -1900,6 +1904,13 @@ impl AcpThreadView {
             }
             AcpThreadEvent::ToolAuthorizationRequired => {
                 self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
+
+                // Only steal focus if message buffer is empty (user likely waiting)
+                if self.message_editor.read(cx).is_empty(cx) {
+                    // Save current focus before stealing
+                    self.saved_focus_for_tool_auth = window.focused(cx);
+                    self.focus_handle.focus(window, cx);
+                }
             }
             AcpThreadEvent::Retry(retry) => {
                 self.thread_retry_status = Some(retry.clone());
@@ -2410,6 +2421,12 @@ impl AcpThreadView {
                 })
                 .ok();
         }
+
+        // Restore previously saved focus if we stole it for tool authorization
+        if let Some(saved_focus) = self.saved_focus_for_tool_auth.take() {
+            saved_focus.focus(window, cx);
+        }
+
         cx.notify();
     }
 
