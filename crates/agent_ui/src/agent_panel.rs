@@ -1140,11 +1140,10 @@ impl AgentPanel {
                         let _ = settings
                             .theme
                             .agent_ui_font_size
-                            .insert(theme::clamp_font_size(agent_ui_font_size).into());
-                        let _ = settings
-                            .theme
-                            .agent_buffer_font_size
-                            .insert(theme::clamp_font_size(agent_buffer_font_size).into());
+                            .insert(f32::from(theme::clamp_font_size(agent_ui_font_size)).into());
+                        let _ = settings.theme.agent_buffer_font_size.insert(
+                            f32::from(theme::clamp_font_size(agent_buffer_font_size)).into(),
+                        );
                     });
                 } else {
                     theme::adjust_agent_ui_font_size(cx, |size| size + delta);

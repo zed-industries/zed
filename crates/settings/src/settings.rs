@@ -1,16 +1,20 @@
 mod base_keymap_setting;
+mod content_into_gpui;
 mod editable_setting_control;
-mod fallible_options;
 mod keymap_file;
-pub mod merge_from;
-mod serde_helper;
-mod settings_content;
 mod settings_file;
 mod settings_store;
 mod vscode_import;
 
-pub use settings_content::*;
 pub use settings_macros::RegisterSetting;
+
+pub mod settings_content {
+    pub use ::settings_content::*;
+}
+
+pub mod fallible_options {
+    pub use ::settings_content::{FallibleOption, parse_json};
+}
 
 #[doc(hidden)]
 pub mod private {
@@ -19,22 +23,25 @@ pub mod private {
 }
 
 use gpui::{App, Global};
+use release_channel::ReleaseChannel;
 use rust_embed::RustEmbed;
+use std::env;
 use std::{borrow::Cow, fmt, str};
 use util::asset_str;
 
+pub use ::settings_content::*;
 pub use base_keymap_setting::*;
+pub use content_into_gpui::IntoGpui;
 pub use editable_setting_control::*;
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
 };
-pub use serde_helper::*;
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
     InvalidSettingsError, LSP_SETTINGS_SCHEMA_URL_PREFIX, LocalSettingsKind, MigrationStatus,
-    ParseStatus, Settings, SettingsFile, SettingsJsonSchemaParams, SettingsKey, SettingsLocation,
+    Settings, SettingsFile, SettingsJsonSchemaParams, SettingsKey, SettingsLocation,
     SettingsParseResult, SettingsStore,
 };
 
@@ -46,6 +53,39 @@ pub use keymap_file::ActionSequence;
 pub struct ActiveSettingsProfileName(pub String);
 
 impl Global for ActiveSettingsProfileName {}
+
+pub trait UserSettingsContentExt {
+    fn for_profile(&self, cx: &App) -> Option<&SettingsContent>;
+    fn for_release_channel(&self) -> Option<&SettingsContent>;
+    fn for_os(&self) -> Option<&SettingsContent>;
+}
+
+impl UserSettingsContentExt for UserSettingsContent {
+    fn for_profile(&self, cx: &App) -> Option<&SettingsContent> {
+        let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() else {
+            return None;
+        };
+        self.profiles.get(&active_profile.0)
+    }
+
+    fn for_release_channel(&self) -> Option<&SettingsContent> {
+        match *release_channel::RELEASE_CHANNEL {
+            ReleaseChannel::Dev => self.dev.as_deref(),
+            ReleaseChannel::Nightly => self.nightly.as_deref(),
+            ReleaseChannel::Preview => self.preview.as_deref(),
+            ReleaseChannel::Stable => self.stable.as_deref(),
+        }
+    }
+
+    fn for_os(&self) -> Option<&SettingsContent> {
+        match env::consts::OS {
+            "macos" => self.macos.as_deref(),
+            "linux" => self.linux.as_deref(),
+            "windows" => self.windows.as_deref(),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord, serde::Serialize)]
 pub struct WorktreeId(usize);

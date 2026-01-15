@@ -96,8 +96,8 @@ impl From<Connection> for RemoteConnectionOptions {
             Connection::Wsl(conn) => RemoteConnectionOptions::Wsl(conn.into()),
             Connection::DevContainer(conn) => {
                 RemoteConnectionOptions::Docker(DockerConnectionOptions {
-                    name: conn.name.to_string(),
-                    container_id: conn.container_id.to_string(),
+                    name: conn.name,
+                    container_id: conn.container_id,
                     upload_binary_over_docker_exec: false,
                 })
             }

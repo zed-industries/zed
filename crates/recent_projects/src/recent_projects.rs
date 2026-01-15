@@ -329,7 +329,7 @@ pub fn add_wsl_distro(
     use gpui::ReadGlobal;
     use settings::SettingsStore;
 
-    let distro_name = SharedString::from(&connection_options.distro_name);
+    let distro_name = connection_options.distro_name.clone();
     let user = connection_options.user.clone();
     SettingsStore::global(cx).update_settings_file(fs, move |setting, _| {
         let connections = setting

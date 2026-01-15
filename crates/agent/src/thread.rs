@@ -1513,8 +1513,8 @@ impl Thread {
             log::debug!("Calling model.stream_completion, attempt {}", attempt);
 
             let (mut events, mut error) = match model.stream_completion(request, cx).await {
-                Ok(events) => (events, None),
-                Err(err) => (stream::empty().boxed(), Some(err)),
+                Ok(events) => (events.fuse(), None),
+                Err(err) => (stream::empty().boxed().fuse(), Some(err)),
             };
             let mut tool_results = FuturesUnordered::new();
             let mut cancelled = false;

@@ -19,7 +19,13 @@ use zeta_prompt::format_zeta_prompt;
 use zeta_prompt::{CURSOR_MARKER, ZetaVersion};
 
 pub const MAX_CONTEXT_TOKENS: usize = 350;
-pub const MAX_EDITABLE_TOKENS: usize = 150;
+
+pub fn max_editable_tokens(version: ZetaVersion) -> usize {
+    match version {
+        ZetaVersion::V0112_MiddleAtEnd | ZetaVersion::V0113_Ordered => 150,
+        ZetaVersion::V0114_180EditableRegion => 180,
+    }
+}
 
 pub fn request_prediction_with_zeta2(
     store: &mut EditPredictionStore,
@@ -61,6 +67,7 @@ pub fn request_prediction_with_zeta2(
                 events,
                 excerpt_path,
                 cursor_offset,
+                zeta_version,
             );
 
             let prompt = format_zeta_prompt(&prompt_input, zeta_version);
@@ -202,6 +209,7 @@ pub fn zeta2_prompt_input(
     events: Vec<Arc<zeta_prompt::Event>>,
     excerpt_path: Arc<Path>,
     cursor_offset: usize,
+    zeta_version: ZetaVersion,
 ) -> (std::ops::Range<usize>, zeta_prompt::ZetaPromptInput) {
     let cursor_point = cursor_offset.to_point(snapshot);
 
@@ -209,7 +217,7 @@ pub fn zeta2_prompt_input(
         crate::cursor_excerpt::editable_and_context_ranges_for_cursor_position(
             cursor_point,
             snapshot,
-            MAX_EDITABLE_TOKENS,
+            max_editable_tokens(zeta_version),
             MAX_CONTEXT_TOKENS,
         );
 

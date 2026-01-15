@@ -20,6 +20,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
+use zeta_prompt::ZetaVersion;
 
 static ANTHROPIC_CLIENT: OnceLock<AnthropicClient> = OnceLock::new();
 
@@ -42,10 +43,9 @@ pub async fn run_prediction(
 
     run_context_retrieval(example, app_state.clone(), cx.clone()).await?;
 
-    if matches!(
-        provider,
-        PredictionProvider::Teacher | PredictionProvider::TeacherNonBatching
-    ) {
+    if let PredictionProvider::Teacher(version) | PredictionProvider::TeacherNonBatching(version) =
+        args.provider
+    {
         let _step_progress = Progress::global().start(Step::Predict, &example.spec.name);
 
         run_format_prompt(
@@ -56,8 +56,8 @@ pub async fn run_prediction(
         )
         .await?;
 
-        let batched = matches!(provider, PredictionProvider::Teacher);
-        return predict_anthropic(example, repetition_count, batched).await;
+        let batched = matches!(provider, PredictionProvider::Teacher(..));
+        return predict_anthropic(example, repetition_count, version, batched).await;
     }
 
     run_load_project(example, app_state.clone(), cx.clone()).await?;
@@ -96,7 +96,7 @@ pub async fn run_prediction(
             }
             PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
             PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
-            PredictionProvider::Teacher | PredictionProvider::TeacherNonBatching => {
+            PredictionProvider::Teacher(..) | PredictionProvider::TeacherNonBatching(..) => {
                 unreachable!()
             }
         };
@@ -246,6 +246,7 @@ pub async fn run_prediction(
 async fn predict_anthropic(
     example: &mut Example,
     _repetition_count: usize,
+    version: ZetaVersion,
     batched: bool,
 ) -> anyhow::Result<()> {
     let llm_model_name = "claude-sonnet-4-5";
@@ -287,12 +288,16 @@ async fn predict_anthropic(
         .collect::<Vec<String>>()
         .join("\n");
 
-    let actual_patch = TeacherPrompt::parse(example, &actual_output)?;
+    let actual_patch = TeacherPrompt::parse(&example, &actual_output)?;
 
     let prediction = ExamplePrediction {
         actual_patch,
         actual_output,
-        provider: PredictionProvider::Teacher,
+        provider: if batched {
+            PredictionProvider::Teacher(version)
+        } else {
+            PredictionProvider::TeacherNonBatching(version)
+        },
     };
 
     example.predictions.push(prediction);
@@ -301,7 +306,7 @@ async fn predict_anthropic(
 
 pub async fn sync_batches(provider: &PredictionProvider) -> anyhow::Result<()> {
     match provider {
-        PredictionProvider::Teacher => {
+        PredictionProvider::Teacher(..) => {
             let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
                 AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
                     .expect("Failed to create Anthropic client")
