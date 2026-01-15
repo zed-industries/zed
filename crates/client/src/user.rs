@@ -4,8 +4,7 @@ use chrono::{DateTime, Utc};
 use cloud_api_client::websocket_protocol::MessageToClient;
 use cloud_api_client::{GetAuthenticatedUserResponse, PlanInfo};
 use cloud_llm_client::{
-    EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
-    MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME, MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, Plan,
+    EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME, Plan,
     UsageLimit,
 };
 use collections::{HashMap, HashSet, hash_map::Entry};
@@ -152,9 +151,6 @@ enum UpdateContacts {
     Wait(postage::barrier::Sender),
     Clear(postage::barrier::Sender),
 }
-
-#[derive(Debug, Clone, Copy, Deref)]
-pub struct ModelRequestUsage(pub RequestUsage);
 
 #[derive(Debug, Clone, Copy, Deref)]
 pub struct EditPredictionUsage(pub RequestUsage);
@@ -934,16 +930,6 @@ impl RequestUsage {
         let amount = amount.to_str()?.parse::<i32>()?;
 
         Ok(Self { limit, amount })
-    }
-}
-
-impl ModelRequestUsage {
-    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
-        Ok(Self(RequestUsage::from_headers(
-            MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME,
-            MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME,
-            headers,
-        )?))
     }
 }
 

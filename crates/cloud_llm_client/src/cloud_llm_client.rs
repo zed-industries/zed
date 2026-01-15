@@ -17,12 +17,6 @@ pub const ZED_VERSION_HEADER_NAME: &str = "x-zed-version";
 /// The client may use this as a signal to refresh the token.
 pub const EXPIRED_LLM_TOKEN_HEADER_NAME: &str = "x-zed-expired-token";
 
-/// The name of the header used to indicate the usage limit for model requests.
-pub const MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME: &str = "x-zed-model-requests-usage-limit";
-
-/// The name of the header used to indicate the usage amount for model requests.
-pub const MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME: &str = "x-zed-model-requests-usage-amount";
-
 /// The name of the header used to indicate the usage limit for edit predictions.
 pub const EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME: &str = "x-zed-edit-predictions-usage-limit";
 
