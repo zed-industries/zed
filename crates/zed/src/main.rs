@@ -942,16 +942,15 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                 serde_json::to_string_pretty(&json_schema_value)
                                     .context("Failed to serialize JSON Schema as JSON")?;
                             let buffer_task = workspace.update(cx, |workspace, cx| {
-                                workspace
-                                    .project()
-                                    .update(cx, |project, cx| project.create_buffer(false, cx))
+                                workspace.project().update(cx, |project, cx| {
+                                    project.create_buffer(json, false, cx)
+                                })
                             })?;
 
                             let buffer = buffer_task.await?;
 
                             workspace.update_in(cx, |workspace, window, cx| {
                                 buffer.update(cx, |buffer, cx| {
-                                    buffer.set_language(json, cx);
                                     buffer.edit([(0..0, json_schema_content)], None, cx);
                                     buffer.edit(
                                         [(0..0, format!("// {} JSON Schema\n", schema_path))],

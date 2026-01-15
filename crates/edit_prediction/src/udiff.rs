@@ -81,7 +81,9 @@ pub async fn apply_diff(
                             Entry::Vacant(entry) => {
                                 let buffer: Entity<Buffer> = if status == FileStatus::Created {
                                     project
-                                        .update(cx, |project, cx| project.create_buffer(true, cx))
+                                        .update(cx, |project, cx| {
+                                            project.create_buffer(None, true, cx)
+                                        })
                                         .await?
                                 } else {
                                     let project_path = project

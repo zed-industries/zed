@@ -3206,28 +3206,45 @@ impl SettingsWindow {
                 original_window
                     .update(cx, |workspace, window, cx| {
                         workspace
-                            .with_local_workspace(window, cx, |workspace, window, cx| {
-                                let create_task = workspace.project().update(cx, |project, cx| {
-                                    project.find_or_create_worktree(
-                                        paths::config_dir().as_path(),
-                                        false,
-                                        cx,
-                                    )
-                                });
-                                let open_task = workspace.open_paths(
-                                    vec![paths::settings_file().to_path_buf()],
-                                    OpenOptions {
-                                        visible: Some(OpenVisible::None),
-                                        ..Default::default()
-                                    },
-                                    None,
-                                    window,
-                                    cx,
-                                );
+                            .with_local_or_wsl_workspace(window, cx, |workspace, window, cx| {
+                                let project = workspace.project().clone();
 
                                 cx.spawn_in(window, async move |workspace, cx| {
-                                    create_task.await.ok();
-                                    open_task.await;
+                                    let (config_dir, settings_file) =
+                                        project.update(cx, |project, cx| {
+                                            (
+                                                project.try_windows_path_to_wsl(
+                                                    paths::config_dir().as_path(),
+                                                    cx,
+                                                ),
+                                                project.try_windows_path_to_wsl(
+                                                    paths::settings_file().as_path(),
+                                                    cx,
+                                                ),
+                                            )
+                                        });
+                                    let config_dir = config_dir.await?;
+                                    let settings_file = settings_file.await?;
+                                    project
+                                        .update(cx, |project, cx| {
+                                            project.find_or_create_worktree(&config_dir, false, cx)
+                                        })
+                                        .await
+                                        .ok();
+                                    workspace
+                                        .update_in(cx, |workspace, window, cx| {
+                                            workspace.open_paths(
+                                                vec![settings_file],
+                                                OpenOptions {
+                                                    visible: Some(OpenVisible::None),
+                                                    ..Default::default()
+                                                },
+                                                None,
+                                                window,
+                                                cx,
+                                            )
+                                        })?
+                                        .await;
 
                                     workspace.update_in(cx, |_, window, cx| {
                                         window.activate_window();

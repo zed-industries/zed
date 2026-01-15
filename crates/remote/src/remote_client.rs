@@ -899,6 +899,11 @@ impl RemoteClient {
             .map_or(false, |connection| connection.shares_network_interface())
     }
 
+    pub fn has_wsl_interop(&self) -> bool {
+        self.remote_connection()
+            .map_or(false, |connection| connection.has_wsl_interop())
+    }
+
     pub fn build_command(
         &self,
         program: Option<String>,

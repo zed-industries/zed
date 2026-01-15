@@ -2392,7 +2392,7 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Call the given callback with a workspace whose project is local.
+    /// Call the given callback with a workspace whose project is local or remote via WSL (allowing host access).
     ///
     /// If the given workspace has a local project, then it will be passed
     /// to the callback. Otherwise, a new empty window will be created.
@@ -2407,6 +2407,33 @@ impl Workspace {
         F: 'static + FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> T,
     {
         if self.project.read(cx).is_local() {
+            Task::ready(Ok(callback(self, window, cx)))
+        } else {
+            let env = self.project.read(cx).cli_environment(cx);
+            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, env, None, cx);
+            cx.spawn_in(window, async move |_vh, cx| {
+                let (workspace, _) = task.await?;
+                workspace.update(cx, callback)
+            })
+        }
+    }
+
+    /// Call the given callback with a workspace whose project is local or remote via WSL (allowing host access).
+    ///
+    /// If the given workspace has a local project, then it will be passed
+    /// to the callback. Otherwise, a new empty window will be created.
+    pub fn with_local_or_wsl_workspace<T, F>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        callback: F,
+    ) -> Task<Result<T>>
+    where
+        T: 'static,
+        F: 'static + FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> T,
+    {
+        let project = self.project.read(cx);
+        if project.is_local() || project.is_via_wsl_with_host_interop(cx) {
             Task::ready(Ok(callback(self, window, cx)))
         } else {
             let env = self.project.read(cx).cli_environment(cx);
@@ -3075,13 +3102,7 @@ impl Workspace {
         cx.spawn(async move |cx| {
             let (worktree, path) = entry.await?;
             let worktree_id = worktree.read_with(cx, |t, _| t.id());
-            Ok((
-                worktree,
-                ProjectPath {
-                    worktree_id,
-                    path: path,
-                },
-            ))
+            Ok((worktree, ProjectPath { worktree_id, path }))
         })
     }
 
@@ -8231,26 +8252,35 @@ pub fn create_and_open_local_file(
                 .await?;
         }
 
-        let mut items = workspace
+        workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.with_local_workspace(window, cx, |workspace, window, cx| {
-                    workspace.open_paths(
-                        vec![path.to_path_buf()],
-                        OpenOptions {
-                            visible: Some(OpenVisible::None),
-                            ..Default::default()
-                        },
-                        None,
-                        window,
-                        cx,
-                    )
+                workspace.with_local_or_wsl_workspace(window, cx, |workspace, window, cx| {
+                    let path = workspace
+                        .project
+                        .read_with(cx, |project, cx| project.try_windows_path_to_wsl(path, cx));
+                    cx.spawn_in(window, async move |workspace, cx| {
+                        let path = path.await?;
+                        let mut items = workspace
+                            .update_in(cx, |workspace, window, cx| {
+                                workspace.open_paths(
+                                    vec![path.to_path_buf()],
+                                    OpenOptions {
+                                        visible: Some(OpenVisible::None),
+                                        ..Default::default()
+                                    },
+                                    None,
+                                    window,
+                                    cx,
+                                )
+                            })?
+                            .await;
+                        let item = items.pop().flatten();
+                        item.with_context(|| format!("path {path:?} is not a file"))?
+                    })
                 })
             })?
             .await?
-            .await;
-
-        let item = items.pop().flatten();
-        item.with_context(|| format!("path {path:?} is not a file"))?
+            .await
     })
 }
 
