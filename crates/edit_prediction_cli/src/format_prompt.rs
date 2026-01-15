@@ -42,7 +42,7 @@ pub async fn run_format_prompt(
                 provider: args.provider,
             });
         }
-        PredictionProvider::Zeta2 => {
+        PredictionProvider::Zeta2(version) => {
             step_progress.set_substatus("formatting zeta2 prompt");
 
             let context_start = prompt_inputs.context_range.start;
@@ -59,7 +59,7 @@ pub async fn run_format_prompt(
                 events: prompt_inputs.edit_history.clone(),
                 related_files: prompt_inputs.related_files.clone().unwrap_or_default(),
             };
-            let prompt = format_zeta_prompt(&input, args.version);
+            let prompt = format_zeta_prompt(&input, version);
             let expected_output = zeta2_output_for_patch(
                 &input,
                 &example
