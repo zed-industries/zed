@@ -6363,30 +6363,14 @@ impl AcpThreadView {
                 .child(loading_contents_spinner(IconSize::default()))
                 .into_any_element()
         } else if is_generating && is_editor_empty {
-            let can_fast_track = self.can_fast_track_queue && !self.message_queue.is_empty();
-
-            if can_fast_track {
-                IconButton::new("fast-track-queue", IconName::Send)
-                    .icon_color(Color::Accent)
-                    .style(ButtonStyle::Filled)
-                    .tooltip(move |_window, cx| {
-                        Tooltip::for_action("Send Queued Message Now", &Chat, cx)
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.can_fast_track_queue = false;
-                        this.send_queued_message_at_index(0, true, window, cx);
-                    }))
-                    .into_any_element()
-            } else {
-                IconButton::new("stop-generation", IconName::Stop)
-                    .icon_color(Color::Error)
-                    .style(ButtonStyle::Tinted(TintColor::Error))
-                    .tooltip(move |_window, cx| {
-                        Tooltip::for_action("Stop Generation", &editor::actions::Cancel, cx)
-                    })
-                    .on_click(cx.listener(|this, _event, _, cx| this.cancel_generation(cx)))
-                    .into_any_element()
-            }
+            IconButton::new("stop-generation", IconName::Stop)
+                .icon_color(Color::Error)
+                .style(ButtonStyle::Tinted(TintColor::Error))
+                .tooltip(move |_window, cx| {
+                    Tooltip::for_action("Stop Generation", &editor::actions::Cancel, cx)
+                })
+                .on_click(cx.listener(|this, _event, _, cx| this.cancel_generation(cx)))
+                .into_any_element()
         } else {
             IconButton::new("send-message", IconName::Send)
                 .style(ButtonStyle::Filled)
