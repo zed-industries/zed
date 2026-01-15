@@ -356,16 +356,22 @@ impl MacTextSystemState {
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let font = &self.fonts[params.font_id.0];
-        let scale = Transform2F::from_scale(params.scale_factor);
-        Ok(font
+        let mut bounds: Bounds<DevicePixels> = font
             .raster_bounds(
                 params.glyph_id.0,
                 params.font_size.into(),
-                scale,
+                Transform2F::from_scale(params.scale_factor),
                 HintingOptions::None,
                 font_kit::canvas::RasterizationOptions::GrayscaleAa,
             )?
-            .into())
+            .into();
+
+        // Adjust the x position to account for the scale factor to avoid glyph clipped.
+        let x_offset = DevicePixels(bounds.origin.x.0 / params.scale_factor as i32);
+        bounds.origin.x -= x_offset;
+        bounds.size.width += x_offset;
+
+        Ok(bounds)
     }
 
     fn rasterize_glyph(
