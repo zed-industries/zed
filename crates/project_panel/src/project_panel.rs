@@ -1773,7 +1773,7 @@ impl ProjectPanel {
         if refocus {
             window.focus(&self.focus_handle, cx);
         }
-        let temporarily_unfolded = edit_state.temporarily_unfolded.clone();
+        let temporarily_unfolded = edit_state.temporarily_unfolded;
         edit_state.processing_filename = Some(filename);
         cx.notify();
 
