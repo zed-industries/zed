@@ -3268,7 +3268,7 @@ impl AcpThreadView {
                                                 this.child(
                                                     IconButton::new(
                                                         ("discard-partial-edit", entry_ix),
-                                                        IconName::Trash,
+                                                        IconName::Undo,
                                                     )
                                                     .icon_size(IconSize::Small)
                                                     .tooltip(move |_, cx| Tooltip::with_meta(
