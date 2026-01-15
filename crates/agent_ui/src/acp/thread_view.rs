@@ -71,8 +71,9 @@ use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
     CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread,
-    OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, SelectPermissionGranularity,
-    SendImmediately, SendNextQueuedMessage, ToggleBurnMode, ToggleProfileSelector,
+    OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage,
+    SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage, ToggleBurnMode,
+    ToggleProfileSelector,
 };
 
 const MAX_COLLAPSED_LINES: usize = 3;
@@ -5863,9 +5864,19 @@ impl AcpThreadView {
                                     .gap_1()
                                     .when(!is_next, |this| this.visible_on_hover("queue_entry"))
                                     .child(
-                                        IconButton::new(("delete", index), IconName::Trash)
-                                            .icon_size(IconSize::Small)
+                                        Button::new(("delete", index), "Remove")
+                                            .label_size(LabelSize::Small)
                                             .tooltip(Tooltip::text("Remove Message from Queue"))
+                                            .when(is_next, |this| {
+                                                this.key_binding(
+                                                    KeyBinding::for_action_in(
+                                                        &RemoveFirstQueuedMessage,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                                )
+                                            })
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 if index < this.message_queue.len() {
                                                     this.message_queue.remove(index);
@@ -7953,6 +7964,12 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::open_permission_dropdown))
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
                 this.send_queued_message_at_index(0, true, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &RemoveFirstQueuedMessage, _, cx| {
+                if !this.message_queue.is_empty() {
+                    this.message_queue.remove(0);
+                    cx.notify();
+                }
             }))
             .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
                 this.message_queue.clear();
