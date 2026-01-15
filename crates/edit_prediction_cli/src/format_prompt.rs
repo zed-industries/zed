@@ -78,7 +78,7 @@ pub async fn run_format_prompt(
                 (editable_range.start - context_start)..(editable_range.end - context_start);
             let input = zeta_prompt::ZetaPromptInput {
                 cursor_path: example.spec.cursor_path.clone(),
-                cursor_excerpt: prompt_inputs.content[context_range.clone()]
+                cursor_excerpt: prompt_inputs.content[context_range]
                     .to_string()
                     .into(),
                 editable_range_in_excerpt,
