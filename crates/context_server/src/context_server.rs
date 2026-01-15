@@ -39,6 +39,7 @@ enum ContextServerTransport {
 pub struct ContextServer {
     id: ContextServerId,
     client: RwLock<Option<Arc<crate::protocol::InitializedContextServerProtocol>>>,
+    last_client: RwLock<Option<Arc<Client>>>,
     configuration: ContextServerTransport,
     request_timeout: Option<Duration>,
 }
@@ -52,6 +53,7 @@ impl ContextServer {
         Self {
             id,
             client: RwLock::new(None),
+            last_client: RwLock::new(None),
             configuration: ContextServerTransport::Stdio(
                 command,
                 working_directory.map(|directory| directory.to_path_buf()),
@@ -92,6 +94,7 @@ impl ContextServer {
         Self {
             id,
             client: RwLock::new(None),
+            last_client: RwLock::new(None),
             configuration: ContextServerTransport::Custom(transport),
             request_timeout,
         }
@@ -106,7 +109,11 @@ impl ContextServer {
     }
 
     pub async fn start(&self, cx: &AsyncApp) -> Result<()> {
-        self.initialize(self.new_client(cx)?).await
+        let client = self.new_client(cx)?;
+        let client_arc = Arc::new(client);
+        *self.last_client.write() = Some(client_arc.clone());
+
+        self.initialize(client_arc).await
     }
 
     fn new_client(&self, cx: &AsyncApp) -> Result<Client> {
@@ -132,9 +139,10 @@ impl ContextServer {
         })
     }
 
-    async fn initialize(&self, client: Client) -> Result<()> {
+    async fn initialize(&self, client_arc: Arc<Client>) -> Result<()> {
         log::debug!("starting context server {}", self.id);
-        let protocol = crate::protocol::ModelContextProtocol::new(client);
+
+        let protocol = crate::protocol::ModelContextProtocol::new_from_arc(client_arc.clone());
         let client_info = types::Implementation {
             name: "Zed".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -150,12 +158,21 @@ impl ContextServer {
         *self.client.write() = Some(Arc::new(initialized_protocol));
         Ok(())
     }
-
     pub fn stop(&self) -> Result<()> {
         let mut client = self.client.write();
         if let Some(protocol) = client.take() {
             drop(protocol);
         }
         Ok(())
+    }
+
+    /// Retrieves the buffered stdout and stderr output from the server.
+    /// Returns (stdout, stderr) as strings.
+    pub fn get_output(&self) -> (String, String) {
+        if let Some(client) = self.last_client.read().as_ref() {
+            client.get_output()
+        } else {
+            (String::new(), String::new())
+        }
     }
 }

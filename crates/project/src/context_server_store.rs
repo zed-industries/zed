@@ -35,12 +35,29 @@ actions!(
     ]
 );
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerErrorDetails {
+    pub message: Arc<str>,
+    pub stdout: Arc<str>,
+    pub stderr: Arc<str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextServerStatus {
     Starting,
     Running,
     Stopped,
-    Error(Arc<str>),
+    Error(Arc<ServerErrorDetails>),
+}
+
+impl std::hash::Hash for ContextServerStatus {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        core::mem::discriminant(self).hash(state);
+        match self {
+            Self::Error(details) => details.message.hash(state),
+            _ => {}
+        }
+    }
 }
 
 impl ContextServerStatus {
@@ -49,7 +66,9 @@ impl ContextServerStatus {
             ContextServerState::Starting { .. } => ContextServerStatus::Starting,
             ContextServerState::Running { .. } => ContextServerStatus::Running,
             ContextServerState::Stopped { .. } => ContextServerStatus::Stopped,
-            ContextServerState::Error { error, .. } => ContextServerStatus::Error(error.clone()),
+            ContextServerState::Error { error_details, .. } => {
+                ContextServerStatus::Error(error_details.clone())
+            }
         }
     }
 }
@@ -71,7 +90,7 @@ enum ContextServerState {
     Error {
         server: Arc<ContextServer>,
         configuration: Arc<ContextServerConfiguration>,
-        error: Arc<str>,
+        error_details: Arc<ServerErrorDetails>,
     },
 }
 
@@ -468,13 +487,22 @@ impl ContextServerStore {
                     }
                     Err(err) => {
                         log::error!("{} context server failed to start: {}", id, err);
+
+                        // Capture server output for debugging
+                        let (stdout, stderr) = server.get_output();
+                        let error_details = Arc::new(ServerErrorDetails {
+                            message: err.to_string().into(),
+                            stdout: stdout.into(),
+                            stderr: stderr.into(),
+                        });
+
                         this.update(cx, |this, cx| {
                             this.update_server_state(
                                 id.clone(),
                                 ContextServerState::Error {
                                     configuration,
                                     server,
-                                    error: err.to_string().into(),
+                                    error_details,
                                 },
                                 cx,
                             )

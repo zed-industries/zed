@@ -893,11 +893,11 @@ fn wait_for_context_server(
                         let _ = tx.send(Err("Context server stopped running".into()));
                     }
                 }
-                ContextServerStatus::Error(error) => {
+                ContextServerStatus::Error(error_details) => {
                     if server_id == &context_server_id
                         && let Some(tx) = tx.lock().unwrap().take()
                     {
-                        let _ = tx.send(Err(error.clone()));
+                        let _ = tx.send(Err(error_details.message.clone()));
                     }
                 }
                 _ => {}

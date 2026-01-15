@@ -18,14 +18,15 @@ use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
     Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
-    ScrollHandle, Subscription, Task, WeakEntity,
+    ScrollHandle, Styled, Subscription, Task, WeakEntity,
 };
-use language::LanguageRegistry;
+use language::{Buffer, LanguageRegistry};
 use language_model::{
     IconOrSvg, LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
     ZED_CLOUD_PROVIDER_ID,
 };
 use language_models::AllLanguageModelSettings;
+use multi_buffer::MultiBuffer;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
     agent_server_store::{
@@ -35,8 +36,8 @@ use project::{
 };
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
-    ButtonStyle, Chip, CommonAnimationExt, ContextMenu, ContextMenuEntry, Disclosure, Divider,
-    DividerColor, ElevationIndex, Indicator, LabelSize, PopoverMenu, Switch, Tooltip,
+    ButtonStyle, Chip, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, Disclosure,
+    Divider, DividerColor, ElevationIndex, Indicator, LabelSize, PopoverMenu, Switch, Tooltip,
     WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
@@ -62,6 +63,9 @@ pub struct AgentConfiguration {
     expanded_provider_configurations: HashMap<LanguageModelProviderId, bool>,
     context_server_registry: Entity<ContextServerRegistry>,
     _registry_subscription: Subscription,
+    expanded_error_outputs: HashMap<ContextServerId, bool>,
+    stderr_output_editors: HashMap<ContextServerId, Entity<Editor>>,
+    stdout_output_editors: HashMap<ContextServerId, Entity<Editor>>,
     scroll_handle: ScrollHandle,
     _check_for_gemini: Task<()>,
 }
@@ -111,6 +115,9 @@ impl AgentConfiguration {
             context_server_registry,
             _registry_subscription: registry_subscription,
             scroll_handle: ScrollHandle::new(),
+            expanded_error_outputs: HashMap::default(),
+            stderr_output_editors: HashMap::default(),
+            stdout_output_editors: HashMap::default(),
             _check_for_gemini: Task::ready(()),
         };
         this.build_provider_configuration_views(window, cx);
@@ -638,7 +645,7 @@ impl AgentConfiguration {
     }
 
     fn render_context_server(
-        &self,
+        &mut self,
         context_server_id: ContextServerId,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -663,8 +670,8 @@ impl AgentConfiguration {
             )
         });
 
-        let error = if let ContextServerStatus::Error(error) = server_status.clone() {
-            Some(error)
+        let error = if let ContextServerStatus::Error(error) = &server_status {
+            Some(error.clone())
         } else {
             None
         };
@@ -687,30 +694,31 @@ impl AgentConfiguration {
             )
         };
 
-        let (status_indicator, tooltip_text) = match server_status {
-            ContextServerStatus::Starting => (
-                Icon::new(IconName::LoadCircle)
-                    .size(IconSize::XSmall)
-                    .color(Color::Accent)
-                    .with_keyed_rotate_animation(
-                        SharedString::from(format!("{}-starting", context_server_id.0)),
-                        3,
-                    )
-                    .into_any_element(),
-                "Server is starting.",
-            ),
-            ContextServerStatus::Running => (
-                Indicator::dot().color(Color::Success).into_any_element(),
-                "Server is active.",
-            ),
-            ContextServerStatus::Error(_) => (
-                Indicator::dot().color(Color::Error).into_any_element(),
-                "Server has an error.",
-            ),
-            ContextServerStatus::Stopped => (
-                Indicator::dot().color(Color::Muted).into_any_element(),
-                "Server is stopped.",
-            ),
+        let tooltip_text = match &server_status {
+            ContextServerStatus::Starting => SharedString::from("Server is starting."),
+            ContextServerStatus::Running => SharedString::from("Server is active."),
+            ContextServerStatus::Error(error_details) => {
+                SharedString::from(format!("Server error: {}", error_details.message))
+            }
+            ContextServerStatus::Stopped => SharedString::from("Server is stopped."),
+        };
+
+        let status_indicator = match &server_status {
+            ContextServerStatus::Starting => Icon::new(IconName::LoadCircle)
+                .size(IconSize::XSmall)
+                .color(Color::Accent)
+                .with_keyed_rotate_animation(
+                    SharedString::from(format!("{}-starting", context_server_id.0)),
+                    3,
+                )
+                .into_any_element(),
+            ContextServerStatus::Running => {
+                Indicator::dot().color(Color::Success).into_any_element()
+            }
+            ContextServerStatus::Error(_) => {
+                Indicator::dot().color(Color::Error).into_any_element()
+            }
+            ContextServerStatus::Stopped => Indicator::dot().color(Color::Muted).into_any_element(),
         };
         let is_remote = server_configuration
             .as_ref()
@@ -851,7 +859,7 @@ impl AgentConfiguration {
                                     .tooltip(Tooltip::text(tooltip_text))
                                     .child(status_indicator),
                             )
-                            .child(Label::new(item_id).truncate())
+                            .child(Label::new(item_id.clone()).truncate())
                             .child(
                                 div()
                                     .id("extension-source")
@@ -885,6 +893,7 @@ impl AgentConfiguration {
                             .child(
                             Switch::new("context-server-switch", is_running.into())
                                 .on_click({
+                                    let context_server_id = context_server_id.clone();
                                     let context_server_manager = self.context_server_store.clone();
                                     let fs = self.fs.clone();
 
@@ -932,31 +941,214 @@ impl AgentConfiguration {
                     ),
             )
             .map(|parent| {
-                if let Some(error) = error {
+                if let Some(error_details) = error {
+                    let has_output =
+                        !error_details.stdout.is_empty() || !error_details.stderr.is_empty();
+                    let is_expanded = self
+                        .expanded_error_outputs
+                        .get(&context_server_id)
+                        .copied()
+                        .unwrap_or(false);
+
+                    let stderr_output = error_details.stderr.clone();
+                    let stdout_output = error_details.stdout.clone();
+
+                    // Create or update stderr editor
+                    if !stderr_output.is_empty() && !self.stderr_output_editors.contains_key(&context_server_id) {
+                        let editor = cx.new(|cx| {
+                            let buffer = cx.new(|cx| Buffer::local(stderr_output.as_ref(), cx));
+                            let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+                            let mut editor = Editor::for_multibuffer(multibuffer, None, window, cx);
+                            editor.set_read_only(true);
+                            editor.set_use_modal_editing(false);
+                            editor
+                        });
+                        self.stderr_output_editors.insert(context_server_id.clone(), editor);
+                    } else if !stderr_output.is_empty() {
+                        if let Some(editor) = self.stderr_output_editors.get(&context_server_id) {
+                            editor.update(cx, |editor, cx| {
+                                let current_text = editor.text(cx);
+                                if current_text != stderr_output.as_ref() {
+                                    editor.set_text(stderr_output.as_ref(), window, cx);
+                                }
+                            });
+                        }
+                    }
+
+                    // Create or update stdout editor
+                    if !stdout_output.is_empty() && !self.stdout_output_editors.contains_key(&context_server_id) {
+                        let editor = cx.new(|cx| {
+                            let buffer = cx.new(|cx| Buffer::local(stdout_output.as_ref(), cx));
+                            let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+                            let mut editor = Editor::for_multibuffer(multibuffer, None, window, cx);
+                            editor.set_read_only(true);
+                            editor.set_use_modal_editing(false);
+                            editor
+                        });
+                        self.stdout_output_editors.insert(context_server_id.clone(), editor);
+                    } else if !stdout_output.is_empty() {
+                        if let Some(editor) = self.stdout_output_editors.get(&context_server_id) {
+                            editor.update(cx, |editor, cx| {
+                                let current_text = editor.text(cx);
+                                if current_text != stdout_output.as_ref() {
+                                    editor.set_text(stdout_output.as_ref(), window, cx);
+                                }
+                            });
+                        }
+                    }
+
                     return parent.child(
-                        h_flex()
-                            .gap_2()
-                            .pr_4()
-                            .items_start()
+                        v_flex()
+                            .gap_1()
                             .child(
                                 h_flex()
-                                    .flex_none()
-                                    .h(window.line_height() / 1.6_f32)
-                                    .justify_center()
+                                    .gap_2()
+                                    .pl_3()
+                                    .pr_4()
+                                    .py_1()
+                                    .bg(cx.theme().status().error_background)
+                                    .border_1()
+                                    .border_color(cx.theme().status().error_border)
+                                    .rounded_md()
+                                    .items_start()
                                     .child(
-                                        Icon::new(IconName::XCircle)
-                                            .size(IconSize::XSmall)
-                                            .color(Color::Error),
-                                    ),
+                                        h_flex()
+                                            .flex_none()
+                                            .h(window.line_height() / 1.6_f32)
+                                            .justify_center()
+                                            .child(
+                                                Icon::new(IconName::XCircle)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Error),
+                                            ),
+                                    )
+                                    .child(
+                                        div().w_full().child(
+                                            Label::new(error_details.message.clone())
+                                                .buffer_font(cx)
+                                                .color(Color::Error)
+                                                .size(LabelSize::Small),
+                                        ),
+                                    )
+                                    .when(has_output, |this| {
+                                        let icon = if is_expanded {
+                                            IconName::ChevronDown
+                                        } else {
+                                            IconName::ChevronRight
+                                        };
+
+                                        this.child(
+                                            IconButton::new(
+                                                format!("toggle-output-{}", context_server_id.0),
+                                                icon,
+                                            )
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Muted)
+                                            .tooltip(Tooltip::text("Toggle server output"))
+                                            .on_click(cx.listener({
+                                                let context_server_id = context_server_id.clone();
+                                                move |this, _event, _window, cx| {
+                                                    let current = this
+                                                        .expanded_error_outputs
+                                                        .get(&context_server_id)
+                                                        .copied()
+                                                        .unwrap_or(false);
+                                                    this.expanded_error_outputs
+                                                        .insert(context_server_id.clone(), !current);
+                                                    cx.notify();
+                                                }
+                                            })),
+                                        )
+                                    }),
                             )
-                            .child(
-                                div().w_full().child(
-                                    Label::new(error)
-                                        .buffer_font(cx)
-                                        .color(Color::Muted)
-                                        .size(LabelSize::Small),
-                                ),
-                            ),
+                            .when(has_output && is_expanded, {
+                                let stderr_editor = self.stderr_output_editors.get(&context_server_id).cloned();
+                                let stdout_editor = self.stdout_output_editors.get(&context_server_id).cloned();
+                                let stderr_output = stderr_output.clone();
+                                let stdout_output = stdout_output.clone();
+
+                                move |this| {
+                                    let stderr_panel = if stderr_output.is_empty() {
+                                        None
+                                    } else {
+                                        stderr_editor.clone().map(|editor| {
+                                            v_flex()
+                                                .gap_0p5()
+                                                .child(
+                                                    Label::new("Server Error Output:")
+                                                        .color(Color::Muted)
+                                                        .size(LabelSize::XSmall),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .h_24()
+                                                        .w_full()
+                                                        .child(editor)
+                                                )
+                                                .into_any_element()
+                                        })
+                                    };
+
+                                    let stdout_panel = if stdout_output.is_empty() {
+                                        None
+                                    } else {
+                                        stdout_editor.clone().map(|editor| {
+                                            v_flex()
+                                                .gap_0p5()
+                                                .child(
+                                                    Label::new("Server Output:")
+                                                        .color(Color::Muted)
+                                                        .size(LabelSize::XSmall),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .h_24()
+                                                        .w_full()
+                                                        .child(editor)
+                                                )
+                                                .into_any_element()
+                                        })
+                                    };
+
+                                    let full_output_to_copy = {
+                                        let mut text = String::new();
+                                        if !stderr_output.is_empty() {
+                                            text.push_str("=== stderr ===\n");
+                                            text.push_str(stderr_output.as_ref());
+                                            if !text.ends_with('\n') {
+                                                text.push('\n');
+                                            }
+                                        }
+                                        if !stdout_output.is_empty() {
+                                            text.push_str("=== stdout ===\n");
+                                            text.push_str(stdout_output.as_ref());
+                                            if !text.ends_with('\n') {
+                                                text.push('\n');
+                                            }
+                                        }
+                                        text
+                                    };
+
+                                    this.child(
+                                        v_flex()
+                                            .pl_3()
+                                            .pr_4()
+                                            .py_1()
+                                            .gap_1()
+                                            .child(
+                                                h_flex()
+                                                    .justify_end()
+                                                    .child(
+                                                        CopyButton::new(full_output_to_copy.clone())
+                                                            .icon_size(IconSize::Small)
+                                                            .tooltip_label("Copy server output to clipboard")
+                                                    ),
+                                            )
+                                            .when_some(stderr_panel, |this, panel| this.child(panel))
+                                            .when_some(stdout_panel, |this, panel| this.child(panel)),
+                                    )
+                                }
+                            }),
                     );
                 }
                 parent
@@ -1226,7 +1418,7 @@ impl Render for AgentConfiguration {
                             .id("assistant-configuration-content")
                             .track_scroll(&self.scroll_handle)
                             .size_full()
-                            .overflow_y_scroll()
+                            .overflow_hidden()
                             .child(self.render_agent_servers_section(cx))
                             .child(self.render_context_servers_section(window, cx))
                             .child(self.render_provider_configuration_section(cx)),

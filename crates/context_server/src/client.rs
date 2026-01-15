@@ -9,6 +9,7 @@ use serde_json::{Value, value::RawValue};
 use slotmap::SlotMap;
 use smol::channel;
 use std::{
+    collections::VecDeque,
     fmt,
     path::PathBuf,
     pin::pin,
@@ -27,6 +28,7 @@ use crate::{
 
 const JSON_RPC_VERSION: &str = "2.0";
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+const MAX_OUTPUT_BUFFER_LINES: usize = 500;
 
 // Standard JSON-RPC error codes
 pub const PARSE_ERROR: i32 = -32700;
@@ -62,6 +64,8 @@ pub(crate) struct Client {
     #[allow(dead_code)]
     transport: Arc<dyn Transport>,
     request_timeout: Option<Duration>,
+    stdout_buffer: Arc<Mutex<VecDeque<String>>>,
+    stderr_buffer: Arc<Mutex<VecDeque<String>>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -196,18 +200,22 @@ impl Client {
         let response_handlers =
             Arc::new(Mutex::new(Some(HashMap::<_, ResponseHandler>::default())));
         let request_handlers = Arc::new(Mutex::new(HashMap::<_, RequestHandler>::default()));
+        let stdout_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(MAX_OUTPUT_BUFFER_LINES)));
+        let stderr_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(MAX_OUTPUT_BUFFER_LINES)));
 
         let receive_input_task = cx.spawn({
             let subscription_set = subscription_set.clone();
             let response_handlers = response_handlers.clone();
             let request_handlers = request_handlers.clone();
             let transport = transport.clone();
+            let stdout_buffer = stdout_buffer.clone();
             async move |cx| {
                 Self::handle_input(
                     transport,
                     subscription_set,
                     request_handlers,
                     response_handlers,
+                    stdout_buffer,
                     cx,
                 )
                 .log_err()
@@ -216,7 +224,8 @@ impl Client {
         });
         let receive_err_task = cx.spawn({
             let transport = transport.clone();
-            async move |_| Self::handle_err(transport).log_err().await
+            let stderr_buffer = stderr_buffer.clone();
+            async move |_| Self::handle_err(transport, stderr_buffer).log_err().await
         });
         let input_task = cx.spawn(async move |_| {
             let (input, err) = futures::join!(receive_input_task, receive_err_task);
@@ -246,6 +255,8 @@ impl Client {
             output_done_rx: Mutex::new(Some(output_done_rx)),
             transport,
             request_timeout,
+            stdout_buffer,
+            stderr_buffer,
         })
     }
 
@@ -258,8 +269,9 @@ impl Client {
     async fn handle_input(
         transport: Arc<dyn Transport>,
         subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
-        request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
+        request_handlers: Arc<Mutex<HashMap<String, RequestHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        _stdout_buffer: Arc<Mutex<VecDeque<String>>>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
         let mut receiver = transport.receive();
@@ -288,7 +300,7 @@ impl Client {
                     cx,
                 )
             } else {
-                log::error!("Unhandled JSON from context_server: {}", message);
+                log::debug!("Non-JSON output from context_server: {}", message);
             }
         }
 
@@ -299,8 +311,20 @@ impl Client {
 
     /// Handles the stderr output from the context server.
     /// Continuously reads and logs any error messages from the server.
-    async fn handle_err(transport: Arc<dyn Transport>) -> anyhow::Result<()> {
+    async fn handle_err(
+        transport: Arc<dyn Transport>,
+        stderr_buffer: Arc<Mutex<VecDeque<String>>>,
+    ) -> anyhow::Result<()> {
         while let Some(err) = transport.receive_err().next().await {
+            // Buffer stderr for debugging (skip empty lines to reduce memory usage)
+            if !err.trim().is_empty() {
+                let mut buffer = stderr_buffer.lock();
+                if buffer.len() >= MAX_OUTPUT_BUFFER_LINES {
+                    buffer.pop_front();
+                }
+                buffer.push_back(err.clone());
+            }
+
             log::debug!("context server stderr: {}", err.trim());
         }
 
@@ -433,8 +457,13 @@ impl Client {
                 anyhow::bail!(RequestCanceled)
             }
             _ = timeout_fut => {
-                log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", timeout.unwrap());
-                anyhow::bail!("Context server request timeout");
+                let timeout_duration = timeout.unwrap();
+                log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", timeout_duration);
+                anyhow::bail!(
+                    "Context server request '{}' timed out after {:?}. Check server logs for details.",
+                    method,
+                    timeout_duration
+                );
             }
         }
     }
@@ -450,6 +479,26 @@ impl Client {
         .unwrap();
         self.outbound_tx.try_send(notification)?;
         Ok(())
+    }
+
+    /// Retrieves the buffered stdout and stderr output from the server.
+    /// Returns up to the last 500 lines from each stream.
+    pub fn get_output(&self) -> (String, String) {
+        let stdout = self
+            .stdout_buffer
+            .lock()
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("");
+        let stderr = self
+            .stderr_buffer
+            .lock()
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("");
+        (stdout, stderr)
     }
 
     #[must_use]
