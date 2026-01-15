@@ -8364,6 +8364,84 @@ async fn test_add_selection_above_below(cx: &mut TestAppContext) {
            n«ˇlm»o
            "#
     ));
+
+    // Assert that the oldest selection's goal column is used when adding more
+    // selections, not the most recently added selection's actual column.
+    cx.set_state(indoc! {"
+        foo bar bazˇ
+        foo
+        foo bar
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        foo bar bazˇ
+        fooˇ
+        foo bar
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        foo bar bazˇ
+        fooˇ
+        foo barˇ
+    "});
+
+    cx.set_state(indoc! {"
+        foo bar baz
+        foo
+        foo barˇ
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        foo bar baz
+        fooˇ
+        foo barˇ
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        foo barˇ baz
+        fooˇ
+        foo barˇ
+    "});
 }
 
 #[gpui::test]
