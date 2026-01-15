@@ -200,12 +200,13 @@ pub fn expand_macro_recursively(
         }
 
         let buffer = project
-            .update(cx, |project, cx| project.create_buffer(false, cx))
+            .update(cx, |project, cx| {
+                project.create_buffer(Some(rust_language), false, cx)
+            })
             .await?;
         workspace.update_in(cx, |workspace, window, cx| {
             buffer.update(cx, |buffer, cx| {
                 buffer.set_text(macro_expansion.expansion, cx);
-                buffer.set_language(Some(rust_language), cx);
                 buffer.set_capability(Capability::ReadOnly, cx);
             });
             let multibuffer =

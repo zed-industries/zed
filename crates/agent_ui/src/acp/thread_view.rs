@@ -5969,12 +5969,13 @@ impl AcpThreadView {
             let markdown_language = markdown_language_task.await?;
 
             let buffer = project
-                .update(cx, |project, cx| project.create_buffer(false, cx))
+                .update(cx, |project, cx| {
+                    project.create_buffer(Some(markdown_language), false, cx)
+                })
                 .await?;
 
             buffer.update(cx, |buffer, cx| {
                 buffer.set_text(markdown, cx);
-                buffer.set_language(Some(markdown_language), cx);
                 buffer.set_capability(language::Capability::ReadWrite, cx);
             });
 

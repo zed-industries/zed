@@ -1116,16 +1116,13 @@ impl SerializableItem for Editor {
 
                     // First create the empty buffer
                     let buffer = project
-                        .update(cx, |project, cx| project.create_buffer(true, cx))
+                        .update(cx, |project, cx| project.create_buffer(language, true, cx))
                         .await
                         .context("Failed to create buffer while deserializing editor")?;
 
                     // Then set the text so that the dirty bit is set correctly
                     buffer.update(cx, |buffer, cx| {
                         buffer.set_language_registry(language_registry);
-                        if let Some(language) = language {
-                            buffer.set_language(Some(language), cx);
-                        }
                         buffer.set_text(contents, cx);
                         if let Some(entry) = buffer.peek_undo_stack() {
                             buffer.forget_transaction(entry.transaction_id());
@@ -1227,7 +1224,7 @@ impl SerializableItem for Editor {
                 ..
             } => window.spawn(cx, async move |cx| {
                 let buffer = project
-                    .update(cx, |project, cx| project.create_buffer(true, cx))
+                    .update(cx, |project, cx| project.create_buffer(None, true, cx))
                     .await
                     .context("Failed to create buffer")?;
 
