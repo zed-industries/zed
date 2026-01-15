@@ -29,12 +29,15 @@ use settings::Settings;
 use text::{Anchor, Point, ToOffset};
 use theme::ActiveTheme;
 use ui::Divider;
-use ui::{IconButton, IconName, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{
+    ButtonLike, ContextMenu, IconButton, IconName, KeyBinding, ListItem, ListItemSpacing,
+    PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+};
 use util::{ResultExt, paths::PathMatcher};
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, SplitDirection, Workspace, pane};
 pub use zed_actions::quick_search::Toggle;
 
-actions!(quick_search, [ReplaceNext, ReplaceAll, ToggleFilters]);
+actions!(quick_search, [ReplaceNext, ReplaceAll, ToggleFilters, ToggleSplitMenu]);
 
 const SEARCH_DEBOUNCE_MS: u64 = 100;
 
@@ -366,6 +369,67 @@ impl QuickSearch {
             picker.refresh(window, cx);
         });
     }
+
+    fn go_to_file_split_left(
+        &mut self,
+        _: &pane::SplitLeft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to_file_split_inner(SplitDirection::Left, window, cx);
+    }
+
+    fn go_to_file_split_right(
+        &mut self,
+        _: &pane::SplitRight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to_file_split_inner(SplitDirection::Right, window, cx);
+    }
+
+    fn go_to_file_split_up(
+        &mut self,
+        _: &pane::SplitUp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to_file_split_inner(SplitDirection::Up, window, cx);
+    }
+
+    fn go_to_file_split_down(
+        &mut self,
+        _: &pane::SplitDown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to_file_split_inner(SplitDirection::Down, window, cx);
+    }
+
+    fn go_to_file_split_inner(
+        &mut self,
+        split_direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let delegate = &self.picker.read(cx).delegate;
+        let Some(selected_match) = delegate.matches.get(delegate.selected_index) else {
+            return;
+        };
+
+        let path = selected_match.path.clone();
+        let Some(workspace) = delegate.workspace.upgrade() else {
+            return;
+        };
+
+        cx.emit(DismissEvent);
+
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.split_path_preview(path, false, Some(split_direction), window, cx)
+            })
+            .detach_and_log_err(cx);
+    }
 }
 
 impl Render for QuickSearch {
@@ -488,6 +552,20 @@ impl Render for QuickSearch {
                     }
                 });
             }))
+            .on_action(cx.listener(|this, _: &ToggleSplitMenu, window, cx| {
+                this.picker.update(cx, |picker, cx| {
+                    let menu_handle = &picker.delegate.split_popover_menu_handle;
+                    if menu_handle.is_deployed() {
+                        menu_handle.hide(cx);
+                    } else {
+                        menu_handle.show(window, cx);
+                    }
+                });
+            }))
+            .on_action(cx.listener(Self::go_to_file_split_left))
+            .on_action(cx.listener(Self::go_to_file_split_right))
+            .on_action(cx.listener(Self::go_to_file_split_up))
+            .on_action(cx.listener(Self::go_to_file_split_down))
             .m_4()
             .relative()
             .top(self.offset.y)
@@ -656,6 +734,9 @@ impl Render for QuickSearch {
                         .map(|path| path.as_std_path().to_string_lossy().to_string())
                         .unwrap_or_default();
 
+                    let split_menu_handle = delegate.split_popover_menu_handle.clone();
+                    let focus_handle = self.focus_handle.clone();
+
                     h_flex()
                         .px_2()
                         .py_1()
@@ -663,11 +744,77 @@ impl Render for QuickSearch {
                         .border_b_1()
                         .border_color(cx.theme().colors().border)
                         .bg(cx.theme().colors().editor_background)
-                        .child(Label::new(file_name).size(LabelSize::Small))
+                        .justify_between()
                         .child(
-                            Label::new(directory)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
+                            h_flex()
+                                .gap_2()
+                                .child(Label::new(file_name).size(LabelSize::Small))
+                                .child(
+                                    Label::new(directory)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                        .child(
+                            PopoverMenu::new("split-menu-popover")
+                                .with_handle(split_menu_handle)
+                                .attach(gpui::Corner::BottomRight)
+                                .anchor(gpui::Corner::TopRight)
+                                .offset(gpui::Point {
+                                    x: px(0.0),
+                                    y: px(-2.0),
+                                })
+                                .trigger_with_tooltip(
+                                    ButtonLike::new("split-trigger")
+                                        .child(Label::new("Split…").size(LabelSize::Small))
+                                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                                        .child(
+                                            KeyBinding::for_action_in(
+                                                &ToggleSplitMenu,
+                                                &focus_handle,
+                                                cx,
+                                            )
+                                            .size(rems_from_px(10.)),
+                                        ),
+                                    {
+                                        let focus_handle = focus_handle.clone();
+                                        move |_window, cx| {
+                                            Tooltip::for_action_in(
+                                                "Open in Split",
+                                                &ToggleSplitMenu,
+                                                &focus_handle,
+                                                cx,
+                                            )
+                                        }
+                                    },
+                                )
+                                .menu({
+                                    let focus_handle = focus_handle.clone();
+                                    move |window, cx| {
+                                        Some(ContextMenu::build(window, cx, {
+                                            let focus_handle = focus_handle.clone();
+                                            move |menu, _, _| {
+                                                menu.context(focus_handle)
+                                                    .action(
+                                                        "Split Left",
+                                                        pane::SplitLeft::default().boxed_clone(),
+                                                    )
+                                                    .action(
+                                                        "Split Right",
+                                                        pane::SplitRight::default().boxed_clone(),
+                                                    )
+                                                    .action(
+                                                        "Split Up",
+                                                        pane::SplitUp::default().boxed_clone(),
+                                                    )
+                                                    .action(
+                                                        "Split Down",
+                                                        pane::SplitDown::default().boxed_clone(),
+                                                    )
+                                            }
+                                        }))
+                                    }
+                                }),
                         )
                 });
 
@@ -757,7 +904,7 @@ pub struct QuickSearchDelegate {
     excluded_files_editor: Entity<Editor>,
     replace_enabled: bool,
     filters_enabled: bool,
-    opened_only: bool,
+    included_opened_only: bool,
     matches: Vec<SearchMatch>,
     selected_index: usize,
     cancel_flag: Arc<std::sync::atomic::AtomicBool>,
@@ -767,6 +914,7 @@ pub struct QuickSearchDelegate {
     search_in_progress: bool,
     pending_initial_query: RefCell<Option<String>>,
     panels_with_errors: HashMap<InputPanel, String>,
+    split_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 impl QuickSearchDelegate {
@@ -789,7 +937,7 @@ impl QuickSearchDelegate {
             excluded_files_editor,
             replace_enabled: false,
             filters_enabled: false,
-            opened_only: false,
+            included_opened_only: false,
             matches: Vec::new(),
             selected_index: 0,
             cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -799,6 +947,7 @@ impl QuickSearchDelegate {
             search_in_progress: false,
             pending_initial_query: RefCell::new(initial_query),
             panels_with_errors: HashMap::default(),
+            split_popover_menu_handle: PopoverMenuHandle::default(),
         }
     }
 
@@ -1313,11 +1462,11 @@ impl PickerDelegate for QuickSearchDelegate {
                                 .child(
                                     IconButton::new("opened-only", IconName::FolderSearch)
                                         .size(ButtonSize::Compact)
-                                        .toggle_state(self.opened_only)
+                                        .toggle_state(self.included_opened_only)
                                         .tooltip(Tooltip::text("Only Search Open Files"))
                                         .on_click(cx.listener(|picker, _, window, cx| {
-                                            picker.delegate.opened_only =
-                                                !picker.delegate.opened_only;
+                                            picker.delegate.included_opened_only =
+                                                !picker.delegate.included_opened_only;
                                             picker.refresh(window, cx);
                                         })),
                                 )
@@ -1383,7 +1532,7 @@ impl PickerDelegate for QuickSearchDelegate {
 
         let cancel_flag = self.cancel_flag.clone();
 
-        let open_buffers = if self.opened_only {
+        let open_buffers = if self.included_opened_only {
             Some(self.open_buffers(cx))
         } else {
             None
