@@ -1,7 +1,8 @@
 use gpui::{
     AnyElement, App, AvailableSpace, Background, Bounds, Context, Corners, CursorStyle, Edges,
-    Element, Entity, Hitbox, HitboxBehavior, IntoElement, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PaintQuad, Pixels, Point, Rgba, Size, Style, hsla, px, relative, rgba,
+    Element, Entity, Focusable, Hitbox, HitboxBehavior, IntoElement, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, Rgba, Size, Style, hsla, px, relative,
+    rgba,
 };
 use theme::ActiveTheme;
 
@@ -150,6 +151,24 @@ impl Element for SplitEditorElement {
         window: &mut ui::Window,
         cx: &mut ui::App,
     ) -> Self::PrepaintState {
+        let lhs_focused = self.lhs.focus_handle(cx).is_focused(window);
+        let rhs_focused = self.rhs.focus_handle(cx).is_focused(window);
+        if lhs_focused && !rhs_focused {
+            let lhs_scroll_position = self
+                .lhs
+                .update(cx, |editor, cx| editor.snapshot(window, cx).scroll_position());
+            self.rhs.update(cx, |editor, cx| {
+                editor.set_scroll_position(lhs_scroll_position, window, cx);
+            });
+        } else {
+            let rhs_scroll_position = self
+                .rhs
+                .update(cx, |editor, cx| editor.snapshot(window, cx).scroll_position());
+            self.lhs.update(cx, |editor, cx| {
+                editor.set_scroll_position(rhs_scroll_position, window, cx);
+            });
+        }
+
         let split_ratio = self.editor.read(cx).split_ratio();
         let lhs_width = (bounds.size.width - SEPARATOR_WIDTH) * split_ratio;
 
