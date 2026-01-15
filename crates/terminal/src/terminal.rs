@@ -118,8 +118,12 @@ const DEBUG_LINE_HEIGHT: Pixels = px(5.);
 pub fn insert_zed_terminal_env(
     env: &mut HashMap<String, String>,
     version: &impl std::fmt::Display,
+    entity_id: Option<u64>,
 ) {
     env.insert("ZED_TERM".to_string(), "true".to_string());
+    if let Some(entity_id) = entity_id {
+        env.insert("ZED_TERM_ID".to_string(), entity_id.to_string());
+    }
     env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
     env.insert("TERM".to_string(), "xterm-256color".to_string());
     env.insert("COLORTERM".to_string(), "truecolor".to_string());
@@ -432,6 +436,7 @@ impl TerminalBuilder {
         completion_tx: Option<Sender<Option<ExitStatus>>>,
         cx: &App,
         activation_script: Vec<String>,
+        entity_id: Option<u64>,
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
         let fut = async move {
@@ -448,7 +453,7 @@ impl TerminalBuilder {
                     .or_insert_with(|| "en_US.UTF-8".to_string());
             }
 
-            insert_zed_terminal_env(&mut env, &version);
+            insert_zed_terminal_env(&mut env, &version, entity_id);
 
             #[derive(Default)]
             struct ShellParams {
@@ -2141,6 +2146,15 @@ impl Terminal {
         }
     }
 
+    pub fn set_title_override(&mut self, title_override: Option<String>, cx: &mut Context<Self>) {
+        self.title_override = title_override;
+        cx.emit(Event::TitleChanged);
+    }
+
+    pub fn title_override(&self) -> Option<&str> {
+        self.title_override.as_deref()
+    }
+
     pub fn kill_active_task(&mut self) {
         if let Some(task) = self.task()
             && task.status == TaskStatus::Running
@@ -2258,7 +2272,12 @@ impl Terminal {
         self.vi_mode_enabled
     }
 
-    pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Task<Result<TerminalBuilder>> {
+    pub fn clone_builder(
+        &self,
+        cx: &App,
+        cwd: Option<PathBuf>,
+        entity_id: Option<u64>,
+    ) -> Task<Result<TerminalBuilder>> {
         let working_directory = self.working_directory().or_else(|| cwd);
         TerminalBuilder::new(
             working_directory,
@@ -2275,6 +2294,7 @@ impl Terminal {
             None,
             cx,
             self.activation_script.clone(),
+            entity_id,
         )
     }
 }
@@ -2527,6 +2547,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     vec![],
+                    None,
                 )
             })
             .await
@@ -2663,6 +2684,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     Vec::new(),
+                    None,
                 )
             })
             .await
@@ -2738,6 +2760,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     Vec::new(),
+                    None,
                 )
             })
             .await
@@ -3204,6 +3227,7 @@ mod tests {
                         None,
                         cx,
                         vec![],
+                        None,
                     )
                 })
                 .await

@@ -81,6 +81,58 @@ impl CapabilityGranter {
 
         Ok(())
     }
+
+    pub fn grant_terminal_create(&self) -> Result<()> {
+        let is_allowed = self
+            .granted_capabilities
+            .iter()
+            .any(|capability| matches!(capability, ExtensionCapability::TerminalCreate(_)));
+
+        if !is_allowed {
+            bail!("capability for terminal:create is not granted by the extension host");
+        }
+
+        Ok(())
+    }
+
+    pub fn grant_terminal_input(&self) -> Result<()> {
+        let is_allowed = self
+            .granted_capabilities
+            .iter()
+            .any(|capability| matches!(capability, ExtensionCapability::TerminalInput(_)));
+
+        if !is_allowed {
+            bail!("capability for terminal:input is not granted by the extension host");
+        }
+
+        Ok(())
+    }
+
+    pub fn grant_terminal_read(&self) -> Result<()> {
+        let is_allowed = self
+            .granted_capabilities
+            .iter()
+            .any(|capability| matches!(capability, ExtensionCapability::TerminalRead(_)));
+
+        if !is_allowed {
+            bail!("capability for terminal:read is not granted by the extension host");
+        }
+
+        Ok(())
+    }
+
+    pub fn grant_terminal_close(&self) -> Result<()> {
+        let is_allowed = self
+            .granted_capabilities
+            .iter()
+            .any(|capability| matches!(capability, ExtensionCapability::TerminalClose(_)));
+
+        if !is_allowed {
+            bail!("capability for terminal:close is not granted by the extension host");
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
