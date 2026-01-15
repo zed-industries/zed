@@ -54,8 +54,8 @@ use {
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
     gpui::{
-        point, px, size, App, AppContext as _, Bounds, Entity, KeyBinding, Modifiers, SharedString,
-        VisualTestAppContext, WindowBounds, WindowHandle, WindowOptions,
+        App, AppContext as _, Bounds, Entity, KeyBinding, Modifiers, SharedString,
+        VisualTestAppContext, WindowBounds, WindowHandle, WindowOptions, point, px, size,
     },
     image::RgbaImage,
     project_panel::ProjectPanel,
@@ -67,8 +67,8 @@ use {
         sync::Arc,
         time::Duration,
     },
-    terminal::terminal_settings::{AlternateScroll, CursorShape},
     terminal::TerminalBuilder,
+    terminal::terminal_settings::{AlternateScroll, CursorShape},
     terminal_view::TerminalView,
     watch,
     workspace::{AppState, Workspace},
@@ -1705,7 +1705,7 @@ fn run_subagent_visual_tests(
     update_baseline: bool,
 ) -> Result<TestResult> {
     use acp_thread::{
-        meta_with_tool_name, AcpThread, ToolCallUpdateSubagentThread, SUBAGENT_TOOL_NAME,
+        AcpThread, SUBAGENT_TOOL_NAME, ToolCallUpdateSubagentThread, meta_with_tool_name,
     };
     use agent_ui::AgentPanel;
 
