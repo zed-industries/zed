@@ -36,6 +36,8 @@ feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 google_ai = { workspace = true, features = ["schemars"] }
+google_vertex_ai = { workspace = true, features = ["schemars"] }
+anthropic_vertex_ai = { workspace = true, features = ["schemars"] }
 gpui.workspace = true
 gpui_tokio.workspace = true
 http_client.workspace = true

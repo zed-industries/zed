@@ -9,9 +9,11 @@ use std::sync::Arc;
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
+    pub anthropic_vertex: Option<AnthropicVertexSettingsContent>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
+    pub google_vertex: Option<GoogleVertexSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub mistral: Option<MistralSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
@@ -312,6 +314,52 @@ pub struct GoogleAvailableModel {
 }
 
 #[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct GoogleVertexSettingsContent {
+    pub api_url: Option<String>,
+    pub project_id: String,  // ADDED
+    pub location_id: String, // ADDED
+    pub available_models: Option<Vec<GoogleVertexAvailableModel>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct GoogleVertexAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub mode: Option<ModelMode>,
+}
+
+#[skip_serializing_none]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct AnthropicVertexSettingsContent {
+    pub api_url: Option<String>,
+    pub project_id: String,  // ADDED
+    pub location_id: String, // ADDED
+    pub available_models: Option<Vec<AnthropicVertexAvailableModel>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct AnthropicVertexAvailableModel {
+    /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-latest, claude-3-opus-20240229, etc
+    pub name: String,
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
+    pub display_name: Option<String>,
+    /// The model's context window size.
+    pub max_tokens: u64,
+    /// A model `name` to substitute when calling tools, in case the primary model doesn't support tool calling.
+    pub tool_override: Option<String>,
+    /// Configuration of Anthropic's caching API.
+    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
+    pub max_output_tokens: Option<u64>,
+    pub default_temperature: Option<f32>,
+    #[serde(default)]
+    pub extra_beta_headers: Vec<String>,
+    /// The model's mode (e.g. thinking)
+    pub mode: Option<ModelMode>,
+}
+
+#[skip_serializing_none]
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct XAiSettingsContent {
     pub api_url: Option<String>,
