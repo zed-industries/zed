@@ -17,9 +17,6 @@ pub const ZED_VERSION_HEADER_NAME: &str = "x-zed-version";
 /// The client may use this as a signal to refresh the token.
 pub const EXPIRED_LLM_TOKEN_HEADER_NAME: &str = "x-zed-expired-token";
 
-/// The name of the header used to indicate what plan the user is currently on.
-pub const CURRENT_PLAN_HEADER_NAME: &str = "x-zed-plan";
-
 /// The name of the header used to indicate the usage limit for model requests.
 pub const MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME: &str = "x-zed-model-requests-usage-limit";
 
@@ -32,13 +29,7 @@ pub const EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME: &str = "x-zed-edit-predictio
 /// The name of the header used to indicate the usage amount for edit predictions.
 pub const EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME: &str = "x-zed-edit-predictions-usage-amount";
 
-/// The name of the header used to indicate the resource for which the subscription limit has been reached.
-pub const SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME: &str = "x-zed-subscription-limit-resource";
-
 pub const EDIT_PREDICTIONS_RESOURCE_HEADER_VALUE: &str = "edit_predictions";
-
-/// The name of the header used to indicate that the maximum number of consecutive tool uses has been reached.
-pub const TOOL_USE_LIMIT_REACHED_HEADER_NAME: &str = "x-zed-tool-use-limit-reached";
 
 /// The name of the header used to indicate the minimum required Zed version.
 ///
