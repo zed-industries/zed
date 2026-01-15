@@ -583,10 +583,6 @@ impl LanguageModel for CloudLanguageModel {
         }
     }
 
-    fn supports_burn_mode(&self) -> bool {
-        self.model.supports_max_mode
-    }
-
     fn supports_split_token_display(&self) -> bool {
         use cloud_llm_client::LanguageModelProvider::*;
         matches!(self.model.provider, OpenAi)
@@ -611,13 +607,6 @@ impl LanguageModel for CloudLanguageModel {
 
     fn max_token_count(&self) -> u64 {
         self.model.max_token_count as u64
-    }
-
-    fn max_token_count_in_burn_mode(&self) -> Option<u64> {
-        self.model
-            .max_token_count_in_max_mode
-            .filter(|_| self.model.supports_max_mode)
-            .map(|max_token_count| max_token_count as u64)
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
@@ -730,7 +719,6 @@ impl LanguageModel for CloudLanguageModel {
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
         let intent = request.intent;
-        let mode = request.mode;
         let app_version = Some(cx.update(|cx| AppVersion::global(cx)));
         let use_responses_api = cx.update(|cx| cx.has_flag::<OpenAiResponsesApiFeatureFlag>());
         let thinking_allowed = request.thinking_allowed;
@@ -764,7 +752,6 @@ impl LanguageModel for CloudLanguageModel {
                             thread_id,
                             prompt_id,
                             intent,
-                            mode,
                             provider: cloud_llm_client::LanguageModelProvider::Anthropic,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)
@@ -811,7 +798,6 @@ impl LanguageModel for CloudLanguageModel {
                                 thread_id,
                                 prompt_id,
                                 intent,
-                                mode,
                                 provider: cloud_llm_client::LanguageModelProvider::OpenAi,
                                 model: request.model.clone(),
                                 provider_request: serde_json::to_value(&request)
@@ -849,7 +835,6 @@ impl LanguageModel for CloudLanguageModel {
                                 thread_id,
                                 prompt_id,
                                 intent,
-                                mode,
                                 provider: cloud_llm_client::LanguageModelProvider::OpenAi,
                                 model: request.model.clone(),
                                 provider_request: serde_json::to_value(&request)
@@ -891,7 +876,6 @@ impl LanguageModel for CloudLanguageModel {
                             thread_id,
                             prompt_id,
                             intent,
-                            mode,
                             provider: cloud_llm_client::LanguageModelProvider::XAi,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)
@@ -926,7 +910,6 @@ impl LanguageModel for CloudLanguageModel {
                             thread_id,
                             prompt_id,
                             intent,
-                            mode,
                             provider: cloud_llm_client::LanguageModelProvider::Google,
                             model: request.model.model_id.clone(),
                             provider_request: serde_json::to_value(&request)

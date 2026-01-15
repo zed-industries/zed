@@ -1159,7 +1159,6 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
-            mode: None,
             stop: vec![],
             temperature: None,
             tools: vec![],
