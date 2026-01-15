@@ -220,6 +220,7 @@ pub struct ContextMenu {
     end_slot_action: Option<Box<dyn Action>>,
     key_context: SharedString,
     _on_blur_subscription: Subscription,
+    _on_window_deactivate_subscription: Subscription,
     keep_open_on_confirm: bool,
     fixed_width: Option<DefiniteLength>,
     main_menu: Option<Entity<ContextMenu>>,
@@ -295,6 +296,14 @@ impl ContextMenu {
                 this.cancel(&menu::Cancel, window, cx)
             },
         );
+        let _on_window_deactivate_subscription = cx.observe_window_activation(
+            window,
+            |this: &mut ContextMenu, window, cx| {
+                if !window.is_window_active() {
+                    this.cancel(&menu::Cancel, window, cx);
+                }
+            },
+        );
         window.refresh();
 
         f(
@@ -309,6 +318,7 @@ impl ContextMenu {
                 end_slot_action: None,
                 key_context: "menu".into(),
                 _on_blur_subscription,
+                _on_window_deactivate_subscription,
                 keep_open_on_confirm: false,
                 fixed_width: None,
                 main_menu: None,
@@ -372,6 +382,14 @@ impl ContextMenu {
                     this.cancel(&menu::Cancel, window, cx)
                 },
             );
+            let _on_window_deactivate_subscription = cx.observe_window_activation(
+                window,
+                |this: &mut ContextMenu, window, cx| {
+                    if !window.is_window_active() {
+                        this.cancel(&menu::Cancel, window, cx);
+                    }
+                },
+            );
             window.refresh();
 
             (builder.clone())(
@@ -386,6 +404,7 @@ impl ContextMenu {
                     end_slot_action: None,
                     key_context: "menu".into(),
                     _on_blur_subscription,
+                    _on_window_deactivate_subscription,
                     keep_open_on_confirm: true,
                     fixed_width: None,
                     main_menu: None,
@@ -453,6 +472,14 @@ impl ContextMenu {
                         }
 
                         this.cancel(&menu::Cancel, window, cx)
+                    },
+                ),
+                _on_window_deactivate_subscription: cx.observe_window_activation(
+                    window,
+                    |this: &mut ContextMenu, window, cx| {
+                        if !window.is_window_active() {
+                            this.cancel(&menu::Cancel, window, cx);
+                        }
                     },
                 ),
                 keep_open_on_confirm: false,
@@ -1206,6 +1233,14 @@ impl ContextMenu {
                 window,
                 |_this: &mut ContextMenu, _window, _cx| {},
             );
+            let _on_window_deactivate_subscription = cx.observe_window_activation(
+                window,
+                |this: &mut ContextMenu, window, cx| {
+                    if !window.is_window_active() {
+                        this.cancel(&menu::Cancel, window, cx);
+                    }
+                },
+            );
 
             let mut menu = ContextMenu {
                 builder: None,
@@ -1218,6 +1253,7 @@ impl ContextMenu {
                 end_slot_action: None,
                 key_context: "menu".into(),
                 _on_blur_subscription,
+                _on_window_deactivate_subscription,
                 keep_open_on_confirm: false,
                 fixed_width: None,
                 documentation_aside: None,
