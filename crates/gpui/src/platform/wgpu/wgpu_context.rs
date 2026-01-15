@@ -53,16 +53,14 @@ impl WgpuContext {
             );
         }
 
-        let (device, queue) = smol::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("gpui_device"),
-                required_features,
-                required_limits: wgpu::Limits::default(),
-                memory_hints: wgpu::MemoryHints::Performance,
-                trace: wgpu::Trace::Off,
-                experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            },
-        ))
+        let (device, queue) = smol::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("gpui_device"),
+            required_features,
+            required_limits: wgpu::Limits::default(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+        }))
         .map_err(|e| anyhow::anyhow!("Failed to create wgpu device: {e}"))?;
 
         Ok(Self {
@@ -78,14 +76,16 @@ impl WgpuContext {
         instance: &wgpu::Instance,
         device_id_filter: Option<u32>,
     ) -> anyhow::Result<wgpu::Adapter> {
-        let adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all()).await;
-
-        if adapters.is_empty() {
-            anyhow::bail!("No GPU adapters found");
-        }
-
         if let Some(device_id) = device_id_filter {
-            for adapter in &adapters {
+            let adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all()).await;
+
+            if adapters.is_empty() {
+                anyhow::bail!("No GPU adapters found");
+            }
+
+            let mut non_matching_adapter_infos: Vec<wgpu::AdapterInfo> = Vec::new();
+
+            for adapter in adapters.into_iter() {
                 let info = adapter.get_info();
                 if info.device == device_id {
                     log::info!(
@@ -93,23 +93,24 @@ impl WgpuContext {
                         device_id,
                         info.name
                     );
-                    return instance
-                        .request_adapter(&wgpu::RequestAdapterOptions {
-                            power_preference: wgpu::PowerPreference::HighPerformance,
-                            compatible_surface: None,
-                            force_fallback_adapter: false,
-                        })
-                        .await
-                        .map_err(|e| anyhow::anyhow!("Failed to request adapter: {e}"));
+                    return Ok(adapter);
+                } else {
+                    non_matching_adapter_infos.push(info);
                 }
             }
+
             log::warn!(
                 "No GPU found matching ZED_DEVICE_ID={:#06x}. Available devices:",
                 device_id
             );
-            for adapter in &adapters {
-                let info = adapter.get_info();
-                log::warn!("  - {} (device_id={:#06x})", info.name, info.device);
+
+            for info in &non_matching_adapter_infos {
+                log::warn!(
+                    "  - {} (device_id={:#06x}, backend={})",
+                    info.name,
+                    info.device,
+                    info.backend
+                );
             }
         }
 
