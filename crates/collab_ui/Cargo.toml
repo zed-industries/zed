@@ -26,6 +26,7 @@ test-support = [
     "util/test-support",
     "workspace/test-support",
     "http_client/test-support",
+    "title_bar/test-support",
 ]
 
 [dependencies]

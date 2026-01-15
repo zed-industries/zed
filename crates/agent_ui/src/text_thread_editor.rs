@@ -1,8 +1,9 @@
 use crate::{
+    agent_panel::AgentType,
     language_model_selector::{LanguageModelSelector, language_model_selector},
-    ui::BurnModeTooltip,
+    ui::{BurnModeTooltip, ModelSelectorTooltip},
 };
-use agent_settings::{AgentSettings, CompletionMode};
+use agent_settings::CompletionMode;
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{DefaultSlashCommand, FileSlashCommand, selections_creases};
@@ -10,8 +11,8 @@ use client::{proto, zed_urls};
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
     Anchor, Editor, EditorEvent, MenuEditPredictionsPolicy, MultiBuffer, MultiBufferOffset,
-    MultiBufferSnapshot, RowExt, ToOffset as _, ToPoint,
-    actions::{MoveToEndOfLine, Newline, ShowCompletions},
+    MultiBufferSnapshot, RowExt, ToOffset as _, ToPoint as _,
+    actions::{MoveToEndOfLine, Newline, SendReviewToAgent, ShowCompletions},
     display_map::{
         BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata, CustomBlockId, FoldId,
         RenderBlock, ToDisplayPoint,
@@ -33,7 +34,8 @@ use language::{
     language_settings::{SoftWrap, all_language_settings},
 };
 use language_model::{
-    ConfigurationError, LanguageModelExt, LanguageModelImage, LanguageModelRegistry, Role,
+    ConfigurationError, IconOrSvg, LanguageModelExt, LanguageModelImage, LanguageModelRegistry,
+    Role,
 };
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, popover_menu::PickerPopoverMenu};
@@ -46,7 +48,7 @@ use settings::{
     update_settings_file,
 };
 use std::{
-    any::TypeId,
+    any::{Any, TypeId},
     cmp,
     ops::Range,
     path::{Path, PathBuf},
@@ -219,7 +221,8 @@ impl TextThreadEditor {
                     .register_action(TextThreadEditor::quote_selection)
                     .register_action(TextThreadEditor::insert_selection)
                     .register_action(TextThreadEditor::copy_code)
-                    .register_action(TextThreadEditor::handle_insert_dragged_files);
+                    .register_action(TextThreadEditor::handle_insert_dragged_files)
+                    .register_action(TextThreadEditor::handle_send_review_to_agent);
             },
         )
         .detach();
@@ -1516,6 +1519,159 @@ impl TextThreadEditor {
         agent_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
     }
 
+    /// Handles the SendReviewToAgent action from the ProjectDiff toolbar.
+    /// Collects ALL stored review comments from ALL hunks and sends them
+    /// to the Agent panel as creases.
+    pub fn handle_send_review_to_agent(
+        workspace: &mut Workspace,
+        _: &SendReviewToAgent,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        use editor::{DiffHunkKey, StoredReviewComment};
+        use git_ui::project_diff::ProjectDiff;
+
+        // Find the ProjectDiff item
+        let Some(project_diff) = workspace.items_of_type::<ProjectDiff>(cx).next() else {
+            workspace.show_toast(
+                Toast::new(
+                    NotificationId::unique::<SendReviewToAgent>(),
+                    "No Project Diff panel found. Open it first to add review comments.",
+                ),
+                cx,
+            );
+            return;
+        };
+
+        // Get the buffer reference first (before taking comments)
+        let buffer = project_diff.update(cx, |project_diff, cx| {
+            project_diff
+                .editor()
+                .read(cx)
+                .primary_editor()
+                .read(cx)
+                .buffer()
+                .clone()
+        });
+
+        // Extract all stored comments from all hunks
+        let all_comments: Vec<(DiffHunkKey, Vec<StoredReviewComment>)> =
+            project_diff.update(cx, |project_diff, cx| {
+                let editor = project_diff.editor().read(cx).primary_editor().clone();
+                editor.update(cx, |editor, cx| editor.take_all_review_comments(cx))
+            });
+
+        // Flatten: we have Vec<(DiffHunkKey, Vec<StoredReviewComment>)>
+        // Convert to Vec<StoredReviewComment> for processing
+        let comments: Vec<StoredReviewComment> = all_comments
+            .into_iter()
+            .flat_map(|(_, comments)| comments)
+            .collect();
+
+        if comments.is_empty() {
+            workspace.show_toast(
+                Toast::new(
+                    NotificationId::unique::<SendReviewToAgent>(),
+                    "No review comments to send. Add comments using the + button in the diff view.",
+                ),
+                cx,
+            );
+            return;
+        }
+
+        // Get or create the agent panel
+        let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
+            workspace.show_toast(
+                Toast::new(
+                    NotificationId::unique::<SendReviewToAgent>(),
+                    "Agent panel is not available.",
+                ),
+                cx,
+            );
+            return;
+        };
+
+        // Create a new thread if there isn't an active one (synchronous call)
+        let has_active_thread = panel.read(cx).active_thread_view().is_some();
+        if !has_active_thread {
+            panel.update(cx, |panel, cx| {
+                panel.new_agent_thread(AgentType::NativeAgent, window, cx);
+            });
+        }
+
+        // Focus the agent panel
+        workspace.focus_panel::<crate::AgentPanel>(window, cx);
+
+        // Defer inserting creases until after the current update cycle completes,
+        // allowing the newly created thread (if any) to fully initialize.
+        cx.defer_in(window, move |workspace, window, cx| {
+            let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
+                workspace.show_toast(
+                    Toast::new(
+                        NotificationId::unique::<SendReviewToAgent>(),
+                        "Agent panel closed unexpectedly.",
+                    ),
+                    cx,
+                );
+                return;
+            };
+
+            let thread_view = panel.read(cx).active_thread_view().cloned();
+            let Some(thread_view) = thread_view else {
+                workspace.show_toast(
+                    Toast::new(
+                        NotificationId::unique::<SendReviewToAgent>(),
+                        "No active thread view available after creating thread.",
+                    ),
+                    cx,
+                );
+                return;
+            };
+
+            // Build creases for all comments, grouping by code snippet
+            // so each snippet appears once with all its comments
+            let snapshot = buffer.read(cx).snapshot(cx);
+
+            // Group comments by their point range (code snippet)
+            let mut comments_by_range: std::collections::BTreeMap<
+                (rope::Point, rope::Point),
+                Vec<String>,
+            > = std::collections::BTreeMap::new();
+
+            for comment in comments {
+                let start = comment.anchor_range.start.to_point(&snapshot);
+                let end = comment.anchor_range.end.to_point(&snapshot);
+                comments_by_range
+                    .entry((start, end))
+                    .or_default()
+                    .push(comment.comment);
+            }
+
+            // Build one crease per unique code snippet with all its comments
+            let mut all_creases = Vec::new();
+            for ((start, end), comment_texts) in comments_by_range {
+                let point_range = start..end;
+
+                let mut creases =
+                    selections_creases(vec![point_range.clone()], snapshot.clone(), cx);
+
+                // Append all comments after the code snippet
+                for (code_text, crease_title) in &mut creases {
+                    let comments_section = comment_texts.join("\n\n");
+                    *code_text = format!("{}\n\n{}", code_text, comments_section);
+                    *crease_title = format!("Review: {}", crease_title);
+                }
+
+                all_creases.extend(creases);
+            }
+
+            // Insert all creases into the message editor
+            thread_view.update(cx, |thread_view, cx| {
+                thread_view.insert_code_crease(all_creases, window, cx);
+            });
+        });
+    }
+
     pub fn quote_ranges(
         &mut self,
         ranges: Vec<Range<Point>>,
@@ -2231,10 +2387,10 @@ impl TextThreadEditor {
             .default_model()
             .map(|default| default.provider);
 
-        let provider_icon = match active_provider {
-            Some(provider) => provider.icon(),
-            None => IconName::Ai,
-        };
+        let provider_icon = active_provider
+            .as_ref()
+            .map(|p| p.icon())
+            .unwrap_or(IconOrSvg::Icon(IconName::Ai));
 
         let focus_handle = self.editor().focus_handle(cx);
 
@@ -2244,43 +2400,25 @@ impl TextThreadEditor {
             (Color::Muted, IconName::ChevronDown)
         };
 
-        let tooltip = Tooltip::element({
-            move |_, cx| {
-                let focus_handle = focus_handle.clone();
-                let should_show_cycle_row = !AgentSettings::get_global(cx)
-                    .favorite_model_ids()
-                    .is_empty();
+        let provider_icon_element = match provider_icon {
+            IconOrSvg::Svg(path) => Icon::from_external_svg(path),
+            IconOrSvg::Icon(name) => Icon::new(name),
+        }
+        .color(color)
+        .size(IconSize::XSmall);
 
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .justify_between()
-                            .child(Label::new("Change Model"))
-                            .child(KeyBinding::for_action_in(
-                                &ToggleModelSelector,
-                                &focus_handle,
-                                cx,
-                            )),
-                    )
-                    .when(should_show_cycle_row, |this| {
-                        this.child(
-                            h_flex()
-                                .pt_1()
-                                .gap_2()
-                                .border_t_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .justify_between()
-                                .child(Label::new("Cycle Favorited Models"))
-                                .child(KeyBinding::for_action_in(
-                                    &CycleFavoriteModels,
-                                    &focus_handle,
-                                    cx,
-                                )),
-                        )
-                    })
-                    .into_any()
+        let show_cycle_row = self
+            .language_model_selector
+            .read(cx)
+            .delegate
+            .favorites_count()
+            > 1;
+
+        let tooltip = Tooltip::element({
+            move |_, _cx| {
+                ModelSelectorTooltip::new(focus_handle.clone())
+                    .show_cycle_row(show_cycle_row)
+                    .into_any_element()
             }
         });
 
@@ -2291,7 +2429,7 @@ impl TextThreadEditor {
                 .child(
                     h_flex()
                         .gap_0p5()
-                        .child(Icon::new(provider_icon).color(color).size(IconSize::XSmall))
+                        .child(provider_icon_element)
                         .child(
                             Label::new(model_name)
                                 .color(color)
@@ -2756,7 +2894,7 @@ impl Item for TextThreadEditor {
 
     fn navigate(
         &mut self,
-        data: Box<dyn std::any::Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -3410,7 +3548,6 @@ mod tests {
         cx.new(|cx| {
             let mut text_thread = TextThread::local(
                 registry,
-                None,
                 prompt_builder.clone(),
                 Arc::new(SlashCommandWorkingSet::default()),
                 cx,

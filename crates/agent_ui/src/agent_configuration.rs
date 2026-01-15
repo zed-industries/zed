@@ -9,7 +9,7 @@ use std::{ops::Range, sync::Arc};
 use agent::ContextServerRegistry;
 use anyhow::Result;
 use client::zed_urls;
-use cloud_llm_client::{Plan, PlanV1, PlanV2};
+use cloud_llm_client::{Plan, PlanV2};
 use collections::HashMap;
 use context_server::ContextServerId;
 use editor::{Editor, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
@@ -22,7 +22,8 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::{
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
+    IconOrSvg, LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use language_models::AllLanguageModelSettings;
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -117,7 +118,7 @@ impl AgentConfiguration {
     }
 
     fn build_provider_configuration_views(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let providers = LanguageModelRegistry::read_global(cx).providers();
+        let providers = LanguageModelRegistry::read_global(cx).visible_providers();
         for provider in providers {
             self.add_provider_configuration_view(&provider, window, cx);
         }
@@ -261,9 +262,12 @@ impl AgentConfiguration {
                                     .w_full()
                                     .gap_1p5()
                                     .child(
-                                        Icon::new(provider.icon())
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
+                                        match provider.icon() {
+                                            IconOrSvg::Svg(path) => Icon::from_external_svg(path),
+                                            IconOrSvg::Icon(name) => Icon::new(name),
+                                        }
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
                                     )
                                     .child(
                                         h_flex()
@@ -416,7 +420,7 @@ impl AgentConfiguration {
         &mut self,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let providers = LanguageModelRegistry::read_global(cx).providers();
+        let providers = LanguageModelRegistry::read_global(cx).visible_providers();
 
         let popover_menu = PopoverMenu::new("add-provider-popover")
             .trigger(
@@ -493,15 +497,9 @@ impl AgentConfiguration {
                 .blend(cx.theme().colors().text_accent.opacity(0.2));
 
             let (plan_name, label_color, bg_color) = match plan {
-                Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree) => {
-                    ("Free", Color::Default, free_chip_bg)
-                }
-                Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial) => {
-                    ("Pro Trial", Color::Accent, pro_chip_bg)
-                }
-                Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro) => {
-                    ("Pro", Color::Accent, pro_chip_bg)
-                }
+                Plan::V2(PlanV2::ZedFree) => ("Free", Color::Default, free_chip_bg),
+                Plan::V2(PlanV2::ZedProTrial) => ("Pro Trial", Color::Accent, pro_chip_bg),
+                Plan::V2(PlanV2::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
             };
 
             Chip::new(plan_name.to_string())
@@ -817,7 +815,8 @@ impl AgentConfiguration {
                                                     }
                                                 },
                                             )
-                                        })
+                                        });
+                                        anyhow::Ok(())
                                     }
                                 })
                                 .detach_and_log_err(cx);
@@ -915,6 +914,7 @@ impl AgentConfiguration {
                                                     .or_insert_with(|| {
                                                         settings::ContextServerSettingsContent::Extension {
                                                             enabled: is_enabled,
+                                                            remote: false,
                                                             settings: serde_json::json!({}),
                                                         }
                                                     })
@@ -1300,7 +1300,7 @@ fn show_unable_to_uninstall_extension_with_context_server(
                                                     .context_servers
                                                     .remove(&context_server_id.0);
                                             });
-                                        })?;
+                                        });
                                         anyhow::Ok(())
                                     }
                                 })
@@ -1338,22 +1338,24 @@ async fn open_new_agent_servers_entry_in_settings_editor(
 
             let mut unique_server_name = None;
             let edits = settings.edits_for_update(&text, |settings| {
-                let server_name: Option<SharedString> = (0..u8::MAX)
+                let server_name: Option<String> = (0..u8::MAX)
                     .map(|i| {
                         if i == 0 {
-                            "your_agent".into()
+                            "your_agent".to_string()
                         } else {
-                            format!("your_agent_{}", i).into()
+                            format!("your_agent_{}", i)
                         }
                     })
                     .find(|name| {
                         !settings
                             .agent_servers
                             .as_ref()
-                            .is_some_and(|agent_servers| agent_servers.custom.contains_key(name))
+                            .is_some_and(|agent_servers| {
+                                agent_servers.custom.contains_key(name.as_str())
+                            })
                     });
                 if let Some(server_name) = server_name {
-                    unique_server_name = Some(server_name.clone());
+                    unique_server_name = Some(SharedString::from(server_name.clone()));
                     settings
                         .agent_servers
                         .get_or_insert_default()
@@ -1366,6 +1368,9 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                                 env: Some(HashMap::default()),
                                 default_mode: None,
                                 default_model: None,
+                                favorite_models: vec![],
+                                default_config_options: Default::default(),
+                                favorite_config_option_values: Default::default(),
                             },
                         );
                 }

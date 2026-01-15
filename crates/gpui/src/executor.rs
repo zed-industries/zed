@@ -14,13 +14,13 @@ use std::{
 };
 use util::TryFutureExt;
 
-pub use scheduler::Priority;
+pub use scheduler::{FallibleTask, Priority};
 
 /// A pointer to the executor that is currently running,
 /// for spawning background tasks.
 #[derive(Clone)]
 pub struct BackgroundExecutor {
-    scheduler: Arc<dyn Scheduler>,
+    inner: scheduler::BackgroundExecutor,
     dispatcher: Arc<dyn PlatformDispatcher>,
 }
 
@@ -62,6 +62,27 @@ impl<T> Task<T> {
     /// Wraps a scheduler::Task.
     pub fn from_scheduler(task: scheduler::Task<T>) -> Self {
         Task(task)
+    }
+
+    /// Converts this task into a fallible task that returns `Option<T>`.
+    ///
+    /// Unlike the standard `Task<T>`, a [`FallibleTask`] will return `None`
+    /// if the task was cancelled.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Background task that gracefully handles cancellation:
+    /// cx.background_spawn(async move {
+    ///     let result = foreground_task.fallible().await;
+    ///     if let Some(value) = result {
+    ///         // Process the value
+    ///     }
+    ///     // If None, task was cancelled - just exit gracefully
+    /// }).detach();
+    /// ```
+    pub fn fallible(self) -> FallibleTask<T> {
+        self.0.fallible()
     }
 }
 
@@ -108,9 +129,14 @@ impl BackgroundExecutor {
         let scheduler: Arc<dyn Scheduler> = Arc::new(PlatformScheduler::new(dispatcher.clone()));
 
         Self {
-            scheduler,
+            inner: scheduler::BackgroundExecutor::new(scheduler),
             dispatcher,
         }
+    }
+
+    /// Close this executor. Tasks will not run after this is called.
+    pub fn close(&self) {
+        self.inner.close();
     }
 
     /// Enqueues the given future to be run to completion on a background thread.
@@ -124,13 +150,8 @@ impl BackgroundExecutor {
 
     /// Enqueues the given future to be run to completion on a background thread with the given priority.
     ///
-    /// `Priority::Realtime` is currently treated as `Priority::High`.
-    ///
-    /// This is intentionally *not* a "downgrade" feature: realtime execution is effectively
-    /// disabled until we have an in-tree use case and are confident about the semantics and
-    /// failure modes (especially around channel backpressure and the risk of blocking
-    /// latency-sensitive threads). It should be straightforward to add a true realtime
-    /// implementation back once those constraints are well-defined.
+    /// When `Priority::RealtimeAudio` is used, the task runs on a dedicated thread with
+    /// realtime scheduling priority, suitable for audio processing.
     #[track_caller]
     pub fn spawn_with_priority<R>(
         &self,
@@ -140,8 +161,11 @@ impl BackgroundExecutor {
     where
         R: Send + 'static,
     {
-        let inner = scheduler::BackgroundExecutor::new(self.scheduler.clone());
-        Task::from_scheduler(inner.spawn_with_priority(priority, future))
+        if priority == Priority::RealtimeAudio {
+            Task::from_scheduler(self.inner.spawn_realtime(future))
+        } else {
+            Task::from_scheduler(self.inner.spawn_with_priority(priority, future))
+        }
     }
 
     /// Enqueues the given future to be run to completion on a background thread and blocking the current task on it.
@@ -154,6 +178,7 @@ impl BackgroundExecutor {
     {
         use crate::RunnableMeta;
         use parking_lot::{Condvar, Mutex};
+        use std::sync::{Arc, atomic::AtomicBool};
 
         struct NotifyOnDrop<'a>(&'a (Condvar, Mutex<bool>));
 
@@ -177,13 +202,14 @@ impl BackgroundExecutor {
 
         let dispatcher = self.dispatcher.clone();
         let location = core::panic::Location::caller();
+        let closed = Arc::new(AtomicBool::new(false));
 
         let pair = &(Condvar::new(), Mutex::new(false));
         let _wait_guard = WaitOnDrop(pair);
 
         let (runnable, task) = unsafe {
             async_task::Builder::new()
-                .metadata(RunnableMeta { location })
+                .metadata(RunnableMeta { location, closed })
                 .spawn_unchecked(
                     move |_| async {
                         let _notify_guard = NotifyOnDrop(pair);
@@ -196,86 +222,6 @@ impl BackgroundExecutor {
         };
         runnable.schedule();
         task.await
-    }
-
-    /// Used by the test harness to run an async test in a synchronous fashion.
-    #[cfg(any(test, feature = "test-support"))]
-    #[track_caller]
-    pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
-        use std::cell::Cell;
-
-        let test_dispatcher = self
-            .dispatcher
-            .as_test()
-            .expect("block_test requires a test dispatcher");
-        let scheduler = test_dispatcher.scheduler();
-
-        let output = Cell::new(None);
-        let future = async {
-            output.set(Some(future.await));
-        };
-        let mut future = std::pin::pin!(future);
-
-        // In async GPUI tests, we must allow foreground tasks scheduled by the test itself
-        // (which are associated with the test session) to make progress while we block.
-        // Otherwise, awaiting futures that depend on same-session foreground work can deadlock.
-        scheduler.block(None, future.as_mut(), None);
-
-        output.take().expect("block_test future did not complete")
-    }
-
-    /// Block the current thread until the given future resolves.
-    /// Consider using `block_with_timeout` instead.
-    pub fn block<R>(&self, future: impl Future<Output = R>) -> R {
-        use std::cell::Cell;
-
-        let output = Cell::new(None);
-        let future = async {
-            output.set(Some(future.await));
-        };
-        let mut future = std::pin::pin!(future);
-
-        #[cfg(any(test, feature = "test-support"))]
-        let session_id = self.dispatcher.as_test().map(|t| t.session_id());
-        #[cfg(not(any(test, feature = "test-support")))]
-        let session_id = None;
-
-        self.scheduler.block(session_id, future.as_mut(), None);
-
-        output.take().expect("block future did not complete")
-    }
-
-    /// Block the current thread until the given future resolves or the timeout elapses.
-    pub fn block_with_timeout<R, Fut: Future<Output = R>>(
-        &self,
-        duration: Duration,
-        future: Fut,
-    ) -> Result<R, impl Future<Output = R> + use<R, Fut>> {
-        use std::cell::Cell;
-
-        let output = Cell::new(None);
-        let mut future = Box::pin(future);
-
-        {
-            let future_ref = &mut future;
-            let wrapper = async {
-                output.set(Some(future_ref.await));
-            };
-            let mut wrapper = std::pin::pin!(wrapper);
-
-            #[cfg(any(test, feature = "test-support"))]
-            let session_id = self.dispatcher.as_test().map(|t| t.session_id());
-            #[cfg(not(any(test, feature = "test-support")))]
-            let session_id = None;
-
-            self.scheduler
-                .block(session_id, wrapper.as_mut(), Some(duration));
-        }
-
-        match output.take() {
-            Some(value) => Ok(value),
-            None => Err(future),
-        }
     }
 
     /// Scoped lets you start a number of tasks and waits
@@ -317,7 +263,7 @@ impl BackgroundExecutor {
     /// Calling this instead of `std::time::Instant::now` allows the use
     /// of fake timers in tests.
     pub fn now(&self) -> Instant {
-        self.scheduler.clock().now()
+        self.inner.scheduler().clock().now()
     }
 
     /// Returns a task that will complete after the given duration.
@@ -327,7 +273,7 @@ impl BackgroundExecutor {
         if duration.is_zero() {
             return Task::ready(());
         }
-        self.spawn(self.scheduler.timer(duration))
+        self.spawn(self.inner.scheduler().timer(duration))
     }
 
     /// In tests, run an arbitrary number of tasks (determined by the SEED environment variable)
@@ -356,69 +302,8 @@ impl BackgroundExecutor {
     /// make progress), we advance the clock to the next timer when no runnable tasks remain.
     #[cfg(any(test, feature = "test-support"))]
     pub fn run_until_parked(&self) {
-        let dispatcher = self.dispatcher.as_test().unwrap();
-        let scheduler = dispatcher.scheduler();
-
-        let log_enabled = std::env::var("GPUI_RUN_UNTIL_PARKED_LOG").ok().as_deref() == Some("1");
-
-        if log_enabled {
-            let (foreground_len, background_len) = scheduler.pending_task_counts();
-            let has_pending = scheduler.has_pending_tasks();
-            log::warn!(
-                "[gpui::executor] run_until_parked: begin pending foreground={} background={} has_pending_tasks={}",
-                foreground_len,
-                background_len,
-                has_pending
-            );
-        }
-
-        let mut ticks = 0usize;
-        let mut advanced_timers = 0usize;
-
-        loop {
-            let mut did_work = false;
-            while scheduler.tick() {
-                did_work = true;
-                ticks += 1;
-
-                if log_enabled && ticks.is_multiple_of(100) {
-                    let (foreground_len, background_len) = scheduler.pending_task_counts();
-                    let has_pending = scheduler.has_pending_tasks();
-                    log::warn!(
-                        "[gpui::executor] run_until_parked: progressed ticks={} pending foreground={} background={} has_pending_tasks={}",
-                        ticks,
-                        foreground_len,
-                        background_len,
-                        has_pending
-                    );
-                }
-            }
-
-            if did_work {
-                continue;
-            }
-
-            // No runnable tasks; if a timer is pending, advance time so it can become runnable.
-            if dispatcher.advance_clock_to_next_timer() {
-                advanced_timers += 1;
-                continue;
-            }
-
-            break;
-        }
-
-        if log_enabled {
-            let (foreground_len, background_len) = scheduler.pending_task_counts();
-            let has_pending = scheduler.has_pending_tasks();
-            log::warn!(
-                "[gpui::executor] run_until_parked: end ticks={} advanced_timers={} pending foreground={} background={} has_pending_tasks={}",
-                ticks,
-                advanced_timers,
-                foreground_len,
-                background_len,
-                has_pending
-            );
-        }
+        let scheduler = self.dispatcher.as_test().unwrap().scheduler();
+        scheduler.run();
     }
 
     /// In tests, prevents `run_until_parked` from panicking if there are outstanding tasks.
@@ -479,12 +364,6 @@ impl BackgroundExecutor {
     pub fn dispatcher(&self) -> &Arc<dyn PlatformDispatcher> {
         &self.dispatcher
     }
-
-    /// Returns a scheduler::BackgroundExecutor that can be used with deltadb and other
-    /// scheduler-based APIs.
-    pub fn scheduler_executor(&self) -> scheduler::BackgroundExecutor {
-        scheduler::BackgroundExecutor::new(self.scheduler.clone())
-    }
 }
 
 impl ForegroundExecutor {
@@ -519,6 +398,11 @@ impl ForegroundExecutor {
         }
     }
 
+    /// Close this executor. Tasks will not run after this is called.
+    pub fn close(&self) {
+        self.inner.close();
+    }
+
     /// Enqueues the given Task to run on the main thread.
     #[track_caller]
     pub fn spawn<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
@@ -540,6 +424,43 @@ impl ForegroundExecutor {
     {
         // Priority is ignored for foreground tasks - they run in order on the main thread
         Task::from_scheduler(self.inner.spawn(future))
+    }
+
+    /// Used by the test harness to run an async test in a synchronous fashion.
+    #[cfg(any(test, feature = "test-support"))]
+    #[track_caller]
+    pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
+        use std::cell::Cell;
+
+        let scheduler = self.inner.scheduler();
+
+        let output = Cell::new(None);
+        let future = async {
+            output.set(Some(future.await));
+        };
+        let mut future = std::pin::pin!(future);
+
+        // In async GPUI tests, we must allow foreground tasks scheduled by the test itself
+        // (which are associated with the test session) to make progress while we block.
+        // Otherwise, awaiting futures that depend on same-session foreground work can deadlock.
+        scheduler.block(None, future.as_mut(), None);
+
+        output.take().expect("block_test future did not complete")
+    }
+
+    /// Block the current thread until the given future resolves.
+    /// Consider using `block_with_timeout` instead.
+    pub fn block_on<R>(&self, future: impl Future<Output = R>) -> R {
+        self.inner.block_on(future)
+    }
+
+    /// Block the current thread until the given future resolves or the timeout elapses.
+    pub fn block_with_timeout<R, Fut: Future<Output = R>>(
+        &self,
+        duration: Duration,
+        future: Fut,
+    ) -> Result<R, impl Future<Output = R> + use<R, Fut>> {
+        self.inner.block_with_timeout(duration, future)
     }
 
     #[doc(hidden)]
@@ -605,6 +526,202 @@ impl Drop for Scope<'_> {
 
         // Wait until the channel is closed, which means that all of the spawned
         // futures have resolved.
-        self.executor.block(self.rx.next());
+        let future = async {
+            self.rx.next().await;
+        };
+        let mut future = std::pin::pin!(future);
+        self.executor
+            .inner
+            .scheduler()
+            .block(None, future.as_mut(), None);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{App, TestDispatcher, TestPlatform};
+    use std::cell::RefCell;
+
+    /// Helper to create test infrastructure.
+    /// Returns (dispatcher, background_executor, app).
+    fn create_test_app() -> (TestDispatcher, BackgroundExecutor, Rc<crate::AppCell>) {
+        let dispatcher = TestDispatcher::new(0);
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+
+        let platform = TestPlatform::new(background_executor.clone(), foreground_executor);
+        let asset_source = Arc::new(());
+        let http_client = http_client::FakeHttpClient::with_404_response();
+
+        let app = App::new_app(platform, asset_source, http_client);
+        (dispatcher, background_executor, app)
+    }
+
+    #[test]
+    fn sanity_test_tasks_run() {
+        let (dispatcher, _background_executor, app) = create_test_app();
+        let foreground_executor = app.borrow().foreground_executor.clone();
+
+        let task_ran = Rc::new(RefCell::new(false));
+
+        foreground_executor
+            .spawn({
+                let task_ran = Rc::clone(&task_ran);
+                async move {
+                    *task_ran.borrow_mut() = true;
+                }
+            })
+            .detach();
+
+        // Run dispatcher while app is still alive
+        dispatcher.run_until_parked();
+
+        // Task should have run
+        assert!(
+            *task_ran.borrow(),
+            "Task should run normally when app is alive"
+        );
+    }
+
+    #[test]
+    fn test_task_cancelled_when_app_dropped() {
+        let (dispatcher, _background_executor, app) = create_test_app();
+        let foreground_executor = app.borrow().foreground_executor.clone();
+        let app_weak = Rc::downgrade(&app);
+
+        let task_ran = Rc::new(RefCell::new(false));
+        let task_ran_clone = Rc::clone(&task_ran);
+
+        foreground_executor
+            .spawn(async move {
+                *task_ran_clone.borrow_mut() = true;
+            })
+            .detach();
+
+        drop(app);
+
+        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
+
+        dispatcher.run_until_parked();
+
+        // The task should have been cancelled, not run
+        assert!(
+            !*task_ran.borrow(),
+            "Task should have been cancelled when app was dropped, but it ran!"
+        );
+    }
+
+    #[test]
+    fn test_nested_tasks_both_cancel() {
+        let (dispatcher, _background_executor, app) = create_test_app();
+        let foreground_executor = app.borrow().foreground_executor.clone();
+        let app_weak = Rc::downgrade(&app);
+
+        let outer_completed = Rc::new(RefCell::new(false));
+        let inner_completed = Rc::new(RefCell::new(false));
+        let reached_await = Rc::new(RefCell::new(false));
+
+        let outer_flag = Rc::clone(&outer_completed);
+        let inner_flag = Rc::clone(&inner_completed);
+        let await_flag = Rc::clone(&reached_await);
+
+        // Channel to block the inner task until we're ready
+        let (tx, rx) = futures::channel::oneshot::channel::<()>();
+
+        let inner_executor = foreground_executor.clone();
+
+        foreground_executor
+            .spawn(async move {
+                let inner_task = inner_executor.spawn({
+                    let inner_flag = Rc::clone(&inner_flag);
+                    async move {
+                        rx.await.ok();
+                        *inner_flag.borrow_mut() = true;
+                    }
+                });
+
+                *await_flag.borrow_mut() = true;
+
+                inner_task.await;
+
+                *outer_flag.borrow_mut() = true;
+            })
+            .detach();
+
+        // Run dispatcher until outer task reaches the await point
+        // The inner task will be blocked on the channel
+        dispatcher.run_until_parked();
+
+        // Verify we actually reached the await point before dropping the app
+        assert!(
+            *reached_await.borrow(),
+            "Outer task should have reached the await point"
+        );
+
+        // Neither task should have completed yet
+        assert!(
+            !*outer_completed.borrow(),
+            "Outer task should not have completed yet"
+        );
+        assert!(
+            !*inner_completed.borrow(),
+            "Inner task should not have completed yet"
+        );
+
+        // Drop the channel sender and app while outer is awaiting inner
+        drop(tx);
+        drop(app);
+        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
+
+        // Run dispatcher - both tasks should be cancelled
+        dispatcher.run_until_parked();
+
+        // Neither task should have completed (both were cancelled)
+        assert!(
+            !*outer_completed.borrow(),
+            "Outer task should have been cancelled, not completed"
+        );
+        assert!(
+            !*inner_completed.borrow(),
+            "Inner task should have been cancelled, not completed"
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_polling_cancelled_task_panics() {
+        let (dispatcher, _background_executor, app) = create_test_app();
+        let foreground_executor = app.borrow().foreground_executor.clone();
+        let app_weak = Rc::downgrade(&app);
+
+        let task = foreground_executor.spawn(async move { 42 });
+
+        drop(app);
+
+        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
+
+        dispatcher.run_until_parked();
+
+        foreground_executor.block_on(task);
+    }
+
+    #[test]
+    fn test_polling_cancelled_task_returns_none_with_fallible() {
+        let (dispatcher, _background_executor, app) = create_test_app();
+        let foreground_executor = app.borrow().foreground_executor.clone();
+        let app_weak = Rc::downgrade(&app);
+
+        let task = foreground_executor.spawn(async move { 42 }).fallible();
+
+        drop(app);
+
+        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
+
+        dispatcher.run_until_parked();
+
+        let result = foreground_executor.block_on(task);
+        assert_eq!(result, None, "Cancelled task should return None");
     }
 }

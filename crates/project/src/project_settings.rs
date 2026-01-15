@@ -59,6 +59,9 @@ pub struct ProjectSettings {
     /// Settings for context servers used for AI-related features.
     pub context_servers: HashMap<Arc<str>, ContextServerSettings>,
 
+    /// Default timeout for context server requests in seconds.
+    pub context_server_timeout: u64,
+
     /// Configuration for Diagnostics-related features.
     pub diagnostics: DiagnosticsSettings,
 
@@ -128,7 +131,9 @@ pub enum ContextServerSettings {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
         enabled: bool,
-
+        /// If true, run this server on the remote server when using remote development.
+        #[serde(default)]
+        remote: bool,
         #[serde(flatten)]
         command: ContextServerCommand,
     },
@@ -141,11 +146,16 @@ pub enum ContextServerSettings {
         /// Optional authentication configuration for the remote server.
         #[serde(skip_serializing_if = "HashMap::is_empty", default)]
         headers: HashMap<String, String>,
+        /// Timeout for tool calls in milliseconds.
+        timeout: Option<u64>,
     },
     Extension {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
         enabled: bool,
+        /// If true, run this server on the remote server when using remote development.
+        #[serde(default)]
+        remote: bool,
         /// The settings for this context server specified by the extension.
         ///
         /// Consult the documentation for the context server to see what settings
@@ -157,20 +167,34 @@ pub enum ContextServerSettings {
 impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
     fn from(value: settings::ContextServerSettingsContent) -> Self {
         match value {
-            settings::ContextServerSettingsContent::Stdio { enabled, command } => {
-                ContextServerSettings::Stdio { enabled, command }
-            }
-            settings::ContextServerSettingsContent::Extension { enabled, settings } => {
-                ContextServerSettings::Extension { enabled, settings }
-            }
+            settings::ContextServerSettingsContent::Stdio {
+                enabled,
+                remote,
+                command,
+            } => ContextServerSettings::Stdio {
+                enabled,
+                remote,
+                command,
+            },
+            settings::ContextServerSettingsContent::Extension {
+                enabled,
+                remote,
+                settings,
+            } => ContextServerSettings::Extension {
+                enabled,
+                remote,
+                settings,
+            },
             settings::ContextServerSettingsContent::Http {
                 enabled,
                 url,
                 headers,
+                timeout,
             } => ContextServerSettings::Http {
                 enabled,
                 url,
                 headers,
+                timeout,
             },
         }
     }
@@ -178,20 +202,34 @@ impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
 impl Into<settings::ContextServerSettingsContent> for ContextServerSettings {
     fn into(self) -> settings::ContextServerSettingsContent {
         match self {
-            ContextServerSettings::Stdio { enabled, command } => {
-                settings::ContextServerSettingsContent::Stdio { enabled, command }
-            }
-            ContextServerSettings::Extension { enabled, settings } => {
-                settings::ContextServerSettingsContent::Extension { enabled, settings }
-            }
+            ContextServerSettings::Stdio {
+                enabled,
+                remote,
+                command,
+            } => settings::ContextServerSettingsContent::Stdio {
+                enabled,
+                remote,
+                command,
+            },
+            ContextServerSettings::Extension {
+                enabled,
+                remote,
+                settings,
+            } => settings::ContextServerSettingsContent::Extension {
+                enabled,
+                remote,
+                settings,
+            },
             ContextServerSettings::Http {
                 enabled,
                 url,
                 headers,
+                timeout,
             } => settings::ContextServerSettingsContent::Http {
                 enabled,
                 url,
                 headers,
+                timeout,
             },
         }
     }
@@ -201,6 +239,7 @@ impl ContextServerSettings {
     pub fn default_extension() -> Self {
         Self::Extension {
             enabled: true,
+            remote: false,
             settings: serde_json::json!({}),
         }
     }
@@ -332,6 +371,10 @@ impl GoToDiagnosticSeverityFilter {
 
 #[derive(Copy, Clone, Debug)]
 pub struct GitSettings {
+    /// Whether or not git integration is enabled.
+    ///
+    /// Default: true
+    pub enabled: GitEnabledSettings,
     /// Whether or not to show the git gutter.
     ///
     /// Default: tracked_files
@@ -359,6 +402,18 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: GitPathStyle,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct GitEnabledSettings {
+    /// Whether git integration is enabled for showing git status.
+    ///
+    /// Default: true
+    pub status: bool,
+    /// Whether git integration is enabled for showing diffs.
+    ///
+    /// Default: true
+    pub diff: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -502,7 +557,14 @@ impl Settings for ProjectSettings {
         let inline_diagnostics = diagnostics.inline.as_ref().unwrap();
 
         let git = content.git.as_ref().unwrap();
+        let git_enabled = {
+            GitEnabledSettings {
+                status: git.enabled.as_ref().unwrap().is_git_status_enabled(),
+                diff: git.enabled.as_ref().unwrap().is_git_diff_enabled(),
+            }
+        };
         let git_settings = GitSettings {
+            enabled: git_enabled,
             git_gutter: git.git_gutter.unwrap(),
             gutter_debounce: git.gutter_debounce.unwrap_or_default(),
             inline_blame: {
@@ -537,6 +599,7 @@ impl Settings for ProjectSettings {
                 .into_iter()
                 .map(|(key, value)| (key, value.into()))
                 .collect(),
+            context_server_timeout: project.context_server_timeout.unwrap_or(60),
             lsp: project
                 .lsp
                 .clone()
@@ -585,7 +648,7 @@ impl Settings for ProjectSettings {
 
 pub enum SettingsObserverMode {
     Local(Arc<dyn Fs>),
-    Remote,
+    Remote { via_collab: bool },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -706,6 +769,7 @@ impl SettingsObserver {
         worktree_store: Entity<WorktreeStore>,
         task_store: Entity<TaskStore>,
         upstream_client: Option<AnyProtoClient>,
+        via_collab: bool,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut user_settings_watcher = None;
@@ -735,7 +799,7 @@ impl SettingsObserver {
         Self {
             worktree_store,
             task_store,
-            mode: SettingsObserverMode::Remote,
+            mode: SettingsObserverMode::Remote { via_collab },
             downstream_client: None,
             project_id: REMOTE_SERVER_PROJECT_ID,
             _trusted_worktrees_watcher: None,
@@ -812,6 +876,10 @@ impl SettingsObserver {
         };
         let path = RelPath::from_proto(&envelope.payload.path)?;
         this.update(&mut cx, |this, cx| {
+            let is_via_collab = match &this.mode {
+                SettingsObserverMode::Local(..) => false,
+                SettingsObserverMode::Remote { via_collab } => *via_collab,
+            };
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
             let Some(worktree) = this
                 .worktree_store
@@ -828,9 +896,10 @@ impl SettingsObserver {
                     local_settings_kind_from_proto(kind),
                     envelope.payload.content,
                 )],
+                is_via_collab,
                 cx,
             );
-        })?;
+        });
         Ok(())
     }
 
@@ -845,7 +914,7 @@ impl SettingsObserver {
                 .result()
                 .context("setting new user settings")?;
             anyhow::Ok(())
-        })??;
+        })?;
         Ok(())
     }
 
@@ -1021,6 +1090,7 @@ impl SettingsObserver {
                         settings_contents.into_iter().map(|(path, kind, content)| {
                             (path, kind, content.and_then(|c| c.log_err()))
                         }),
+                        false,
                         cx,
                     )
                 })
@@ -1033,12 +1103,17 @@ impl SettingsObserver {
         &mut self,
         worktree: Entity<Worktree>,
         settings_contents: impl IntoIterator<Item = (Arc<RelPath>, LocalSettingsKind, Option<String>)>,
+        is_via_collab: bool,
         cx: &mut Context<Self>,
     ) {
         let worktree_id = worktree.read(cx).id();
         let remote_worktree_id = worktree.read(cx).id();
         let task_store = self.task_store.clone();
-        let can_trust_worktree = OnceCell::new();
+        let can_trust_worktree = if is_via_collab {
+            OnceCell::from(true)
+        } else {
+            OnceCell::new()
+        };
         for (directory, kind, file_content) in settings_contents {
             let mut applied = true;
             match kind {
@@ -1046,7 +1121,7 @@ impl SettingsObserver {
                     if *can_trust_worktree.get_or_init(|| {
                         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
                             trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                                trusted_worktrees.can_trust(worktree_id, cx)
+                                trusted_worktrees.can_trust(&self.worktree_store, worktree_id, cx)
                             })
                         } else {
                             true
@@ -1149,7 +1224,7 @@ impl SettingsObserver {
     ) -> Task<()> {
         let mut user_tasks_file_rx =
             watch_config_file(cx.background_executor(), fs, file_path.clone());
-        let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
+        let user_tasks_content = cx.foreground_executor().block_on(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
             let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
@@ -1158,7 +1233,7 @@ impl SettingsObserver {
                 return;
             };
             if let Some(user_tasks_content) = user_tasks_content {
-                let Ok(()) = task_store.update(cx, |task_store, cx| {
+                task_store.update(cx, |task_store, cx| {
                     task_store
                         .update_user_tasks(
                             TaskSettingsLocation::Global(&file_path),
@@ -1166,20 +1241,16 @@ impl SettingsObserver {
                             cx,
                         )
                         .log_err();
-                }) else {
-                    return;
-                };
+                });
             }
             while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-                let Ok(result) = task_store.update(cx, |task_store, cx| {
+                let result = task_store.update(cx, |task_store, cx| {
                     task_store.update_user_tasks(
                         TaskSettingsLocation::Global(&file_path),
                         Some(&user_tasks_content),
                         cx,
                     )
-                }) else {
-                    break;
-                };
+                });
 
                 weak_entry
                     .update(cx, |_, cx| match result {
@@ -1204,7 +1275,7 @@ impl SettingsObserver {
     ) -> Task<()> {
         let mut user_tasks_file_rx =
             watch_config_file(cx.background_executor(), fs, file_path.clone());
-        let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
+        let user_tasks_content = cx.foreground_executor().block_on(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
             let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
@@ -1213,7 +1284,7 @@ impl SettingsObserver {
                 return;
             };
             if let Some(user_tasks_content) = user_tasks_content {
-                let Ok(()) = task_store.update(cx, |task_store, cx| {
+                task_store.update(cx, |task_store, cx| {
                     task_store
                         .update_user_debug_scenarios(
                             TaskSettingsLocation::Global(&file_path),
@@ -1221,20 +1292,16 @@ impl SettingsObserver {
                             cx,
                         )
                         .log_err();
-                }) else {
-                    return;
-                };
+                });
             }
             while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-                let Ok(result) = task_store.update(cx, |task_store, cx| {
+                let result = task_store.update(cx, |task_store, cx| {
                     task_store.update_user_debug_scenarios(
                         TaskSettingsLocation::Global(&file_path),
                         Some(&user_tasks_content),
                         cx,
                     )
-                }) else {
-                    break;
-                };
+                });
 
                 weak_entry
                     .update(cx, |_, cx| match result {

@@ -26,8 +26,13 @@ collections.workspace = true
 component.workspace = true
 convert_case.workspace = true
 copilot.workspace = true
+copilot_chat.workspace = true
+copilot_ui.workspace = true
 credentials_provider.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
+extension.workspace = true
+extension_host.workspace = true
+feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 google_ai = { workspace = true, features = ["schemars"] }
@@ -64,4 +69,5 @@ x_ai = { workspace = true, features = ["schemars"] }
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }

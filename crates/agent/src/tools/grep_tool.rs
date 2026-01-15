@@ -1,11 +1,11 @@
 use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
-use futures::StreamExt;
+use futures::{FutureExt as _, StreamExt};
 use gpui::{App, Entity, SharedString, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};
 use project::{
-    Project, WorktreeSettings,
+    Project, SearchResults, WorktreeSettings,
     search::{SearchQuery, SearchResult},
 };
 use schemars::JsonSchema;
@@ -117,7 +117,7 @@ impl AgentTool for GrepTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         const CONTEXT_LINES: u32 = 2;
@@ -176,19 +176,31 @@ impl AgentTool for GrepTool {
 
         let project = self.project.downgrade();
         cx.spawn(async move |cx|  {
-            futures::pin_mut!(results);
+            // Keep the search alive for the duration of result iteration. Dropping this task is the
+            // cancellation mechanism; we intentionally do not detach it.
+            let SearchResults {rx, _task_handle}  = results;
+            futures::pin_mut!(rx);
 
             let mut output = String::new();
             let mut skips_remaining = input.offset;
             let mut matches_found = 0;
             let mut has_more_matches = false;
 
-            'outer: while let Some(SearchResult::Buffer { buffer, ranges }) = results.next().await {
+            'outer: loop {
+                let search_result = futures::select! {
+                    result = rx.next().fuse() => result,
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        anyhow::bail!("Search cancelled by user");
+                    }
+                };
+                let Some(SearchResult::Buffer { buffer, ranges }) = search_result else {
+                    break;
+                };
                 if ranges.is_empty() {
                     continue;
                 }
 
-                let Ok((Some(path), mut parse_status)) = buffer.read_with(cx, |buffer, cx| {
+                let (Some(path), mut parse_status) = buffer.read_with(cx, |buffer, cx| {
                     (buffer.file().map(|file| file.full_path(cx)), buffer.parse_status())
                 }) else {
                     continue;
@@ -197,20 +209,21 @@ impl AgentTool for GrepTool {
                 // Check if this file should be excluded based on its worktree settings
                 if let Ok(Some(project_path)) = project.read_with(cx, |project, cx| {
                     project.find_project_path(&path, cx)
-                })
-                    && cx.update(|cx| {
+                }) {
+                    if cx.update(|cx| {
                         let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
                         worktree_settings.is_path_excluded(&project_path.path)
                             || worktree_settings.is_path_private(&project_path.path)
-                    }).unwrap_or(false) {
+                    }) {
                         continue;
                     }
+                }
 
                 while *parse_status.borrow() != ParseStatus::Idle {
                     parse_status.changed().await?;
                 }
 
-                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
                 let mut ranges = ranges
                     .into_iter()

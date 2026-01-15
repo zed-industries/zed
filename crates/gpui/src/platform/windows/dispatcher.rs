@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Context;
 use util::ResultExt;
 use windows::{
     System::Threading::{
@@ -11,6 +12,10 @@ use windows::{
     },
     Win32::{
         Foundation::{LPARAM, WPARAM},
+        System::Threading::{
+            GetCurrentThread, HIGH_PRIORITY_CLASS, SetPriorityClass, SetThreadPriority,
+            THREAD_PRIORITY_TIME_CRITICAL,
+        },
         UI::WindowsAndMessaging::PostMessageW,
     },
 };
@@ -51,7 +56,12 @@ impl WindowsDispatcher {
         let handler = {
             let mut task_wrapper = Some(runnable);
             WorkItemHandler::new(move |_| {
-                Self::execute_runnable(task_wrapper.take().unwrap());
+                let runnable = task_wrapper.take().unwrap();
+                // Check if the executor that spawned this task was closed
+                if runnable.metadata().is_closed() {
+                    return Ok(());
+                }
+                Self::execute_runnable(runnable);
                 Ok(())
             })
         };
@@ -63,7 +73,12 @@ impl WindowsDispatcher {
         let handler = {
             let mut task_wrapper = Some(runnable);
             TimerElapsedHandler::new(move |_| {
-                Self::execute_runnable(task_wrapper.take().unwrap());
+                let runnable = task_wrapper.take().unwrap();
+                // Check if the executor that spawned this task was closed
+                if runnable.metadata().is_closed() {
+                    return Ok(());
+                }
+                Self::execute_runnable(runnable);
                 Ok(())
             })
         };
@@ -117,6 +132,9 @@ impl PlatformDispatcher for WindowsDispatcher {
 
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
         let priority = match priority {
+            Priority::RealtimeAudio => {
+                panic!("RealtimeAudio priority should use spawn_realtime, not dispatch")
+            }
             Priority::High => WorkItemPriority::High,
             Priority::Medium => WorkItemPriority::Normal,
             Priority::Low => WorkItemPriority::Low,
@@ -155,5 +173,24 @@ impl PlatformDispatcher for WindowsDispatcher {
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
         self.dispatch_on_threadpool_after(runnable, duration);
+    }
+
+    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
+        std::thread::spawn(move || {
+            // SAFETY: always safe to call
+            let thread_handle = unsafe { GetCurrentThread() };
+
+            // SAFETY: thread_handle is a valid handle to a thread
+            unsafe { SetPriorityClass(thread_handle, HIGH_PRIORITY_CLASS) }
+                .context("thread priority class")
+                .log_err();
+
+            // SAFETY: thread_handle is a valid handle to a thread
+            unsafe { SetThreadPriority(thread_handle, THREAD_PRIORITY_TIME_CRITICAL) }
+                .context("thread priority")
+                .log_err();
+
+            f();
+        });
     }
 }

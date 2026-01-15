@@ -51,7 +51,7 @@ struct WindowsPlatformInner {
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     validation_number: usize,
-    main_receiver: flume::Receiver<RunnableVariant>,
+    main_receiver: PriorityQueueReceiver<RunnableVariant>,
     dispatcher: Arc<WindowsDispatcher>,
 }
 
@@ -98,7 +98,7 @@ impl WindowsPlatform {
             OleInitialize(None).context("unable to initialize Windows OLE")?;
         }
         let directx_devices = DirectXDevices::new().context("Creating DirectX devices")?;
-        let (main_sender, main_receiver) = flume::unbounded::<RunnableVariant>();
+        let (main_sender, main_receiver) = PriorityQueueReceiver::new();
         let validation_number = if usize::BITS == 64 {
             rand::random::<u64>() as usize
         } else {
@@ -635,7 +635,14 @@ impl Platform for WindowsPlatform {
                 UserName: PWSTR::from_raw(username.as_mut_ptr()),
                 ..CREDENTIALW::default()
             };
-            unsafe { CredWriteW(&credentials, 0) }?;
+            unsafe {
+                CredWriteW(&credentials, 0).map_err(|err| {
+                    anyhow!(
+                        "Failed to write credentials to Windows Credential Manager: {}",
+                        err,
+                    )
+                })?;
+            }
             Ok(())
         })
     }
@@ -838,6 +845,8 @@ impl WindowsPlatformInner {
                     let peek_msg = |msg: &mut _, msg_kind| unsafe {
                         PeekMessageW(msg, None, 0, 0, PM_REMOVE | msg_kind).as_bool()
                     };
+                    // We need to process a paint message here as otherwise we will re-enter `run_foreground_task` before painting if we have work remaining.
+                    // The reason for this is that windows prefers custom application message processing over system messages.
                     if peek_msg(&mut msg, PM_QS_PAINT) {
                         process_message(&msg);
                     }
@@ -857,22 +866,24 @@ impl WindowsPlatformInner {
                     }
                     break 'tasks;
                 }
-                match self.main_receiver.try_recv() {
-                    Err(_) => break 'timeout_loop,
-                    Ok(runnable) => WindowsDispatcher::execute_runnable(runnable),
+                let mut main_receiver = self.main_receiver.clone();
+                match main_receiver.try_pop() {
+                    Ok(Some(runnable)) => WindowsDispatcher::execute_runnable(runnable),
+                    _ => break 'timeout_loop,
                 }
             }
 
             // Someone could enqueue a Runnable here. The flag is still true, so they will not PostMessage.
             // We need to check for those Runnables after we clear the flag.
             self.dispatcher.wake_posted.store(false, Ordering::Release);
-            match self.main_receiver.try_recv() {
-                Err(_) => break 'tasks,
-                Ok(runnable) => {
+            let mut main_receiver = self.main_receiver.clone();
+            match main_receiver.try_pop() {
+                Ok(Some(runnable)) => {
                     self.dispatcher.wake_posted.store(true, Ordering::Release);
 
                     WindowsDispatcher::execute_runnable(runnable);
                 }
+                _ => break 'tasks,
             }
         }
 
@@ -934,7 +945,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) windows_version: WindowsVersion,
     pub(crate) drop_target_helper: IDropTargetHelper,
     pub(crate) validation_number: usize,
-    pub(crate) main_receiver: flume::Receiver<RunnableVariant>,
+    pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
     pub(crate) disable_direct_composition: bool,
     pub(crate) directx_devices: DirectXDevices,
@@ -947,8 +958,8 @@ struct PlatformWindowCreateContext {
     inner: Option<Result<Rc<WindowsPlatformInner>>>,
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     validation_number: usize,
-    main_sender: Option<flume::Sender<RunnableVariant>>,
-    main_receiver: Option<flume::Receiver<RunnableVariant>>,
+    main_sender: Option<PriorityQueueSender<RunnableVariant>>,
+    main_receiver: Option<PriorityQueueReceiver<RunnableVariant>>,
     directx_devices: Option<DirectXDevices>,
     dispatcher: Option<Arc<WindowsDispatcher>>,
 }

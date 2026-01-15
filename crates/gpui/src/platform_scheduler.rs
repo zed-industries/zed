@@ -85,14 +85,21 @@ impl Scheduler for PlatformScheduler {
         self.dispatcher.dispatch(runnable, priority);
     }
 
+    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
+        self.dispatcher.spawn_realtime(f);
+    }
+
     fn timer(&self, duration: Duration) -> Timer {
+        use std::sync::{Arc, atomic::AtomicBool};
+
         let (tx, rx) = oneshot::channel();
         let dispatcher = self.dispatcher.clone();
 
         // Create a runnable that will send the completion signal
         let location = std::panic::Location::caller();
+        let closed = Arc::new(AtomicBool::new(false));
         let (runnable, _task) = async_task::Builder::new()
-            .metadata(RunnableMeta { location })
+            .metadata(RunnableMeta { location, closed })
             .spawn(
                 move |_| async move {
                     let _ = tx.send(());

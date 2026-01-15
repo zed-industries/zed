@@ -5,7 +5,7 @@ use futures::{Stream, TryFutureExt, stream};
 use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Task};
 use http_client::HttpClient;
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, LanguageModel, LanguageModelCompletionError,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUse,
@@ -202,6 +202,10 @@ impl OllamaLanguageModelProvider {
             SharedString::new(api_url.as_str())
         }
     }
+
+    fn has_custom_url(cx: &App) -> bool {
+        Self::settings(cx).api_url != OLLAMA_API_URL
+    }
 }
 
 impl LanguageModelProviderState for OllamaLanguageModelProvider {
@@ -221,8 +225,8 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiOllama
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiOllama)
     }
 
     fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -249,33 +253,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for setting_model in &OllamaLanguageModelProvider::settings(cx).available_models {
-            let setting_base = setting_model.name.split(':').next().unwrap();
-            if let Some(model) = models
-                .values_mut()
-                .find(|m| m.name.split(':').next().unwrap() == setting_base)
-            {
-                model.max_tokens = setting_model.max_tokens;
-                model.display_name = setting_model.display_name.clone();
-                model.keep_alive = setting_model.keep_alive.clone();
-                model.supports_tools = setting_model.supports_tools;
-                model.supports_vision = setting_model.supports_images;
-                model.supports_thinking = setting_model.supports_thinking;
-            } else {
-                models.insert(
-                    setting_model.name.clone(),
-                    ollama::Model {
-                        name: setting_model.name.clone(),
-                        display_name: setting_model.display_name.clone(),
-                        max_tokens: setting_model.max_tokens,
-                        keep_alive: setting_model.keep_alive.clone(),
-                        supports_tools: setting_model.supports_tools,
-                        supports_vision: setting_model.supports_images,
-                        supports_thinking: setting_model.supports_thinking,
-                    },
-                );
-            }
-        }
+        merge_settings_into_models(&mut models, &settings.available_models);
 
         let mut models = models
             .into_values()
@@ -505,12 +483,10 @@ impl LanguageModel for OllamaLanguageModel {
         let request = self.to_ollama_request(request);
 
         let http_client = self.http_client.clone();
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = OllamaLanguageModelProvider::api_url(cx);
             (state.api_key_state.key(&api_url), api_url)
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
-        };
+        });
 
         let future = self.request_limiter.stream(async move {
             let stream =
@@ -653,9 +629,21 @@ impl ConfigurationView {
         }
     }
 
-    fn retry_connection(&self, cx: &mut App) {
-        self.state
-            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
+    fn retry_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let has_api_url = OllamaLanguageModelProvider::has_custom_url(cx);
+        let has_api_key = self
+            .state
+            .read_with(cx, |state, _| state.api_key_state.has_key());
+        if !has_api_url {
+            self.save_api_url(cx);
+        }
+        if !has_api_key {
+            self.save_api_key(&Default::default(), window, cx);
+        }
+
+        self.state.update(cx, |state, cx| {
+            state.restart_fetch_models_task(cx);
+        });
     }
 
     fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -671,7 +659,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -684,7 +672,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .update(cx, |state, cx| state.set_api_key(None, cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -692,7 +680,7 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn save_api_url(&mut self, cx: &mut Context<Self>) {
+    fn save_api_url(&self, cx: &mut Context<Self>) {
         let api_url = self.api_url_editor.read(cx).text(cx).trim().to_string();
         let current_url = OllamaLanguageModelProvider::api_url(cx);
         if !api_url.is_empty() && &api_url != &current_url {
@@ -769,7 +757,7 @@ impl ConfigurationView {
               .child(self.api_key_editor.clone())
               .child(
                   Label::new(
-                      format!("You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed.")
+                      format!("You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed.")
                   )
                   .size(LabelSize::Small)
                   .color(Color::Muted),
@@ -895,11 +883,11 @@ impl Render for ConfigurationView {
                                     .child(
                                         IconButton::new("refresh-models", IconName::RotateCcw)
                                             .tooltip(Tooltip::text("Refresh Models"))
-                                            .on_click(cx.listener(|this, _, _, cx| {
+                                            .on_click(cx.listener(|this, _, window, cx| {
                                                 this.state.update(cx, |state, _| {
                                                     state.fetched_models.clear();
                                                 });
-                                                this.retry_connection(cx);
+                                                this.retry_connection(window, cx);
                                             })),
                                     ),
                             )
@@ -909,15 +897,42 @@ impl Render for ConfigurationView {
                                     .icon_position(IconPosition::Start)
                                     .icon_size(IconSize::XSmall)
                                     .icon(IconName::PlayOutlined)
-                                    .on_click(
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.retry_connection(cx)
-                                        }),
-                                    ),
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.retry_connection(window, cx)
+                                    })),
                             )
                         }
                     }),
             )
+    }
+}
+
+fn merge_settings_into_models(
+    models: &mut HashMap<String, ollama::Model>,
+    available_models: &[AvailableModel],
+) {
+    for setting_model in available_models {
+        if let Some(model) = models.get_mut(&setting_model.name) {
+            model.max_tokens = setting_model.max_tokens;
+            model.display_name = setting_model.display_name.clone();
+            model.keep_alive = setting_model.keep_alive.clone();
+            model.supports_tools = setting_model.supports_tools;
+            model.supports_vision = setting_model.supports_images;
+            model.supports_thinking = setting_model.supports_thinking;
+        } else {
+            models.insert(
+                setting_model.name.clone(),
+                ollama::Model {
+                    name: setting_model.name.clone(),
+                    display_name: setting_model.display_name.clone(),
+                    max_tokens: setting_model.max_tokens,
+                    keep_alive: setting_model.keep_alive.clone(),
+                    supports_tools: setting_model.supports_tools,
+                    supports_vision: setting_model.supports_images,
+                    supports_thinking: setting_model.supports_thinking,
+                },
+            );
+        }
     }
 }
 
@@ -928,5 +943,85 @@ fn tool_into_ollama(tool: LanguageModelRequestTool) -> ollama::OllamaTool {
             description: Some(tool.description),
             parameters: Some(tool.input_schema),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_merge_settings_preserves_display_names_for_similar_models() {
+        // Regression test for https://github.com/zed-industries/zed/issues/43646
+        // When multiple models share the same base name (e.g., qwen2.5-coder:1.5b and qwen2.5-coder:3b),
+        // each model should get its own display_name from settings, not a random one.
+
+        let mut models: HashMap<String, ollama::Model> = HashMap::new();
+        models.insert(
+            "qwen2.5-coder:1.5b".to_string(),
+            ollama::Model {
+                name: "qwen2.5-coder:1.5b".to_string(),
+                display_name: None,
+                max_tokens: 4096,
+                keep_alive: None,
+                supports_tools: None,
+                supports_vision: None,
+                supports_thinking: None,
+            },
+        );
+        models.insert(
+            "qwen2.5-coder:3b".to_string(),
+            ollama::Model {
+                name: "qwen2.5-coder:3b".to_string(),
+                display_name: None,
+                max_tokens: 4096,
+                keep_alive: None,
+                supports_tools: None,
+                supports_vision: None,
+                supports_thinking: None,
+            },
+        );
+
+        let available_models = vec![
+            AvailableModel {
+                name: "qwen2.5-coder:1.5b".to_string(),
+                display_name: Some("QWEN2.5 Coder 1.5B".to_string()),
+                max_tokens: 5000,
+                keep_alive: None,
+                supports_tools: Some(true),
+                supports_images: None,
+                supports_thinking: None,
+            },
+            AvailableModel {
+                name: "qwen2.5-coder:3b".to_string(),
+                display_name: Some("QWEN2.5 Coder 3B".to_string()),
+                max_tokens: 6000,
+                keep_alive: None,
+                supports_tools: Some(true),
+                supports_images: None,
+                supports_thinking: None,
+            },
+        ];
+
+        merge_settings_into_models(&mut models, &available_models);
+
+        let model_1_5b = models
+            .get("qwen2.5-coder:1.5b")
+            .expect("1.5b model missing");
+        let model_3b = models.get("qwen2.5-coder:3b").expect("3b model missing");
+
+        assert_eq!(
+            model_1_5b.display_name,
+            Some("QWEN2.5 Coder 1.5B".to_string()),
+            "1.5b model should have its own display_name"
+        );
+        assert_eq!(model_1_5b.max_tokens, 5000);
+
+        assert_eq!(
+            model_3b.display_name,
+            Some("QWEN2.5 Coder 3B".to_string()),
+            "3b model should have its own display_name"
+        );
+        assert_eq!(model_3b.max_tokens, 6000);
     }
 }

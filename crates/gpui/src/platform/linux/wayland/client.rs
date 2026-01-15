@@ -204,7 +204,7 @@ pub struct Output {
 pub(crate) struct WaylandClientState {
     serial_tracker: SerialTracker,
     globals: Globals,
-    gpu_context: BladeContext,
+    pub gpu_context: BladeContext,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -247,7 +247,7 @@ pub(crate) struct WaylandClientState {
     cursor: Cursor,
     pending_activation: Option<PendingActivation>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
-    common: LinuxCommon,
+    pub common: LinuxCommon,
 }
 
 pub struct DragState {
@@ -1207,6 +1207,12 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
             if capabilities.contains(wl_seat::Capability::Keyboard) {
                 let keyboard = seat.get_keyboard(qh, ());
 
+                if let Some(text_input) = state.text_input.take() {
+                    text_input.destroy();
+                    state.ime_pre_edit = None;
+                    state.composing = false;
+                }
+
                 state.text_input = state
                     .globals
                     .text_input_manager
@@ -1221,6 +1227,11 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
             }
             if capabilities.contains(wl_seat::Capability::Pointer) {
                 let pointer = seat.get_pointer(qh, ());
+
+                if let Some(cursor_shape_device) = state.cursor_shape_device.take() {
+                    cursor_shape_device.destroy();
+                }
+
                 state.cursor_shape_device = state
                     .globals
                     .cursor_shape_manager

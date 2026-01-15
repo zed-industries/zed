@@ -41,8 +41,8 @@ fn extension_benchmarks(c: &mut Criterion) {
             || wasm_bytes.clone(),
             |wasm_bytes| {
                 let _extension = cx
-                    .executor()
-                    .block(wasm_host.load_extension(wasm_bytes, &manifest, &cx.to_async()))
+                    .foreground_executor()
+                    .block_on(wasm_host.load_extension(wasm_bytes, &manifest, &cx.to_async()))
                     .unwrap();
             },
             BatchSize::SmallInput,
@@ -72,8 +72,8 @@ fn wasm_bytes(cx: &TestAppContext, manifest: &mut ExtensionManifest, fs: Arc<dyn
         .parent()
         .unwrap()
         .join("extensions/test-extension");
-    cx.executor()
-        .block(extension_builder.compile_extension(
+    cx.foreground_executor()
+        .block_on(extension_builder.compile_extension(
             &path,
             manifest,
             CompileExtensionOptions { release: true },
@@ -148,6 +148,7 @@ fn manifest() -> ExtensionManifest {
         )],
         debug_adapters: Default::default(),
         debug_locators: Default::default(),
+        language_model_providers: BTreeMap::default(),
     }
 }
 

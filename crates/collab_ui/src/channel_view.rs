@@ -173,7 +173,7 @@ impl ChannelView {
                     };
                     buffer.set_language(Some(markdown), cx);
                 })
-            })?;
+            });
 
             cx.new_window_entity(|window, cx| {
                 let mut this = Self::new(
@@ -517,7 +517,7 @@ impl Item for ChannelView {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {

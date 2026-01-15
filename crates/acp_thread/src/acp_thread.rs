@@ -4,6 +4,26 @@ mod mention;
 mod terminal;
 
 use agent_settings::AgentSettings;
+
+/// Key used in ACP ToolCall meta to store the tool's programmatic name.
+/// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
+pub const TOOL_NAME_META_KEY: &str = "tool_name";
+
+/// The tool name for subagent spawning
+pub const SUBAGENT_TOOL_NAME: &str = "subagent";
+
+/// Helper to extract tool name from ACP meta
+pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
+    meta.as_ref()
+        .and_then(|m| m.get(TOOL_NAME_META_KEY))
+        .and_then(|v| v.as_str())
+        .map(|s| SharedString::from(s.to_owned()))
+}
+
+/// Helper to create meta with tool name
+pub fn meta_with_tool_name(tool_name: &str) -> acp::Meta {
+    acp::Meta::from_iter([(TOOL_NAME_META_KEY.into(), tool_name.into())])
+}
 use collections::HashSet;
 pub use connection::*;
 pub use diff::*;
@@ -11,6 +31,7 @@ use language::language_settings::FormatOnSave;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
+use serde_json::to_string_pretty;
 use settings::Settings as _;
 use task::{Shell, ShellBuilder};
 pub use terminal::*;
@@ -194,6 +215,7 @@ pub struct ToolCall {
     pub raw_input: Option<serde_json::Value>,
     pub raw_input_markdown: Option<Entity<Markdown>>,
     pub raw_output: Option<serde_json::Value>,
+    pub tool_name: Option<SharedString>,
 }
 
 impl ToolCall {
@@ -205,7 +227,9 @@ impl ToolCall {
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Self> {
-        let title = if let Some((first_line, _)) = tool_call.title.split_once("\n") {
+        let title = if tool_call.kind == acp::ToolKind::Execute {
+            tool_call.title
+        } else if let Some((first_line, _)) = tool_call.title.split_once("\n") {
             first_line.to_owned() + "…"
         } else {
             tool_call.title
@@ -228,6 +252,8 @@ impl ToolCall {
             .as_ref()
             .and_then(|input| markdown_for_raw_output(input, &language_registry, cx));
 
+        let tool_name = tool_name_from_meta(&tool_call.meta);
+
         let result = Self {
             id: tool_call.tool_call_id,
             label: cx
@@ -240,6 +266,7 @@ impl ToolCall {
             raw_input: tool_call.raw_input,
             raw_input_markdown,
             raw_output: tool_call.raw_output,
+            tool_name,
         };
         Ok(result)
     }
@@ -273,8 +300,10 @@ impl ToolCall {
 
         if let Some(title) = title {
             self.label.update(cx, |label, cx| {
-                if let Some((first_line, _)) = title.split_once("\n") {
-                    label.replace(first_line.to_owned() + "…", cx)
+                if self.kind == acp::ToolKind::Execute {
+                    label.replace(title, cx);
+                } else if let Some((first_line, _)) = title.split_once("\n") {
+                    label.replace(first_line.to_owned() + "…", cx);
                 } else {
                     label.replace(title, cx);
                 }
@@ -337,6 +366,7 @@ impl ToolCall {
             ToolCallContent::Diff(diff) => Some(diff),
             ToolCallContent::ContentBlock(_) => None,
             ToolCallContent::Terminal(_) => None,
+            ToolCallContent::SubagentThread(_) => None,
         })
     }
 
@@ -345,10 +375,27 @@ impl ToolCall {
             ToolCallContent::Terminal(terminal) => Some(terminal),
             ToolCallContent::ContentBlock(_) => None,
             ToolCallContent::Diff(_) => None,
+            ToolCallContent::SubagentThread(_) => None,
         })
     }
 
-    fn to_markdown(&self, cx: &App) -> String {
+    pub fn subagent_thread(&self) -> Option<&Entity<AcpThread>> {
+        self.content.iter().find_map(|content| match content {
+            ToolCallContent::SubagentThread(thread) => Some(thread),
+            _ => None,
+        })
+    }
+
+    pub fn is_subagent(&self) -> bool {
+        matches!(self.kind, acp::ToolKind::Other)
+            && self
+                .tool_name
+                .as_ref()
+                .map(|n| n.as_ref() == SUBAGENT_TOOL_NAME)
+                .unwrap_or(false)
+    }
+
+    pub fn to_markdown(&self, cx: &App) -> String {
         let mut markdown = format!(
             "**Tool Call: {}**\nStatus: {}\n\n",
             self.label.read(cx).source(),
@@ -374,18 +421,16 @@ impl ToolCall {
             })
             .ok()??;
         let buffer = buffer.await.log_err()?;
-        let position = buffer
-            .update(cx, |buffer, _| {
-                let snapshot = buffer.snapshot();
-                if let Some(row) = location.line {
-                    let column = snapshot.indent_size_for_line(row).len;
-                    let point = snapshot.clip_point(Point::new(row, column), Bias::Left);
-                    snapshot.anchor_before(point)
-                } else {
-                    Anchor::min_for_buffer(snapshot.remote_id())
-                }
-            })
-            .ok()?;
+        let position = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            if let Some(row) = location.line {
+                let column = snapshot.indent_size_for_line(row).len;
+                let point = snapshot.clip_point(Point::new(row, column), Bias::Left);
+                snapshot.anchor_before(point)
+            } else {
+                Anchor::min_for_buffer(snapshot.remote_id())
+            }
+        });
 
         Some(ResolvedLocation { buffer, position })
     }
@@ -482,6 +527,7 @@ pub enum ContentBlock {
     Empty,
     Markdown { markdown: Entity<Markdown> },
     ResourceLink { resource_link: acp::ResourceLink },
+    Image { image: Arc<gpui::Image> },
 }
 
 impl ContentBlock {
@@ -516,29 +562,50 @@ impl ContentBlock {
         path_style: PathStyle,
         cx: &mut App,
     ) {
-        if matches!(self, ContentBlock::Empty)
-            && let acp::ContentBlock::ResourceLink(resource_link) = block
-        {
-            *self = ContentBlock::ResourceLink { resource_link };
-            return;
-        }
-
-        let new_content = self.block_string_contents(block, path_style);
-
-        match self {
-            ContentBlock::Empty => {
+        match (&mut *self, &block) {
+            (ContentBlock::Empty, acp::ContentBlock::ResourceLink(resource_link)) => {
+                *self = ContentBlock::ResourceLink {
+                    resource_link: resource_link.clone(),
+                };
+            }
+            (ContentBlock::Empty, acp::ContentBlock::Image(image_content)) => {
+                if let Some(image) = Self::decode_image(image_content) {
+                    *self = ContentBlock::Image { image };
+                } else {
+                    let new_content = Self::image_md(image_content);
+                    *self = Self::create_markdown_block(new_content, language_registry, cx);
+                }
+            }
+            (ContentBlock::Empty, _) => {
+                let new_content = Self::block_string_contents(&block, path_style);
                 *self = Self::create_markdown_block(new_content, language_registry, cx);
             }
-            ContentBlock::Markdown { markdown } => {
+            (ContentBlock::Markdown { markdown }, _) => {
+                let new_content = Self::block_string_contents(&block, path_style);
                 markdown.update(cx, |markdown, cx| markdown.append(&new_content, cx));
             }
-            ContentBlock::ResourceLink { resource_link } => {
+            (ContentBlock::ResourceLink { resource_link }, _) => {
                 let existing_content = Self::resource_link_md(&resource_link.uri, path_style);
+                let new_content = Self::block_string_contents(&block, path_style);
                 let combined = format!("{}\n{}", existing_content, new_content);
-
+                *self = Self::create_markdown_block(combined, language_registry, cx);
+            }
+            (ContentBlock::Image { .. }, _) => {
+                let new_content = Self::block_string_contents(&block, path_style);
+                let combined = format!("`Image`\n{}", new_content);
                 *self = Self::create_markdown_block(combined, language_registry, cx);
             }
         }
+    }
+
+    fn decode_image(image_content: &acp::ImageContent) -> Option<Arc<gpui::Image>> {
+        use base64::Engine as _;
+
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(image_content.data.as_bytes())
+            .ok()?;
+        let format = gpui::ImageFormat::from_mime_type(&image_content.mime_type)?;
+        Some(Arc::new(gpui::Image::from_bytes(format, bytes)))
     }
 
     fn create_markdown_block(
@@ -552,9 +619,9 @@ impl ContentBlock {
         }
     }
 
-    fn block_string_contents(&self, block: acp::ContentBlock, path_style: PathStyle) -> String {
+    fn block_string_contents(block: &acp::ContentBlock, path_style: PathStyle) -> String {
         match block {
-            acp::ContentBlock::Text(text_content) => text_content.text,
+            acp::ContentBlock::Text(text_content) => text_content.text.clone(),
             acp::ContentBlock::ResourceLink(resource_link) => {
                 Self::resource_link_md(&resource_link.uri, path_style)
             }
@@ -565,8 +632,8 @@ impl ContentBlock {
                         ..
                     }),
                 ..
-            }) => Self::resource_link_md(&uri, path_style),
-            acp::ContentBlock::Image(image) => Self::image_md(&image),
+            }) => Self::resource_link_md(uri, path_style),
+            acp::ContentBlock::Image(image) => Self::image_md(image),
             _ => String::new(),
         }
     }
@@ -588,6 +655,7 @@ impl ContentBlock {
             ContentBlock::Empty => "",
             ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
             ContentBlock::ResourceLink { resource_link } => &resource_link.uri,
+            ContentBlock::Image { .. } => "`Image`",
         }
     }
 
@@ -596,12 +664,20 @@ impl ContentBlock {
             ContentBlock::Empty => None,
             ContentBlock::Markdown { markdown } => Some(markdown),
             ContentBlock::ResourceLink { .. } => None,
+            ContentBlock::Image { .. } => None,
         }
     }
 
     pub fn resource_link(&self) -> Option<&acp::ResourceLink> {
         match self {
             ContentBlock::ResourceLink { resource_link } => Some(resource_link),
+            _ => None,
+        }
+    }
+
+    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+        match self {
+            ContentBlock::Image { image } => Some(image),
             _ => None,
         }
     }
@@ -612,6 +688,7 @@ pub enum ToolCallContent {
     ContentBlock(ContentBlock),
     Diff(Entity<Diff>),
     Terminal(Entity<Terminal>),
+    SubagentThread(Entity<AcpThread>),
 }
 
 impl ToolCallContent {
@@ -683,6 +760,21 @@ impl ToolCallContent {
             Self::ContentBlock(content) => content.to_markdown(cx).to_string(),
             Self::Diff(diff) => diff.read(cx).to_markdown(cx),
             Self::Terminal(terminal) => terminal.read(cx).to_markdown(cx),
+            Self::SubagentThread(thread) => thread.read(cx).to_markdown(cx),
+        }
+    }
+
+    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+        match self {
+            Self::ContentBlock(content) => content.image(),
+            _ => None,
+        }
+    }
+
+    pub fn subagent_thread(&self) -> Option<&Entity<AcpThread>> {
+        match self {
+            Self::SubagentThread(thread) => Some(thread),
+            _ => None,
         }
     }
 }
@@ -692,6 +784,7 @@ pub enum ToolCallUpdate {
     UpdateFields(acp::ToolCallUpdate),
     UpdateDiff(ToolCallUpdateDiff),
     UpdateTerminal(ToolCallUpdateTerminal),
+    UpdateSubagentThread(ToolCallUpdateSubagentThread),
 }
 
 impl ToolCallUpdate {
@@ -700,6 +793,7 @@ impl ToolCallUpdate {
             Self::UpdateFields(update) => &update.tool_call_id,
             Self::UpdateDiff(diff) => &diff.id,
             Self::UpdateTerminal(terminal) => &terminal.id,
+            Self::UpdateSubagentThread(subagent) => &subagent.id,
         }
     }
 }
@@ -732,6 +826,18 @@ impl From<ToolCallUpdateTerminal> for ToolCallUpdate {
 pub struct ToolCallUpdateTerminal {
     pub id: acp::ToolCallId,
     pub terminal: Entity<Terminal>,
+}
+
+impl From<ToolCallUpdateSubagentThread> for ToolCallUpdate {
+    fn from(subagent: ToolCallUpdateSubagentThread) -> Self {
+        Self::UpdateSubagentThread(subagent)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ToolCallUpdateSubagentThread {
+    pub id: acp::ToolCallId,
+    pub thread: Entity<AcpThread>,
 }
 
 #[derive(Debug, Default)]
@@ -798,6 +904,8 @@ impl PlanEntry {
 pub struct TokenUsage {
     pub max_tokens: u64,
     pub used_tokens: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
 }
 
 impl TokenUsage {
@@ -883,6 +991,7 @@ pub enum AcpThreadEvent {
     Refusal,
     AvailableCommandsUpdated(Vec<acp::AvailableCommand>),
     ModeUpdated(acp::SessionModeId),
+    ConfigOptionsUpdated(Vec<acp::SessionConfigOption>),
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -1148,6 +1257,23 @@ impl AcpThread {
         false
     }
 
+    pub fn has_in_progress_tool_calls(&self) -> bool {
+        for entry in self.entries.iter().rev() {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => return false,
+                AgentThreadEntry::ToolCall(ToolCall {
+                    status: ToolCallStatus::InProgress | ToolCallStatus::Pending,
+                    ..
+                }) => {
+                    return true;
+                }
+                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+            }
+        }
+
+        false
+    }
+
     pub fn used_tools_since_last_user_message(&self) -> bool {
         for entry in self.entries.iter().rev() {
             match entry {
@@ -1192,6 +1318,10 @@ impl AcpThread {
                 current_mode_id,
                 ..
             }) => cx.emit(AcpThreadEvent::ModeUpdated(current_mode_id)),
+            acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate {
+                config_options,
+                ..
+            }) => cx.emit(AcpThreadEvent::ConfigOptionsUpdated(config_options)),
             _ => {}
         }
         Ok(())
@@ -1365,6 +1495,7 @@ impl AcpThread {
                     raw_input: None,
                     raw_input_markdown: None,
                     raw_output: None,
+                    tool_name: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -1390,6 +1521,16 @@ impl AcpThread {
                 call.content.clear();
                 call.content
                     .push(ToolCallContent::Terminal(update.terminal));
+            }
+            ToolCallUpdate::UpdateSubagentThread(update) => {
+                debug_assert!(
+                    !call.content.iter().any(|c| {
+                        matches!(c, ToolCallContent::SubagentThread(existing) if existing == &update.thread)
+                    }),
+                    "Duplicate SubagentThread update for the same AcpThread entity"
+                );
+                call.content
+                    .push(ToolCallContent::SubagentThread(update.thread));
             }
         }
 
@@ -1759,7 +1900,7 @@ impl AcpThread {
             .ok();
 
             let old_checkpoint = git_store
-                .update(cx, |git, cx| git.checkpoint(cx))?
+                .update(cx, |git, cx| git.checkpoint(cx))
                 .await
                 .context("failed to get old checkpoint")
                 .log_err();
@@ -1939,7 +2080,7 @@ impl AcpThread {
             rewind.await?;
             if let Some(checkpoint) = checkpoint {
                 git_store
-                    .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))?
+                    .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))
                     .await?;
             }
 
@@ -1957,7 +2098,7 @@ impl AcpThread {
 
         let telemetry = ActionLogTelemetry::from(&*self);
         cx.spawn(async move |this, cx| {
-            cx.update(|cx| truncate.run(id.clone(), cx))?.await?;
+            cx.update(|cx| truncate.run(id.clone(), cx)).await?;
             this.update(cx, |this, cx| {
                 if let Some((ix, _)) = this.user_message_mut(&id) {
                     // Collect all terminals from entries that will be removed
@@ -1992,37 +2133,42 @@ impl AcpThread {
     fn update_last_checkpoint(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let git_store = self.project.read(cx).git_store().clone();
 
-        let old_checkpoint = if let Some((_, message)) = self.last_user_message() {
-            if let Some(checkpoint) = message.checkpoint.as_ref() {
-                checkpoint.git_checkpoint.clone()
-            } else {
-                return Task::ready(Ok(()));
-            }
-        } else {
+        let Some((_, message)) = self.last_user_message() else {
             return Task::ready(Ok(()));
         };
+        let Some(user_message_id) = message.id.clone() else {
+            return Task::ready(Ok(()));
+        };
+        let Some(checkpoint) = message.checkpoint.as_ref() else {
+            return Task::ready(Ok(()));
+        };
+        let old_checkpoint = checkpoint.git_checkpoint.clone();
 
         let new_checkpoint = git_store.update(cx, |git, cx| git.checkpoint(cx));
         cx.spawn(async move |this, cx| {
-            let new_checkpoint = new_checkpoint
+            let Some(new_checkpoint) = new_checkpoint
                 .await
                 .context("failed to get new checkpoint")
-                .log_err();
-            if let Some(new_checkpoint) = new_checkpoint {
-                let equal = git_store
-                    .update(cx, |git, cx| {
-                        git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
-                    })?
-                    .await
-                    .unwrap_or(true);
-                this.update(cx, |this, cx| {
-                    let (ix, message) = this.last_user_message().context("no user message")?;
-                    let checkpoint = message.checkpoint.as_mut().context("no checkpoint")?;
-                    checkpoint.show = !equal;
-                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
-                    anyhow::Ok(())
-                })??;
-            }
+                .log_err()
+            else {
+                return Ok(());
+            };
+
+            let equal = git_store
+                .update(cx, |git, cx| {
+                    git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
+                })
+                .await
+                .unwrap_or(true);
+
+            this.update(cx, |this, cx| {
+                if let Some((ix, message)) = this.user_message_mut(&user_message_id) {
+                    if let Some(checkpoint) = message.checkpoint.as_mut() {
+                        checkpoint.show = !equal;
+                        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                    }
+                }
+            })?;
 
             Ok(())
         })
@@ -2070,17 +2216,14 @@ impl AcpThread {
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |this, cx| {
-            let load = project
-                .update(cx, |project, cx| {
-                    let path = project
-                        .project_path_for_absolute_path(&path, cx)
-                        .ok_or_else(|| {
-                            acp::Error::resource_not_found(Some(path.display().to_string()))
-                        })?;
-                    Ok(project.open_buffer(path, cx))
-                })
-                .map_err(|e| acp::Error::internal_error().data(e.to_string()))
-                .flatten()?;
+            let load = project.update(cx, |project, cx| {
+                let path = project
+                    .project_path_for_absolute_path(&path, cx)
+                    .ok_or_else(|| {
+                        acp::Error::resource_not_found(Some(path.display().to_string()))
+                    })?;
+                Ok::<_, acp::Error>(project.open_buffer(path, cx))
+            })?;
 
             let buffer = load.await?;
 
@@ -2099,9 +2242,9 @@ impl AcpThread {
             } else {
                 action_log.update(cx, |action_log, cx| {
                     action_log.buffer_read(buffer.clone(), cx);
-                })?;
+                });
 
-                let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+                let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
                 this.update(cx, |this, _| {
                     this.shared_buffers.insert(buffer.clone(), snapshot.clone());
                 })?;
@@ -2130,7 +2273,7 @@ impl AcpThread {
                     }),
                     cx,
                 );
-            })?;
+            });
 
             Ok(snapshot.text_for_range(start..end).collect::<String>())
         })
@@ -2151,7 +2294,7 @@ impl AcpThread {
                     .context("invalid path")?;
                 anyhow::Ok(project.open_buffer(path, cx))
             });
-            let buffer = load??.await?;
+            let buffer = load?.await?;
             let snapshot = this.update(cx, |this, cx| {
                 this.shared_buffers
                     .get(&buffer)
@@ -2186,7 +2329,7 @@ impl AcpThread {
                     }),
                     cx,
                 );
-            })?;
+            });
 
             let format_on_save = cx.update(|cx| {
                 action_log.update(cx, |action_log, cx| {
@@ -2208,7 +2351,7 @@ impl AcpThread {
                     action_log.buffer_edited(buffer.clone(), cx);
                 });
                 format_on_save
-            })?;
+            });
 
             if format_on_save {
                 let format_task = project.update(cx, |project, cx| {
@@ -2219,16 +2362,16 @@ impl AcpThread {
                         FormatTrigger::Save,
                         cx,
                     )
-                })?;
+                });
                 format_task.await.log_err();
 
                 action_log.update(cx, |action_log, cx| {
                     action_log.buffer_edited(buffer.clone(), cx);
-                })?;
+                });
             }
 
             project
-                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
+                .update(cx, |project, cx| project.save_buffer(buffer, cx))
                 .await
         })
     }
@@ -2274,7 +2417,7 @@ impl AcpThread {
                         project
                             .remote_client()
                             .and_then(|r| r.read(cx).default_system_shell())
-                    })?
+                    })
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());
                 let (task_command, task_args) =
                     ShellBuilder::new(&Shell::Program(shell), is_windows)
@@ -2292,10 +2435,10 @@ impl AcpThread {
                             },
                             cx,
                         )
-                    })?
+                    })
                     .await?;
 
-                cx.new(|cx| {
+                anyhow::Ok(cx.new(|cx| {
                     Terminal::new(
                         terminal_id,
                         &format!("{} {}", command, args.join(" ")),
@@ -2305,7 +2448,7 @@ impl AcpThread {
                         language_registry,
                         cx,
                     )
-                })
+                }))
             }
         });
 
@@ -2422,8 +2565,10 @@ fn markdown_for_raw_output(
             )
         })),
         value => Some(cx.new(|cx| {
+            let pretty_json = to_string_pretty(value).unwrap_or_else(|_| value.to_string());
+
             Markdown::new(
-                format!("```json\n{}\n```", value).into(),
+                format!("```json\n{}\n```", pretty_json).into(),
                 Some(language_registry.clone()),
                 None,
                 cx,
@@ -2594,6 +2739,129 @@ mod tests {
         assert!(
             content.contains("pre-exit data"),
             "expected pre-exit data to render, got: {content}"
+        );
+    }
+
+    /// Test that killing a terminal via Terminal::kill properly:
+    /// 1. Causes wait_for_exit to complete (doesn't hang forever)
+    /// 2. The underlying terminal still has the output that was written before the kill
+    ///
+    /// This test verifies that the fix to kill_active_task (which now also kills
+    /// the shell process in addition to the foreground process) properly allows
+    /// wait_for_exit to complete instead of hanging indefinitely.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_terminal_kill_allows_wait_for_exit_to_complete(cx: &mut gpui::TestAppContext) {
+        use std::collections::HashMap;
+        use task::Shell;
+        use util::shell_builder::ShellBuilder;
+
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| connection.new_thread(project.clone(), Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        let terminal_id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
+
+        // Create a real PTY terminal that runs a command which prints output then sleeps
+        // We use printf instead of echo and chain with && sleep to ensure proper execution
+        let (completion_tx, _completion_rx) = smol::channel::unbounded();
+        let (program, args) = ShellBuilder::new(&Shell::System, false).build(
+            Some("printf 'output_before_kill\\n' && sleep 60".to_owned()),
+            &[],
+        );
+
+        let builder = cx
+            .update(|cx| {
+                ::terminal::TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::WithArguments {
+                        program,
+                        args,
+                        title_override: None,
+                    },
+                    HashMap::default(),
+                    ::terminal::terminal_settings::CursorShape::default(),
+                    ::terminal::terminal_settings::AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    Some(completion_tx),
+                    cx,
+                    vec![],
+                )
+            })
+            .await
+            .unwrap();
+
+        let lower_terminal = cx.new(|cx| builder.subscribe(cx));
+
+        // Create the acp_thread Terminal wrapper
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Created {
+                    terminal_id: terminal_id.clone(),
+                    label: "printf output_before_kill && sleep 60".to_string(),
+                    cwd: None,
+                    output_byte_limit: None,
+                    terminal: lower_terminal.clone(),
+                },
+                cx,
+            );
+        });
+
+        // Wait for the printf command to execute and produce output
+        // Use real time since parking is enabled
+        cx.executor().timer(Duration::from_millis(500)).await;
+
+        // Get the acp_thread Terminal and kill it
+        let wait_for_exit = thread.update(cx, |thread, cx| {
+            let term = thread.terminals.get(&terminal_id).unwrap();
+            let wait_for_exit = term.read(cx).wait_for_exit();
+            term.update(cx, |term, cx| {
+                term.kill(cx);
+            });
+            wait_for_exit
+        });
+
+        // KEY ASSERTION: wait_for_exit should complete within a reasonable time (not hang).
+        // Before the fix to kill_active_task, this would hang forever because
+        // only the foreground process was killed, not the shell, so the PTY
+        // child never exited and wait_for_completed_task never completed.
+        let exit_result = futures::select! {
+            result = futures::FutureExt::fuse(wait_for_exit) => Some(result),
+            _ = futures::FutureExt::fuse(cx.background_executor.timer(Duration::from_secs(5))) => None,
+        };
+
+        assert!(
+            exit_result.is_some(),
+            "wait_for_exit should complete after kill, but it timed out. \
+            This indicates kill_active_task is not properly killing the shell process."
+        );
+
+        // Give the system a chance to process any pending updates
+        cx.run_until_parked();
+
+        // Verify that the underlying terminal still has the output that was
+        // written before the kill. This verifies that killing doesn't lose output.
+        let inner_content = thread.read_with(cx, |thread, cx| {
+            let term = thread.terminals.get(&terminal_id).unwrap();
+            term.read(cx).inner().read(cx).get_content()
+        });
+
+        assert!(
+            inner_content.contains("output_before_kill"),
+            "Underlying terminal should contain output from before kill, got: {}",
+            inner_content
         );
     }
 
@@ -3553,7 +3821,7 @@ mod tests {
         });
 
         select! {
-            _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(10))) => {
+            _ = futures::FutureExt::fuse(cx.background_executor.timer(Duration::from_secs(10))) => {
                 panic!("Timeout waiting for tool call")
             }
             ix = rx.next().fuse() => {
@@ -3760,6 +4028,9 @@ mod tests {
                         ContentBlock::Empty => panic!("Expected markdown content, got empty"),
                         ContentBlock::ResourceLink { .. } => {
                             panic!("Expected markdown content, got resource link")
+                        }
+                        ContentBlock::Image { .. } => {
+                            panic!("Expected markdown content, got image")
                         }
                     }
                 } else {
@@ -4064,6 +4335,69 @@ mod tests {
         assert_eq!(
             terminal_count, 2,
             "Should have exactly 2 terminals (the completed ones from before checkpoint)"
+        );
+    }
+
+    /// Tests that update_last_checkpoint correctly updates the original message's checkpoint
+    /// even when a new user message is added while the async checkpoint comparison is in progress.
+    ///
+    /// This is a regression test for a bug where update_last_checkpoint would fail with
+    /// "no checkpoint" if a new user message (without a checkpoint) was added between when
+    /// update_last_checkpoint started and when its async closure ran.
+    #[gpui::test]
+    async fn test_update_last_checkpoint_with_new_message_added(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/test"), json!({".git": {}, "file.txt": "content"}))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/test"))], cx).await;
+
+        let handler_done = Arc::new(AtomicBool::new(false));
+        let handler_done_clone = handler_done.clone();
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
+            move |_, _thread, _cx| {
+                handler_done_clone.store(true, SeqCst);
+                async move { Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)) }.boxed_local()
+            },
+        ));
+
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        let send_future = thread.update(cx, |thread, cx| thread.send_raw("First message", cx));
+        let send_task = cx.background_executor.spawn(send_future);
+
+        // Tick until handler completes, then a few more to let update_last_checkpoint start
+        while !handler_done.load(SeqCst) {
+            cx.executor().tick();
+        }
+        for _ in 0..5 {
+            cx.executor().tick();
+        }
+
+        thread.update(cx, |thread, cx| {
+            thread.push_entry(
+                AgentThreadEntry::UserMessage(UserMessage {
+                    id: Some(UserMessageId::new()),
+                    content: ContentBlock::Empty,
+                    chunks: vec!["Injected message (no checkpoint)".into()],
+                    checkpoint: None,
+                    indented: false,
+                }),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+        let result = send_task.await;
+
+        assert!(
+            result.is_ok(),
+            "send should succeed even when new message added during update_last_checkpoint: {:?}",
+            result.err()
         );
     }
 }

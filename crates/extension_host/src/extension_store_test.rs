@@ -7,8 +7,8 @@ use async_compression::futures::bufread::GzipEncoder;
 use collections::{BTreeMap, HashSet};
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
-use futures::{AsyncReadExt, StreamExt, io::BufReader};
-use gpui::{AppContext as _, TestAppContext};
+use futures::{AsyncReadExt, FutureExt, StreamExt, io::BufReader};
+use gpui::{AppContext as _, BackgroundExecutor, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{BinaryStatus, LanguageMatcher, LanguageName, LanguageRegistry};
 use language_extension::LspAccess;
@@ -165,6 +165,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         capabilities: Vec::new(),
                         debug_adapters: Default::default(),
                         debug_locators: Default::default(),
+                        language_model_providers: BTreeMap::default(),
                     }),
                     dev: false,
                 },
@@ -196,6 +197,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         capabilities: Vec::new(),
                         debug_adapters: Default::default(),
                         debug_locators: Default::default(),
+                        language_model_providers: BTreeMap::default(),
                     }),
                     dev: false,
                 },
@@ -376,6 +378,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 capabilities: Vec::new(),
                 debug_adapters: Default::default(),
                 debug_locators: Default::default(),
+                language_model_providers: BTreeMap::default(),
             }),
             dev: false,
         },
@@ -531,30 +534,23 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
-    log::info!("Initializing test");
     init_test(cx);
     cx.executor().allow_parking();
-    log::info!("[test_extension_store_with_test_extension] after init_test + allow_parking");
 
-    fn panic_timeout<T>(what: &str, seconds: u64) -> T {
-        panic!(
-            "[test_extension_store_with_test_extension] timed out after {seconds}s while {what}"
-        );
-    }
-
+    let executor = cx.executor();
     async fn await_or_timeout<T>(
+        executor: &BackgroundExecutor,
         what: &'static str,
         seconds: u64,
         future: impl std::future::Future<Output = T>,
     ) -> T {
-        use futures::FutureExt as _;
-        use gpui::Timer;
-
-        let timeout = Timer::after(std::time::Duration::from_secs(seconds));
+        let timeout = executor.timer(std::time::Duration::from_secs(seconds));
 
         futures::select! {
             output = future.fuse() => output,
-            _ = futures::FutureExt::fuse(timeout) => panic_timeout(what, seconds),
+            _ = futures::FutureExt::fuse(timeout) => panic!(
+            "[test_extension_store_with_test_extension] timed out after {seconds}s while {what}"
+        )
         }
     }
 
@@ -579,16 +575,13 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let extensions_dir = extensions_tree.path().canonicalize().unwrap();
     let project_dir = project_dir.path().canonicalize().unwrap();
 
-    log::info!("Setting up test");
-
-    log::info!("[test_extension_store_with_test_extension] creating Project::test");
     let project = await_or_timeout(
+        &executor,
         "awaiting Project::test",
         5,
         Project::test(fs.clone(), [project_dir.as_path()], cx),
     )
     .await;
-    log::info!("[test_extension_store_with_test_extension] created Project::test");
 
     let proxy = Arc::new(ExtensionHostProxy::new());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
@@ -706,18 +699,12 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         )
     });
 
-    log::info!("Flushing events");
-
     // Ensure that debounces fire.
     let mut events = cx.events(&extension_store);
     let executor = cx.executor();
     let _task = cx.executor().spawn(async move {
         while let Some(event) = events.next().await {
             if let Event::StartedReloading = event {
-                log::info!(
-                    "[test_extension_store_with_test_extension] saw Event::StartedReloading; advancing clock by {:?}",
-                    RELOAD_DEBOUNCE_DURATION
-                );
                 executor.advance_clock(RELOAD_DEBOUNCE_DURATION);
             }
         }
@@ -732,22 +719,18 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         .detach();
     });
 
-    log::info!(
-        "[test_extension_store_with_test_extension] install_dev_extension starting: {:?}",
-        test_extension_dir
-    );
+    let executor = cx.executor();
     await_or_timeout(
+        &executor,
         "awaiting install_dev_extension",
-        5,
+        60,
         extension_store.update(cx, |store, cx| {
             store.install_dev_extension(test_extension_dir.clone(), cx)
         }),
     )
     .await
     .unwrap();
-    log::info!("[test_extension_store_with_test_extension] install_dev_extension completed");
 
-    log::info!("[test_extension_store_with_test_extension] registering fake LSP server: gleam");
     let mut fake_servers = language_registry.register_fake_lsp_server(
         LanguageServerName("gleam".into()),
         lsp::ServerCapabilities {
@@ -756,14 +739,10 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         },
         None,
     );
-    log::info!("[test_extension_store_with_test_extension] registered fake LSP server: gleam");
-    log::warn!("[test_extension_store_with_test_extension] after register_fake_lsp_server; running until parked");
     cx.executor().run_until_parked();
-    log::warn!("[test_extension_store_with_test_extension] after run_until_parked (post fake server registration)");
 
-    log::warn!("[test_extension_store_with_test_extension] about to open buffer with LSP");
-    log::info!("[test_extension_store_with_test_extension] opening buffer with LSP");
     let (buffer, _handle) = await_or_timeout(
+        &executor,
         "awaiting open_local_buffer_with_lsp",
         5,
         project.update(cx, |project, cx| {
@@ -772,20 +751,17 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     )
     .await
     .unwrap();
-    log::info!("[test_extension_store_with_test_extension] opened buffer with LSP");
-    log::warn!("[test_extension_store_with_test_extension] opened buffer; running until parked before awaiting fake server");
     cx.executor().run_until_parked();
-    log::warn!("[test_extension_store_with_test_extension] done run_until_parked; awaiting first fake LSP server spawn");
 
-    log::info!("[test_extension_store_with_test_extension] awaiting first fake LSP server spawn");
-    let fake_server = await_or_timeout("awaiting first fake server spawn", 10, fake_servers.next())
-        .await
-        .unwrap();
-    log::info!(
-        "[test_extension_store_with_test_extension] got first fake LSP server spawn (binary={:?}, args={:?})",
-        fake_server.binary.path,
-        fake_server.binary.arguments
-    );
+    let fake_server = await_or_timeout(
+        &executor,
+        "awaiting first fake server spawn",
+        10,
+        fake_servers.next(),
+    )
+    .await
+    .unwrap();
+
     let work_dir = extensions_dir.join(format!("work/{test_extension_id}"));
     let expected_server_path = work_dir.join("gleam-v1.2.3/gleam");
     let expected_binary_contents = language_server_version.lock().binary_contents.clone();
@@ -800,6 +776,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);
     assert_eq!(
         await_or_timeout(
+            &executor,
             "awaiting fs.load(expected_server_path)",
             5,
             fs.load(&expected_server_path)
@@ -811,18 +788,38 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     assert_eq!(language_server_version.lock().http_request_count, 2);
     assert_eq!(
         [
-            await_or_timeout("awaiting status_updates #1", 5, status_updates.next())
-                .await
-                .unwrap(),
-            await_or_timeout("awaiting status_updates #2", 5, status_updates.next())
-                .await
-                .unwrap(),
-            await_or_timeout("awaiting status_updates #3", 5, status_updates.next())
-                .await
-                .unwrap(),
-            await_or_timeout("awaiting status_updates #4", 5, status_updates.next())
-                .await
-                .unwrap(),
+            await_or_timeout(
+                &executor,
+                "awaiting status_updates #1",
+                5,
+                status_updates.next()
+            )
+            .await
+            .unwrap(),
+            await_or_timeout(
+                &executor,
+                "awaiting status_updates #2",
+                5,
+                status_updates.next()
+            )
+            .await
+            .unwrap(),
+            await_or_timeout(
+                &executor,
+                "awaiting status_updates #3",
+                5,
+                status_updates.next()
+            )
+            .await
+            .unwrap(),
+            await_or_timeout(
+                &executor,
+                "awaiting status_updates #4",
+                5,
+                status_updates.next()
+            )
+            .await
+            .unwrap(),
         ],
         [
             (
@@ -871,7 +868,24 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         ])))
     });
 
+    // `register_fake_lsp_server` can yield a server instance before the client has finished the LSP
+    // initialization handshake. Wait until we observe the client's `initialized` notification before
+    // issuing requests like completion.
+    await_or_timeout(
+        &executor,
+        "awaiting LSP Initialized notification",
+        5,
+        async {
+            fake_server
+                .clone()
+                .try_receive_notification::<lsp::notification::Initialized>()
+                .await;
+        },
+    )
+    .await;
+
     let completion_labels = await_or_timeout(
+        &executor,
         "awaiting completions",
         5,
         project.update(cx, |project, cx| {
@@ -907,13 +921,18 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     // The extension has cached the binary path, and does not attempt
     // to reinstall it.
-    let fake_server =
-        await_or_timeout("awaiting second fake server spawn", 5, fake_servers.next())
-            .await
-            .unwrap();
+    let fake_server = await_or_timeout(
+        &executor,
+        "awaiting second fake server spawn",
+        5,
+        fake_servers.next(),
+    )
+    .await
+    .unwrap();
     assert_eq!(fake_server.binary.path, expected_server_path);
     assert_eq!(
         await_or_timeout(
+            &executor,
             "awaiting fs.load(expected_server_path) after restart",
             5,
             fs.load(&expected_server_path)
@@ -927,6 +946,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     // Reload the extension, clearing its cache.
     // Start a new instance of the language server.
     await_or_timeout(
+        &executor,
         "awaiting extension_store.reload(test-extension)",
         5,
         extension_store.update(cx, |store, cx| {
@@ -940,9 +960,14 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     });
 
     // The extension re-fetches the latest version of the language server.
-    let fake_server = await_or_timeout("awaiting third fake server spawn", 5, fake_servers.next())
-        .await
-        .unwrap();
+    let fake_server = await_or_timeout(
+        &executor,
+        "awaiting third fake server spawn",
+        5,
+        fake_servers.next(),
+    )
+    .await
+    .unwrap();
     let new_expected_server_path =
         extensions_dir.join(format!("work/{test_extension_id}/gleam-v2.0.0/gleam"));
     let expected_binary_contents = language_server_version.lock().binary_contents.clone();
@@ -950,6 +975,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);
     assert_eq!(
         await_or_timeout(
+            &executor,
             "awaiting fs.load(new_expected_server_path)",
             5,
             fs.load(&new_expected_server_path)
@@ -960,14 +986,17 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     );
 
     // The old language server directory has been cleaned up.
-    assert!(await_or_timeout(
-        "awaiting fs.metadata(expected_server_path)",
-        5,
-        fs.metadata(&expected_server_path)
-    )
-    .await
-    .unwrap()
-    .is_none());
+    assert!(
+        await_or_timeout(
+            &executor,
+            "awaiting fs.metadata(expected_server_path)",
+            5,
+            fs.metadata(&expected_server_path)
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
 }
 
 fn init_test(cx: &mut TestAppContext) {

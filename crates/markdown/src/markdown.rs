@@ -8,6 +8,7 @@ use language::LanguageName;
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
 use ui::Checkbox;
+use ui::CopyButton;
 
 use std::borrow::Cow;
 use std::iter;
@@ -22,9 +23,9 @@ use collections::{HashMap, HashSet};
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
-    ImageFormat, KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Point, ScrollHandle, Stateful, StrikethroughStyle, StyleRefinement, StyledText, Task,
-    TextLayout, TextRun, TextStyle, TextStyleRefinement, actions, img, point, quad,
+    ImageFormat, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent, MouseMoveEvent,
+    MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle, StyleRefinement, StyledText,
+    Task, TextLayout, TextRun, TextStyle, TextStyleRefinement, actions, img, point, quad,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -32,7 +33,7 @@ use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse
 use pulldown_cmark::Alignment;
 use sum_tree::TreeMap;
 use theme::SyntaxTheme;
-use ui::{ScrollAxes, Scrollbars, Tooltip, WithScrollbar, prelude::*};
+use ui::{ScrollAxes, Scrollbars, WithScrollbar, prelude::*};
 use util::ResultExt;
 
 use crate::parser::CodeBlockKind;
@@ -112,6 +113,7 @@ pub struct Markdown {
     options: Options,
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: HashMap<usize, ScrollHandle>,
+    context_menu_selected_text: Option<String>,
 }
 
 struct Options {
@@ -181,6 +183,7 @@ impl Markdown {
             },
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: HashMap::default(),
+            context_menu_selected_text: None,
         };
         this.parse(cx);
         this
@@ -205,6 +208,7 @@ impl Markdown {
             },
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: HashMap::default(),
+            context_menu_selected_text: None,
         };
         this.parse(cx);
         this
@@ -289,6 +293,14 @@ impl Markdown {
         }
     }
 
+    pub fn selected_text(&self) -> Option<String> {
+        if self.selection.end <= self.selection.start {
+            None
+        } else {
+            Some(self.source[self.selection.start..self.selection.end].to_string())
+        }
+    }
+
     fn copy(&self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
         if self.selection.end <= self.selection.start {
             return;
@@ -297,12 +309,20 @@ impl Markdown {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
-    fn copy_as_markdown(&self, _: &mut Window, cx: &mut Context<Self>) {
+    fn copy_as_markdown(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = self.context_menu_selected_text.take() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+            return;
+        }
         if self.selection.end <= self.selection.start {
             return;
         }
         let text = self.source[self.selection.start..self.selection.end].to_string();
         cx.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+
+    fn capture_selection_for_context_menu(&mut self) {
+        self.context_menu_selected_text = self.selected_text();
     }
 
     fn parse(&mut self, cx: &mut Context<Self>) {
@@ -666,6 +686,19 @@ impl MarkdownElement {
         let on_open_url = self.on_url_click.take();
 
         self.on_mouse_event(window, cx, {
+            let hitbox = hitbox.clone();
+            move |markdown, event: &MouseDownEvent, phase, window, _| {
+                if phase.capture()
+                    && event.button == MouseButton::Right
+                    && hitbox.is_hovered(window)
+                {
+                    // Capture selected text so it survives until menu item is clicked
+                    markdown.capture_selection_for_context_menu();
+                }
+            }
+        });
+
+        self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
             let hitbox = hitbox.clone();
             move |markdown, event: &MouseDownEvent, phase, window, cx| {
@@ -713,7 +746,7 @@ impl MarkdownElement {
                         window.prevent_default();
                         cx.notify();
                     }
-                } else if phase.capture() {
+                } else if phase.capture() && event.button == MouseButton::Left {
                     markdown.selection = Selection::default();
                     markdown.pressed_link = None;
                     cx.notify();
@@ -1170,7 +1203,6 @@ impl Element for MarkdownElement {
                                     range.end,
                                     code,
                                     self.markdown.clone(),
-                                    cx,
                                 );
                                 el.child(
                                     h_flex()
@@ -1201,7 +1233,6 @@ impl Element for MarkdownElement {
                                     range.end,
                                     code,
                                     self.markdown.clone(),
-                                    cx,
                                 );
                                 el.child(
                                     h_flex()
@@ -1417,26 +1448,12 @@ fn render_copy_code_block_button(
     id: usize,
     code: String,
     markdown: Entity<Markdown>,
-    cx: &App,
 ) -> impl IntoElement {
     let id = ElementId::named_usize("copy-markdown-code", id);
-    let was_copied = markdown.read(cx).copied_code_blocks.contains(&id);
-    IconButton::new(
-        id.clone(),
-        if was_copied {
-            IconName::Check
-        } else {
-            IconName::Copy
-        },
-    )
-    .icon_color(Color::Muted)
-    .icon_size(IconSize::Small)
-    .style(ButtonStyle::Filled)
-    .shape(ui::IconButtonShape::Square)
-    .tooltip(Tooltip::text("Copy"))
-    .on_click({
+
+    CopyButton::new(code.clone()).custom_on_click({
         let markdown = markdown;
-        move |_event, _window, cx| {
+        move |_window, cx| {
             let id = id.clone();
             markdown.update(cx, |this, cx| {
                 this.copied_code_blocks.insert(id.clone());
@@ -1812,6 +1829,40 @@ impl RenderedLine {
         mapping.source_index + (rendered_index - mapping.rendered_index)
     }
 
+    /// Returns the source index for use as an exclusive range end at a word/selection boundary.
+    /// When the rendered index is exactly at the start of a segment with a gap from the previous
+    /// segment (e.g., after stripped markdown syntax like backticks), this returns the end of the
+    /// previous segment rather than the start of the current one.
+    fn source_index_for_exclusive_rendered_end(&self, rendered_index: usize) -> usize {
+        if rendered_index >= self.layout.len() {
+            return self.source_end;
+        }
+
+        let ix = match self
+            .source_mappings
+            .binary_search_by_key(&rendered_index, |probe| probe.rendered_index)
+        {
+            Ok(ix) => ix,
+            Err(ix) => {
+                return self.source_mappings[ix - 1].source_index
+                    + (rendered_index - self.source_mappings[ix - 1].rendered_index);
+            }
+        };
+
+        // Exact match at the start of a segment. Check if there's a gap from the previous segment.
+        if ix > 0 {
+            let prev_mapping = &self.source_mappings[ix - 1];
+            let mapping = &self.source_mappings[ix];
+            let prev_segment_len = mapping.rendered_index - prev_mapping.rendered_index;
+            let prev_source_end = prev_mapping.source_index + prev_segment_len;
+            if prev_source_end < mapping.source_index {
+                return prev_source_end;
+            }
+        }
+
+        self.source_mappings[ix].source_index
+    }
+
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
         let line_rendered_index;
         let out_of_bounds;
@@ -1918,7 +1969,7 @@ impl RenderedText {
             };
 
             return line.source_index_for_rendered_index(line_rendered_start + previous_space)
-                ..line.source_index_for_rendered_index(line_rendered_start + next_space);
+                ..line.source_index_for_exclusive_rendered_end(line_rendered_start + next_space);
         }
 
         source_index..source_index
@@ -2189,6 +2240,31 @@ mod tests {
         let word_range = rendered.surrounding_word_range(51); // Inside "code"
         let selected_text = rendered.text_for_range(word_range);
         assert_eq!(selected_text, "code");
+    }
+
+    #[gpui::test]
+    fn test_inline_code_word_selection_excludes_backticks(cx: &mut TestAppContext) {
+        // Test that double-clicking on inline code selects just the code content,
+        // not the backticks. This verifies the fix for the bug where selecting
+        // inline code would include the trailing backtick.
+        let rendered = render_markdown("use `blah` here", cx);
+
+        // Source layout: "use `blah` here"
+        //                 0123456789...
+        // The inline code "blah" is at source positions 5-8 (content range 5..9)
+
+        // Click inside "blah" - should select just "blah", not "blah`"
+        let word_range = rendered.surrounding_word_range(6); // 'l' in "blah"
+
+        // text_for_range extracts from the rendered text (without backticks), so it
+        // would return "blah" even with a wrong source range. We check it anyway.
+        let selected_text = rendered.text_for_range(word_range.clone());
+        assert_eq!(selected_text, "blah");
+
+        // The source range is what matters for copy_as_markdown and selected_text,
+        // which extract directly from the source. With the bug, this would be 5..10
+        // which includes the closing backtick at position 9.
+        assert_eq!(word_range, 5..9);
     }
 
     #[gpui::test]

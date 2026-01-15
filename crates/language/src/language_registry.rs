@@ -228,7 +228,6 @@ pub const QUERY_FILENAME_PREFIXES: &[(
     ("brackets", |q| &mut q.brackets),
     ("outline", |q| &mut q.outline),
     ("indents", |q| &mut q.indents),
-    ("embedding", |q| &mut q.embedding),
     ("injections", |q| &mut q.injections),
     ("overrides", |q| &mut q.overrides),
     ("redactions", |q| &mut q.redactions),
@@ -245,7 +244,6 @@ pub struct LanguageQueries {
     pub brackets: Option<Cow<'static, str>>,
     pub indents: Option<Cow<'static, str>>,
     pub outline: Option<Cow<'static, str>>,
-    pub embedding: Option<Cow<'static, str>>,
     pub injections: Option<Cow<'static, str>>,
     pub overrides: Option<Cow<'static, str>>,
     pub redactions: Option<Cow<'static, str>>,
@@ -408,6 +406,12 @@ impl LanguageRegistry {
         let load_lsp_adapter = state.available_lsp_adapters.get(name)?;
 
         Some(load_lsp_adapter())
+    }
+
+    /// Checks if a language server adapter with the given name is available to be loaded.
+    pub fn is_lsp_adapter_available(&self, name: &LanguageServerName) -> bool {
+        let state = self.state.read();
+        state.available_lsp_adapters.contains_key(name)
     }
 
     pub fn register_lsp_adapter(&self, language_name: LanguageName, adapter: Arc<dyn LspAdapter>) {
@@ -1134,22 +1138,8 @@ impl LanguageRegistry {
         binary: lsp::LanguageServerBinary,
         cx: &mut gpui::AsyncApp,
     ) -> Option<lsp::LanguageServer> {
-        log::warn!(
-            "[language::language_registry] create_fake_language_server: called name={} id={} path={:?} args={:?}",
-            name.0,
-            server_id,
-            binary.path,
-            binary.arguments
-        );
-
         let mut state = self.state.write();
-        let Some(fake_entry) = state.fake_server_entries.get_mut(name) else {
-            log::warn!(
-                "[language::language_registry] create_fake_language_server: no fake server entry registered for {}",
-                name.0
-            );
-            return None;
-        };
+        let fake_entry = state.fake_server_entries.get_mut(name)?;
 
         let (server, mut fake_server) = lsp::FakeLanguageServer::new(
             server_id,
@@ -1164,18 +1154,9 @@ impl LanguageRegistry {
             initializer(&mut fake_server);
         }
 
-        let server_name = name.0.to_string();
-        log::info!(
-            "[language_registry] create_fake_language_server: created fake server for {server_name}, emitting synchronously (tests must not depend on LSP task scheduling)"
-        );
-
         // Emit synchronously so tests can reliably observe server creation even if the LSP startup
         // task hasn't progressed to initialization yet.
-        if fake_entry.tx.unbounded_send(fake_server).is_err() {
-            log::warn!(
-                "[language_registry] create_fake_language_server: failed to send fake server for {server_name} (receiver dropped)"
-            );
-        }
+        fake_entry.tx.unbounded_send(fake_server).ok();
 
         Some(server)
     }
@@ -1209,7 +1190,7 @@ impl LanguageRegistryState {
             language.set_theme(theme.syntax());
         }
         self.language_settings.languages.0.insert(
-            language.name().0,
+            language.name().0.to_string(),
             LanguageSettingsContent {
                 tab_size: language.config.tab_size,
                 hard_tabs: language.config.hard_tabs,

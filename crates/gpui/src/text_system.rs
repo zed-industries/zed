@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
-    StrikethroughStyle, UnderlineStyle, px,
+    StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
 };
 use anyhow::{Context as _, anyhow};
 use collections::FxHashMap;
@@ -405,6 +405,17 @@ impl TextSystem {
         let raster_bounds = self.raster_bounds(params)?;
         self.platform_text_system
             .rasterize_glyph(params, raster_bounds)
+    }
+
+    /// Returns the text rendering mode recommended by the platform for the given font and size.
+    /// The return value will never be [`TextRenderingMode::PlatformDefault`].
+    pub(crate) fn recommended_rendering_mode(
+        &self,
+        font_id: FontId,
+        font_size: Pixels,
+    ) -> TextRenderingMode {
+        self.platform_text_system
+            .recommended_rendering_mode(font_id, font_size)
     }
 }
 
@@ -1155,6 +1166,8 @@ pub struct RenderGlyphParams {
     pub scale_factor: f32,
     /// Whether this glyph is an emoji (affects rendering path).
     pub is_emoji: bool,
+    /// Whether subpixel rendering is enabled.
+    pub subpixel_rendering: bool,
 }
 
 impl Eq for RenderGlyphParams {}
@@ -1167,6 +1180,7 @@ impl Hash for RenderGlyphParams {
         self.subpixel_variant.hash(state);
         self.scale_factor.to_bits().hash(state);
         self.is_emoji.hash(state);
+        self.subpixel_rendering.hash(state);
     }
 }
 

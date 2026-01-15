@@ -43,8 +43,7 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, File};
 use language_model::{
-    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    Role, ZED_CLOUD_PROVIDER_ID,
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use menu;
 use multi_buffer::ExcerptInfo;
@@ -58,7 +57,7 @@ use project::{
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
     project_settings::{GitPathStyle, ProjectSettings},
 };
-use prompt_store::{PromptId, PromptStore, RULES_FILE_NAMES};
+use prompt_store::{BuiltInPrompt, PromptId, PromptStore, RULES_FILE_NAMES};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
 use std::future::Future;
@@ -1277,7 +1276,7 @@ impl GitPanel {
                     .ok_or_else(|| anyhow::anyhow!("Failed to open file"))?;
                 if let Some(active_editor) = item.downcast::<Editor>() {
                     if let Some(diff_task) =
-                        active_editor.update(cx, |editor, _cx| editor.wait_for_diff_to_load())?
+                        active_editor.update(cx, |editor, _cx| editor.wait_for_diff_to_load())
                     {
                         diff_task.await;
                     }
@@ -1295,7 +1294,8 @@ impl GitPanel {
                                 cx,
                             );
                         })
-                    })?;
+                    })
+                    .log_err();
                 }
 
                 anyhow::Ok(())
@@ -1382,7 +1382,7 @@ impl GitPanel {
 
                 let gitignore_abs_path = repo_root.join(".gitignore");
 
-                let buffer = project
+                let buffer: Entity<Buffer> = project
                     .update(cx, |project, cx| {
                         project.open_local_buffer(gitignore_abs_path, cx)
                     })?
@@ -1394,7 +1394,7 @@ impl GitPanel {
 
                     if existing_content
                         .lines()
-                        .any(|line| line.trim() == file_path_str)
+                        .any(|line: &str| line.trim() == file_path_str)
                     {
                         return;
                     }
@@ -1410,7 +1410,7 @@ impl GitPanel {
 
                     buffer.edit([(insert_position..insert_position, new_entry)], None, cx);
                     should_save = true;
-                })?;
+                });
 
                 if should_save {
                     project
@@ -1932,7 +1932,7 @@ impl GitPanel {
         cx.spawn({
             async move |this, cx| {
                 let stash_task = active_repository
-                    .update(cx, |repo, cx| repo.stash_pop(None, cx))?
+                    .update(cx, |repo, cx| repo.stash_pop(None, cx))
                     .await;
                 this.update(cx, |this, cx| {
                     stash_task
@@ -1955,7 +1955,7 @@ impl GitPanel {
         cx.spawn({
             async move |this, cx| {
                 let stash_task = active_repository
-                    .update(cx, |repo, cx| repo.stash_apply(None, cx))?
+                    .update(cx, |repo, cx| repo.stash_apply(None, cx))
                     .await;
                 this.update(cx, |this, cx| {
                     stash_task
@@ -1978,7 +1978,7 @@ impl GitPanel {
         cx.spawn({
             async move |this, cx| {
                 let stash_task = active_repository
-                    .update(cx, |repo, cx| repo.stash_all(cx))?
+                    .update(cx, |repo, cx| repo.stash_all(cx))
                     .await;
                 this.update(cx, |this, cx| {
                     stash_task
@@ -2275,7 +2275,7 @@ impl GitPanel {
                 stage_task.await?;
                 let commit_task = active_repository.update(cx, |repo, cx| {
                     repo.commit(message.into(), None, options, askpass, cx)
-                })?;
+                });
                 commit_task.await?
             })
         };
@@ -2319,7 +2319,7 @@ impl GitPanel {
 
                     repo.update(cx, |repo, cx| {
                         repo.reset("HEAD^".to_string(), ResetMode::Soft, cx)
-                    })?
+                    })
                     .await??;
 
                     Ok(Some(prior_head))
@@ -2359,7 +2359,7 @@ impl GitPanel {
             let repo = repo.context("No active repository")?;
 
             let pushed_to: Vec<SharedString> = repo
-                .update(&mut cx, |repo, _| repo.check_for_pushed_commits())?
+                .update(&mut cx, |repo, _| repo.check_for_pushed_commits())
                 .await??;
 
             if pushed_to.is_empty() {
@@ -2530,41 +2530,37 @@ impl GitPanel {
         repo_work_dir: &Arc<Path>,
         cx: &mut AsyncApp,
     ) -> Option<String> {
-        let rules_path = cx
-            .update(|cx| {
-                for worktree in project.read(cx).worktrees(cx) {
-                    let worktree_abs_path = worktree.read(cx).abs_path();
-                    if !worktree_abs_path.starts_with(&repo_work_dir) {
-                        continue;
-                    }
+        let rules_path = cx.update(|cx| {
+            for worktree in project.read(cx).worktrees(cx) {
+                let worktree_abs_path = worktree.read(cx).abs_path();
+                if !worktree_abs_path.starts_with(&repo_work_dir) {
+                    continue;
+                }
 
-                    let worktree_snapshot = worktree.read(cx).snapshot();
-                    for rules_name in RULES_FILE_NAMES {
-                        if let Ok(rel_path) = RelPath::unix(rules_name) {
-                            if let Some(entry) = worktree_snapshot.entry_for_path(rel_path) {
-                                if entry.is_file() {
-                                    return Some(ProjectPath {
-                                        worktree_id: worktree.read(cx).id(),
-                                        path: entry.path.clone(),
-                                    });
-                                }
+                let worktree_snapshot = worktree.read(cx).snapshot();
+                for rules_name in RULES_FILE_NAMES {
+                    if let Ok(rel_path) = RelPath::unix(rules_name) {
+                        if let Some(entry) = worktree_snapshot.entry_for_path(rel_path) {
+                            if entry.is_file() {
+                                return Some(ProjectPath {
+                                    worktree_id: worktree.read(cx).id(),
+                                    path: entry.path.clone(),
+                                });
                             }
                         }
                     }
                 }
-                None
-            })
-            .ok()??;
+            }
+            None
+        })?;
 
         let buffer = project
             .update(cx, |project, cx| project.open_buffer(rules_path, cx))
-            .ok()?
             .await
             .ok()?;
 
         let content = buffer
             .read_with(cx, |buffer, _| buffer.text())
-            .ok()?
             .trim()
             .to_string();
 
@@ -2575,29 +2571,18 @@ impl GitPanel {
         }
     }
 
-    async fn load_commit_message_prompt(
-        is_using_legacy_zed_pro: bool,
-        cx: &mut AsyncApp,
-    ) -> String {
-        const DEFAULT_PROMPT: &str = include_str!("commit_message_prompt.txt");
-
-        // Remove this once we stop supporting legacy Zed Pro
-        // In legacy Zed Pro, Git commit summary generation did not count as a
-        // prompt. If the user changes the prompt, our classification will fail,
-        // meaning that users will be charged for generating commit messages.
-        if is_using_legacy_zed_pro {
-            return DEFAULT_PROMPT.to_string();
-        }
-
+    async fn load_commit_message_prompt(cx: &mut AsyncApp) -> String {
         let load = async {
-            let store = cx.update(|cx| PromptStore::global(cx)).ok()?.await.ok()?;
+            let store = cx.update(|cx| PromptStore::global(cx)).await.ok()?;
             store
-                .update(cx, |s, cx| s.load(PromptId::CommitMessage, cx))
-                .ok()?
+                .update(cx, |s, cx| {
+                    s.load(PromptId::BuiltIn(BuiltInPrompt::CommitMessage), cx)
+                })
                 .await
                 .ok()
         };
-        load.await.unwrap_or_else(|| DEFAULT_PROMPT.to_string())
+        load.await
+            .unwrap_or_else(|| BuiltInPrompt::CommitMessage.default_content().to_string())
     }
 
     /// Generates a commit message using an LLM.
@@ -2630,13 +2615,6 @@ impl GitPanel {
         let project = self.project.clone();
         let repo_work_dir = repo.read(cx).work_directory_abs_path.clone();
 
-        // Remove this once we stop supporting legacy Zed Pro
-        let is_using_legacy_zed_pro = provider.id() == ZED_CLOUD_PROVIDER_ID
-            && self.workspace.upgrade().map_or(false, |workspace| {
-                workspace.read(cx).user_store().read(cx).plan()
-                    == Some(cloud_llm_client::Plan::V1(cloud_llm_client::PlanV1::ZedPro))
-            });
-
         self.generate_commit_message_task = Some(cx.spawn(async move |this, mut cx| {
              async move {
                 let _defer = cx.on_drop(&this, |this, _cx| {
@@ -2649,9 +2627,9 @@ impl GitPanel {
                     } else {
                         None
                     }
-                })? {
+                }) {
                     task.await.log_err();
-                };
+                }
 
                 let mut diff_text = match diff.await {
                     Ok(result) => match result {
@@ -2672,7 +2650,7 @@ impl GitPanel {
 
                 let rules_content = Self::load_project_rules(&project, &repo_work_dir, &mut cx).await;
 
-                let prompt = Self::load_commit_message_prompt(is_using_legacy_zed_pro, &mut cx).await;
+                let prompt = Self::load_commit_message_prompt(&mut cx).await;
 
                 let subject = this.update(cx, |this, cx| {
                     this.commit_editor.read(cx).text(cx).lines().next().map(ToOwned::to_owned).unwrap_or_default()
@@ -2768,7 +2746,6 @@ impl GitPanel {
             let repo = repo?;
             let remotes = repo
                 .update(cx, |repo, _| repo.get_remotes(None, false))
-                .ok()?
                 .await
                 .ok()?
                 .log_err()?;
@@ -2823,7 +2800,7 @@ impl GitPanel {
                 };
                 let fetch = repo.update(cx, |repo, cx| {
                     repo.fetch(fetch_options.clone(), askpass, cx)
-                })?;
+                });
 
                 let remote_message = fetch.await?;
                 this.update(cx, |this, cx| {
@@ -2848,93 +2825,15 @@ impl GitPanel {
     }
 
     pub(crate) fn git_clone(&mut self, repo: String, window: &mut Window, cx: &mut Context<Self>) {
-        let path = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Select as Repository Destination".into()),
-        });
-
         let workspace = self.workspace.clone();
 
-        cx.spawn_in(window, async move |this, cx| {
-            let mut paths = path.await.ok()?.ok()??;
-            let mut path = paths.pop()?;
-            let repo_name = repo.split("/").last()?.strip_suffix(".git")?.to_owned();
-
-            let fs = this.read_with(cx, |this, _| this.fs.clone()).ok()?;
-
-            let prompt_answer = match fs.git_clone(&repo, path.as_path()).await {
-                Ok(_) => cx.update(|window, cx| {
-                    window.prompt(
-                        PromptLevel::Info,
-                        &format!("Git Clone: {}", repo_name),
-                        None,
-                        &["Add repo to project", "Open repo in new project"],
-                        cx,
-                    )
-                }),
-                Err(e) => {
-                    this.update(cx, |this: &mut GitPanel, cx| {
-                        let toast = StatusToast::new(e.to_string(), cx, |this, _| {
-                            this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                                .dismiss_button(true)
-                        });
-
-                        this.workspace
-                            .update(cx, |workspace, cx| {
-                                workspace.toggle_status_toast(toast, cx);
-                            })
-                            .ok();
-                    })
-                    .ok()?;
-
-                    return None;
-                }
-            }
-            .ok()?;
-
-            path.push(repo_name);
-            match prompt_answer.await.ok()? {
-                0 => {
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            workspace
-                                .project()
-                                .update(cx, |project, cx| {
-                                    project.create_worktree(path.as_path(), true, cx)
-                                })
-                                .detach();
-                        })
-                        .ok();
-                }
-                1 => {
-                    workspace
-                        .update(cx, move |workspace, cx| {
-                            workspace::open_new(
-                                Default::default(),
-                                workspace.app_state().clone(),
-                                cx,
-                                move |workspace, _, cx| {
-                                    cx.activate(true);
-                                    workspace
-                                        .project()
-                                        .update(cx, |project, cx| {
-                                            project.create_worktree(&path, true, cx)
-                                        })
-                                        .detach();
-                                },
-                            )
-                            .detach();
-                        })
-                        .ok();
-                }
-                _ => {}
-            }
-
-            Some(())
-        })
-        .detach();
+        crate::clone::clone_and_open(
+            repo.into(),
+            workspace,
+            window,
+            cx,
+            Arc::new(|_workspace: &mut workspace::Workspace, _window, _cx| {}),
+        );
     }
 
     pub(crate) fn git_init(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3057,7 +2956,7 @@ impl GitPanel {
 
             let pull = repo.update(cx, |repo, cx| {
                 repo.pull(branch_name, remote.name.clone(), rebase, askpass, cx)
-            })?;
+            });
 
             let remote_message = pull.await?;
 
@@ -3130,12 +3029,20 @@ impl GitPanel {
             let push = repo.update(cx, |repo, cx| {
                 repo.push(
                     branch.name().to_owned().into(),
+                    branch
+                        .upstream
+                        .as_ref()
+                        .filter(|u| matches!(u.tracking, UpstreamTracking::Tracked(_)))
+                        .and_then(|u| u.branch_name())
+                        .unwrap_or_else(|| branch.name())
+                        .to_owned()
+                        .into(),
                     remote.name.clone(),
                     options,
                     askpass_delegate,
                     cx,
                 )
-            })?;
+            });
 
             let remote_output = push.await?;
 
@@ -3151,6 +3058,68 @@ impl GitPanel {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    pub fn create_pull_request(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let result = (|| -> anyhow::Result<()> {
+            let repo = self
+                .active_repository
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("No active repository"))?;
+
+            let (branch, remote_origin, remote_upstream) = {
+                let repository = repo.read(cx);
+                (
+                    repository.branch.clone(),
+                    repository.remote_origin_url.clone(),
+                    repository.remote_upstream_url.clone(),
+                )
+            };
+
+            let branch = branch.ok_or_else(|| anyhow::anyhow!("No active branch"))?;
+            let source_branch = branch
+                .upstream
+                .as_ref()
+                .filter(|upstream| matches!(upstream.tracking, UpstreamTracking::Tracked(_)))
+                .and_then(|upstream| upstream.branch_name())
+                .ok_or_else(|| anyhow::anyhow!("No remote configured for repository"))?;
+            let source_branch = source_branch.to_string();
+
+            let remote_url = branch
+                .upstream
+                .as_ref()
+                .and_then(|upstream| match upstream.remote_name() {
+                    Some("upstream") => remote_upstream.as_deref(),
+                    Some(_) => remote_origin.as_deref(),
+                    None => None,
+                })
+                .or(remote_origin.as_deref())
+                .or(remote_upstream.as_deref())
+                .ok_or_else(|| anyhow::anyhow!("No remote configured for repository"))?;
+            let remote_url = remote_url.to_string();
+
+            let provider_registry = GitHostingProviderRegistry::global(cx);
+            let Some((provider, parsed_remote)) =
+                git::parse_git_remote_url(provider_registry, &remote_url)
+            else {
+                return Err(anyhow::anyhow!("Unsupported remote URL: {}", remote_url));
+            };
+
+            let Some(url) = provider.build_create_pull_request_url(&parsed_remote, &source_branch)
+            else {
+                return Err(anyhow::anyhow!("Unable to construct pull request URL"));
+            };
+
+            cx.open_url(url.as_str());
+            Ok(())
+        })();
+
+        if let Err(err) = result {
+            log::error!("Error while creating pull request {:?}", err);
+            cx.defer_in(window, |panel, _window, cx| {
+                panel.show_error_toast("create pull request", err, cx);
+            });
+        }
     }
 
     fn askpass_delegate(
@@ -3203,7 +3172,7 @@ impl GitPanel {
                         Some(current_branch.name().to_string())
                     };
                     anyhow::Ok(repo.get_remotes(current_branch, is_push))
-                })??
+                })?
                 .await??;
 
             let current_remotes: Vec<_> = current_remotes
@@ -3715,7 +3684,7 @@ impl GitPanel {
             self.entry_count += 1;
             let is_staging_or_staged = GitPanel::stage_status_for_entry(status_entry, repo)
                 .as_bool()
-                .unwrap_or(false);
+                .unwrap_or(true);
 
             if repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path) {
                 self.conflicted_count += 1;
@@ -3783,7 +3752,12 @@ impl GitPanel {
         }
     }
 
-    fn show_remote_output(&self, action: RemoteAction, info: RemoteCommandOutput, cx: &mut App) {
+    fn show_remote_output(
+        &mut self,
+        action: RemoteAction,
+        info: RemoteCommandOutput,
+        cx: &mut Context<Self>,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -3912,11 +3886,7 @@ impl GitPanel {
         &self,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        if !agent_settings::AgentSettings::get_global(cx).enabled(cx)
-            || LanguageModelRegistry::read_global(cx)
-                .commit_message_model()
-                .is_none()
-        {
+        if !agent_settings::AgentSettings::get_global(cx).enabled(cx) {
             return None;
         }
 
@@ -3931,7 +3901,7 @@ impl GitPanel {
                             .with_rotate_animation(2),
                     )
                     .child(
-                        Label::new("Generating Commit...")
+                        Label::new("Generating Commit…")
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
@@ -3939,25 +3909,37 @@ impl GitPanel {
             );
         }
 
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let has_commit_model_configuration_error = model_registry
+            .configuration_error(model_registry.commit_message_model(), cx)
+            .is_some();
         let can_commit = self.can_commit();
+
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
+
         Some(
             IconButton::new("generate-commit-message", IconName::AiEdit)
                 .shape(ui::IconButtonShape::Square)
-                .icon_color(Color::Muted)
+                .icon_color(if has_commit_model_configuration_error {
+                    Color::Disabled
+                } else {
+                    Color::Muted
+                })
                 .tooltip(move |_window, cx| {
-                    if can_commit {
+                    if !can_commit {
+                        Tooltip::simple("No Changes to Commit", cx)
+                    } else if has_commit_model_configuration_error {
+                        Tooltip::simple("Configure an LLM provider to generate commit messages", cx)
+                    } else {
                         Tooltip::for_action_in(
                             "Generate Commit Message",
                             &git::GenerateCommitMessage,
                             &editor_focus_handle,
                             cx,
                         )
-                    } else {
-                        Tooltip::simple("No changes to commit", cx)
                     }
                 })
-                .disabled(!can_commit)
+                .disabled(!can_commit || has_commit_model_configuration_error)
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.generate_commit_message(cx);
                 }))
@@ -4444,23 +4426,24 @@ impl GitPanel {
 
         Some(
             h_flex()
-                .py_1p5()
-                .px_2()
+                .p_1p5()
                 .gap_1p5()
                 .justify_between()
                 .border_t_1()
                 .border_color(cx.theme().colors().border.opacity(0.8))
                 .child(
                     div()
+                        .id("commit-msg-hover")
+                        .px_1()
                         .cursor_pointer()
-                        .overflow_hidden()
                         .line_clamp(1)
+                        .rounded_sm()
+                        .hover(|s| s.bg(cx.theme().colors().element_hover))
                         .child(
                             Label::new(commit.subject.clone())
                                 .size(LabelSize::Small)
                                 .truncate(),
                         )
-                        .id("commit-msg-hover")
                         .on_click({
                             let commit = commit.clone();
                             let repo = active_repository.downgrade();
@@ -4492,7 +4475,7 @@ impl GitPanel {
                 )
                 .when(commit.has_parent, |this| {
                     let has_unstaged = self.has_unstaged_changes();
-                    this.child(
+                    this.pr_2().child(
                         panel_icon_button("undo", IconName::Undo)
                             .icon_size(IconSize::XSmall)
                             .icon_color(Color::Muted)
@@ -5280,7 +5263,7 @@ impl GitPanel {
 
                 this.child(
                     self.entry_label(path_name, path_color)
-                        .truncate()
+                        .truncate_start()
                         .when(strikethrough, Label::strikethrough),
                 )
             })
@@ -5628,7 +5611,7 @@ impl GitPanelMessageTooltip {
                         git_panel.load_commit_details(sha.to_string(), cx),
                         git_panel.workspace.clone(),
                     )
-                })?;
+                });
                 let details = details.await?;
                 let provider_registry = cx
                     .update(|_, app| GitHostingProviderRegistry::default_global(app))
@@ -5815,7 +5798,7 @@ impl RenderOnce for PanelRepoFooter {
             .menu(move |window, cx| {
                 let workspace = workspace.clone()?;
                 let repo = repo.clone().flatten();
-                Some(branch_picker::popover(workspace, repo, window, cx))
+                Some(branch_picker::popover(workspace, false, repo, window, cx))
             })
             .trigger_with_tooltip(
                 branch_selector_button,
