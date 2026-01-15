@@ -299,15 +299,26 @@ impl SerializedPane {
         }
 
         let mut items = Vec::new();
-        for item_handle in futures::future::join_all(item_tasks).await {
+        for (index, item_handle) in futures::future::join_all(item_tasks)
+            .await
+            .into_iter()
+            .enumerate()
+        {
             let item_handle = item_handle.log_err();
             items.push(item_handle.clone());
 
-            if let Some(item_handle) = item_handle {
-                pane.update_in(cx, |pane, window, cx| {
-                    pane.add_item(item_handle.clone(), true, true, None, window, cx);
-                })?;
-            }
+            let Some(item_handle) = item_handle else {
+                continue;
+            };
+
+            pane.update_in(cx, |pane, window, cx| {
+                if let Some(preview_item_index) = preview_item_index
+                    && index == preview_item_index
+                {
+                    pane.set_preview_item_id(Some(item_handle.item_id()), cx);
+                }
+                pane.add_item(item_handle.clone(), true, true, None, window, cx);
+            })?;
         }
 
         if let Some(active_item_index) = active_item_index {
@@ -316,13 +327,6 @@ impl SerializedPane {
             })?;
         }
 
-        if let Some(preview_item_index) = preview_item_index {
-            pane.update(cx, |pane, cx| {
-                if let Some(item) = pane.item_for_index(preview_item_index) {
-                    pane.set_preview_item_id(Some(item.item_id()), cx);
-                }
-            })?;
-        }
         pane.update(cx, |pane, _| {
             pane.set_pinned_count(self.pinned_count.min(items.len()));
         })?;
