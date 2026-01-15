@@ -54,8 +54,8 @@ use {
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
     gpui::{
-        App, AppContext as _, Bounds, Entity, KeyBinding, Modifiers, SharedString,
-        VisualTestAppContext, WindowBounds, WindowHandle, WindowOptions, point, px, size,
+        point, px, size, App, AppContext as _, Bounds, Entity, KeyBinding, Modifiers, SharedString,
+        VisualTestAppContext, WindowBounds, WindowHandle, WindowOptions,
     },
     image::RgbaImage,
     project_panel::ProjectPanel,
@@ -67,8 +67,8 @@ use {
         sync::Arc,
         time::Duration,
     },
-    terminal::TerminalBuilder,
     terminal::terminal_settings::{AlternateScroll, CursorShape},
+    terminal::TerminalBuilder,
     terminal_view::TerminalView,
     watch,
     workspace::{AppState, Workspace},
@@ -1705,7 +1705,7 @@ fn run_subagent_visual_tests(
     update_baseline: bool,
 ) -> Result<TestResult> {
     use acp_thread::{
-        AcpThread, SUBAGENT_TOOL_NAME, ToolCallUpdateSubagentThread, meta_with_tool_name,
+        meta_with_tool_name, AcpThread, ToolCallUpdateSubagentThread, SUBAGENT_TOOL_NAME,
     };
     use agent_ui::AgentPanel;
 
@@ -2488,7 +2488,7 @@ fn capture_terminal_cursor_screenshot(
         cx.new(|cx| {
             let mut view = TerminalView::new(
                 terminal.clone(),
-                workspace_entity.downgrade().into(),
+                workspace_entity.downgrade(),
                 None,
                 project.downgrade(),
                 window,
