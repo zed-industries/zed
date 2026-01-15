@@ -3969,6 +3969,54 @@ impl Window {
             return;
         }
 
+        // Check for user-configured mouse bindings before dispatching to listeners.
+        // Mouse bindings are checked on MouseDownEvent (not MouseUp or Click).
+        // The dispatch path is based on focus (like keyboard bindings), not mouse position.
+        if let Some(mouse_down) = event.downcast_ref::<crate::MouseDownEvent>() {
+            let node_id = self.focus_node_id_in_rendered_frame(self.focus);
+            let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+
+            let bindings = self.rendered_frame.dispatch_tree.dispatch_mouse(
+                mouse_down.button,
+                mouse_down.modifiers,
+                mouse_down.click_count,
+                &dispatch_path,
+            );
+
+            cx.propagate_event = true;
+            for binding in bindings {
+                self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+                if !cx.propagate_event {
+                    return;
+                }
+            }
+        }
+
+        // Check for scroll bindings (modifier + scroll → action).
+        // Only triggers when modifiers are held; normal scrolling passes through.
+        if let Some(scroll) = event.downcast_ref::<crate::ScrollWheelEvent>() {
+            if scroll.modifiers.number_of_modifiers() > 0 {
+                if let Some(direction) = Self::scroll_direction(&scroll.delta) {
+                    let node_id = self.focus_node_id_in_rendered_frame(self.focus);
+                    let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+
+                    let bindings = self.rendered_frame.dispatch_tree.dispatch_scroll(
+                        direction,
+                        scroll.modifiers,
+                        &dispatch_path,
+                    );
+
+                    cx.propagate_event = true;
+                    for binding in bindings {
+                        self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+                        if !cx.propagate_event {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
 
         // Capture phase, events bubble from back to front. Handlers for this phase are used for
@@ -4004,6 +4052,37 @@ impl Window {
                 // the window.
                 cx.active_drag = None;
                 self.refresh();
+            }
+        }
+    }
+
+    fn scroll_direction(delta: &crate::ScrollDelta) -> Option<crate::ScrollDirection> {
+        match delta {
+            crate::ScrollDelta::Pixels(point) => {
+                if point.y.0.abs() > point.x.0.abs() {
+                    if point.y.0 > 0.0 {
+                        Some(crate::ScrollDirection::Up)
+                    } else if point.y.0 < 0.0 {
+                        Some(crate::ScrollDirection::Down)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            crate::ScrollDelta::Lines(point) => {
+                if point.y.abs() > point.x.abs() {
+                    if point.y > 0.0 {
+                        Some(crate::ScrollDirection::Up)
+                    } else if point.y < 0.0 {
+                        Some(crate::ScrollDirection::Down)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             }
         }
     }

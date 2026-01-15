@@ -17544,6 +17544,145 @@ impl Editor {
         self.go_to_definition_of_kind(GotoDefinitionKind::Type, true, window, cx)
     }
 
+    pub fn add_cursor_at_mouse(
+        &mut self,
+        _: &AddCursorAtMouse,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(position_map) = self.last_position_map.clone() else {
+            return;
+        };
+        let mouse_position = window.mouse_position();
+        if !position_map.text_hitbox.contains(&mouse_position) {
+            return;
+        }
+        let point_for_position = position_map.point_for_position(mouse_position);
+        let position = point_for_position.previous_valid;
+
+        self.select(
+            SelectPhase::Begin {
+                position,
+                add: true,
+                click_count: 1,
+            },
+            window,
+            cx,
+        );
+        self.select(SelectPhase::End, window, cx);
+    }
+
+    pub fn extend_selection_to_mouse(
+        &mut self,
+        _: &ExtendSelectionToMouse,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(position_map) = self.last_position_map.clone() else {
+            return;
+        };
+        let mouse_position = window.mouse_position();
+        if !position_map.text_hitbox.contains(&mouse_position) {
+            return;
+        }
+        let point_for_position = position_map.point_for_position(mouse_position);
+        let position = point_for_position.previous_valid;
+
+        self.select(
+            SelectPhase::Extend {
+                position,
+                click_count: 1,
+            },
+            window,
+            cx,
+        );
+        self.select(SelectPhase::End, window, cx);
+    }
+
+    pub fn go_to_definition_at_mouse(
+        &mut self,
+        _: &GoToDefinitionAtMouse,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Navigated>> {
+        let Some(position_map) = self.last_position_map.clone() else {
+            return Task::ready(Ok(Navigated::No));
+        };
+        let mouse_position = window.mouse_position();
+        if !position_map.text_hitbox.contains(&mouse_position) {
+            return Task::ready(Ok(Navigated::No));
+        }
+        let point_for_position = position_map.point_for_position(mouse_position);
+        let position = point_for_position.previous_valid;
+
+        let anchor = position_map
+            .snapshot
+            .display_point_to_anchor(position, Bias::Left);
+        self.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.clear_disjoint();
+            s.set_pending_anchor_range(anchor..anchor, SelectMode::Character);
+        });
+        self.select(SelectPhase::End, window, cx);
+
+        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, window, cx)
+    }
+
+    pub fn go_to_type_definition_at_mouse(
+        &mut self,
+        _: &GoToTypeDefinitionAtMouse,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Navigated>> {
+        let Some(position_map) = self.last_position_map.clone() else {
+            return Task::ready(Ok(Navigated::No));
+        };
+        let mouse_position = window.mouse_position();
+        if !position_map.text_hitbox.contains(&mouse_position) {
+            return Task::ready(Ok(Navigated::No));
+        }
+        let point_for_position = position_map.point_for_position(mouse_position);
+        let position = point_for_position.previous_valid;
+
+        let anchor = position_map
+            .snapshot
+            .display_point_to_anchor(position, Bias::Left);
+        self.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.clear_disjoint();
+            s.set_pending_anchor_range(anchor..anchor, SelectMode::Character);
+        });
+        self.select(SelectPhase::End, window, cx);
+
+        self.go_to_definition_of_kind(GotoDefinitionKind::Type, false, window, cx)
+    }
+
+    pub fn start_columnar_selection_at_mouse(
+        &mut self,
+        _: &StartColumnarSelectionAtMouse,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(position_map) = self.last_position_map.clone() else {
+            return;
+        };
+        let mouse_position = window.mouse_position();
+        if !position_map.text_hitbox.contains(&mouse_position) {
+            return;
+        }
+        let point_for_position = position_map.point_for_position(mouse_position);
+        let position = point_for_position.previous_valid;
+
+        self.select(
+            SelectPhase::BeginColumnar {
+                position,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+                goal_column: point_for_position.exact_unclipped.column(),
+            },
+            window,
+            cx,
+        );
+    }
+
     fn go_to_definition_of_kind(
         &mut self,
         kind: GotoDefinitionKind,
