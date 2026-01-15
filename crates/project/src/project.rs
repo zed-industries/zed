@@ -9,7 +9,7 @@ pub mod git_store;
 pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
-mod manifest_tree;
+pub mod manifest_tree;
 pub mod prettier_store;
 pub mod project_search;
 pub mod project_settings;
@@ -353,6 +353,14 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
+    EntryOpened {
+        path: ProjectPath,
+        preview: bool,
+    },
+    EntryClosed {
+        path: ProjectPath,
+        preview: bool,
+    },
     EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
@@ -4501,6 +4509,14 @@ impl Project {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.add(worktree, cx);
         });
+    }
+
+    pub fn add_open_path(&mut self, path: ProjectPath, preview: bool, cx: &mut Context<Self>) {
+        cx.emit(Event::EntryOpened { path, preview });
+    }
+
+    pub fn remove_open_path(&mut self, path: ProjectPath, preview: bool, cx: &mut Context<Self>) {
+        cx.emit(Event::EntryClosed { path, preview });
     }
 
     pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut Context<Self>) {

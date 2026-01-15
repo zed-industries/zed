@@ -99,10 +99,16 @@ impl FileIcons {
         })
     }
 
-    pub fn get_folder_icon(expanded: bool, path: &Path, cx: &App) -> Option<SharedString> {
+    pub fn get_folder_icon(
+        pinned: bool,
+        expanded: bool,
+        path: &Path,
+        cx: &App,
+    ) -> Option<SharedString> {
         fn get_folder_icon(
             icon_theme: &Arc<IconTheme>,
             path: &Path,
+            pinned: bool,
             expanded: bool,
         ) -> Option<SharedString> {
             let name = path.file_name()?.to_str()?.trim();
@@ -111,56 +117,66 @@ impl FileIcons {
             }
 
             let directory_icons = icon_theme.named_directory_icons.get(name)?;
-
-            if expanded {
+            if pinned {
+                directory_icons.pinned.clone()
+            } else if expanded {
                 directory_icons.expanded.clone()
             } else {
                 directory_icons.collapsed.clone()
             }
         }
 
-        get_folder_icon(GlobalTheme::icon_theme(cx), path, expanded)
+        get_folder_icon(GlobalTheme::icon_theme(cx), path, pinned, expanded)
             .or_else(|| {
                 Self::default_icon_theme(cx)
-                    .and_then(|icon_theme| get_folder_icon(&icon_theme, path, expanded))
+                    .and_then(|icon_theme| get_folder_icon(&icon_theme, path, pinned, expanded))
             })
             .or_else(|| {
                 // If we can't find a specific folder icon for the folder at the given path, fall back to the generic folder
                 // icon.
-                Self::get_generic_folder_icon(expanded, cx)
+                Self::get_generic_folder_icon(pinned, expanded, cx)
             })
     }
 
-    fn get_generic_folder_icon(expanded: bool, cx: &App) -> Option<SharedString> {
+    fn get_generic_folder_icon(pinned: bool, expanded: bool, cx: &App) -> Option<SharedString> {
         fn get_generic_folder_icon(
             icon_theme: &Arc<IconTheme>,
+            pinned: bool,
             expanded: bool,
         ) -> Option<SharedString> {
-            if expanded {
+            if pinned {
+                icon_theme.directory_icons.pinned.clone()
+            } else if expanded {
                 icon_theme.directory_icons.expanded.clone()
             } else {
                 icon_theme.directory_icons.collapsed.clone()
             }
         }
 
-        get_generic_folder_icon(GlobalTheme::icon_theme(cx), expanded).or_else(|| {
+        get_generic_folder_icon(GlobalTheme::icon_theme(cx), pinned, expanded).or_else(|| {
             Self::default_icon_theme(cx)
-                .and_then(|icon_theme| get_generic_folder_icon(&icon_theme, expanded))
+                .and_then(|icon_theme| get_generic_folder_icon(&icon_theme, pinned, expanded))
         })
     }
 
-    pub fn get_chevron_icon(expanded: bool, cx: &App) -> Option<SharedString> {
-        fn get_chevron_icon(icon_theme: &Arc<IconTheme>, expanded: bool) -> Option<SharedString> {
-            if expanded {
+    pub fn get_chevron_icon(pinned: bool, expanded: bool, cx: &App) -> Option<SharedString> {
+        fn get_chevron_icon(
+            icon_theme: &Arc<IconTheme>,
+            pinned: bool,
+            expanded: bool,
+        ) -> Option<SharedString> {
+            if pinned {
+                icon_theme.chevron_icons.pinned.clone()
+            } else if expanded {
                 icon_theme.chevron_icons.expanded.clone()
             } else {
                 icon_theme.chevron_icons.collapsed.clone()
             }
         }
 
-        get_chevron_icon(GlobalTheme::icon_theme(cx), expanded).or_else(|| {
+        get_chevron_icon(GlobalTheme::icon_theme(cx), pinned, expanded).or_else(|| {
             Self::default_icon_theme(cx)
-                .and_then(|icon_theme| get_chevron_icon(&icon_theme, expanded))
+                .and_then(|icon_theme| get_chevron_icon(&icon_theme, pinned, expanded))
         })
     }
 }

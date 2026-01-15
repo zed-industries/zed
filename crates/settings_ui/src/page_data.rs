@@ -4215,7 +4215,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 20] {
+    fn project_panel_section() -> [SettingsPageItem; 21] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4438,6 +4438,28 @@ fn panels_page() -> SettingsPage {
                             .project_panel
                             .get_or_insert_default()
                             .auto_fold_dirs = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Partial Collapse",
+                description: "Whether to keep open or edited entries visible when collapsed.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.partial_collapse"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .partial_collapse
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .partial_collapse = value;
                     },
                 }),
                 metadata: None,

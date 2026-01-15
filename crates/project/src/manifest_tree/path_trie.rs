@@ -13,10 +13,11 @@ use util::rel_path::RelPath;
 /// A path is unexplored when the closest ancestor of a path is not the path itself; that means that we have not yet ran the scan on that path.
 /// For example, if there's a project root at path `python/project` and we query for a path `python/project/subdir/another_subdir/file.py`, there is
 /// a known root at `python/project` and the unexplored part is `subdir/another_subdir` - we need to run a scan on these 2 directories.
-pub(super) struct RootPathTrie<Label> {
+#[derive(Clone)]
+pub struct RootPathTrie<Label, Value> {
     worktree_relative_path: Arc<RelPath>,
-    labels: BTreeMap<Label, LabelPresence>,
-    children: BTreeMap<Arc<str>, RootPathTrie<Label>>,
+    labels: BTreeMap<Label, Value>,
+    children: BTreeMap<Arc<str>, RootPathTrie<Label, Value>>,
 }
 
 /// Label presence is a marker that allows to optimize searches within [RootPathTrie]; node label can be:
@@ -32,17 +33,17 @@ pub(super) struct RootPathTrie<Label> {
 /// Storing absent nodes allows us to recognize which paths have already been scanned for a project root unsuccessfully. This way we don't need to run
 /// such scan more than once.
 #[derive(Clone, Copy, Debug, PartialOrd, PartialEq, Ord, Eq)]
-pub(super) enum LabelPresence {
+pub enum LabelPresence {
     KnownAbsent,
     Present,
 }
 
-impl<Label: Ord + Clone> RootPathTrie<Label> {
-    pub(super) fn new() -> Self {
+impl<Label: Ord + Clone, Value: PartialEq + Clone> RootPathTrie<Label, Value> {
+    pub fn new() -> Self {
         Self::new_with_key(Arc::from(RelPath::empty()))
     }
 
-    fn new_with_key(worktree_relative_path: Arc<RelPath>) -> Self {
+    pub fn new_with_key(worktree_relative_path: Arc<RelPath>) -> Self {
         RootPathTrie {
             worktree_relative_path,
             labels: Default::default(),
@@ -50,13 +51,11 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
         }
     }
 
-    // Internal implementation of inner that allows one to visit descendants of insertion point for a node.
-    fn insert_inner(
-        &mut self,
-        path: &TriePath,
-        value: Label,
-        presence: LabelPresence,
-    ) -> &mut Self {
+    pub fn len(&self) -> usize {
+        self.children.len()
+    }
+
+    pub fn insert(&mut self, path: &TriePath, label: Label, value: Value) -> Option<Value> {
         let mut current = self;
 
         let mut path_so_far = <Arc<RelPath>>::from(RelPath::empty());
@@ -69,13 +68,7 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
                 Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
             };
         }
-        let _previous_value = current.labels.insert(value, presence);
-        debug_assert_eq!(_previous_value, None);
-        current
-    }
-
-    pub(super) fn insert(&mut self, path: &TriePath, value: Label, presence: LabelPresence) {
-        self.insert_inner(path, value, presence);
+        current.labels.insert(label, value)
     }
 
     pub(super) fn walk<'a>(
@@ -83,7 +76,7 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
         path: &TriePath,
         callback: &mut dyn for<'b> FnMut(
             &'b Arc<RelPath>,
-            &'a BTreeMap<Label, LabelPresence>,
+            &'a BTreeMap<Label, Value>,
         ) -> ControlFlow<()>,
     ) {
         let mut current = self;
@@ -103,26 +96,92 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
         }
     }
 
-    pub(super) fn remove(&mut self, path: &TriePath) {
+    pub fn get<'a>(&'a self, path: Option<&TriePath>) -> Option<&'a BTreeMap<Label, Value>> {
+        let mut current = self;
+        if let Some(path) = path {
+            for key in path.0.iter() {
+                current = current.children.get(key)?;
+            }
+        }
+        Some(&current.labels)
+    }
+
+    pub fn remove(&mut self, path: &TriePath) -> Option<RootPathTrie<Label, Value>> {
         let mut current = self;
         for path in path.0.iter().take(path.0.len().saturating_sub(1)) {
             current = match current.children.get_mut(path) {
                 Some(child) => child,
-                None => return,
+                None => return None,
             };
         }
-        if let Some(final_entry_name) = path.0.last() {
-            current.children.remove(final_entry_name);
+        match path.0.last() {
+            Some(last) => current.children.remove(last),
+            None => None,
         }
+    }
+
+    pub fn is_leaf(&self, path: &TriePath) -> bool {
+        let mut current = self;
+        for key in path.0.iter() {
+            current = match current.children.get(key) {
+                Some(child) => child,
+                None => return false,
+            }
+        }
+        if current.children.len() > 0 {
+            return false;
+        }
+        true
+    }
+
+    // Remove path and resulting monochild ancestors, return branch at path
+    pub fn prune(&mut self, path: &TriePath) -> Option<RootPathTrie<Label, Value>> {
+        let mut current = &mut self.children;
+        let mut prune = 0;
+        // Find nearest ancestor having multiple children
+        let max = path.0.len().saturating_sub(1);
+        for (i, key) in path.0.iter().enumerate() {
+            if current.len() > 1 {
+                prune = i;
+            }
+            if i == max {
+                break;
+            }
+            current = match current.get_mut(key) {
+                Some(child) => &mut child.children,
+                None => return None,
+            };
+        }
+        // Remove branch from parent
+        let branch = match path.0.last() {
+            Some(last) => match current.get(last) {
+                Some(_) => current.remove(last),
+                None => return None,
+            },
+            None => return None,
+        };
+        // Prune nearest ancestor having multiple children
+        let mut ancestor = self;
+        for (i, key) in path.0.iter().take(max).enumerate() {
+            if i == prune {
+                ancestor.children.remove(key);
+                break;
+            }
+            ancestor = match ancestor.children.get_mut(key) {
+                Some(child) => child,
+                None => break,
+            };
+        }
+        branch
     }
 }
 
 /// [TriePath] is a [Path] preprocessed for amortizing the cost of doing multiple lookups in distinct [RootPathTrie]s.
 #[derive(Clone)]
-pub(super) struct TriePath(Arc<[Arc<str>]>);
+pub struct TriePath(Arc<[Arc<str>]>);
 
 impl TriePath {
-    fn new(value: &RelPath) -> Self {
+    pub fn new(value: &RelPath) -> Self {
         TriePath(
             value
                 .components()
@@ -148,7 +207,7 @@ mod tests {
 
     #[test]
     fn test_insert_and_lookup() {
-        let mut trie = RootPathTrie::<()>::new();
+        let mut trie = RootPathTrie::<(), LabelPresence>::new();
         trie.insert(
             &TriePath::new(rel_path("a/b/c")),
             (),
@@ -248,7 +307,7 @@ mod tests {
 
     #[test]
     fn path_to_a_root_can_contain_multiple_known_nodes() {
-        let mut trie = RootPathTrie::<()>::new();
+        let mut trie = RootPathTrie::<(), LabelPresence>::new();
         trie.insert(&TriePath::new(rel_path("a/b")), (), LabelPresence::Present);
         trie.insert(&TriePath::new(rel_path("a")), (), LabelPresence::Present);
         let mut visited_paths = BTreeSet::new();
@@ -261,5 +320,63 @@ mod tests {
             ControlFlow::Continue(())
         });
         assert_eq!(visited_paths.len(), 2);
+    }
+
+    #[test]
+    fn node_is_leaf() {
+        let mut trie = RootPathTrie::<(), ()>::new();
+        trie.insert(&TriePath::new(rel_path("a/b/c")), (), ());
+        trie.insert(&TriePath::new(rel_path("a/b/d")), (), ());
+        trie.insert(&TriePath::new(rel_path("a/e/f")), (), ());
+
+        assert_eq!(trie.is_leaf(&TriePath::new(rel_path("a/b/c"))), true);
+        assert_eq!(trie.is_leaf(&TriePath::new(rel_path("a/b"))), false);
+        assert_eq!(trie.is_leaf(&TriePath::new(rel_path(""))), false);
+    }
+
+    #[test]
+    fn prune_returns_branch_and_removes_ancestors() {
+        let mut trie = RootPathTrie::<(), String>::new();
+        trie.insert(&TriePath::new(rel_path("a/b")), (), "b".to_string());
+        trie.insert(&TriePath::new(rel_path("a/b/c")), (), "c".to_string());
+        trie.insert(&TriePath::new(rel_path("a/b/c/d")), (), "d".to_string());
+        trie.insert(&TriePath::new(rel_path("a/b/e/f")), (), "f".to_string());
+
+        // Do not prune non-existing branches
+        assert_eq!(trie.prune(&TriePath::new(rel_path(""))).is_some(), false);
+        assert_eq!(trie.prune(&TriePath::new(rel_path("b/c"))).is_some(), false);
+        assert_eq!(trie.prune(&TriePath::new(rel_path("a/x"))).is_some(), false);
+        assert_eq!(
+            trie.prune(&TriePath::new(rel_path("a/b/c/x"))).is_some(),
+            false
+        );
+
+        // Prune leaf
+        let mut branch = trie.prune(&TriePath::new(rel_path("a/b/c/d"))).unwrap();
+        let mut label = branch.get(None).and_then(|labels| labels.get(&()));
+        assert_eq!(label, Some(&"d".to_string()));
+        // Monochild ancestor is removed
+        assert_eq!(
+            trie.get(Some(&TriePath::new(rel_path("a/b/c")))).is_some(),
+            false
+        );
+        // Multichildren ancestor is kept
+        label = trie
+            .get(Some(&TriePath::new(rel_path("a/b"))))
+            .and_then(|labels| labels.get(&()));
+        assert_eq!(label, Some(&"b".to_string()));
+
+        // Prune node
+        branch = trie.prune(&TriePath::new(rel_path("a/b/e"))).unwrap();
+        label = branch
+            .get(Some(&TriePath::new(rel_path("f"))))
+            .and_then(|labels| labels.get(&()));
+        assert_eq!(label, Some(&"f".to_string()));
+        // Monochild ancestors are removed
+        assert_eq!(
+            trie.get(Some(&TriePath::new(rel_path("a")))).is_some(),
+            false
+        );
+        assert_eq!(trie.len(), 0);
     }
 }

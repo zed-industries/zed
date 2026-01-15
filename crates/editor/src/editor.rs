@@ -18302,7 +18302,7 @@ impl Editor {
                 destination_index = pane.replace_preview_item_id(item.item_id(), window, cx);
             }
             if was_existing && !allow_preview {
-                pane.unpreview_item_if_preview(item.item_id());
+                pane.unpreview_item_if_preview(item.item_id(), cx);
             }
             pane.add_item(item, activate_pane, true, destination_index, window, cx);
         });
@@ -23925,7 +23925,7 @@ impl Editor {
                                 if !PreviewTabsSettings::get_global(cx)
                                     .enable_preview_from_multibuffer
                                 {
-                                    pane.unpreview_item_if_preview(pane_item_id);
+                                    pane.unpreview_item_if_preview(pane_item_id, cx);
                                 }
                             });
                             Some(editor)
