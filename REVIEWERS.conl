@@ -14,7 +14,6 @@
   = @dinocosta
   = @kubkon
   = @maxdeviant
-  = @p1n3appl3
   = @probably-neb
   = @smitbarmase
   = @SomeoneToIgnore
@@ -30,7 +29,6 @@ audio
   = @yara-blue
 
 crashes
-  = @p1n3appl3
   = @Veykril
 
 debugger
@@ -76,7 +74,6 @@ languages
 linux
   = @cole-miller
   = @yara-blue
-  = @p1n3appl3
   = @probably-neb
   = @smitbarmase
 
@@ -92,7 +89,6 @@ multi_buffer
 
 pickers
   = @yara-blue
-  = @p1n3appl3
   = @SomeoneToIgnore
 
 project_panel
@@ -123,7 +119,6 @@ text
 vim
   = @ConradIrwin
   = @dinocosta
-  = @p1n3appl3
   = @probably-neb
 
 windows
