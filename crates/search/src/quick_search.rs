@@ -1,4 +1,4 @@
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use futures::StreamExt;
 use std::cell::RefCell;
 use std::ops::Range;
@@ -37,6 +37,13 @@ pub use zed_actions::quick_search::Toggle;
 actions!(quick_search, [ReplaceNext, ReplaceAll, ToggleFilters]);
 
 const SEARCH_DEBOUNCE_MS: u64 = 100;
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+enum InputPanel {
+    Query,
+    Include,
+    Exclude,
+}
 
 struct SearchMatchHighlight;
 struct SearchMatchLineHighlight;
@@ -759,6 +766,7 @@ pub struct QuickSearchDelegate {
     search_options: SearchOptions,
     search_in_progress: bool,
     pending_initial_query: RefCell<Option<String>>,
+    panels_with_errors: HashMap<InputPanel, String>,
 }
 
 impl QuickSearchDelegate {
@@ -790,6 +798,7 @@ impl QuickSearchDelegate {
             search_options: SearchOptions::from_settings(&EditorSettings::get_global(cx).search),
             search_in_progress: false,
             pending_initial_query: RefCell::new(initial_query),
+            panels_with_errors: HashMap::default(),
         }
     }
 
@@ -876,7 +885,7 @@ impl QuickSearchDelegate {
         });
     }
 
-    fn parse_path_matches(&self, text: String, cx: &App) -> PathMatcher {
+    fn parse_path_matches(&self, text: String, cx: &App) -> anyhow::Result<PathMatcher> {
         let queries: Vec<String> = text
             .split(',')
             .map(str::trim)
@@ -885,34 +894,63 @@ impl QuickSearchDelegate {
             .collect();
 
         if queries.is_empty() {
-            return PathMatcher::default();
+            return Ok(PathMatcher::default());
         }
 
         let path_style = self.project.read(cx).path_style(cx);
-        PathMatcher::new(&queries, path_style).unwrap_or_default()
+        Ok(PathMatcher::new(&queries, path_style)?)
     }
 
     fn build_search_query(
-        &self,
+        &mut self,
         query: &str,
         open_buffers: Option<Vec<Entity<Buffer>>>,
-        cx: &Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<SearchQuery> {
         if query.is_empty() {
+            self.panels_with_errors.remove(&InputPanel::Query);
             return None;
         }
 
         let files_to_include = if self.filters_enabled {
             let include_text = self.included_files_editor.read(cx).text(cx);
-            self.parse_path_matches(include_text, cx)
+            match self.parse_path_matches(include_text, cx) {
+                Ok(matcher) => {
+                    if self.panels_with_errors.remove(&InputPanel::Include).is_some() {
+                        cx.notify();
+                    }
+                    matcher
+                }
+                Err(e) => {
+                    if self.panels_with_errors.insert(InputPanel::Include, e.to_string()).is_none() {
+                        cx.notify();
+                    }
+                    PathMatcher::default()
+                }
+            }
         } else {
+            self.panels_with_errors.remove(&InputPanel::Include);
             PathMatcher::default()
         };
 
         let files_to_exclude = if self.filters_enabled {
             let exclude_text = self.excluded_files_editor.read(cx).text(cx);
-            self.parse_path_matches(exclude_text, cx)
+            match self.parse_path_matches(exclude_text, cx) {
+                Ok(matcher) => {
+                    if self.panels_with_errors.remove(&InputPanel::Exclude).is_some() {
+                        cx.notify();
+                    }
+                    matcher
+                }
+                Err(e) => {
+                    if self.panels_with_errors.insert(InputPanel::Exclude, e.to_string()).is_none() {
+                        cx.notify();
+                    }
+                    PathMatcher::default()
+                }
+            }
         } else {
+            self.panels_with_errors.remove(&InputPanel::Exclude);
             PathMatcher::default()
         };
 
@@ -921,7 +959,7 @@ impl QuickSearchDelegate {
         let whole_word = self.search_options.contains(SearchOptions::WHOLE_WORD);
         let include_ignored = self.search_options.contains(SearchOptions::INCLUDE_IGNORED);
 
-        if self.search_options.contains(SearchOptions::REGEX) {
+        let result = if self.search_options.contains(SearchOptions::REGEX) {
             SearchQuery::regex(
                 query,
                 whole_word,
@@ -933,7 +971,6 @@ impl QuickSearchDelegate {
                 match_full_paths,
                 open_buffers,
             )
-            .ok()
         } else {
             SearchQuery::text(
                 query,
@@ -945,7 +982,21 @@ impl QuickSearchDelegate {
                 match_full_paths,
                 open_buffers,
             )
-            .ok()
+        };
+
+        match result {
+            Ok(search_query) => {
+                if self.panels_with_errors.remove(&InputPanel::Query).is_some() {
+                    cx.notify();
+                }
+                Some(search_query)
+            }
+            Err(e) => {
+                if self.panels_with_errors.insert(InputPanel::Query, e.to_string()).is_none() {
+                    cx.notify();
+                }
+                None
+            }
         }
     }
 
@@ -1046,6 +1097,16 @@ impl PickerDelegate for QuickSearchDelegate {
                             .flex_1()
                             .overflow_hidden()
                             .py_1p5()
+                            .border_1()
+                            .rounded_md()
+                            .px_1()
+                            .border_color(
+                                if self.panels_with_errors.contains_key(&InputPanel::Query) {
+                                    Color::Error.color(cx)
+                                } else {
+                                    gpui::transparent_black()
+                                }
+                            )
                             .child(editor.clone()),
                     )
                     .child({
@@ -1207,6 +1268,16 @@ impl PickerDelegate for QuickSearchDelegate {
                                     div()
                                         .flex_1()
                                         .overflow_hidden()
+                                        .border_1()
+                                        .rounded_md()
+                                        .px_1()
+                                        .border_color(
+                                            if self.panels_with_errors.contains_key(&InputPanel::Include) {
+                                                Color::Error.color(cx)
+                                            } else {
+                                                gpui::transparent_black()
+                                            }
+                                        )
                                         .child(self.included_files_editor.clone()),
                                 ),
                         )
@@ -1223,6 +1294,16 @@ impl PickerDelegate for QuickSearchDelegate {
                                     div()
                                         .flex_1()
                                         .overflow_hidden()
+                                        .border_1()
+                                        .rounded_md()
+                                        .px_1()
+                                        .border_color(
+                                            if self.panels_with_errors.contains_key(&InputPanel::Exclude) {
+                                                Color::Error.color(cx)
+                                            } else {
+                                                gpui::transparent_black()
+                                            }
+                                        )
                                         .child(self.excluded_files_editor.clone()),
                                 ),
                         )
