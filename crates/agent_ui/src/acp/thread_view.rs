@@ -1677,13 +1677,14 @@ impl AcpThreadView {
         };
 
         // Only increment skip count for "Send Now" operations (out-of-order sends)
-        // Normal auto-processing from the Stopped handler doesn't need to skip
+        // Normal auto-processing from the Stopped handler doesn't need to skip.
+        // We only skip the Stopped event from the cancelled generation, NOT the
+        // Stopped event from the newly sent message (which should trigger queue processing).
         if is_send_now {
             let is_generating = thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
-            self.skip_queue_processing_count += if is_generating { 2 } else { 1 };
+            self.skip_queue_processing_count += if is_generating { 1 } else { 0 };
         }
 
-        // Ensure we don't end up with multiple concurrent generations
         let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
 
         let should_be_following = self.should_be_following;
