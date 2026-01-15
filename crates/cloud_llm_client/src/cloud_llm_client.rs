@@ -84,38 +84,12 @@ impl FromStr for UsageLimit {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Plan {
-    V1(PlanV1),
     V2(PlanV2),
 }
 
 impl Plan {
     pub fn is_v2(&self) -> bool {
         matches!(self, Self::V2(_))
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PlanV1 {
-    #[default]
-    #[serde(alias = "Free")]
-    ZedFree,
-    #[serde(alias = "ZedPro")]
-    ZedPro,
-    #[serde(alias = "ZedProTrial")]
-    ZedProTrial,
-}
-
-impl FromStr for PlanV1 {
-    type Err = anyhow::Error;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "zed_free" => Ok(Self::ZedFree),
-            "zed_pro" => Ok(Self::ZedPro),
-            "zed_pro_trial" => Ok(Self::ZedProTrial),
-            plan => Err(anyhow::anyhow!("invalid plan: {plan:?}")),
-        }
     }
 }
 
@@ -386,12 +360,6 @@ pub struct ListModelsResponse {
     pub recommended_models: Vec<LanguageModelId>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct GetSubscriptionResponse {
-    pub plan: PlanV1,
-    pub usage: Option<CurrentUsage>,
-}
-
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct CurrentUsage {
     pub model_requests: UsageData,
@@ -410,30 +378,6 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-
-    #[test]
-    fn test_plan_v1_deserialize_snake_case() {
-        let plan = serde_json::from_value::<PlanV1>(json!("zed_free")).unwrap();
-        assert_eq!(plan, PlanV1::ZedFree);
-
-        let plan = serde_json::from_value::<PlanV1>(json!("zed_pro")).unwrap();
-        assert_eq!(plan, PlanV1::ZedPro);
-
-        let plan = serde_json::from_value::<PlanV1>(json!("zed_pro_trial")).unwrap();
-        assert_eq!(plan, PlanV1::ZedProTrial);
-    }
-
-    #[test]
-    fn test_plan_v1_deserialize_aliases() {
-        let plan = serde_json::from_value::<PlanV1>(json!("Free")).unwrap();
-        assert_eq!(plan, PlanV1::ZedFree);
-
-        let plan = serde_json::from_value::<PlanV1>(json!("ZedPro")).unwrap();
-        assert_eq!(plan, PlanV1::ZedPro);
-
-        let plan = serde_json::from_value::<PlanV1>(json!("ZedProTrial")).unwrap();
-        assert_eq!(plan, PlanV1::ZedProTrial);
-    }
 
     #[test]
     fn test_plan_v2_deserialize_snake_case() {

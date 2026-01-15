@@ -675,12 +675,12 @@ impl UserStore {
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
-            use cloud_llm_client::PlanV1;
+            use cloud_llm_client::PlanV2;
 
             return match plan.as_str() {
-                "free" => Some(Plan::V1(PlanV1::ZedFree)),
-                "trial" => Some(Plan::V1(PlanV1::ZedProTrial)),
-                "pro" => Some(Plan::V1(PlanV1::ZedPro)),
+                "free" => Some(Plan::V2(PlanV2::ZedFree)),
+                "trial" => Some(Plan::V2(PlanV2::ZedProTrial)),
+                "pro" => Some(Plan::V2(PlanV2::ZedPro)),
                 _ => {
                     panic!("ZED_SIMULATE_PLAN must be one of 'free', 'trial', or 'pro'");
                 }
