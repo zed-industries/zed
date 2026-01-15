@@ -30575,6 +30575,52 @@ fn test_review_comment_remove(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_review_comment_undo_delete(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+
+    _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
+        let key = test_hunk_key("");
+
+        // Add two comments
+        let id1 = add_test_comment(editor, key.clone(), "First comment", 0, cx);
+        let _id2 = add_test_comment(editor, key.clone(), "Second comment", 1, cx);
+
+        assert_eq!(editor.total_review_comment_count(), 2);
+
+        // Delete the first comment
+        let removed = editor.remove_review_comment(id1, cx);
+        assert!(removed);
+        assert_eq!(editor.total_review_comment_count(), 1);
+
+        // Verify only second comment remains
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let comments = editor.comments_for_hunk(&key, &snapshot);
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].comment, "Second comment");
+
+        // Undo the delete
+        let undone = editor.undo_delete_review_comment(cx);
+        assert!(undone);
+        assert_eq!(editor.total_review_comment_count(), 2);
+
+        // Verify both comments are back
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let comments = editor.comments_for_hunk(&key, &snapshot);
+        assert_eq!(comments.len(), 2);
+
+        // Comments should be in chronological order
+        assert_eq!(comments[0].comment, "First comment");
+        assert_eq!(comments[1].comment, "Second comment");
+
+        // Undo again should fail (no more deleted comments)
+        let undone_again = editor.undo_delete_review_comment(cx);
+        assert!(!undone_again);
+    });
+}
+
+#[gpui::test]
 fn test_review_comment_update(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

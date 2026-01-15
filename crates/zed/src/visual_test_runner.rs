@@ -1541,6 +1541,161 @@ import { AiPaneTabContext } from 'context';
         update_baseline,
     )?;
 
+    // Test 9: Click edit on the first comment - shows inline editor
+    // First, get the comment ID of the first comment and trigger edit
+    let first_comment_id = regular_window
+        .update(cx, |workspace, window, cx| {
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    // Get the first comment's ID
+                    let comment_id = editor
+                        .all_review_comments()
+                        .next()
+                        .map(|(_, comments)| comments.first().map(|c| c.id))
+                        .flatten();
+
+                    if let Some(id) = comment_id {
+                        // Trigger edit on the first comment
+                        editor.edit_review_comment(
+                            &editor::actions::EditReviewComment { id },
+                            window,
+                            cx,
+                        );
+                    }
+                    comment_id
+                })
+            } else {
+                None
+            }
+        })
+        .ok()
+        .flatten();
+
+    // Wait for UI to update
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 9: Comment in edit mode with inline editor
+    let test9_result = run_visual_test(
+        "diff_review_comment_editing",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Cancel the edit so we can test delete
+    if let Some(comment_id) = first_comment_id {
+        regular_window
+            .update(cx, |workspace, window, cx| {
+                let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+                if let Some(editor) = editors.into_iter().next() {
+                    editor.update(cx, |editor, cx| {
+                        editor.cancel_edit_review_comment(comment_id, window, cx);
+                    });
+                }
+            })
+            .ok();
+    }
+
+    // Wait for UI to update
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Test 10: Delete a comment - shows one fewer comment
+    regular_window
+        .update(cx, |workspace, window, cx| {
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    // Get the first comment's ID and delete it
+                    let comment_id = editor
+                        .all_review_comments()
+                        .next()
+                        .map(|(_, comments)| comments.first().map(|c| c.id))
+                        .flatten();
+
+                    if let Some(id) = comment_id {
+                        editor.delete_review_comment(
+                            &editor::actions::DeleteReviewComment { id },
+                            window,
+                            cx,
+                        );
+                    }
+                });
+            }
+        })
+        .ok();
+
+    // Wait for UI to update
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 10: After deleting one comment (should show 2 remaining)
+    let test10_result = run_visual_test(
+        "diff_review_comment_deleted",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Test 11: Undo the delete - should restore the comment
+    regular_window
+        .update(cx, |workspace, window, cx| {
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    editor.undo_delete_review_comment_action(
+                        &editor::actions::UndoDeleteReviewComment,
+                        window,
+                        cx,
+                    );
+                });
+            }
+        })
+        .ok();
+
+    // Wait for UI to update
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 11: After undo delete (should show 3 comments again)
+    let test11_result = run_visual_test(
+        "diff_review_comment_undo_delete",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
     // Test 8: Collapse the comments section
     regular_window
         .update(cx, |workspace, _window, cx| {
@@ -1617,6 +1772,9 @@ import { AiPaneTabContext } from 'context';
         &test6_result,
         &test7_result,
         &test8_result,
+        &test9_result,
+        &test10_result,
+        &test11_result,
     ];
 
     // Combine results: if any test updated a baseline, return BaselineUpdated;
@@ -1706,7 +1864,9 @@ fn run_subagent_visual_tests(
         project.find_or_create_worktree(&project_path, true, cx)
     });
 
+    cx.background_executor.allow_parking();
     let _ = cx.foreground_executor.block_test(add_worktree_task);
+    cx.background_executor.forbid_parking();
 
     cx.run_until_parked();
 

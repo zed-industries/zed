@@ -1272,6 +1272,9 @@ pub struct Editor {
     /// Uses a Vec instead of HashMap because DiffHunkKey contains an Anchor
     /// which doesn't implement Hash/Eq in a way suitable for HashMap keys.
     stored_review_comments: Vec<(DiffHunkKey, Vec<StoredReviewComment>)>,
+    /// Stack of recently deleted comments for undo support.
+    /// Each entry contains the hunk key and the deleted comment.
+    deleted_review_comments: Vec<(DiffHunkKey, StoredReviewComment)>,
     /// Counter for generating unique comment IDs.
     next_review_comment_id: usize,
     hovered_diff_hunk_row: Option<DisplayRow>,
@@ -2450,6 +2453,7 @@ impl Editor {
             gutter_diff_review_indicator: (None, None),
             diff_review_overlays: Vec::new(),
             stored_review_comments: Vec::new(),
+            deleted_review_comments: Vec::new(),
             next_review_comment_id: 0,
             hovered_diff_hunk_row: None,
             _subscriptions: (!is_minimap)
@@ -21386,6 +21390,13 @@ impl Editor {
             .sum()
     }
 
+    /// Returns an iterator over all stored review comments (hunk_key, comments pairs).
+    pub fn all_review_comments(
+        &self,
+    ) -> impl Iterator<Item = (&DiffHunkKey, &Vec<StoredReviewComment>)> {
+        self.stored_review_comments.iter().map(|(k, v)| (k, v))
+    }
+
     /// Returns the count of comments for a specific hunk.
     pub fn hunk_comment_count(&self, key: &DiffHunkKey, snapshot: &MultiBufferSnapshot) -> usize {
         let key_point = key.hunk_start_anchor.to_point(snapshot);
@@ -21434,10 +21445,14 @@ impl Editor {
     }
 
     /// Removes a review comment by ID from any hunk.
+    /// The deleted comment is saved for undo support.
     pub fn remove_review_comment(&mut self, id: usize, cx: &mut Context<Self>) -> bool {
-        for (_, comments) in self.stored_review_comments.iter_mut() {
+        for (hunk_key, comments) in self.stored_review_comments.iter_mut() {
             if let Some(index) = comments.iter().position(|c| c.id == id) {
-                comments.remove(index);
+                let deleted_comment = comments.remove(index);
+                // Save for undo
+                self.deleted_review_comments
+                    .push((hunk_key.clone(), deleted_comment));
                 cx.emit(EditorEvent::ReviewCommentsChanged {
                     total_count: self.total_review_comment_count(),
                 });
@@ -21446,6 +21461,38 @@ impl Editor {
             }
         }
         false
+    }
+
+    /// Restores the most recently deleted review comment (undo delete).
+    /// Returns true if a comment was restored.
+    pub fn undo_delete_review_comment(&mut self, cx: &mut Context<Self>) -> bool {
+        if let Some((hunk_key, comment)) = self.deleted_review_comments.pop() {
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+            let key_point = hunk_key.hunk_start_anchor.to_point(&snapshot);
+
+            // Find existing entry for this hunk or add a new one
+            if let Some((_, comments)) = self.stored_review_comments.iter_mut().find(|(k, _)| {
+                k.file_path == hunk_key.file_path
+                    && k.hunk_start_anchor.to_point(&snapshot) == key_point
+            }) {
+                // Insert in chronological order based on created_at
+                let insert_pos = comments
+                    .iter()
+                    .position(|c| c.created_at > comment.created_at)
+                    .unwrap_or(comments.len());
+                comments.insert(insert_pos, comment);
+            } else {
+                self.stored_review_comments.push((hunk_key, vec![comment]));
+            }
+
+            cx.emit(EditorEvent::ReviewCommentsChanged {
+                total_count: self.total_review_comment_count(),
+            });
+            cx.notify();
+            true
+        } else {
+            false
+        }
     }
 
     /// Updates a review comment's text by ID.
@@ -21791,6 +21838,24 @@ impl Editor {
         }
     }
 
+    /// Action handler for UndoDeleteReviewComment.
+    pub fn undo_delete_review_comment_action(
+        &mut self,
+        _: &UndoDeleteReviewComment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Get the hunk key of the comment we're about to restore (for refreshing the overlay)
+        let hunk_key = self.deleted_review_comments.last().map(|(k, _)| k.clone());
+
+        if self.undo_delete_review_comment(cx) {
+            // Refresh the overlay height after restoring a comment
+            if let Some(hunk_key) = hunk_key {
+                self.refresh_diff_review_overlay_height(&hunk_key, window, cx);
+            }
+        }
+    }
+
     fn render_diff_review_overlay(
         prompt_editor: &Entity<Editor>,
         hunk_key: &DiffHunkKey,
@@ -22082,8 +22147,37 @@ impl Editor {
                     )
                     .into_any_element()
             } else {
-                // Display mode: no action buttons for now (edit/delete not yet implemented)
-                gpui::Empty.into_any_element()
+                // Display mode: show edit and delete buttons
+                h_flex()
+                    .gap_1()
+                    .child(
+                        IconButton::new(format!("diff-review-edit-{comment_id}"), IconName::Pencil)
+                            .icon_color(ui::Color::Muted)
+                            .icon_size(action_icon_size)
+                            .tooltip(Tooltip::text("Edit"))
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(crate::actions::EditReviewComment { id: comment_id }),
+                                    cx,
+                                );
+                            }),
+                    )
+                    .child(
+                        IconButton::new(
+                            format!("diff-review-delete-{comment_id}"),
+                            IconName::Trash,
+                        )
+                        .icon_color(ui::Color::Muted)
+                        .icon_size(action_icon_size)
+                        .tooltip(Tooltip::text("Delete"))
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(crate::actions::DeleteReviewComment { id: comment_id }),
+                                cx,
+                            );
+                        }),
+                    )
+                    .into_any_element()
             })
     }
 

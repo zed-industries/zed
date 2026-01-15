@@ -508,6 +508,7 @@ impl EditorElement {
         register_action(editor, window, Editor::submit_diff_review_comment_action);
         register_action(editor, window, Editor::edit_review_comment);
         register_action(editor, window, Editor::delete_review_comment);
+        register_action(editor, window, Editor::undo_delete_review_comment_action);
         register_action(editor, window, Editor::confirm_edit_review_comment_action);
         register_action(editor, window, Editor::cancel_edit_review_comment_action);
         register_action(editor, window, Editor::go_to_previous_change);
