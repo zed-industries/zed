@@ -345,6 +345,8 @@ actions!(
         SelectPrevDirectory,
         /// Opens a diff view to compare two marked files.
         CompareMarkedFiles,
+        /// Opens the selected file in a new window.
+        OpenInNewWindow,
     ]
 );
 
@@ -1126,6 +1128,9 @@ impl ProjectPanel {
                             })
                             .when(is_local, |menu| {
                                 menu.action("Open in Default App", Box::new(OpenWithSystem))
+                            })
+                            .when(is_local && !is_dir, |menu| {
+                                menu.action("Open in New Window", Box::new(OpenInNewWindow))
                             })
                             .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_dir, |menu| {
@@ -3134,6 +3139,29 @@ impl ProjectPanel {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             let abs_path = worktree.absolutize(&entry.path);
             cx.open_with_system(&abs_path);
+        }
+    }
+
+    fn open_in_new_window(&mut self, _: &OpenInNewWindow, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            if entry.is_dir() {
+                return;
+            }
+            let abs_path = worktree.absolutize(&entry.path);
+            let Some(workspace) = self.workspace.upgrade() else {
+                return;
+            };
+            let app_state = workspace.read(cx).app_state().clone();
+            workspace::open_paths(
+                &[abs_path],
+                app_state,
+                OpenOptions {
+                    open_new_workspace: Some(true),
+                    ..Default::default()
+                },
+                cx,
+            )
+            .detach_and_log_err(cx);
         }
     }
 
@@ -5932,6 +5960,7 @@ impl Render for ProjectPanel {
                     el.on_action(cx.listener(Self::reveal_in_finder))
                         .on_action(cx.listener(Self::open_system))
                         .on_action(cx.listener(Self::open_in_terminal))
+                        .on_action(cx.listener(Self::open_in_new_window))
                 })
                 .when(project.is_via_remote_server(), |el| {
                     el.on_action(cx.listener(Self::open_in_terminal))

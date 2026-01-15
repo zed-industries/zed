@@ -1,6 +1,6 @@
 use crate::{
-    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
+    CloseWindow, NewFile, NewTerminal, OpenInNewWindow, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
+    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace, open_paths,
     WorkspaceItemBuilder, ZoomIn, ZoomOut,
     invalid_item_view::InvalidItemView,
     item::{
@@ -3068,6 +3068,7 @@ impl Pane {
                             });
 
                             let entry_abs_path = pane.read(cx).entry_abs_path(entry, cx);
+                            let entry_abs_path_for_new_window = entry_abs_path.clone();
                             let parent_abs_path = entry_abs_path
                                 .as_deref()
                                 .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
@@ -3139,6 +3140,28 @@ impl Pane {
                                                 .boxed_clone(),
                                                 cx,
                                             );
+                                        }),
+                                    )
+                                })
+                                .when_some(entry_abs_path_for_new_window, |menu, abs_path| {
+                                    menu.entry(
+                                        "Open in New Window",
+                                        Some(Box::new(OpenInNewWindow)),
+                                        window.handler_for(&pane, move |this, _, cx| {
+                                            let Some(workspace) = this.workspace.upgrade() else {
+                                                return;
+                                            };
+                                            let app_state = workspace.read(cx).app_state().clone();
+                                            open_paths(
+                                                &[abs_path.clone()],
+                                                app_state,
+                                                OpenOptions {
+                                                    open_new_workspace: Some(true),
+                                                    ..Default::default()
+                                                },
+                                                cx,
+                                            )
+                                            .detach_and_log_err(cx);
                                         }),
                                     )
                                 });

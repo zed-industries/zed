@@ -249,6 +249,8 @@ actions!(
         OpenFiles,
         /// Opens the current location in terminal.
         OpenInTerminal,
+        /// Opens the current item in a new window.
+        OpenInNewWindow,
         /// Opens the component preview.
         OpenComponentPreview,
         /// Reloads the active item.
@@ -2468,6 +2470,30 @@ impl Workspace {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx)
+    }
+
+    pub fn open_in_new_window(&mut self, _: &OpenInNewWindow, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(item) = self.active_item(cx) else {
+            return;
+        };
+        let Some(project_path) = item.project_path(cx) else {
+            return;
+        };
+        let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
+            return;
+        };
+
+        let app_state = self.app_state.clone();
+        open_paths(
+            &[abs_path],
+            app_state,
+            OpenOptions {
+                open_new_workspace: Some(true),
+                ..Default::default()
+            },
+            cx,
+        )
+        .detach_and_log_err(cx);
     }
 
     pub fn move_focused_panel_to_next_position(
@@ -6035,6 +6061,7 @@ impl Workspace {
             .on_action(cx.listener(Self::add_folder_to_project))
             .on_action(cx.listener(Self::follow_next_collaborator))
             .on_action(cx.listener(Self::close_window))
+            .on_action(cx.listener(Self::open_in_new_window))
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
             .on_action(cx.listener(Self::move_focused_panel_to_next_position))
