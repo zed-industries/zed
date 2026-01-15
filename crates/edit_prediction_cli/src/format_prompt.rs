@@ -45,18 +45,19 @@ pub async fn run_format_prompt(
     let cursor_point = Point::new(prompt_inputs.cursor_row, prompt_inputs.cursor_column);
     let snapshot = cx.background_spawn(snapshot_fut).await;
 
-    let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
-        cursor_point,
-        &snapshot,
-        edit_prediction::zeta2::MAX_EDITABLE_TOKENS,
-        edit_prediction::zeta2::MAX_CONTEXT_TOKENS,
-    );
-    let editable_range = editable_range.to_offset(&snapshot);
-    let context_range = context_range.to_offset(&snapshot);
-
     match args.provider {
-        PredictionProvider::Teacher | PredictionProvider::TeacherNonBatching => {
+        PredictionProvider::Teacher(version) | PredictionProvider::TeacherNonBatching(version) => {
             step_progress.set_substatus("formatting teacher prompt");
+
+            let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
+                cursor_point,
+                &snapshot,
+                edit_prediction::zeta2::max_editable_tokens(version),
+                edit_prediction::zeta2::MAX_CONTEXT_TOKENS,
+            );
+            let editable_range = editable_range.to_offset(&snapshot);
+            let context_range = context_range.to_offset(&snapshot);
+
             let prompt = TeacherPrompt::format_prompt(example, editable_range, context_range);
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
@@ -71,6 +72,15 @@ pub async fn run_format_prompt(
         }
         PredictionProvider::Zeta2(version) => {
             step_progress.set_substatus("formatting zeta2 prompt");
+
+            let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
+                cursor_point,
+                &snapshot,
+                edit_prediction::zeta2::max_editable_tokens(version),
+                edit_prediction::zeta2::MAX_CONTEXT_TOKENS,
+            );
+            let editable_range = editable_range.to_offset(&snapshot);
+            let context_range = context_range.to_offset(&snapshot);
 
             let context_start = context_range.start;
             let cursor_offset_in_excerpt = prompt_inputs.cursor_offset - context_start;
