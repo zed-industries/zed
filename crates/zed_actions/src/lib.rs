@@ -122,7 +122,7 @@ pub struct IncreaseBufferFontSize {
     pub persist: bool,
 }
 
-/// Increases the font size in the editor buffer.
+/// Opens the settings editor at a specific path.
 #[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
