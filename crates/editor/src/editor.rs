@@ -15131,8 +15131,25 @@ impl Editor {
             display_map.max_point().row()
         };
 
+        // When `skip_soft_wrap` is true, we use buffer columns instead of pixel positions
+        // to place new selections. We need to preserve the column range from the oldest
+        // selection in each group, not the most recently added one, because intermediate
+        // selections may have been clamped to shorter lines.
+        let mut goal_columns_by_selection_id = HashMap::default();
         let mut last_added_item_per_group = HashMap::default();
         for group in state.groups.iter_mut() {
+            if let Some(oldest_id) = group.stack.first() {
+                if let Some(oldest_selection) =
+                    columnar_selections.iter().find(|s| s.id == *oldest_id)
+                {
+                    let start_col = oldest_selection.start.column;
+                    let end_col = oldest_selection.end.column;
+                    let goal_columns = start_col.min(end_col)..start_col.max(end_col);
+                    for id in &group.stack {
+                        goal_columns_by_selection_id.insert(*id, goal_columns.clone());
+                    }
+                }
+            }
             if let Some(last_id) = group.stack.last() {
                 last_added_item_per_group.insert(*last_id, group);
             }
@@ -15174,15 +15191,19 @@ impl Editor {
                         };
 
                         let new_selection = if let Some(buffer_row) = new_buffer_row {
-                            let start_col = selection.start.column;
-                            let end_col = selection.end.column;
-                            let buffer_columns = start_col.min(end_col)..start_col.max(end_col);
-
+                            let goal_columns = goal_columns_by_selection_id
+                                .get(&selection.id)
+                                .cloned()
+                                .unwrap_or_else(|| {
+                                    let start_col = selection.start.column;
+                                    let end_col = selection.end.column;
+                                    start_col.min(end_col)..start_col.max(end_col)
+                                });
                             self.selections
                                 .build_columnar_selection_from_buffer_columns(
                                     &display_map,
                                     buffer_row,
-                                    &buffer_columns,
+                                    &goal_columns,
                                     selection.reversed,
                                     &text_layout_details,
                                 )
