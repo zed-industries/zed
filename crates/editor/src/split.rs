@@ -259,9 +259,10 @@ impl SplittableEditor {
         });
         let panes = PaneGroup::new(pane);
         // TODO(split-diff) we might want to tag editor events with whether they came from primary/secondary
-        let subscriptions = vec![cx.subscribe(
+        let subscriptions = vec![cx.subscribe_in(
             &primary_editor,
-            |this, _, event: &EditorEvent, cx| match event {
+            window,
+            |this, primary_editor, event: &EditorEvent, window, cx| match event {
                 EditorEvent::ExpandExcerptsRequested {
                     excerpt_ids,
                     lines,
@@ -272,6 +273,16 @@ impl SplittableEditor {
                 EditorEvent::SelectionsChanged { .. } => {
                     if let Some(secondary) = &mut this.secondary {
                         secondary.has_latest_selection = false;
+                    }
+                    cx.emit(event.clone());
+                }
+                EditorEvent::ScrollPositionChanged { .. } => {
+                    let scroll_position = primary_editor
+                        .update(cx, |primary_editor, cx| primary_editor.scroll_position(cx));
+                    if let Some(secondary) = &this.secondary {
+                        secondary.editor.update(cx, |secondary_editor, cx| {
+                            secondary_editor.set_scroll_position(scroll_position, window, cx);
+                        })
                     }
                     cx.emit(event.clone());
                 }
@@ -353,9 +364,10 @@ impl SplittableEditor {
             pane
         });
 
-        let subscriptions = vec![cx.subscribe(
+        let subscriptions = vec![cx.subscribe_in(
             &secondary_editor,
-            |this, _, event: &EditorEvent, cx| match event {
+            window,
+            |this, secondary_editor, event: &EditorEvent, window, cx| match event {
                 EditorEvent::ExpandExcerptsRequested {
                     excerpt_ids,
                     lines,
@@ -376,6 +388,15 @@ impl SplittableEditor {
                     if let Some(secondary) = &mut this.secondary {
                         secondary.has_latest_selection = true;
                     }
+                    cx.emit(event.clone());
+                }
+                EditorEvent::ScrollPositionChanged { .. } => {
+                    let scroll_position = secondary_editor.update(cx, |secondary_editor, cx| {
+                        secondary_editor.scroll_position(cx)
+                    });
+                    this.primary_editor.update(cx, |primary_editor, cx| {
+                        primary_editor.set_scroll_position(scroll_position, window, cx);
+                    });
                     cx.emit(event.clone());
                 }
                 _ => cx.emit(event.clone()),
@@ -610,63 +631,9 @@ impl SplittableEditor {
         use multi_buffer::MultiBufferRow;
         use multi_buffer::MultiBufferSnapshot;
 
-        fn format_diff(snapshot: &MultiBufferSnapshot) -> String {
-            let text = snapshot.text();
-            let row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
-            let boundary_rows = snapshot
-                .excerpt_boundaries_in_range(MultiBufferOffset(0)..)
-                .map(|b| b.row)
-                .collect::<HashSet<_>>();
-
-            text.split('\n')
-                .enumerate()
-                .zip(row_infos)
-                .map(|((ix, line), info)| {
-                    let marker = match info.diff_status.map(|status| status.kind) {
-                        Some(DiffHunkStatusKind::Added) => "+ ",
-                        Some(DiffHunkStatusKind::Deleted) => "- ",
-                        Some(DiffHunkStatusKind::Modified) => unreachable!(),
-                        None => {
-                            if !line.is_empty() {
-                                "  "
-                            } else {
-                                ""
-                            }
-                        }
-                    };
-                    let boundary_row = if boundary_rows.contains(&MultiBufferRow(ix as u32)) {
-                        "  ----------\n"
-                    } else {
-                        ""
-                    };
-                    let expand = info
-                        .expand_info
-                        .map(|expand_info| match expand_info.direction {
-                            ExpandExcerptDirection::Up => " [↑]",
-                            ExpandExcerptDirection::Down => " [↓]",
-                            ExpandExcerptDirection::UpAndDown => " [↕]",
-                        })
-                        .unwrap_or_default();
-
-                    format!("{boundary_row}{marker}{line}{expand}")
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
-
         let Some(secondary) = &self.secondary else {
             return;
         };
-
-        log::info!(
-            "primary:\n\n{}",
-            format_diff(&self.primary_multibuffer.read(cx).snapshot(cx))
-        );
-
-        log::info!(
-            "secondary:\n\n{}",
-            format_diff(&secondary.multibuffer.read(cx).snapshot(cx))
-        );
 
         let primary_excerpts = self.primary_multibuffer.read(cx).excerpt_ids();
         let secondary_excerpts = secondary.multibuffer.read(cx).excerpt_ids();
@@ -735,7 +702,6 @@ impl SplittableEditor {
         use crate::DisplayRow;
         use crate::display_map::Block;
         use buffer_diff::DiffHunkStatusKind;
-        use unicode_width::UnicodeWidthStr;
 
         assert!(
             self.secondary.is_some(),
@@ -1050,7 +1016,13 @@ impl SplittableEditor {
             {
                 let len = rng.random_range(100..500);
                 let text = RandomCharIter::new(&mut *rng).take(len).collect::<String>();
-                let buffer = cx.new(|cx| Buffer::local(text, cx));
+                let buffer = cx.new(|cx| {
+                    let mut buffer = Buffer::local(text, cx);
+                    if std::env::var("ENSURE_FINAL_NEWLINE").is_ok() {
+                        buffer.ensure_final_newline(cx);
+                    }
+                    buffer
+                });
                 log::info!(
                     "Creating new buffer {} with text: {:?}",
                     buffer.read(cx).remote_id(),
@@ -1061,18 +1033,35 @@ impl SplittableEditor {
                 // Create some initial diff hunks.
                 buffer.update(cx, |buffer, cx| {
                     buffer.randomly_edit(rng, 1, cx);
+                    if std::env::var("ENSURE_FINAL_NEWLINE").is_ok() {
+                        buffer.ensure_final_newline(cx);
+                    }
                 });
                 let buffer_snapshot = buffer.read(cx).text_snapshot();
-                let ranges = diff.update(cx, |diff, cx| {
+                diff.update(cx, |diff, cx| {
                     diff.recalculate_diff_sync(&buffer_snapshot, cx);
-                    diff.snapshot(cx)
-                        .hunks(&buffer_snapshot)
-                        .map(|hunk| hunk.buffer_range.to_point(&buffer_snapshot))
-                        .collect::<Vec<_>>()
                 });
                 let path = PathKey::for_buffer(&buffer, cx);
-                self.set_excerpts_for_path(path, buffer, ranges, 2, diff, cx);
+                if max_excerpts == 1 {
+                    self.set_excerpts_for_path(
+                        path,
+                        buffer.clone(),
+                        vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                        0,
+                        diff,
+                        cx,
+                    );
+                } else {
+                    let ranges = diff.update(cx, |diff, cx| {
+                        diff.snapshot(cx)
+                            .hunks(&buffer_snapshot)
+                            .map(|hunk| hunk.buffer_range.to_point(&buffer_snapshot))
+                            .collect::<Vec<_>>()
+                    });
+                    self.set_excerpts_for_path(path, buffer, ranges, 2, diff, cx);
+                }
             } else {
+                log::info!("removing excerpts");
                 let remove_count = rng.random_range(1..=paths.len());
                 let paths_to_remove = paths
                     .choose_multiple(rng, remove_count)
@@ -1405,6 +1394,9 @@ mod tests {
         let operations = std::env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
+        let max_excerpts = std::env::var("MAX_EXCERPTS")
+            .map(|i| i.parse().expect("invalid `MAX_EXCERPTS` variable"))
+            .unwrap_or(5);
         let rng = &mut rng;
         for _ in 0..operations {
             let buffers = editor.update(cx, |editor, cx| {
@@ -1417,6 +1409,7 @@ mod tests {
             });
 
             if buffers.is_empty() {
+                log::info!("adding excerpts to empty multibuffer");
                 editor.update(cx, |editor, cx| {
                     editor.randomly_edit_excerpts(rng, 2, cx);
                     editor.check_invariants(true, cx);
@@ -1433,9 +1426,15 @@ mod tests {
                         if rng.random() {
                             log::info!("randomly editing single buffer");
                             buffer.randomly_edit(rng, 5, cx);
+                            if std::env::var("ENSURE_FINAL_NEWLINE").is_ok() {
+                                buffer.ensure_final_newline(cx);
+                            }
                         } else {
                             log::info!("randomly undoing/redoing in single buffer");
                             buffer.randomly_undo_redo(rng, cx);
+                            if std::env::var("ENSURE_FINAL_NEWLINE").is_ok() {
+                                buffer.ensure_final_newline(cx);
+                            }
                         }
                     });
                 }
@@ -1476,17 +1475,19 @@ mod tests {
                             diff.recalculate_diff_sync(&buffer_snapshot, cx);
                         });
                         cx.run_until_parked();
-                        let diff_snapshot = diff.read_with(cx, |diff, cx| diff.snapshot(cx));
-                        let ranges = diff_snapshot
-                            .hunks(&buffer_snapshot)
-                            .map(|hunk| hunk.range)
-                            .collect::<Vec<_>>();
-                        editor.update(cx, |editor, cx| {
-                            let path = PathKey::for_buffer(&buffer, cx);
-                            editor.set_excerpts_for_path(path, buffer, ranges, 2, diff, cx);
-                        });
-                        quiesced = true;
+                        if max_excerpts > 1 {
+                            let diff_snapshot = diff.read_with(cx, |diff, cx| diff.snapshot(cx));
+                            let ranges = diff_snapshot
+                                .hunks(&buffer_snapshot)
+                                .map(|hunk| hunk.range)
+                                .collect::<Vec<_>>();
+                            editor.update(cx, |editor, cx| {
+                                let path = PathKey::for_buffer(&buffer, cx);
+                                editor.set_excerpts_for_path(path, buffer, ranges, 2, diff, cx);
+                            });
+                        }
                     }
+                    quiesced = true;
                 }
             }
 
