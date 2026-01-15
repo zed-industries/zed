@@ -201,9 +201,10 @@ impl LineWrapper {
             self.should_truncate_line(&line, truncate_width, truncation_affix, truncate_from)
         {
             let result = match truncate_from {
-                TruncateFrom::Start => {
-                    SharedString::from(format!("{truncation_affix}{}", &line[truncate_ix + 1..]))
-                }
+                TruncateFrom::Start => SharedString::from(format!(
+                    "{truncation_affix}{}",
+                    &line[line.ceil_char_boundary(truncate_ix + 1)..]
+                )),
                 TruncateFrom::End => {
                     SharedString::from(format!("{}{truncation_affix}", &line[..truncate_ix]))
                 }
@@ -599,12 +600,19 @@ mod tests {
             "aa bbb cccc dddd......",
             "......",
         );
+        perform_test(
+            &mut wrapper,
+            "aa bbb cccc 🦀🦀🦀🦀🦀 eeee ffff gggg",
+            "aa bbb cccc 🦀🦀🦀🦀…",
+            "…",
+        );
     }
 
     #[test]
     fn test_truncate_line_start() {
         let mut wrapper = build_wrapper();
 
+        #[track_caller]
         fn perform_test(
             wrapper: &mut LineWrapper,
             text: &'static str,
@@ -641,6 +649,12 @@ mod tests {
             "aaaa bbbb cccc ddddd eeee fff gg",
             "......dddd eeee fff gg",
             "......",
+        );
+        perform_test(
+            &mut wrapper,
+            "aaaa bbbb cccc 🦀🦀🦀🦀🦀 eeee fff gg",
+            "…🦀🦀🦀🦀 eeee fff gg",
+            "…",
         );
     }
 
