@@ -3748,8 +3748,7 @@ impl Editor {
         result
     }
     
-    // function needed for active function range highlighting 
-    // Returns the start and end row of the current scope the cursor is in, if any.
+    // Returns the start and end row of the current scope the cursor is in, if any
     pub fn current_scope_boundary(&self, window: &Window, cx: &mut App) -> Option<(u32, u32)> {
         let snapshot = self.snapshot(window, cx);
         let buffer_snapshot = snapshot.buffer_snapshot();

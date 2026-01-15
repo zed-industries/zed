@@ -342,7 +342,7 @@ pub struct ScrollbarContent {
     /// Whether to show markers indicating the start and end of the current scope in the scrollbar.
     ///
     /// Default: true
-    pub active_scope_range: Option<bool>,
+    pub active_scope_markers: Option<bool>,
 }
 
 /// Sticky scroll related settings

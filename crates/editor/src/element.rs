@@ -6980,6 +6980,13 @@ impl EditorElement {
         let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
         let any_scrollbar_dragged = self.editor.read(cx).scroll_manager.any_scrollbar_dragged();
 
+        // get active scope for active scope marker painting
+        let active_scope = if scrollbar_settings.active_scope_markers {
+            self.editor.update(cx, |editor, cx| editor.current_scope_boundary(window, cx))
+        } else {
+            None
+        };
+        
         for (scrollbar_layout, axis) in scrollbars_layout.iter_scrollbars() {
             let hitbox = &scrollbar_layout.hitbox;
             if scrollbars_layout.visible {
@@ -7022,56 +7029,48 @@ impl EditorElement {
                             window.paint_quad(marker);
                         }
 
-                        // Paint active scope markers
-                        if scrollbar_settings.active_scope_range {
-                            if let Some((start_row, end_row)) = self.editor.update(cx, |editor, cx| {
-                                editor.current_scope_boundary(window, cx)
-                            }) {
-                                let snapshot = &layout.position_map.snapshot;
-                                let display_snapshot = &snapshot.display_snapshot;
-                                let buffer_snapshot = snapshot.buffer_snapshot();
-                        
-                                let start_display_row = buffer_snapshot
-                                    .anchor_before(Point::new(start_row, 0))
-                                    .to_display_point(display_snapshot)
-                                    .row();
-                                let end_display_row = buffer_snapshot
-                                    .anchor_before(Point::new(end_row, 0))
-                                    .to_display_point(display_snapshot)
-                                    .row();
-                        
-                                let total_rows = (display_snapshot.max_point().row().0 + 1) as f32;
-                                
-                                // for painting the markers I tried useing marker_quads_for_ranges, but it didnt show up
-                                // meybe because of layering issiues so I use a custom aproach
-                                if total_rows > 0.0 {
-                                    let track_bounds = scrollbar_layout.hitbox.bounds;
-                                    let track_height = track_bounds.size.height;
-                                    
-                                    // size
-                                    let marker_size = px(4.0);
-                                    // positioning
-                                    let padding = px(2.0);
-                                    let marker_x = track_bounds.right() - marker_size - padding;
-                                    // color
-                                    let color = gpui::white().opacity(0.5);
-                        
-                                    for display_row in [start_display_row, end_display_row] {
-                                        let ratio = display_row.0 as f32 / total_rows;
-                                        let absolute_y = track_bounds.top() + (ratio * track_height);
-                                        
-                                        
-                                        window.paint_quad(gpui::fill(
-                                            Bounds::new(
-                                                point(marker_x, absolute_y - (marker_size / 2.0)),
-                                                size(marker_size, marker_size),
-                                            ),
-                                            color,
-                                        ));
-                                    }
-                                }
-                            }
-                        }
+                        // active scope marker/indicator painting logic
+                        if let Some((start_row, end_row)) = active_scope {
+                          let snapshot = &layout.position_map.snapshot;
+                          let display_snapshot = &snapshot.display_snapshot;
+                          
+                          let start_display_row = snapshot
+                              .buffer_snapshot()
+                              .anchor_before(Point::new(start_row, 0))
+                              .to_display_point(display_snapshot)
+                              .row();
+                          let end_display_row = snapshot
+                              .buffer_snapshot()
+                              .anchor_before(Point::new(end_row, 0))
+                              .to_display_point(display_snapshot)
+                              .row();
+                      
+                          // use text_unit_size to map rows to pixels
+                          let text_unit_size = scrollbar_layout.text_unit_size;
+                          
+                          let start_y = start_display_row.as_f64() as f32 * text_unit_size;
+                          let end_y = end_display_row.as_f64() as f32 * text_unit_size;
+                          
+                          let track_bounds = hitbox.bounds;
+                          // size
+                          let marker_w = px(4.0);
+                          let marker_h = px(4.0);
+                          // position
+                          let marker_x = track_bounds.right() - marker_w - px(2.0);
+                          //color 
+                          let color = gpui::white().opacity(0.6);
+                      
+                          for y in [start_y, end_y] {
+                              let marker_y = track_bounds.top() + y;
+                              window.paint_quad(gpui::fill(
+                                  Bounds::new(
+                                      point(marker_x, (marker_y - marker_h / 2.0).round()),
+                                      size(marker_w, marker_h),
+                                  ),
+                                  color,
+                              ));
+                          }
+                      }
                     }
 
                     if let Some(thumb_bounds) = scrollbar_layout.thumb_bounds {
