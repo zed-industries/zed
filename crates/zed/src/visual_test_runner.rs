@@ -1552,8 +1552,7 @@ import { AiPaneTabContext } from 'context';
                     let comment_id = editor
                         .all_review_comments()
                         .next()
-                        .map(|(_, comments)| comments.first().map(|c| c.id))
-                        .flatten();
+                        .and_then(|(_, comments)| comments.first().map(|c| c.id));
 
                     if let Some(id) = comment_id {
                         // Trigger edit on the first comment
@@ -1623,8 +1622,7 @@ import { AiPaneTabContext } from 'context';
                     let comment_id = editor
                         .all_review_comments()
                         .next()
-                        .map(|(_, comments)| comments.first().map(|c| c.id))
-                        .flatten();
+                        .and_then(|(_, comments)| comments.first().map(|c| c.id));
 
                     if let Some(id) = comment_id {
                         editor.delete_review_comment(
