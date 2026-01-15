@@ -511,6 +511,7 @@ pub(crate) struct Vim {
 
     operator_stack: Vec<Operator>,
     beam_jump: Option<BeamJumpState>,
+    beam_jump_pending_commit_task: Option<Task<()>>,
     pub(crate) replacements: Vec<(Range<editor::Anchor>, String)>,
 
     pub(crate) stored_visual_mode: Option<(Mode, Vec<bool>)>,
@@ -573,6 +574,7 @@ impl Vim {
             exit_temporary_mode: false,
             operator_stack: Vec::new(),
             beam_jump: None,
+            beam_jump_pending_commit_task: None,
             replacements: Vec::new(),
 
             stored_visual_mode: None,
@@ -1568,6 +1570,8 @@ impl Vim {
     }
 
     fn clear_beam_jump(&mut self, cx: &mut Context<Self>) {
+        self.beam_jump_pending_commit_task = None;
+
         if self.beam_jump.is_none() {
             return;
         }
@@ -1761,7 +1765,8 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        cx.spawn_in(window, async move |this, cx| {
+        self.beam_jump_pending_commit_task = None;
+        self.beam_jump_pending_commit_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
                 .timer(BEAM_JUMP_PENDING_COMMIT_TIMEOUT)
                 .await;
@@ -1775,8 +1780,7 @@ impl Vim {
                 );
             })
             .log_err();
-        })
-        .detach();
+        }));
     }
 
     fn commit_beam_jump_pending_commit(
