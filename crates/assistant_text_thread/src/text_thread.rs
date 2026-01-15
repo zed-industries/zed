@@ -7,14 +7,14 @@ use assistant_slash_command::{
 use assistant_slash_commands::FileCommandMetadata;
 use client::{self, proto};
 use clock::ReplicaId;
-use cloud_llm_client::{CompletionIntent};
+use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet};
 use fs::{Fs, RenameOptions};
 
 use futures::{FutureExt, StreamExt, future::Shared};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
-    Task, WeakEntity,
+    Task,
 };
 use itertools::Itertools as _;
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
@@ -27,7 +27,6 @@ use language_model::{
 };
 use open_ai::Model as OpenAiModel;
 use paths::text_threads_dir;
-use project::Project;
 use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -688,7 +687,6 @@ pub struct TextThread {
     path: Option<Arc<Path>>,
     _subscriptions: Vec<Subscription>,
     language_registry: Arc<LanguageRegistry>,
-    project: Option<WeakEntity<Project>>,
     prompt_builder: Arc<PromptBuilder>,
     completion_mode: agent_settings::CompletionMode,
 }
@@ -708,7 +706,6 @@ impl EventEmitter<TextThreadEvent> for TextThread {}
 impl TextThread {
     pub fn local(
         language_registry: Arc<LanguageRegistry>,
-        project: Option<WeakEntity<Project>>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
         cx: &mut Context<Self>,
@@ -720,7 +717,6 @@ impl TextThread {
             language_registry,
             prompt_builder,
             slash_commands,
-            project,
             cx,
         )
     }
@@ -740,7 +736,6 @@ impl TextThread {
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
-        project: Option<WeakEntity<Project>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let buffer = cx.new(|_cx| {
@@ -781,7 +776,6 @@ impl TextThread {
             completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             path: None,
             buffer,
-            project,
             language_registry,
             slash_commands,
             prompt_builder,
@@ -869,7 +863,6 @@ impl TextThread {
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
-        project: Option<WeakEntity<Project>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let id = saved_context.id.clone().unwrap_or_else(TextThreadId::new);
@@ -880,7 +873,6 @@ impl TextThread {
             language_registry,
             prompt_builder,
             slash_commands,
-            project,
             cx,
         );
         this.path = Some(path);
