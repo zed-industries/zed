@@ -3894,7 +3894,6 @@ impl AcpThreadView {
             return self.render_permission_buttons_legacy(options, entry_ix, tool_call_id, cx);
         }
 
-        // Get granularity options (all options except the old deny option which we no longer generate)
         let granularity_options: Vec<_> = options
             .iter()
             .filter(|o| {
@@ -3912,18 +3911,15 @@ impl AcpThreadView {
             .copied()
             .unwrap_or_else(|| granularity_options.len().saturating_sub(1));
 
-        // Get the selected option
         let selected_option = granularity_options
             .get(selected_index)
             .or(granularity_options.last())
             .copied();
 
-        // The dropdown label should match the selected option
         let dropdown_label: SharedString = selected_option
             .map(|o| o.name.clone().into())
             .unwrap_or_else(|| "Only this time".into());
 
-        // Prepare data for button click handlers
         let (allow_option_id, allow_option_kind, deny_option_id, deny_option_kind) =
             if let Some(option) = selected_option {
                 let option_id_str = option.option_id.0.to_string();
@@ -3950,7 +3946,6 @@ impl AcpThreadView {
                     option_id_str.replace("allow", "deny")
                 };
 
-                // Determine the kinds
                 let allow_kind = option.kind;
                 let deny_kind = match option.kind {
                     acp::PermissionOptionKind::AllowOnce => acp::PermissionOptionKind::RejectOnce,
@@ -3975,19 +3970,16 @@ impl AcpThreadView {
                 )
             };
 
-        div()
+        h_flex()
+            .w_full()
             .p_1()
+            .gap_2()
+            .justify_between()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
-            .w_full()
-            .h_flex()
-            .items_center()
-            .justify_between()
-            .gap_2()
             .child(
-                // Left side: Allow and Deny buttons
                 h_flex()
-                    .gap_1()
+                    .gap_0p5()
                     .child(
                         Button::new(("allow-btn", entry_ix), "Allow")
                             .icon(IconName::Check)
@@ -3995,19 +3987,15 @@ impl AcpThreadView {
                             .icon_position(IconPosition::Start)
                             .icon_size(IconSize::XSmall)
                             .label_size(LabelSize::Small)
-                            .map(|btn| {
-                                if is_first {
-                                    btn.key_binding(
-                                        KeyBinding::for_action_in(
-                                            &AllowOnce as &dyn Action,
-                                            &self.focus_handle,
-                                            cx,
-                                        )
-                                        .map(|kb| kb.size(rems_from_px(10.))),
+                            .when(is_first, |this| {
+                                this.key_binding(
+                                    KeyBinding::for_action_in(
+                                        &AllowOnce as &dyn Action,
+                                        &self.focus_handle,
+                                        cx,
                                     )
-                                } else {
-                                    btn
-                                }
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                )
                             })
                             .on_click(cx.listener({
                                 let tool_call_id = tool_call_id.clone();
@@ -4031,19 +4019,15 @@ impl AcpThreadView {
                             .icon_position(IconPosition::Start)
                             .icon_size(IconSize::XSmall)
                             .label_size(LabelSize::Small)
-                            .map(|btn| {
-                                if is_first {
-                                    btn.key_binding(
-                                        KeyBinding::for_action_in(
-                                            &RejectOnce as &dyn Action,
-                                            &self.focus_handle,
-                                            cx,
-                                        )
-                                        .map(|kb| kb.size(rems_from_px(10.))),
+                            .when(is_first, |this| {
+                                this.key_binding(
+                                    KeyBinding::for_action_in(
+                                        &RejectOnce as &dyn Action,
+                                        &self.focus_handle,
+                                        cx,
                                     )
-                                } else {
-                                    btn
-                                }
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                )
                             })
                             .on_click(cx.listener({
                                 let tool_call_id = tool_call_id.clone();
@@ -4061,18 +4045,15 @@ impl AcpThreadView {
                             })),
                     ),
             )
-            .child(
-                // Right side: Granularity dropdown
-                self.render_permission_granularity_dropdown(
-                    &granularity_options,
-                    dropdown_label,
-                    entry_ix,
-                    tool_call_id,
-                    selected_index,
-                    is_first,
-                    cx,
-                ),
-            )
+            .child(self.render_permission_granularity_dropdown(
+                &granularity_options,
+                dropdown_label,
+                entry_ix,
+                tool_call_id,
+                selected_index,
+                is_first,
+                cx,
+            ))
     }
 
     fn render_permission_granularity_dropdown(
@@ -4085,8 +4066,6 @@ impl AcpThreadView {
         is_first: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        // Collect option info for the menu builder closure
-        // Each item is (index, display_name)
         let menu_options: Vec<(usize, SharedString)> = granularity_options
             .iter()
             .enumerate()
@@ -4098,23 +4077,18 @@ impl AcpThreadView {
             .trigger(
                 Button::new(("granularity-trigger", entry_ix), current_label)
                     .icon(IconName::ChevronDown)
-                    .icon_position(IconPosition::End)
                     .icon_size(IconSize::XSmall)
+                    .icon_color(Color::Muted)
                     .label_size(LabelSize::Small)
-                    .style(ButtonStyle::Subtle)
-                    .map(|btn| {
-                        if is_first {
-                            btn.key_binding(
-                                KeyBinding::for_action_in(
-                                    &crate::OpenPermissionDropdown as &dyn Action,
-                                    &self.focus_handle,
-                                    cx,
-                                )
-                                .map(|kb| kb.size(rems_from_px(10.))),
+                    .when(is_first, |this| {
+                        this.key_binding(
+                            KeyBinding::for_action_in(
+                                &crate::OpenPermissionDropdown as &dyn Action,
+                                &self.focus_handle,
+                                cx,
                             )
-                        } else {
-                            btn
-                        }
+                            .map(|kb| kb.size(rems_from_px(10.))),
+                        )
                     }),
             )
             .menu(move |window, cx| {
@@ -4128,38 +4102,20 @@ impl AcpThreadView {
                         let tool_call_id_for_entry = tool_call_id.clone();
                         let is_selected = index == selected_index;
 
-                        menu = menu.custom_entry(
-                            {
-                                let display_name = display_name.clone();
-                                move |_window, _cx| {
-                                    h_flex()
-                                        .w_full()
-                                        .justify_between()
-                                        .child(
-                                            Label::new(display_name.clone()).size(LabelSize::Small),
-                                        )
-                                        .when(is_selected, |this| {
-                                            this.child(
-                                                Icon::new(IconName::Check)
-                                                    .size(IconSize::Small)
-                                                    .color(Color::Accent),
-                                            )
-                                        })
-                                        .into_any_element()
-                                }
-                            },
-                            {
-                                let tool_call_id = tool_call_id_for_entry.clone();
-                                move |window, cx| {
-                                    window.dispatch_action(
-                                        SelectPermissionGranularity {
-                                            tool_call_id: tool_call_id.0.to_string(),
-                                            index,
-                                        }
-                                        .boxed_clone(),
-                                        cx,
-                                    );
-                                }
+                        menu = menu.toggleable_entry(
+                            display_name,
+                            is_selected,
+                            IconPosition::End,
+                            None,
+                            move |window, cx| {
+                                window.dispatch_action(
+                                    SelectPermissionGranularity {
+                                        tool_call_id: tool_call_id_for_entry.0.to_string(),
+                                        index,
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                );
                             },
                         );
                     }
