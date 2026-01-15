@@ -182,6 +182,8 @@ impl PlatformWindow for TestWindow {
         )
     }
 
+    fn request_user_attention(&self, _is_critical: bool) {}
+
     fn activate(&self) {
         self.0
             .lock()
