@@ -1190,7 +1190,7 @@ impl LanguageRegistryState {
             language.set_theme(theme.syntax());
         }
         self.language_settings.languages.0.insert(
-            language.name().0,
+            language.name().0.to_string(),
             LanguageSettingsContent {
                 tab_size: language.config.tab_size,
                 hard_tabs: language.config.hard_tabs,

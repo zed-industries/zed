@@ -1,9 +1,12 @@
 mod agent;
 mod editor;
 mod extension;
+mod fallible_options;
 mod language;
 mod language_model;
+pub mod merge_from;
 mod project;
+mod serde_helper;
 mod terminal;
 mod theme;
 mod workspace;
@@ -11,25 +14,35 @@ mod workspace;
 pub use agent::*;
 pub use editor::*;
 pub use extension::*;
+pub use fallible_options::*;
 pub use language::*;
 pub use language_model::*;
+pub use merge_from::MergeFrom as MergeFromTrait;
 pub use project::*;
+use serde::de::DeserializeOwned;
+pub use serde_helper::{
+    serialize_f32_with_two_decimal_places, serialize_optional_f32_with_two_decimal_places,
+};
+use settings_json::parse_json_with_comments;
 pub use terminal::*;
 pub use theme::*;
 pub use workspace::*;
 
 use collections::{HashMap, IndexMap};
-use gpui::{App, SharedString};
-use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::collections::BTreeSet;
-use std::env;
 use std::sync::Arc;
 pub use util::serde::default_true;
 
-use crate::{ActiveSettingsProfileName, merge_from};
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseStatus {
+    /// Settings were parsed successfully
+    Success,
+    /// Settings failed to parse
+    Failed { error: String },
+}
 
 #[with_fallible_options]
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -166,8 +179,41 @@ pub struct SettingsContent {
 }
 
 impl SettingsContent {
-    pub fn languages_mut(&mut self) -> &mut HashMap<SharedString, LanguageSettingsContent> {
+    pub fn languages_mut(&mut self) -> &mut HashMap<String, LanguageSettingsContent> {
         &mut self.project.all_languages.languages.0
+    }
+}
+
+// These impls are there to optimize builds by avoiding monomorphization downstream. Yes, they're repetitive, but using default impls
+// break the optimization, for whatever reason.
+pub trait RootUserSettings: Sized + DeserializeOwned {
+    fn parse_json(json: &str) -> (Option<Self>, ParseStatus);
+    fn parse_json_with_comments(json: &str) -> anyhow::Result<Self>;
+}
+
+impl RootUserSettings for SettingsContent {
+    fn parse_json(json: &str) -> (Option<Self>, ParseStatus) {
+        fallible_options::parse_json(json)
+    }
+    fn parse_json_with_comments(json: &str) -> anyhow::Result<Self> {
+        parse_json_with_comments(json)
+    }
+}
+// Explicit opt-in instead of blanket impl to avoid monomorphizing downstream. Just a hunch though.
+impl RootUserSettings for Option<SettingsContent> {
+    fn parse_json(json: &str) -> (Option<Self>, ParseStatus) {
+        fallible_options::parse_json(json)
+    }
+    fn parse_json_with_comments(json: &str) -> anyhow::Result<Self> {
+        parse_json_with_comments(json)
+    }
+}
+impl RootUserSettings for UserSettingsContent {
+    fn parse_json(json: &str) -> (Option<Self>, ParseStatus) {
+        fallible_options::parse_json(json)
+    }
+    fn parse_json_with_comments(json: &str) -> anyhow::Result<Self> {
+        parse_json_with_comments(json)
     }
 }
 
@@ -192,33 +238,6 @@ pub struct UserSettingsContent {
 
 pub struct ExtensionsSettingsContent {
     pub all_languages: AllLanguageSettingsContent,
-}
-
-impl UserSettingsContent {
-    pub fn for_release_channel(&self) -> Option<&SettingsContent> {
-        match *release_channel::RELEASE_CHANNEL {
-            ReleaseChannel::Dev => self.dev.as_deref(),
-            ReleaseChannel::Nightly => self.nightly.as_deref(),
-            ReleaseChannel::Preview => self.preview.as_deref(),
-            ReleaseChannel::Stable => self.stable.as_deref(),
-        }
-    }
-
-    pub fn for_os(&self) -> Option<&SettingsContent> {
-        match env::consts::OS {
-            "macos" => self.macos.as_deref(),
-            "linux" => self.linux.as_deref(),
-            "windows" => self.windows.as_deref(),
-            _ => None,
-        }
-    }
-
-    pub fn for_profile(&self, cx: &App) -> Option<&SettingsContent> {
-        let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() else {
-            return None;
-        };
-        self.profiles.get(&active_profile.0)
-    }
 }
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.
@@ -964,14 +983,14 @@ pub struct RemoteSettingsContent {
     Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
 )]
 pub struct DevContainerConnection {
-    pub name: SharedString,
-    pub container_id: SharedString,
+    pub name: String,
+    pub container_id: String,
 }
 
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct SshConnection {
-    pub host: SharedString,
+    pub host: String,
     pub username: Option<String>,
     pub port: Option<u16>,
     #[serde(default)]
@@ -994,7 +1013,7 @@ pub struct SshConnection {
 
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Debug)]
 pub struct WslConnection {
-    pub distro_name: SharedString,
+    pub distro_name: String,
     pub user: Option<String>,
     #[serde(default)]
     pub projects: BTreeSet<RemoteProject>,

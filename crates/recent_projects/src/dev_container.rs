@@ -312,8 +312,8 @@ pub(crate) async fn start_dev_container(
             .await?;
 
             let connection = Connection::DevContainer(DevContainerConnection {
-                name: project_name.into(),
-                container_id: container_id.into(),
+                name: project_name,
+                container_id,
             });
 
             Ok((connection, remote_workspace_folder))

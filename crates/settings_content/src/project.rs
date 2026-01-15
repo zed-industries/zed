@@ -3,12 +3,13 @@ use std::{path::PathBuf, sync::Arc};
 use collections::{BTreeMap, HashMap};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings_json::parse_json_with_comments;
 use settings_macros::{MergeFrom, with_fallible_options};
 use util::serde::default_true;
 
 use crate::{
-    AllLanguageSettingsContent, DelayMs, ExtendingVec, ProjectTerminalSettingsContent,
-    SlashCommandSettings,
+    AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
+    RootUserSettings, SlashCommandSettings, fallible_options,
 };
 
 #[with_fallible_options]
@@ -21,6 +22,15 @@ impl IntoIterator for LspSettingsMap {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
+    }
+}
+
+impl RootUserSettings for ProjectSettingsContent {
+    fn parse_json(json: &str) -> (Option<Self>, ParseStatus) {
+        fallible_options::parse_json(json)
+    }
+    fn parse_json_with_comments(json: &str) -> anyhow::Result<Self> {
+        parse_json_with_comments(json)
     }
 }
 

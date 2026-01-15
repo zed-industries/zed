@@ -23678,7 +23678,7 @@ impl Editor {
                     .into_iter()
                     .flatten(),
             )
-            .flat_map(|accent| accent.0.clone())
+            .flat_map(|accent| accent.0.clone().map(SharedString::from))
             .collect();
 
         Some(AccentData {

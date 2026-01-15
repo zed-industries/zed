@@ -4615,9 +4615,7 @@ async fn test_formatting_buffer(
                     file.project.all_languages.defaults.formatter =
                         Some(FormatterList::Single(Formatter::External {
                             command: "awk".into(),
-                            arguments: Some(
-                                vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
-                            ),
+                            arguments: Some(vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()]),
                         }));
                 });
             });
