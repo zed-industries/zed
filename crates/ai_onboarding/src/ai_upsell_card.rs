@@ -64,7 +64,7 @@ impl RenderOnce for AiUpsellCard {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(PlanDefinitions.pro_plan(false));
+            .child(PlanDefinitions.pro_plan());
 
         let free_section = v_flex()
             .flex_grow()
@@ -185,7 +185,7 @@ impl RenderOnce for AiUpsellCard {
                                             )
                                             .child(Divider::horizontal()),
                                     )
-                                    .child(PlanDefinitions.pro_plan(true))
+                                    .child(PlanDefinitions.pro_plan())
                                     .child(
                                         Button::new("pro", "Get Started")
                                             .full_width()
@@ -249,7 +249,7 @@ impl RenderOnce for AiUpsellCard {
                             .color(Color::Muted)
                             .mb_2(),
                     )
-                    .child(PlanDefinitions.pro_plan(false)),
+                    .child(PlanDefinitions.pro_plan()),
             },
             // Signed Out State
             _ => card

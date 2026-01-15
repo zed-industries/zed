@@ -2550,13 +2550,8 @@ impl Thread {
                     max_attempts: 3,
                 })
             }
-            Other(err)
-                if err.is::<language_model::PaymentRequiredError>()
-                    || err.is::<language_model::ModelRequestLimitReachedError>() =>
-            {
-                // Retrying won't help for Payment Required or Model Request Limit errors (where
-                // the user must upgrade to usage-based billing to get more requests, or else wait
-                // for a significant amount of time for the request limit to reset).
+            Other(err) if err.is::<language_model::PaymentRequiredError>() => {
+                // Retrying won't help for Payment Required errors.
                 None
             }
             // Conservatively assume that any other errors are non-retryable

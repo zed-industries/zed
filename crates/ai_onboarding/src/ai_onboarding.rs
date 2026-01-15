@@ -117,7 +117,7 @@ impl ZedAiOnboarding {
                     .color(Color::Muted)
                     .mb_2(),
             )
-            .child(PlanDefinitions.pro_plan(false))
+            .child(PlanDefinitions.pro_plan())
             .child(
                 Button::new("sign_in", "Try Zed Pro for Free")
                     .disabled(signing_in)
@@ -158,7 +158,7 @@ impl ZedAiOnboarding {
                                 )
                                 .child(Divider::horizontal()),
                         )
-                        .child(PlanDefinitions.pro_plan(true))
+                        .child(PlanDefinitions.pro_plan())
                         .child(
                             Button::new("pro", "Get Started")
                                 .full_width()
@@ -261,7 +261,7 @@ impl ZedAiOnboarding {
                     .color(Color::Muted)
                     .mb_2(),
             )
-            .child(PlanDefinitions.pro_plan(false))
+            .child(PlanDefinitions.pro_plan())
             .children(self.render_dismiss_button())
             .into_any_element()
     }

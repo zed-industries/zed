@@ -4,12 +4,11 @@ use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::{Client, ModelRequestUsage, UserStore, zed_urls};
 use cloud_llm_client::{
-    CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_X_AI_HEADER_NAME,
-    CURRENT_PLAN_HEADER_NAME, CompletionBody, CompletionEvent, CompletionRequestStatus,
-    CountTokensBody, CountTokensResponse, EXPIRED_LLM_TOKEN_HEADER_NAME, ListModelsResponse,
-    MODEL_REQUESTS_RESOURCE_HEADER_VALUE, Plan, PlanV1, PlanV2,
-    SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
-    TOOL_USE_LIMIT_REACHED_HEADER_NAME, ZED_VERSION_HEADER_NAME,
+    CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody,
+    CompletionEvent, CompletionRequestStatus, CountTokensBody, CountTokensResponse,
+    EXPIRED_LLM_TOKEN_HEADER_NAME, ListModelsResponse, Plan, PlanV2,
+    SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, TOOL_USE_LIMIT_REACHED_HEADER_NAME,
+    ZED_VERSION_HEADER_NAME,
 };
 use feature_flags::{FeatureFlagAppExt as _, OpenAiResponsesApiFeatureFlag};
 use futures::{
@@ -24,8 +23,8 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, LlmApiToken, ModelRequestLimitReachedError,
-    PaymentRequiredError, RateLimiter, RefreshLlmTokenListener,
+    LanguageModelToolSchemaFormat, LlmApiToken, PaymentRequiredError, RateLimiter,
+    RefreshLlmTokenListener,
 };
 use release_channel::AppVersion;
 use schemars::JsonSchema;
@@ -36,7 +35,6 @@ pub use settings::ZedDotDevAvailableModel as AvailableModel;
 pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
 use smol::io::{AsyncReadExt, BufReader};
 use std::pin::Pin;
-use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
@@ -447,26 +445,7 @@ impl CloudLanguageModel {
                 continue;
             }
 
-            if status == StatusCode::FORBIDDEN
-                && response
-                    .headers()
-                    .get(SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME)
-                    .is_some()
-            {
-                if let Some(MODEL_REQUESTS_RESOURCE_HEADER_VALUE) = response
-                    .headers()
-                    .get(SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME)
-                    .and_then(|resource| resource.to_str().ok())
-                    && let Some(plan) = response
-                        .headers()
-                        .get(CURRENT_PLAN_HEADER_NAME)
-                        .and_then(|plan| plan.to_str().ok())
-                        .and_then(|plan| cloud_llm_client::PlanV1::from_str(plan).ok())
-                        .map(Plan::V1)
-                {
-                    return Err(anyhow!(ModelRequestLimitReachedError { plan }));
-                }
-            } else if status == StatusCode::PAYMENT_REQUIRED {
+            if status == StatusCode::PAYMENT_REQUIRED {
                 return Err(anyhow!(PaymentRequiredError));
             }
 
@@ -1118,18 +1097,15 @@ struct ZedAiConfiguration {
 
 impl RenderOnce for ZedAiConfiguration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let is_pro = self.plan.is_some_and(|plan| {
-            matches!(plan, Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro))
-        });
+        let is_pro = self
+            .plan
+            .is_some_and(|plan| plan == Plan::V2(PlanV2::ZedPro));
         let subscription_text = match (self.plan, self.subscription_period) {
-            (Some(Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro)), Some(_)) => {
+            (Some(Plan::V2(PlanV2::ZedPro)), Some(_)) => {
                 "You have access to Zed's hosted models through your Pro subscription."
             }
-            (Some(Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial)), Some(_)) => {
+            (Some(Plan::V2(PlanV2::ZedProTrial)), Some(_)) => {
                 "You have access to Zed's hosted models through your Pro trial."
-            }
-            (Some(Plan::V1(PlanV1::ZedFree)), Some(_)) => {
-                "You have basic access to Zed's hosted models through the Free plan."
             }
             (Some(Plan::V2(PlanV2::ZedFree)), Some(_)) => {
                 if self.eligible_for_trial {
@@ -1294,15 +1270,15 @@ impl Component for ZedAiConfiguration {
                     ),
                     single_example(
                         "Free Plan",
-                        configuration(true, Some(Plan::V1(PlanV1::ZedFree)), true, false),
+                        configuration(true, Some(Plan::V2(PlanV2::ZedFree)), true, false),
                     ),
                     single_example(
                         "Zed Pro Trial Plan",
-                        configuration(true, Some(Plan::V1(PlanV1::ZedProTrial)), true, false),
+                        configuration(true, Some(Plan::V2(PlanV2::ZedProTrial)), true, false),
                     ),
                     single_example(
                         "Zed Pro Plan",
-                        configuration(true, Some(Plan::V1(PlanV1::ZedPro)), true, false),
+                        configuration(true, Some(Plan::V2(PlanV2::ZedPro)), true, false),
                     ),
                 ])
                 .into_any_element(),

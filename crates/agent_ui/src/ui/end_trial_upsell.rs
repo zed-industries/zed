@@ -36,7 +36,7 @@ impl RenderOnce for EndTrialUpsell {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(PlanDefinitions.pro_plan(self.plan.is_v2(), false))
+            .child(PlanDefinitions.pro_plan())
             .child(
                 Button::new("cta-button", "Upgrade to Zed Pro")
                     .full_width()
@@ -67,7 +67,7 @@ impl RenderOnce for EndTrialUpsell {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(PlanDefinitions.free_plan(self.plan.is_v2()));
+            .child(PlanDefinitions.free_plan());
 
         AgentPanelOnboardingCard::new()
             .child(Headline::new("Your Zed Pro Trial has expired"))

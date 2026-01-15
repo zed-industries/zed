@@ -29,7 +29,7 @@ impl PlanDefinitions {
             })
     }
 
-    pub fn pro_plan(&self, price: bool) -> impl IntoElement {
+    pub fn pro_plan(&self) -> impl IntoElement {
         List::new()
             .child(ListBulletItem::new("Unlimited edit predictions"))
             .child(ListBulletItem::new("$5 of tokens"))

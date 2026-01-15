@@ -35,7 +35,6 @@ pub const EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME: &str = "x-zed-edit-predicti
 /// The name of the header used to indicate the resource for which the subscription limit has been reached.
 pub const SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME: &str = "x-zed-subscription-limit-resource";
 
-pub const MODEL_REQUESTS_RESOURCE_HEADER_VALUE: &str = "model_requests";
 pub const EDIT_PREDICTIONS_RESOURCE_HEADER_VALUE: &str = "edit_predictions";
 
 /// The name of the header used to indicate that the maximum number of consecutive tool uses has been reached.
