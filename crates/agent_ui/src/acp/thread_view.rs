@@ -5861,10 +5861,11 @@ impl AcpThreadView {
                                 h_flex()
                                     .flex_none()
                                     .gap_1()
-                                    .visible_on_hover("queue_entry")
+                                    .when(!is_next, |this| this.visible_on_hover("queue_entry"))
                                     .child(
-                                        Button::new(("delete", index), "Remove")
-                                            .label_size(LabelSize::Small)
+                                        IconButton::new(("delete", index), IconName::Trash)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip(Tooltip::text("Remove Message from Queue"))
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 if index < this.message_queue.len() {
                                                     this.message_queue.remove(index);
@@ -5874,7 +5875,6 @@ impl AcpThreadView {
                                     )
                                     .child(
                                         Button::new(("send_now", index), "Send Now")
-                                            .style(ButtonStyle::Outlined)
                                             .label_size(LabelSize::Small)
                                             .when(is_next, |this| {
                                                 let action: Box<dyn gpui::Action> =
@@ -5884,7 +5884,7 @@ impl AcpThreadView {
                                                         Box::new(SendNextQueuedMessage)
                                                     };
 
-                                                this.key_binding(
+                                                this.style(ButtonStyle::Outlined).key_binding(
                                                     KeyBinding::for_action_in(
                                                         action.as_ref(),
                                                         &focus_handle.clone(),
