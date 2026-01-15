@@ -5,9 +5,11 @@ use crate::{
     progress::{InfoStyle, Progress, Step, StepProgress},
 };
 use anyhow::{Context as _, Result};
-use edit_prediction::udiff::{OpenedBuffers, refresh_worktree_entries, strip_diff_path_prefix};
 use edit_prediction::{
-    EditPredictionStore, cursor_excerpt::editable_and_context_ranges_for_cursor_position, zeta2,
+    EditPredictionStore,
+    cursor_excerpt::editable_and_context_ranges_for_cursor_position,
+    udiff::{OpenedBuffers, refresh_worktree_entries, strip_diff_path_prefix},
+    zeta2,
 };
 use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity};
