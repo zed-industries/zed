@@ -21,11 +21,11 @@ use collections::HashSet;
 use edit_prediction::EditPredictionStore;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
-use gpui::{AppContext as _, Application};
+use gpui::{AppContext as _, Application, BackgroundExecutor};
 use zeta_prompt::ZetaVersion;
 
 use reqwest_client::ReqwestClient;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::Display;
 use std::fs::{File, OpenOptions};
 use std::hash::{Hash, Hasher};
@@ -152,49 +152,21 @@ impl Display for Command {
             Command::ParseExample => write!(f, "parse-example"),
             Command::LoadProject => write!(f, "load-project"),
             Command::Context => write!(f, "context"),
-            Command::FormatPrompt(format_prompt_args) => write!(
-                f,
-                "format-prompt --prompt-format={}",
-                format_prompt_args
-                    .provider
-                    .to_possible_value()
-                    .unwrap()
-                    .get_name()
-            ),
-            Command::Predict(predict_args) => {
-                write!(
-                    f,
-                    "predict --provider={:?}",
-                    predict_args
-                        .provider
-                        .to_possible_value()
-                        .unwrap()
-                        .get_name()
-                )
+            Command::FormatPrompt(args) => {
+                write!(f, "format-prompt --provider={}", args.provider)
             }
-            Command::Score(predict_args) => {
-                write!(
-                    f,
-                    "score --provider={:?}",
-                    predict_args
-                        .provider
-                        .to_possible_value()
-                        .unwrap()
-                        .get_name()
-                )
+            Command::Predict(args) => {
+                write!(f, "predict --provider={}", args.provider)
+            }
+            Command::Score(args) => {
+                write!(f, "score --provider={}", args.provider)
             }
             Command::Distill => write!(f, "distill"),
-            Command::Eval(predict_args) => write!(
-                f,
-                "eval --provider={:?}",
-                predict_args
-                    .provider
-                    .to_possible_value()
-                    .unwrap()
-                    .get_name()
-            ),
+            Command::Eval(args) => {
+                write!(f, "eval --provider={}", args.provider)
+            }
             Command::Synthesize(args) => {
-                write!(f, "synthesize --repo={}", args.repo)
+                write!(f, "synthesize --repos {}", args.repos.join(" "))
             }
             Command::Clean => write!(f, "clean"),
             Command::SplitCommit(_) => write!(f, "split-commit"),
@@ -205,54 +177,107 @@ impl Display for Command {
 
 #[derive(Debug, Args, Clone)]
 struct FormatPromptArgs {
-    #[clap(long, short)]
+    #[clap(long, short('p'), default_value_t = PredictionProvider::default())]
     provider: PredictionProvider,
-    #[clap(
-        long,
-        short,
-        help = "(only for --provider zeta2) A substring of a zeta_prompt::ZetaVersion variant to use",
-        value_parser = ZetaVersion::parse,
-        default_value_t = ZetaVersion::default(),
-    )]
-    version: ZetaVersion,
 }
 
 #[derive(Debug, Args, Clone)]
 struct PredictArgs {
-    #[clap(long, short)]
+    #[clap(long, short('p'), default_value_t = PredictionProvider::default())]
     provider: PredictionProvider,
     #[clap(long, default_value_t = 1)]
     repetitions: usize,
-    #[clap(
-        long,
-        short,
-        help = "(only for --provider zeta2) A substring of a zeta_prompt::ZetaVersion variant to use",
-        value_parser = ZetaVersion::parse,
-    )]
-    version: ZetaVersion,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, ValueEnum, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum PredictionProvider {
     Sweep,
     Mercury,
     Zeta1,
-    Zeta2,
+    Zeta2(ZetaVersion),
     Teacher,
     TeacherNonBatching,
 }
 
+impl Default for PredictionProvider {
+    fn default() -> Self {
+        PredictionProvider::Zeta2(ZetaVersion::default())
+    }
+}
+
+impl std::fmt::Display for PredictionProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PredictionProvider::Sweep => write!(f, "sweep"),
+            PredictionProvider::Mercury => write!(f, "mercury"),
+            PredictionProvider::Zeta1 => write!(f, "zeta1"),
+            PredictionProvider::Zeta2(version) => write!(f, "zeta2:{version}"),
+            PredictionProvider::Teacher => write!(f, "teacher"),
+            PredictionProvider::TeacherNonBatching => write!(f, "teacher-non-batching"),
+        }
+    }
+}
+
+impl std::str::FromStr for PredictionProvider {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s_lower = s.to_lowercase();
+        match s_lower.as_str() {
+            "sweep" => Ok(PredictionProvider::Sweep),
+            "mercury" => Ok(PredictionProvider::Mercury),
+            "zeta1" => Ok(PredictionProvider::Zeta1),
+            // Handle both old format "zeta2" and new format with version
+            "zeta2" => Ok(PredictionProvider::Zeta2(ZetaVersion::default())),
+            "teacher" => Ok(PredictionProvider::Teacher),
+            "teacher-non-batching" | "teacher_non_batching" | "teachernonbatching" => {
+                Ok(PredictionProvider::TeacherNonBatching)
+            }
+            _ if s_lower.starts_with("zeta2:") => {
+                let version_str = &s[6..];
+                let version = ZetaVersion::parse(version_str)?;
+                Ok(PredictionProvider::Zeta2(version))
+            }
+            _ => anyhow::bail!(
+                "unknown provider `{s}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher-non-batching\n\
+                 For zeta2, you can optionally specify a version like `zeta2:ordered` or `zeta2:V0113_Ordered`.\n\
+                 Available zeta versions:\n{}",
+                ZetaVersion::options_as_string()
+            ),
+        }
+    }
+}
+
+impl Serialize for PredictionProvider {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for PredictionProvider {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug, Args, Clone)]
 struct SynthesizeArgs {
-    /// Repository URL (git@github.com:owner/repo or https://...)
-    #[clap(long)]
-    repo: String,
+    /// Repository URLs (git@github.com:owner/repo or https://...)
+    #[clap(long, required = true, num_args = 1..)]
+    repos: Vec<String>,
 
-    /// Number of examples to generate
+    /// Number of examples to generate per repository
     #[clap(long, default_value_t = 5)]
     count: usize,
 
-    /// Maximum commits to scan before giving up
+    /// Maximum commits to scan per repository before giving up
     #[clap(long, default_value_t = 100)]
     max_commits: usize,
 
@@ -279,6 +304,7 @@ async fn load_examples(
     http_client: Arc<dyn http_client::HttpClient>,
     args: &EpArgs,
     output_path: Option<&PathBuf>,
+    background_executor: BackgroundExecutor,
 ) -> anyhow::Result<Vec<Example>> {
     let mut captured_after_timestamps = Vec::new();
     let mut file_inputs = Vec::new();
@@ -312,6 +338,7 @@ async fn load_examples(
             http_client,
             &captured_after_timestamps,
             max_rows_per_timestamp,
+            background_executor,
         )
         .await?;
         examples.append(&mut captured_examples);
@@ -423,7 +450,7 @@ fn main() {
                 panic!("output dir is required");
             };
             let config = SynthesizeConfig {
-                repo_url: synth_args.repo.clone(),
+                repo_urls: synth_args.repos.clone(),
                 count: synth_args.count,
                 max_commits: synth_args.max_commits,
                 output_dir,
@@ -465,8 +492,13 @@ fn main() {
 
         cx.spawn(async move |cx| {
             let result = async {
-                let mut examples =
-                    load_examples(app_state.client.http_client(), &args, output.as_ref()).await?;
+                let mut examples = load_examples(
+                    app_state.client.http_client(),
+                    &args,
+                    output.as_ref(),
+                    cx.background_executor().clone(),
+                )
+                .await?;
 
                 match &command {
                     Command::Predict(args) | Command::Score(args) | Command::Eval(args) => {

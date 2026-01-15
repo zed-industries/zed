@@ -931,28 +931,26 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                     .project()
                                     .update(cx, |project, _| project.lsp_store())
                             })?;
+                            let uri = format!("zed://schemas/{}", schema_path);
                             let json_schema_content =
-                                json_schema_store::resolve_schema_request_inner(
-                                    &app_state.languages,
-                                    lsp_store,
-                                    &schema_path,
-                                    cx,
-                                )
-                                .await?;
+                                json_schema_store::handle_schema_request(lsp_store, uri, cx)
+                                    .await?;
+                            let json_schema_value: serde_json::Value =
+                                serde_json::from_str(&json_schema_content)
+                                    .context("Failed to parse JSON Schema")?;
                             let json_schema_content =
-                                serde_json::to_string_pretty(&json_schema_content)
+                                serde_json::to_string_pretty(&json_schema_value)
                                     .context("Failed to serialize JSON Schema as JSON")?;
                             let buffer_task = workspace.update(cx, |workspace, cx| {
-                                workspace
-                                    .project()
-                                    .update(cx, |project, cx| project.create_buffer(false, cx))
+                                workspace.project().update(cx, |project, cx| {
+                                    project.create_buffer(json, false, cx)
+                                })
                             })?;
 
                             let buffer = buffer_task.await?;
 
                             workspace.update_in(cx, |workspace, window, cx| {
                                 buffer.update(cx, |buffer, cx| {
-                                    buffer.set_language(json, cx);
                                     buffer.edit([(0..0, json_schema_content)], None, cx);
                                     buffer.edit(
                                         [(0..0, format!("// {} JSON Schema\n", schema_path))],

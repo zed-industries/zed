@@ -173,7 +173,9 @@ fn capture_example_as_markdown(
                 .await?
         } else {
             project
-                .update(cx, |project, cx| project.create_buffer(false, cx))
+                .update(cx, |project, cx| {
+                    project.create_buffer(Some(markdown_language.clone()), false, cx)
+                })
                 .await?
         };
 

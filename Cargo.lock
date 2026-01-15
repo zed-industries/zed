@@ -5293,6 +5293,7 @@ dependencies = [
  "dirs 4.0.0",
  "edit_prediction",
  "extension",
+ "flate2",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -6253,9 +6254,9 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 
 [[package]]
 name = "flate2"
-version = "1.1.4"
+version = "1.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc5a4e564e38c699f2880d3fda590bedc2e69f3f84cd48b457bd892ce61d0aa9"
+checksum = "b375d6465b98090a5f25b1c7703f3859783755aa9a80433b36e0379a3ec2f369"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
@@ -8684,10 +8685,12 @@ name = "json_schema_store"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "dap",
  "extension",
  "gpui",
  "language",
+ "parking_lot",
  "paths",
  "project",
  "schemars",
@@ -14897,7 +14900,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more 0.99.20",
  "ec4rs",
  "fs",
  "futures 0.3.31",
@@ -14914,14 +14916,31 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_json_lenient",
- "serde_repr",
+ "settings_content",
  "settings_json",
  "settings_macros",
  "smallvec",
- "strum 0.27.2",
  "unindent",
  "util",
  "zlog",
+]
+
+[[package]]
+name = "settings_content"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "derive_more 0.99.20",
+ "log",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "settings_json",
+ "settings_macros",
+ "strum 0.27.2",
+ "util",
 ]
 
 [[package]]

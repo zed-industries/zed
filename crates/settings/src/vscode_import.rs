@@ -803,7 +803,7 @@ impl VsCodeSettings {
             buffer_font_family,
             buffer_font_fallbacks,
             buffer_font_size: self.read_f32("editor.fontSize").map(FontSize::from),
-            buffer_font_weight: self.read_f32("editor.fontWeight").map(|w| w.into()),
+            buffer_font_weight: self.read_f32("editor.fontWeight").map(FontWeightContent),
             buffer_line_height: None,
             buffer_font_features: None,
             agent_ui_font_size: None,

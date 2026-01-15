@@ -905,198 +905,6 @@ async fn test_tool_hallucination(cx: &mut TestAppContext) {
     assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Failed));
 }
 
-#[gpui::test]
-async fn test_resume_after_tool_use_limit(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-
-    let events = thread
-        .update(cx, |thread, cx| {
-            thread.add_tool(EchoTool);
-            thread.send(UserMessageId::new(), ["abc"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-    let tool_use = LanguageModelToolUse {
-        id: "tool_id_1".into(),
-        name: EchoTool::name().into(),
-        raw_input: "{}".into(),
-        input: serde_json::to_value(&EchoToolInput { text: "def".into() }).unwrap(),
-        is_input_complete: true,
-        thought_signature: None,
-    };
-    fake_model
-        .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
-    fake_model.end_last_completion_stream();
-
-    cx.run_until_parked();
-    let completion = fake_model.pending_completions().pop().unwrap();
-    let tool_result = LanguageModelToolResult {
-        tool_use_id: "tool_id_1".into(),
-        tool_name: EchoTool::name().into(),
-        is_error: false,
-        content: "def".into(),
-        output: Some("def".into()),
-    };
-    assert_eq!(
-        completion.messages[1..],
-        vec![
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec!["abc".into()],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::Assistant,
-                content: vec![MessageContent::ToolUse(tool_use.clone())],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::ToolResult(tool_result.clone())],
-                cache: true,
-                reasoning_details: None,
-            },
-        ]
-    );
-
-    // Simulate reaching tool use limit.
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUseLimitReached);
-    fake_model.end_last_completion_stream();
-    let last_event = events.collect::<Vec<_>>().await.pop().unwrap();
-    assert!(
-        last_event
-            .unwrap_err()
-            .is::<language_model::ToolUseLimitReachedError>()
-    );
-
-    let events = thread.update(cx, |thread, cx| thread.resume(cx)).unwrap();
-    cx.run_until_parked();
-    let completion = fake_model.pending_completions().pop().unwrap();
-    assert_eq!(
-        completion.messages[1..],
-        vec![
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec!["abc".into()],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::Assistant,
-                content: vec![MessageContent::ToolUse(tool_use)],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::ToolResult(tool_result)],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec!["Continue where you left off".into()],
-                cache: true,
-                reasoning_details: None,
-            }
-        ]
-    );
-
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Text("Done".into()));
-    fake_model.end_last_completion_stream();
-    events.collect::<Vec<_>>().await;
-    thread.read_with(cx, |thread, _cx| {
-        assert_eq!(
-            thread.last_message().unwrap().to_markdown(),
-            indoc! {"
-                ## Assistant
-
-                Done
-            "}
-        )
-    });
-}
-
-#[gpui::test]
-async fn test_send_after_tool_use_limit(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-
-    let events = thread
-        .update(cx, |thread, cx| {
-            thread.add_tool(EchoTool);
-            thread.send(UserMessageId::new(), ["abc"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    let tool_use = LanguageModelToolUse {
-        id: "tool_id_1".into(),
-        name: EchoTool::name().into(),
-        raw_input: "{}".into(),
-        input: serde_json::to_value(&EchoToolInput { text: "def".into() }).unwrap(),
-        is_input_complete: true,
-        thought_signature: None,
-    };
-    let tool_result = LanguageModelToolResult {
-        tool_use_id: "tool_id_1".into(),
-        tool_name: EchoTool::name().into(),
-        is_error: false,
-        content: "def".into(),
-        output: Some("def".into()),
-    };
-    fake_model
-        .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUseLimitReached);
-    fake_model.end_last_completion_stream();
-    let last_event = events.collect::<Vec<_>>().await.pop().unwrap();
-    assert!(
-        last_event
-            .unwrap_err()
-            .is::<language_model::ToolUseLimitReachedError>()
-    );
-
-    thread
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), vec!["ghi"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-    let completion = fake_model.pending_completions().pop().unwrap();
-    assert_eq!(
-        completion.messages[1..],
-        vec![
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec!["abc".into()],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::Assistant,
-                content: vec![MessageContent::ToolUse(tool_use)],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::ToolResult(tool_result)],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec!["ghi".into()],
-                cache: true,
-                reasoning_details: None,
-            }
-        ]
-    );
-}
-
 async fn expect_tool_call(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -> acp::ToolCall {
     let event = events
         .next()
@@ -2516,6 +2324,7 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
             Some(acp_thread::TokenUsage {
                 used_tokens: 32_000 + 16_000,
                 max_tokens: 1_000_000,
+                input_tokens: 32_000,
                 output_tokens: 16_000,
             })
         );
@@ -2576,6 +2385,7 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
             Some(acp_thread::TokenUsage {
                 used_tokens: 40_000 + 20_000,
                 max_tokens: 1_000_000,
+                input_tokens: 40_000,
                 output_tokens: 20_000,
             })
         );
@@ -2625,6 +2435,7 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
                 Some(acp_thread::TokenUsage {
                     used_tokens: 32_000 + 16_000,
                     max_tokens: 1_000_000,
+                    input_tokens: 32_000,
                     output_tokens: 16_000,
                 })
             );
@@ -2680,6 +2491,7 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
             Some(acp_thread::TokenUsage {
                 used_tokens: 40_000 + 20_000,
                 max_tokens: 1_000_000,
+                input_tokens: 40_000,
                 output_tokens: 20_000,
             })
         );

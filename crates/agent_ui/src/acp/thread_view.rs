@@ -14,7 +14,6 @@ use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use client::zed_urls;
-use cloud_llm_client::PlanV1;
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
 use editor::{
@@ -30,12 +29,12 @@ use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
     CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
-    ListOffset, ListState, ObjectFit, PlatformDisplay, SharedString, StyleRefinement, Subscription,
-    Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
-    ease_in_out, img, linear_color_stop, linear_gradient, list, point, pulsating_between,
+    ListOffset, ListState, ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyleRefinement,
+    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window,
+    WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient, list, point,
+    pulsating_between,
 };
 use language::Buffer;
-
 use language_model::LanguageModelRegistry;
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use project::{AgentServerStore, ExternalAgentServerName, Project, ProjectEntryId};
@@ -52,9 +51,9 @@ use text::{Anchor, ToPoint as _};
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
     Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, DecoratedIcon,
-    DiffStat, Disclosure, Divider, DividerColor, ElevationIndex, IconDecoration,
-    IconDecorationKind, KeyBinding, PopoverMenu, PopoverMenuHandle, SpinnerLabel, TintColor,
-    Tooltip, WithScrollbar, prelude::*, right_click_menu,
+    DiffStat, Disclosure, Divider, DividerColor, IconDecoration, IconDecorationKind, KeyBinding,
+    PopoverMenu, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
+    right_click_menu,
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
@@ -71,23 +70,20 @@ use crate::acp::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
-
-use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip, UsageCallout};
+use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip};
 use crate::user_slash_command::{
     CommandLoadError, SlashCommandRegistry, SlashCommandRegistryEvent,
 };
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
-    ContinueThread, ContinueWithBurnMode, CycleFavoriteModels, CycleModeSelector,
-    ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAgentDiff, OpenHistory, RejectAll,
-    RejectOnce, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
-    ToggleBurnMode, ToggleProfileSelector,
+    CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread,
+    OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, SelectPermissionGranularity,
+    SendImmediately, SendNextQueuedMessage, ToggleBurnMode, ToggleProfileSelector,
 };
 
-/// Maximum number of lines to show for a collapsed terminal command preview.
 const MAX_COLLAPSED_LINES: usize = 3;
-const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(1);
-const TOKEN_THRESHOLD: u64 = 1;
+const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
+const TOKEN_THRESHOLD: u64 = 250;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ThreadFeedback {
@@ -98,8 +94,6 @@ enum ThreadFeedback {
 #[derive(Debug)]
 enum ThreadError {
     PaymentRequired,
-    ModelRequestLimitReached(cloud_llm_client::Plan),
-    ToolUseLimitReached,
     Refusal,
     AuthenticationRequired(SharedString),
     Other(SharedString),
@@ -109,12 +103,6 @@ impl ThreadError {
     fn from_err(error: anyhow::Error, agent: &Rc<dyn AgentServer>) -> Self {
         if error.is::<language_model::PaymentRequiredError>() {
             Self::PaymentRequired
-        } else if error.is::<language_model::ToolUseLimitReachedError>() {
-            Self::ToolUseLimitReached
-        } else if let Some(error) =
-            error.downcast_ref::<language_model::ModelRequestLimitReachedError>()
-        {
-            Self::ModelRequestLimitReached(error.plan)
         } else if let Some(acp_error) = error.downcast_ref::<acp::Error>()
             && acp_error.code == acp::ErrorCode::AuthRequired
         {
@@ -359,6 +347,7 @@ pub struct AcpThreadView {
     expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     expanded_subagents: HashSet<acp::SessionId>,
+    subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     edits_expanded: bool,
     plan_expanded: bool,
     queue_expanded: bool,
@@ -585,6 +574,7 @@ impl AcpThreadView {
             expanded_tool_call_raw_inputs: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             expanded_subagents: HashSet::default(),
+            subagent_scroll_handles: RefCell::new(HashMap::default()),
             editing_message: None,
             edits_expanded: false,
             plan_expanded: false,
@@ -3315,7 +3305,7 @@ impl AcpThreadView {
                                                 this.child(
                                                     IconButton::new(
                                                         ("discard-partial-edit", entry_ix),
-                                                        IconName::Trash,
+                                                        IconName::Undo,
                                                     )
                                                     .icon_size(IconSize::Small)
                                                     .tooltip(move |_, cx| Tooltip::with_meta(
@@ -3600,91 +3590,91 @@ impl AcpThreadView {
 
         let card_header_id =
             SharedString::from(format!("subagent-header-{}-{}", entry_ix, context_ix));
-        let card_id = SharedString::from(format!("subagent-card-{}-{}", entry_ix, context_ix));
-        let disclosure_id =
-            SharedString::from(format!("subagent-disclosure-{}-{}", entry_ix, context_ix));
         let diff_stat_id = SharedString::from(format!("subagent-diff-{}-{}", entry_ix, context_ix));
+
+        let icon = h_flex().w_4().justify_center().child(if is_running {
+            SpinnerLabel::new()
+                .size(LabelSize::Small)
+                .into_any_element()
+        } else {
+            Icon::new(IconName::Check)
+                .size(IconSize::Small)
+                .color(Color::Success)
+                .into_any_element()
+        });
 
         v_flex()
             .w_full()
             .rounded_md()
             .border_1()
             .border_color(self.tool_card_border_color(cx))
-            .bg(cx.theme().colors().editor_background)
             .overflow_hidden()
             .child(
                 h_flex()
-                    .id(card_id)
                     .group(&card_header_id)
+                    .py_1()
+                    .px_1p5()
                     .w_full()
-                    .p_1()
-                    .gap_1p5()
+                    .gap_1()
+                    .justify_between()
                     .bg(self.tool_card_header_bg(cx))
                     .child(
-                        div()
-                            .id(disclosure_id)
-                            .cursor_pointer()
-                            .on_click(cx.listener({
-                                move |this, _, _, cx| {
-                                    if this.expanded_subagents.contains(&session_id) {
-                                        this.expanded_subagents.remove(&session_id);
-                                    } else {
-                                        this.expanded_subagents.insert(session_id.clone());
-                                    }
-                                    cx.notify();
-                                }
-                            }))
-                            .child(Disclosure::new(
-                                SharedString::from(format!(
-                                    "subagent-disclosure-inner-{}-{}",
-                                    entry_ix, context_ix
-                                )),
-                                is_expanded,
-                            )),
-                    )
-                    .child(if is_running {
-                        SpinnerLabel::new()
-                            .size(LabelSize::Small)
-                            .into_any_element()
-                    } else {
-                        Icon::new(IconName::Check)
-                            .size(IconSize::Small)
-                            .color(Color::Success)
-                            .into_any_element()
-                    })
-                    .child(
-                        h_flex().flex_1().overflow_hidden().child(
-                            Label::new(title.to_string())
-                                .size(LabelSize::Small)
-                                .color(Color::Default),
-                        ),
-                    )
-                    .when(files_changed > 0, |this| {
-                        this.child(
-                            h_flex()
-                                .gap_1()
-                                .child(Label::new("—").size(LabelSize::Small).color(Color::Muted))
-                                .child(
-                                    Label::new(format!(
-                                        "{} {} changed",
-                                        files_changed,
-                                        if files_changed == 1 { "file" } else { "files" }
-                                    ))
+                        h_flex()
+                            .gap_1p5()
+                            .child(icon)
+                            .child(
+                                Label::new(title.to_string())
                                     .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                    .color(Color::Default),
+                            )
+                            .when(files_changed > 0, |this| {
+                                this.child(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Label::new(format!(
+                                                "— {} {} changed",
+                                                files_changed,
+                                                if files_changed == 1 { "file" } else { "files" }
+                                            ))
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                        )
+                                        .child(DiffStat::new(
+                                            diff_stat_id.clone(),
+                                            diff_stats.lines_added as usize,
+                                            diff_stats.lines_removed as usize,
+                                        )),
                                 )
-                                .child(DiffStat::new(
-                                    diff_stat_id.clone(),
-                                    diff_stats.lines_added as usize,
-                                    diff_stats.lines_removed as usize,
-                                )),
+                            }),
+                    )
+                    .child(
+                        Disclosure::new(
+                            SharedString::from(format!(
+                                "subagent-disclosure-inner-{}-{}",
+                                entry_ix, context_ix
+                            )),
+                            is_expanded,
                         )
-                    }),
+                        .opened_icon(IconName::ChevronUp)
+                        .closed_icon(IconName::ChevronDown)
+                        .visible_on_hover(card_header_id)
+                        .on_click(cx.listener({
+                            move |this, _, _, cx| {
+                                if this.expanded_subagents.contains(&session_id) {
+                                    this.expanded_subagents.remove(&session_id);
+                                } else {
+                                    this.expanded_subagents.insert(session_id.clone());
+                                }
+                                cx.notify();
+                            }
+                        })),
+                    ),
             )
             .when(is_expanded, |this| {
-                this.child(self.render_subagent_expanded_content(
-                    entry_ix, context_ix, thread, is_running, window, cx,
-                ))
+                this.child(
+                    self.render_subagent_expanded_content(entry_ix, context_ix, thread, window, cx),
+                )
             })
             .into_any_element()
     }
@@ -3694,14 +3684,14 @@ impl AcpThreadView {
         _entry_ix: usize,
         _context_ix: usize,
         thread: &Entity<AcpThread>,
-        is_running: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let thread_read = thread.read(cx);
+        let session_id = thread_read.session_id().clone();
         let entries = thread_read.entries();
 
-        // Find the most recent assistant message with any content (message or thought)
+        // Find the most recent agent message with any content (message or thought)
         let last_assistant_markdown = entries.iter().rev().find_map(|entry| {
             if let AgentThreadEntry::AssistantMessage(msg) = entry {
                 msg.chunks.iter().find_map(|chunk| match chunk {
@@ -3713,28 +3703,32 @@ impl AcpThreadView {
             }
         });
 
-        let has_content = last_assistant_markdown.is_some();
+        let scroll_handle = self
+            .subagent_scroll_handles
+            .borrow_mut()
+            .entry(session_id.clone())
+            .or_default()
+            .clone();
 
-        v_flex()
+        scroll_handle.scroll_to_bottom();
+
+        div()
+            .id(format!("subagent-content-{}", session_id))
             .w_full()
+            .max_h_56()
             .p_2()
-            .gap_2()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
-            .bg(cx.theme().colors().editor_background)
+            .bg(cx.theme().colors().editor_background.opacity(0.2))
+            .overflow_hidden()
+            .track_scroll(&scroll_handle)
             .when_some(last_assistant_markdown, |this, markdown| {
                 this.child(
-                    div()
-                        .when(!is_running, |d| d.max_h(px(200.)).overflow_hidden())
-                        .text_sm()
-                        .child(self.render_markdown(
-                            markdown,
-                            default_markdown_style(false, false, window, cx),
-                        )),
+                    self.render_markdown(
+                        markdown,
+                        default_markdown_style(false, false, window, cx),
+                    ),
                 )
-            })
-            .when(is_running && !has_content, |this| {
-                this.child(SpinnerLabel::new().size(LabelSize::Small))
             })
     }
 
@@ -3937,7 +3931,6 @@ impl AcpThreadView {
             return self.render_permission_buttons_legacy(options, entry_ix, tool_call_id, cx);
         }
 
-        // Get granularity options (all options except the old deny option which we no longer generate)
         let granularity_options: Vec<_> = options
             .iter()
             .filter(|o| {
@@ -3955,18 +3948,15 @@ impl AcpThreadView {
             .copied()
             .unwrap_or_else(|| granularity_options.len().saturating_sub(1));
 
-        // Get the selected option
         let selected_option = granularity_options
             .get(selected_index)
             .or(granularity_options.last())
             .copied();
 
-        // The dropdown label should match the selected option
         let dropdown_label: SharedString = selected_option
             .map(|o| o.name.clone().into())
             .unwrap_or_else(|| "Only this time".into());
 
-        // Prepare data for button click handlers
         let (allow_option_id, allow_option_kind, deny_option_id, deny_option_kind) =
             if let Some(option) = selected_option {
                 let option_id_str = option.option_id.0.to_string();
@@ -3993,7 +3983,6 @@ impl AcpThreadView {
                     option_id_str.replace("allow", "deny")
                 };
 
-                // Determine the kinds
                 let allow_kind = option.kind;
                 let deny_kind = match option.kind {
                     acp::PermissionOptionKind::AllowOnce => acp::PermissionOptionKind::RejectOnce,
@@ -4018,19 +4007,16 @@ impl AcpThreadView {
                 )
             };
 
-        div()
+        h_flex()
+            .w_full()
             .p_1()
+            .gap_2()
+            .justify_between()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
-            .w_full()
-            .h_flex()
-            .items_center()
-            .justify_between()
-            .gap_2()
             .child(
-                // Left side: Allow and Deny buttons
                 h_flex()
-                    .gap_1()
+                    .gap_0p5()
                     .child(
                         Button::new(("allow-btn", entry_ix), "Allow")
                             .icon(IconName::Check)
@@ -4038,19 +4024,15 @@ impl AcpThreadView {
                             .icon_position(IconPosition::Start)
                             .icon_size(IconSize::XSmall)
                             .label_size(LabelSize::Small)
-                            .map(|btn| {
-                                if is_first {
-                                    btn.key_binding(
-                                        KeyBinding::for_action_in(
-                                            &AllowOnce as &dyn Action,
-                                            &self.focus_handle,
-                                            cx,
-                                        )
-                                        .map(|kb| kb.size(rems_from_px(10.))),
+                            .when(is_first, |this| {
+                                this.key_binding(
+                                    KeyBinding::for_action_in(
+                                        &AllowOnce as &dyn Action,
+                                        &self.focus_handle,
+                                        cx,
                                     )
-                                } else {
-                                    btn
-                                }
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                )
                             })
                             .on_click(cx.listener({
                                 let tool_call_id = tool_call_id.clone();
@@ -4074,19 +4056,15 @@ impl AcpThreadView {
                             .icon_position(IconPosition::Start)
                             .icon_size(IconSize::XSmall)
                             .label_size(LabelSize::Small)
-                            .map(|btn| {
-                                if is_first {
-                                    btn.key_binding(
-                                        KeyBinding::for_action_in(
-                                            &RejectOnce as &dyn Action,
-                                            &self.focus_handle,
-                                            cx,
-                                        )
-                                        .map(|kb| kb.size(rems_from_px(10.))),
+                            .when(is_first, |this| {
+                                this.key_binding(
+                                    KeyBinding::for_action_in(
+                                        &RejectOnce as &dyn Action,
+                                        &self.focus_handle,
+                                        cx,
                                     )
-                                } else {
-                                    btn
-                                }
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                )
                             })
                             .on_click(cx.listener({
                                 let tool_call_id = tool_call_id.clone();
@@ -4104,18 +4082,15 @@ impl AcpThreadView {
                             })),
                     ),
             )
-            .child(
-                // Right side: Granularity dropdown
-                self.render_permission_granularity_dropdown(
-                    &granularity_options,
-                    dropdown_label,
-                    entry_ix,
-                    tool_call_id,
-                    selected_index,
-                    is_first,
-                    cx,
-                ),
-            )
+            .child(self.render_permission_granularity_dropdown(
+                &granularity_options,
+                dropdown_label,
+                entry_ix,
+                tool_call_id,
+                selected_index,
+                is_first,
+                cx,
+            ))
     }
 
     fn render_permission_granularity_dropdown(
@@ -4128,8 +4103,6 @@ impl AcpThreadView {
         is_first: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        // Collect option info for the menu builder closure
-        // Each item is (index, display_name)
         let menu_options: Vec<(usize, SharedString)> = granularity_options
             .iter()
             .enumerate()
@@ -4141,23 +4114,18 @@ impl AcpThreadView {
             .trigger(
                 Button::new(("granularity-trigger", entry_ix), current_label)
                     .icon(IconName::ChevronDown)
-                    .icon_position(IconPosition::End)
                     .icon_size(IconSize::XSmall)
+                    .icon_color(Color::Muted)
                     .label_size(LabelSize::Small)
-                    .style(ButtonStyle::Subtle)
-                    .map(|btn| {
-                        if is_first {
-                            btn.key_binding(
-                                KeyBinding::for_action_in(
-                                    &crate::OpenPermissionDropdown as &dyn Action,
-                                    &self.focus_handle,
-                                    cx,
-                                )
-                                .map(|kb| kb.size(rems_from_px(10.))),
+                    .when(is_first, |this| {
+                        this.key_binding(
+                            KeyBinding::for_action_in(
+                                &crate::OpenPermissionDropdown as &dyn Action,
+                                &self.focus_handle,
+                                cx,
                             )
-                        } else {
-                            btn
-                        }
+                            .map(|kb| kb.size(rems_from_px(10.))),
+                        )
                     }),
             )
             .menu(move |window, cx| {
@@ -4171,38 +4139,20 @@ impl AcpThreadView {
                         let tool_call_id_for_entry = tool_call_id.clone();
                         let is_selected = index == selected_index;
 
-                        menu = menu.custom_entry(
-                            {
-                                let display_name = display_name.clone();
-                                move |_window, _cx| {
-                                    h_flex()
-                                        .w_full()
-                                        .justify_between()
-                                        .child(
-                                            Label::new(display_name.clone()).size(LabelSize::Small),
-                                        )
-                                        .when(is_selected, |this| {
-                                            this.child(
-                                                Icon::new(IconName::Check)
-                                                    .size(IconSize::Small)
-                                                    .color(Color::Accent),
-                                            )
-                                        })
-                                        .into_any_element()
-                                }
-                            },
-                            {
-                                let tool_call_id = tool_call_id_for_entry.clone();
-                                move |window, cx| {
-                                    window.dispatch_action(
-                                        SelectPermissionGranularity {
-                                            tool_call_id: tool_call_id.0.to_string(),
-                                            index,
-                                        }
-                                        .boxed_clone(),
-                                        cx,
-                                    );
-                                }
+                        menu = menu.toggleable_entry(
+                            display_name,
+                            is_selected,
+                            IconPosition::End,
+                            None,
+                            move |window, cx| {
+                                window.dispatch_action(
+                                    SelectPermissionGranularity {
+                                        tool_call_id: tool_call_id_for_entry.0.to_string(),
+                                        index,
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                );
                             },
                         );
                     }
@@ -6094,52 +6044,118 @@ impl AcpThreadView {
         thread.read(cx).is_imported()
     }
 
-    fn is_using_zed_ai_models(&self, cx: &App) -> bool {
+    fn supports_split_token_display(&self, cx: &App) -> bool {
         self.as_native_thread(cx)
             .and_then(|thread| thread.read(cx).model())
-            .is_some_and(|model| model.provider_id() == language_model::ZED_CLOUD_PROVIDER_ID)
+            .is_some_and(|model| model.supports_split_token_display())
     }
 
     fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<Div> {
         let thread = self.thread()?.read(cx);
         let usage = thread.token_usage()?;
         let is_generating = thread.status() != ThreadStatus::Idle;
+        let show_split = self.supports_split_token_display(cx);
 
-        let used = crate::text_thread_editor::humanize_token_count(usage.used_tokens);
-        let max = crate::text_thread_editor::humanize_token_count(usage.max_tokens);
+        let separator_color = Color::Custom(cx.theme().colors().text_muted.opacity(0.5));
+        let token_label = |text: String, animation_id: &'static str| {
+            Label::new(text)
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .map(|label| {
+                    if is_generating {
+                        label
+                            .with_animation(
+                                animation_id,
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.3, 0.8)),
+                                |label, delta| label.alpha(delta),
+                            )
+                            .into_any()
+                    } else {
+                        label.into_any_element()
+                    }
+                })
+        };
 
-        Some(
-            h_flex()
-                .flex_shrink_0()
-                .gap_0p5()
-                .mr_1p5()
-                .child(
-                    Label::new(used)
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .map(|label| {
-                            if is_generating {
-                                label
-                                    .with_animation(
-                                        "used-tokens-label",
-                                        Animation::new(Duration::from_secs(2))
-                                            .repeat()
-                                            .with_easing(pulsating_between(0.3, 0.8)),
-                                        |label, delta| label.alpha(delta),
-                                    )
-                                    .into_any()
-                            } else {
-                                label.into_any_element()
-                            }
-                        }),
-                )
-                .child(
-                    Label::new("/")
-                        .size(LabelSize::Small)
-                        .color(Color::Custom(cx.theme().colors().text_muted.opacity(0.5))),
-                )
-                .child(Label::new(max).size(LabelSize::Small).color(Color::Muted)),
-        )
+        if show_split {
+            let max_output_tokens = self
+                .as_native_thread(cx)
+                .and_then(|thread| thread.read(cx).model())
+                .and_then(|model| model.max_output_tokens())
+                .unwrap_or(0);
+
+            let input = crate::text_thread_editor::humanize_token_count(usage.input_tokens);
+            let input_max = crate::text_thread_editor::humanize_token_count(
+                usage.max_tokens.saturating_sub(max_output_tokens),
+            );
+            let output = crate::text_thread_editor::humanize_token_count(usage.output_tokens);
+            let output_max = crate::text_thread_editor::humanize_token_count(max_output_tokens);
+
+            Some(
+                h_flex()
+                    .flex_shrink_0()
+                    .gap_1()
+                    .mr_1p5()
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .child(
+                                Icon::new(IconName::ArrowUp)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(token_label(input, "input-tokens-label"))
+                            .child(
+                                Label::new("/")
+                                    .size(LabelSize::Small)
+                                    .color(separator_color),
+                            )
+                            .child(
+                                Label::new(input_max)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .child(
+                                Icon::new(IconName::ArrowDown)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(token_label(output, "output-tokens-label"))
+                            .child(
+                                Label::new("/")
+                                    .size(LabelSize::Small)
+                                    .color(separator_color),
+                            )
+                            .child(
+                                Label::new(output_max)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    ),
+            )
+        } else {
+            let used = crate::text_thread_editor::humanize_token_count(usage.used_tokens);
+            let max = crate::text_thread_editor::humanize_token_count(usage.max_tokens);
+
+            Some(
+                h_flex()
+                    .flex_shrink_0()
+                    .gap_0p5()
+                    .mr_1p5()
+                    .child(token_label(used, "used-tokens-label"))
+                    .child(
+                        Label::new("/")
+                            .size(LabelSize::Small)
+                            .color(separator_color),
+                    )
+                    .child(Label::new(max).size(LabelSize::Small).color(Color::Muted)),
+            )
+        }
     }
 
     fn toggle_burn_mode(
@@ -6757,12 +6773,13 @@ impl AcpThreadView {
             let markdown_language = markdown_language_task.await?;
 
             let buffer = project
-                .update(cx, |project, cx| project.create_buffer(false, cx))
+                .update(cx, |project, cx| {
+                    project.create_buffer(Some(markdown_language), false, cx)
+                })
                 .await?;
 
             buffer.update(cx, |buffer, cx| {
                 buffer.set_text(markdown, cx);
-                buffer.set_language(Some(markdown_language), cx);
                 buffer.set_capability(language::Capability::ReadWrite, cx);
             });
 
@@ -7399,29 +7416,6 @@ impl AcpThreadView {
         )
     }
 
-    fn render_usage_callout(&self, line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {
-        if !self.is_using_zed_ai_models(cx) {
-            return None;
-        }
-
-        let user_store = self.project.read(cx).user_store().read(cx);
-        if user_store.is_usage_based_billing_enabled() {
-            return None;
-        }
-
-        let plan = user_store
-            .plan()
-            .unwrap_or(cloud_llm_client::Plan::V1(PlanV1::ZedFree));
-
-        let usage = user_store.model_request_usage()?;
-
-        Some(
-            div()
-                .child(UsageCallout::new(plan, usage))
-                .line_height(line_height),
-        )
-    }
-
     fn agent_ui_font_size_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.entry_view_state.update(cx, |entry_view_state, cx| {
             entry_view_state.agent_ui_font_size_changed(cx);
@@ -7597,10 +7591,6 @@ impl AcpThreadView {
                 self.render_authentication_required_error(error.clone(), cx)
             }
             ThreadError::PaymentRequired => self.render_payment_required_error(cx),
-            ThreadError::ModelRequestLimitReached(plan) => {
-                self.render_model_request_limit_reached_error(*plan, cx)
-            }
-            ThreadError::ToolUseLimitReached => self.render_tool_use_limit_reached_error(cx)?,
         };
 
         Some(div().child(content))
@@ -7788,95 +7778,6 @@ impl AcpThreadView {
                     .child(self.create_copy_button(error)),
             )
             .dismiss_action(self.dismiss_error_button(cx))
-    }
-
-    fn render_model_request_limit_reached_error(
-        &self,
-        plan: cloud_llm_client::Plan,
-        cx: &mut Context<Self>,
-    ) -> Callout {
-        let error_message = match plan {
-            cloud_llm_client::Plan::V1(PlanV1::ZedPro) => {
-                "Upgrade to usage-based billing for more prompts."
-            }
-            cloud_llm_client::Plan::V1(PlanV1::ZedProTrial)
-            | cloud_llm_client::Plan::V1(PlanV1::ZedFree) => "Upgrade to Zed Pro for more prompts.",
-            cloud_llm_client::Plan::V2(_) => "",
-        };
-
-        Callout::new()
-            .severity(Severity::Error)
-            .title("Model Prompt Limit Reached")
-            .icon(IconName::XCircle)
-            .description(error_message)
-            .actions_slot(
-                h_flex()
-                    .gap_0p5()
-                    .child(self.upgrade_button(cx))
-                    .child(self.create_copy_button(error_message)),
-            )
-            .dismiss_action(self.dismiss_error_button(cx))
-    }
-
-    fn render_tool_use_limit_reached_error(&self, cx: &mut Context<Self>) -> Option<Callout> {
-        let thread = self.as_native_thread(cx)?;
-        let supports_burn_mode = thread
-            .read(cx)
-            .model()
-            .is_some_and(|model| model.supports_burn_mode());
-
-        let focus_handle = self.focus_handle(cx);
-
-        Some(
-            Callout::new()
-                .icon(IconName::Info)
-                .title("Consecutive tool use limit reached.")
-                .actions_slot(
-                    h_flex()
-                        .gap_0p5()
-                        .when(supports_burn_mode, |this| {
-                            this.child(
-                                Button::new("continue-burn-mode", "Continue with Burn Mode")
-                                    .style(ButtonStyle::Filled)
-                                    .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                                    .layer(ElevationIndex::ModalSurface)
-                                    .label_size(LabelSize::Small)
-                                    .key_binding(
-                                        KeyBinding::for_action_in(
-                                            &ContinueWithBurnMode,
-                                            &focus_handle,
-                                            cx,
-                                        )
-                                        .map(|kb| kb.size(rems_from_px(10.))),
-                                    )
-                                    .tooltip(Tooltip::text(
-                                        "Enable Burn Mode for unlimited tool use.",
-                                    ))
-                                    .on_click({
-                                        cx.listener(move |this, _, _window, cx| {
-                                            thread.update(cx, |thread, cx| {
-                                                thread
-                                                    .set_completion_mode(CompletionMode::Burn, cx);
-                                            });
-                                            this.resume_chat(cx);
-                                        })
-                                    }),
-                            )
-                        })
-                        .child(
-                            Button::new("continue-conversation", "Continue")
-                                .layer(ElevationIndex::ModalSurface)
-                                .label_size(LabelSize::Small)
-                                .key_binding(
-                                    KeyBinding::for_action_in(&ContinueThread, &focus_handle, cx)
-                                        .map(|kb| kb.size(rems_from_px(10.))),
-                                )
-                                .on_click(cx.listener(|this, _, _window, cx| {
-                                    this.resume_chat(cx);
-                                })),
-                        ),
-                ),
-        )
     }
 
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
@@ -8086,7 +7987,6 @@ impl AcpThreadView {
 impl Render for AcpThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_messages = self.list_state.item_count() > 0;
-        let line_height = TextSize::Small.rems(cx).to_pixels(window.rem_size()) * 1.5;
 
         v_flex()
             .size_full()
@@ -8274,12 +8174,8 @@ impl Render for AcpThreadView {
                 |this, version| this.child(self.render_new_version_callout(&version, cx)),
             )
             .children(
-                if let Some(usage_callout) = self.render_usage_callout(line_height, cx) {
-                    Some(usage_callout.into_any_element())
-                } else {
-                    self.render_token_limit_callout(cx)
-                        .map(|token_limit_callout| token_limit_callout.into_any_element())
-                },
+                self.render_token_limit_callout(cx)
+                    .map(|token_limit_callout| token_limit_callout.into_any_element()),
             )
             .child(self.render_message_editor(window, cx))
     }

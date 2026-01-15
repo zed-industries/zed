@@ -650,7 +650,7 @@ impl AgentServerStore {
                     .iter()
                     .filter_map(|(name, settings)| match settings {
                         CustomAgentServerSettings::Custom { command, .. } => Some((
-                            ExternalAgentServerName(name.clone()),
+                            ExternalAgentServerName(name.clone().into()),
                             Box::new(LocalCustomAgent {
                                 command: command.clone(),
                                 project_environment: project_environment.clone(),
@@ -2014,7 +2014,7 @@ pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,
     pub codex: Option<BuiltinAgentServerSettings>,
-    pub custom: HashMap<SharedString, CustomAgentServerSettings>,
+    pub custom: HashMap<String, CustomAgentServerSettings>,
 }
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
 pub struct BuiltinAgentServerSettings {

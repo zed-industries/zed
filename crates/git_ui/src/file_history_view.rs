@@ -12,6 +12,7 @@ use project::{
     git_store::{GitStore, Repository},
 };
 use std::any::{Any, TypeId};
+use std::sync::Arc;
 
 use time::OffsetDateTime;
 use ui::{Avatar, Chip, Divider, ListItem, WithScrollbar, prelude::*};
@@ -574,7 +575,12 @@ impl Item for FileHistoryView {
         Task::ready(None)
     }
 
-    fn navigate(&mut self, _: Box<dyn Any>, _window: &mut Window, _: &mut Context<Self>) -> bool {
+    fn navigate(
+        &mut self,
+        _: Arc<dyn Any + Send>,
+        _window: &mut Window,
+        _: &mut Context<Self>,
+    ) -> bool {
         false
     }
 

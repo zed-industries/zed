@@ -36,7 +36,7 @@ pub struct WslConnectionOptions {
 impl From<settings::WslConnection> for WslConnectionOptions {
     fn from(val: settings::WslConnection) -> Self {
         WslConnectionOptions {
-            distro_name: val.distro_name.into(),
+            distro_name: val.distro_name,
             user: val.user,
         }
     }
@@ -147,9 +147,14 @@ impl WslRemoteConnection {
     }
 
     async fn run_wsl_command(&self, program: &str, args: &[&str]) -> Result<()> {
-        run_wsl_command_impl(&self.connection_options, program, args, false)
-            .await
-            .map(|_| ())
+        run_wsl_command_impl(wsl_command_impl(
+            &self.connection_options,
+            program,
+            args,
+            false,
+        ))
+        .await
+        .map(|_| ())
     }
 
     async fn ensure_server_binary(
@@ -380,15 +385,13 @@ impl RemoteConnection for WslRemoteConnection {
             let options = self.connection_options.clone();
             async move {
                 let wsl_src = windows_path_to_wsl_path_impl(&options, &src_path).await?;
-
-                run_wsl_command_impl(
+                let command = wsl_command_impl(
                     &options,
                     "cp",
                     &["-r", &wsl_src, &dest_path.to_string()],
                     true,
-                )
-                .await
-                .map_err(|e| {
+                );
+                run_wsl_command_impl(command).await.map_err(|e| {
                     anyhow!(
                         "failed to upload directory {} -> {}: {}",
                         src_path.display(),
@@ -531,17 +534,34 @@ async fn sanitize_path(path: &Path) -> Result<String> {
     Ok(sanitized.replace('\\', "/"))
 }
 
-async fn run_wsl_command_with_output_impl(
+fn run_wsl_command_with_output_impl(
     options: &WslConnectionOptions,
     program: &str,
     args: &[&str],
-) -> Result<String> {
-    match run_wsl_command_impl(options, program, args, true).await {
-        Ok(res) => Ok(res),
-        Err(exec_err) => match run_wsl_command_impl(options, program, args, false).await {
+) -> impl Future<Output = Result<String>> + use<> {
+    let exec_command = wsl_command_impl(options, program, args, true);
+    let command = wsl_command_impl(options, program, args, false);
+    async move {
+        match run_wsl_command_impl(exec_command).await {
             Ok(res) => Ok(res),
-            Err(e) => Err(e.context(exec_err)),
-        },
+            Err(exec_err) => match run_wsl_command_impl(command).await {
+                Ok(res) => Ok(res),
+                Err(e) => Err(e.context(exec_err)),
+            },
+        }
+    }
+}
+
+impl WslConnectionOptions {
+    pub fn abs_windows_path_to_wsl_path(
+        &self,
+        source: &Path,
+    ) -> impl Future<Output = Result<String>> + use<> {
+        let path_str = source.to_string_lossy();
+
+        let source = path_str.strip_prefix(r"\\?\").unwrap_or(&*path_str);
+        let source = source.replace('\\', "/");
+        run_wsl_command_with_output_impl(self, "wslpath", &["-u", &source])
     }
 }
 
@@ -553,27 +573,23 @@ async fn windows_path_to_wsl_path_impl(
     run_wsl_command_with_output_impl(options, "wslpath", &["-u", &source]).await
 }
 
-async fn run_wsl_command_impl(
-    options: &WslConnectionOptions,
-    program: &str,
-    args: &[&str],
-    exec: bool,
-) -> Result<String> {
-    let mut command = wsl_command_impl(options, program, args, exec);
-    let output = command
-        .output()
-        .await
-        .with_context(|| format!("Failed to run command '{:?}'", command))?;
+fn run_wsl_command_impl(mut command: process::Command) -> impl Future<Output = Result<String>> {
+    async move {
+        let output = command
+            .output()
+            .await
+            .with_context(|| format!("Failed to run command '{:?}'", command))?;
 
-    if !output.status.success() {
-        return Err(anyhow!(
-            "Command '{:?}' failed: {}",
-            command,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Command '{:?}' failed: {}",
+                command,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
     }
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 /// Creates a new `wsl.exe` command that runs the given program with the given arguments.
