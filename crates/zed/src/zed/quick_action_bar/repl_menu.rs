@@ -1,6 +1,8 @@
 use gpui::ElementId;
 use gpui::{AnyElement, Entity};
+use language::LanguageName;
 use picker::Picker;
+use project::ProjectPath;
 use repl::{
     ExecutionState, JupyterSettings, Kernel, KernelSpecification, KernelStatus, Session,
     SessionSupport,
@@ -283,6 +285,25 @@ impl QuickActionBar {
             return div().into_any_element();
         };
 
+        // Get active Python toolchain name from cache if available
+        let active_toolchain_name = self.workspace.upgrade().and_then(|workspace| {
+            let buffer = editor.read(cx).buffer().read(cx).as_singleton()?;
+            let buffer = buffer.read(cx);
+            let file = buffer.file()?;
+            let worktree_id = file.worktree_id(cx);
+            let path = file.path().parent()?.into();
+
+            let project = workspace.read(cx).project();
+            project
+                .read(cx)
+                .cached_active_toolchain(
+                    ProjectPath { worktree_id, path },
+                    LanguageName::new_static("Python"),
+                    cx,
+                )
+                .map(|t| t.name)
+        });
+
         let session = repl::session(editor.downgrade(), cx);
 
         let current_kernelspec = match session {
@@ -305,6 +326,7 @@ impl QuickActionBar {
                 })
             },
             worktree_id,
+            active_toolchain_name,
             ButtonLike::new("kernel-selector")
                 .style(ButtonStyle::Subtle)
                 .size(ButtonSize::Compact)
