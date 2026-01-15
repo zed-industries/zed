@@ -5185,4 +5185,55 @@ mod tests {
             });
         }
     }
+
+    #[gpui::test]
+    async fn test_external_file_opens_in_new_window(cx: &mut gpui::TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/"),
+                json!({
+                    "project_a": {
+                        "file_in_project.txt": "Project A content"
+                    },
+                    "unrelated": {
+                        "external_file.txt": "External content"
+                    }
+                }),
+            )
+            .await;
+
+        // Open a workspace with project_a
+        let project_a = Project::test(
+            app_state.fs.clone(),
+            [path!("/project_a").as_ref()],
+            cx,
+        )
+        .await;
+        let _window_a =
+            cx.add_window(|window, cx| Workspace::test_new(project_a.clone(), window, cx));
+        cx.run_until_parked();
+
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+
+        // Open an external file that is NOT in project_a's worktree
+        // Without prefer_focused_window or open_new_workspace flags
+        cx.update(|cx| {
+            workspace::open_paths(
+                &[PathBuf::from(path!("/unrelated/external_file.txt"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        // Should have opened in a NEW window since the file isn't in any open project
+        assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+    }
 }
