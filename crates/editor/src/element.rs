@@ -3787,7 +3787,10 @@ impl EditorElement {
 
             Block::ExcerptBoundary { .. } => {
                 let color = cx.theme().colors().clone();
-                let mut result = v_flex().id(block_id).w_full();
+                let mut result = v_flex()
+                    .id(block_id)
+                    .w_full()
+                    .when_some(self.split_info, |this, info| this.w(info.bounds.size.width));
 
                 result = result.child(
                     h_flex().relative().child(
@@ -4490,7 +4493,9 @@ impl EditorElement {
         cx: &mut App,
     ) {
         for block in blocks {
-            let mut origin = if let Some(info) = self.split_info
+            let use_split_bounds = self.split_info.is_some() && block.is_buffer_header;
+            let mut origin = if use_split_bounds
+                && let Some(info) = self.split_info
                 && let Some(row) = block.row
             {
                 info.bounds.origin
@@ -4561,7 +4566,11 @@ impl EditorElement {
 
         let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
 
-        let available_width = hitbox.bounds.size.width - right_margin;
+        let (available_width, header_origin) = if let Some(split_info) = self.split_info {
+            (split_info.bounds.size.width, split_info.bounds.origin)
+        } else {
+            (hitbox.bounds.size.width - right_margin, hitbox.origin)
+        };
 
         let mut header = v_flex()
             .w_full()
@@ -4584,7 +4593,7 @@ impl EditorElement {
             )
             .into_any_element();
 
-        let mut origin = hitbox.origin;
+        let mut origin = header_origin;
         // Move floating header up to avoid colliding with the next buffer header.
         for block in blocks.iter() {
             if !block.is_buffer_header {
@@ -10427,7 +10436,7 @@ impl Element for EditorElement {
                             });
                         }
 
-                        if self.split_info.is_none() {
+                        if self.split_info.map(|info| info.side) != Some(SplitSide::Left) {
                             window.with_element_namespace("blocks", |window| {
                                 if let Some(mut sticky_header) = layout.sticky_buffer_header.take()
                                 {

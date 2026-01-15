@@ -216,23 +216,17 @@ impl Element for SplitEditorElement {
         cx: &mut ui::App,
     ) {
         prepaint.lhs_element.paint(window, cx);
-        prepaint.rhs_element.paint(window, cx);
-
-        let is_hovered = prepaint.separator_hitbox.is_hovered(window);
-        let border_color = if is_hovered {
-            cx.theme().colors().border_focused
-        } else {
-            cx.theme().colors().border
-        };
 
         window.paint_quad(PaintQuad {
-            background: Background::from(border_color),
+            background: Background::from(cx.theme().colors().border),
             border_color: hsla(0.0, 0.0, 0.0, 0.0),
             border_style: gpui::BorderStyle::Solid,
             border_widths: gpui::Edges::default(),
             bounds: prepaint.separator_bounds,
             corner_radii: Corners::default(),
         });
+
+        prepaint.rhs_element.paint(window, cx);
 
         window.set_cursor_style(CursorStyle::ResizeLeftRight, &prepaint.separator_hitbox);
 
@@ -297,6 +291,16 @@ impl Default for CheckerboardElement {
             height: px(10.),
             light: rgba(0xFFFFFF10),
             dark: rgba(0x00000000),
+        }
+    }
+}
+
+impl CheckerboardElement {
+    pub fn new(size: Pixels) -> Self {
+        Self {
+            width: size,
+            height: size,
+            ..Default::default()
         }
     }
 }
