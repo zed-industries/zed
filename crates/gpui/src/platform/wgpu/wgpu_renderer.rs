@@ -110,6 +110,7 @@ pub struct WgpuRenderer {
     path_msaa_view: Option<wgpu::TextureView>,
     rendering_params: RenderingParameters,
     dual_source_blending: bool,
+    adapter_info: wgpu::AdapterInfo,
 }
 
 impl WgpuRenderer {
@@ -233,6 +234,8 @@ impl WgpuRenderer {
         .map(|(t, v)| (Some(t), Some(v)))
         .unwrap_or((None, None));
 
+        let adapter_info = context.adapter.get_info();
+
         Ok(Self {
             device,
             queue,
@@ -250,6 +253,7 @@ impl WgpuRenderer {
             path_msaa_view,
             rendering_params,
             dual_source_blending,
+            adapter_info,
         })
     }
 
@@ -775,10 +779,10 @@ impl WgpuRenderer {
 
     pub fn gpu_specs(&self) -> GpuSpecs {
         GpuSpecs {
-            is_software_emulated: false,
-            device_name: "wgpu".to_string(),
-            driver_name: "wgpu".to_string(),
-            driver_info: "wgpu renderer".to_string(),
+            is_software_emulated: self.adapter_info.device_type == wgpu::DeviceType::Cpu,
+            device_name: self.adapter_info.name.clone(),
+            driver_name: self.adapter_info.driver.clone(),
+            driver_info: self.adapter_info.driver_info.clone(),
         }
     }
 
