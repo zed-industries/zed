@@ -152,47 +152,19 @@ impl Display for Command {
             Command::ParseExample => write!(f, "parse-example"),
             Command::LoadProject => write!(f, "load-project"),
             Command::Context => write!(f, "context"),
-            Command::FormatPrompt(format_prompt_args) => write!(
-                f,
-                "format-prompt --prompt-format={}",
-                format_prompt_args
-                    .provider
-                    .to_possible_value()
-                    .unwrap()
-                    .get_name()
-            ),
-            Command::Predict(predict_args) => {
-                write!(
-                    f,
-                    "predict --provider={:?}",
-                    predict_args
-                        .provider
-                        .to_possible_value()
-                        .unwrap()
-                        .get_name()
-                )
+            Command::FormatPrompt(args) => {
+                write!(f, "format-prompt --provider={}", args.provider)
             }
-            Command::Score(predict_args) => {
-                write!(
-                    f,
-                    "score --provider={:?}",
-                    predict_args
-                        .provider
-                        .to_possible_value()
-                        .unwrap()
-                        .get_name()
-                )
+            Command::Predict(args) => {
+                write!(f, "predict --provider={}", args.provider)
+            }
+            Command::Score(args) => {
+                write!(f, "score --provider={}", args.provider)
             }
             Command::Distill => write!(f, "distill"),
-            Command::Eval(predict_args) => write!(
-                f,
-                "eval --provider={:?}",
-                predict_args
-                    .provider
-                    .to_possible_value()
-                    .unwrap()
-                    .get_name()
-            ),
+            Command::Eval(args) => {
+                write!(f, "eval --provider={}", args.provider)
+            }
             Command::Synthesize(args) => {
                 write!(f, "synthesize --repos {}", args.repos.join(" "))
             }
@@ -205,41 +177,74 @@ impl Display for Command {
 
 #[derive(Debug, Args, Clone)]
 struct FormatPromptArgs {
-    #[clap(long, short)]
+    #[clap(long, short, default_value_t = PredictionProvider::default())]
     provider: PredictionProvider,
-    #[clap(
-        long,
-        short,
-        help = "(only for --provider zeta2) A substring of a zeta_prompt::ZetaVersion variant to use",
-        value_parser = ZetaVersion::parse,
-        default_value_t = ZetaVersion::default(),
-    )]
-    version: ZetaVersion,
 }
 
 #[derive(Debug, Args, Clone)]
 struct PredictArgs {
-    #[clap(long, short)]
+    #[clap(long, short, default_value_t = PredictionProvider::default())]
     provider: PredictionProvider,
     #[clap(long, default_value_t = 1)]
     repetitions: usize,
-    #[clap(
-        long,
-        short,
-        help = "(only for --provider zeta2) A substring of a zeta_prompt::ZetaVersion variant to use",
-        value_parser = ZetaVersion::parse,
-    )]
-    version: ZetaVersion,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, ValueEnum, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 enum PredictionProvider {
     Sweep,
     Mercury,
     Zeta1,
-    Zeta2,
+    Zeta2(ZetaVersion),
     Teacher,
     TeacherNonBatching,
+}
+
+impl Default for PredictionProvider {
+    fn default() -> Self {
+        PredictionProvider::Zeta2(ZetaVersion::default())
+    }
+}
+
+impl std::fmt::Display for PredictionProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PredictionProvider::Sweep => write!(f, "sweep"),
+            PredictionProvider::Mercury => write!(f, "mercury"),
+            PredictionProvider::Zeta1 => write!(f, "zeta1"),
+            PredictionProvider::Zeta2(version) => write!(f, "zeta2:{version}"),
+            PredictionProvider::Teacher => write!(f, "teacher"),
+            PredictionProvider::TeacherNonBatching => write!(f, "teacher-non-batching"),
+        }
+    }
+}
+
+impl std::str::FromStr for PredictionProvider {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s_lower = s.to_lowercase();
+        match s_lower.as_str() {
+            "sweep" => Ok(PredictionProvider::Sweep),
+            "mercury" => Ok(PredictionProvider::Mercury),
+            "zeta1" => Ok(PredictionProvider::Zeta1),
+            "zeta2" => Ok(PredictionProvider::Zeta2(ZetaVersion::default())),
+            "teacher" => Ok(PredictionProvider::Teacher),
+            "teacher-non-batching" | "teacher_non_batching" | "teachernonbatching" => {
+                Ok(PredictionProvider::TeacherNonBatching)
+            }
+            _ if s_lower.starts_with("zeta2:") => {
+                let version_str = &s[6..];
+                let version = ZetaVersion::parse(version_str)?;
+                Ok(PredictionProvider::Zeta2(version))
+            }
+            _ => anyhow::bail!(
+                "unknown provider `{s}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher-non-batching\n\
+                 For zeta2, you can optionally specify a version like `zeta2:ordered` or `zeta2:V0113_Ordered`.\n\
+                 Available zeta versions:\n{}",
+                ZetaVersion::options_as_string()
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Args, Clone)]

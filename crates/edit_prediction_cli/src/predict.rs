@@ -31,7 +31,6 @@ pub async fn run_prediction(
 ) -> anyhow::Result<()> {
     let provider = args.provider;
     let repetition_count = args.repetitions;
-    let zeta_version = args.version;
 
     if let Some(existing_prediction) = example.predictions.first() {
         if existing_prediction.provider == provider {
@@ -51,10 +50,7 @@ pub async fn run_prediction(
 
         run_format_prompt(
             example,
-            &FormatPromptArgs {
-                provider,
-                version: args.version,
-            },
+            &FormatPromptArgs { provider },
             app_state.clone(),
             cx,
         )
@@ -70,7 +66,7 @@ pub async fn run_prediction(
 
     if matches!(
         provider,
-        PredictionProvider::Zeta1 | PredictionProvider::Zeta2
+        PredictionProvider::Zeta1 | PredictionProvider::Zeta2(_)
     ) {
         step_progress.set_substatus("authenticating");
         static AUTHENTICATED: OnceLock<Shared<Task<()>>> = OnceLock::new();
@@ -95,9 +91,9 @@ pub async fn run_prediction(
     ep_store.update(&mut cx, |store, _cx| {
         let model = match provider {
             PredictionProvider::Zeta1 => edit_prediction::EditPredictionModel::Zeta1,
-            PredictionProvider::Zeta2 => edit_prediction::EditPredictionModel::Zeta2 {
-                version: zeta_version,
-            },
+            PredictionProvider::Zeta2(version) => {
+                edit_prediction::EditPredictionModel::Zeta2 { version }
+            }
             PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
             PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
             PredictionProvider::Teacher | PredictionProvider::TeacherNonBatching => {
@@ -135,7 +131,7 @@ pub async fn run_prediction(
 
                         if let Some(prompt) = request.prompt {
                             fs::write(run_dir.join("prediction_prompt.md"), &prompt)?;
-                            if provider == PredictionProvider::Zeta2 {
+                            if matches!(provider, PredictionProvider::Zeta2(_)) {
                                 updated_example.prompt.get_or_insert(ExamplePrompt {
                                     input: prompt,
                                     expected_output: String::new(),

@@ -18,7 +18,9 @@ pub struct ZetaPromptInput {
     pub related_files: Vec<RelatedFile>,
 }
 
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, EnumIter, IntoStaticStr)]
+#[derive(
+    Default, Clone, Copy, Debug, PartialEq, Eq, EnumIter, IntoStaticStr, Serialize, Deserialize,
+)]
 #[allow(non_camel_case_types)]
 pub enum ZetaVersion {
     V0112_MiddleAtEnd,
@@ -54,7 +56,7 @@ impl ZetaVersion {
         Ok(result)
     }
 
-    fn options_as_string() -> String {
+    pub fn options_as_string() -> String {
         ZetaVersion::iter()
             .map(|version| format!("- {}\n", <&'static str>::from(version)))
             .collect::<Vec<_>>()
