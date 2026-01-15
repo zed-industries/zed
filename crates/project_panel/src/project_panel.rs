@@ -3077,7 +3077,9 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            cx.reveal_path(&worktree.read(cx).absolutize(&entry.path));
+            let path = worktree.read(cx).absolutize(&entry.path);
+            self.project
+                .update(cx, |project, cx| project.reveal_path(&path, cx));
         }
     }
 
