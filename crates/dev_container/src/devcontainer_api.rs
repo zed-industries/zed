@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Display,
     path::{Path, PathBuf},
     sync::Arc,
@@ -101,7 +101,7 @@ pub(crate) async fn read_devcontainer_configuration_for_project(
 pub(crate) async fn apply_dev_container_template(
     template: &DevContainerTemplate,
     options_selected: &HashMap<String, String>,
-    features_selected: &HashMap<String, DevContainerFeature>,
+    features_selected: &HashSet<DevContainerFeature>,
     cx: &mut AsyncWindowContext,
     node_runtime: &NodeRuntime,
 ) -> Result<DevContainerApply, DevContainerError> {
@@ -385,7 +385,7 @@ async fn devcontainer_read_configuration(
 async fn devcontainer_template_apply(
     template: &DevContainerTemplate,
     template_options: &HashMap<String, String>,
-    features_selected: &HashMap<String, DevContainerFeature>, // TODO this still should be a hashset
+    features_selected: &HashSet<DevContainerFeature>,
     path_to_cli: &PathBuf,
     found_in_path: bool,
     node_runtime: &NodeRuntime,
@@ -492,18 +492,21 @@ fn project_directory(cx: &mut AsyncWindowContext) -> Option<Arc<Path>> {
     }
 }
 
-fn template_features_to_json(features_selected: &HashMap<String, DevContainerFeature>) -> String {
+fn template_features_to_json(features_selected: &HashSet<DevContainerFeature>) -> String {
     let things = features_selected
         .iter()
-        .map(|(_, v)| {
+        .map(|feature| {
             let mut map = HashMap::new();
             map.insert(
                 "id",
                 format!(
                     "{}/{}:{}",
-                    v.source_repository.as_ref().unwrap_or(&String::from("")),
-                    v.id,
-                    v.major_version()
+                    feature
+                        .source_repository
+                        .as_ref()
+                        .unwrap_or(&String::from("")),
+                    feature.id,
+                    feature.major_version()
                 ),
             );
             map

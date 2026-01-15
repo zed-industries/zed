@@ -4,6 +4,7 @@ use gpui::Task;
 use picker::Picker;
 use picker::PickerDelegate;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::sync::Arc;
 use ui::ActiveTheme;
@@ -60,7 +61,7 @@ struct TemplateEntry {
     template: DevContainerTemplate,
     options_selected: HashMap<String, String>,
     next_option: Option<TemplateOptionSelection>,
-    features_selected: HashMap<String, DevContainerFeature>,
+    features_selected: HashSet<DevContainerFeature>,
 }
 
 #[derive(Clone)]
@@ -410,13 +411,13 @@ impl PickerDelegate for FeaturePickerDelegate {
                 ToggleState::Selected => {
                     self.template_entry
                         .features_selected
-                        .remove(&current.feature.id);
+                        .remove(&current.feature);
                     ToggleState::Unselected
                 }
                 _ => {
                     self.template_entry
                         .features_selected
-                        .insert(current.feature.id.clone(), current.feature.clone());
+                        .insert(current.feature.clone());
                     ToggleState::Selected
                 }
             };
@@ -885,7 +886,7 @@ impl StatefulModal for DevContainerModal {
                         template: item,
                         options_selected: HashMap::new(),
                         next_option: None,
-                        features_selected: HashMap::new(),
+                        features_selected: HashSet::new(),
                     })
                     .collect::<Vec<TemplateEntry>>();
                 if self.state == DevContainerState::QueryingTemplates {
@@ -1297,7 +1298,7 @@ struct DockerManifestsResponse {
     layers: Vec<ManifestLayer>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 struct DevContainerFeature {
     id: String,
