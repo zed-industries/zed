@@ -48,9 +48,9 @@ use text::{Anchor, ToPoint as _};
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
     Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, DecoratedIcon,
-    DiffStat, Disclosure, Divider, DividerColor, ElevationIndex, IconDecoration,
-    IconDecorationKind, KeyBinding, PopoverMenu, PopoverMenuHandle, SpinnerLabel, TintColor,
-    Tooltip, WithScrollbar, prelude::*, right_click_menu,
+    DiffStat, Disclosure, Divider, DividerColor, IconDecoration, IconDecorationKind, KeyBinding,
+    PopoverMenu, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
+    right_click_menu,
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
@@ -70,10 +70,9 @@ use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
-    ContinueThread, ContinueWithBurnMode, CycleFavoriteModels, CycleModeSelector,
-    ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAgentDiff, OpenHistory, RejectAll,
-    RejectOnce, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
-    ToggleBurnMode, ToggleProfileSelector,
+    CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread,
+    OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, SelectPermissionGranularity,
+    SendImmediately, SendNextQueuedMessage, ToggleBurnMode, ToggleProfileSelector,
 };
 
 const MAX_COLLAPSED_LINES: usize = 3;
@@ -5996,12 +5995,6 @@ impl AcpThreadView {
         thread.read(cx).is_imported()
     }
 
-    fn is_using_zed_ai_models(&self, cx: &App) -> bool {
-        self.as_native_thread(cx)
-            .and_then(|thread| thread.read(cx).model())
-            .is_some_and(|model| model.provider_id() == language_model::ZED_CLOUD_PROVIDER_ID)
-    }
-
     fn supports_split_token_display(&self, cx: &App) -> bool {
         self.as_native_thread(cx)
             .and_then(|thread| thread.read(cx).model())
@@ -7374,29 +7367,6 @@ impl AcpThreadView {
         )
     }
 
-    fn render_usage_callout(&self, line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {
-        if !self.is_using_zed_ai_models(cx) {
-            return None;
-        }
-
-        let user_store = self.project.read(cx).user_store().read(cx);
-        if user_store.is_usage_based_billing_enabled() {
-            return None;
-        }
-
-        let plan = user_store
-            .plan()
-            .unwrap_or(cloud_llm_client::Plan::V1(PlanV1::ZedFree));
-
-        let usage = user_store.model_request_usage()?;
-
-        Some(
-            div()
-                .child(UsageCallout::new(plan, usage))
-                .line_height(line_height),
-        )
-    }
-
     fn agent_ui_font_size_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.entry_view_state.update(cx, |entry_view_state, cx| {
             entry_view_state.agent_ui_font_size_changed(cx);
@@ -7520,10 +7490,6 @@ impl AcpThreadView {
                 self.render_authentication_required_error(error.clone(), cx)
             }
             ThreadError::PaymentRequired => self.render_payment_required_error(cx),
-            ThreadError::ModelRequestLimitReached(plan) => {
-                self.render_model_request_limit_reached_error(*plan, cx)
-            }
-            ThreadError::ToolUseLimitReached => self.render_tool_use_limit_reached_error(cx)?,
         };
 
         Some(div().child(content))
@@ -7711,95 +7677,6 @@ impl AcpThreadView {
                     .child(self.create_copy_button(error)),
             )
             .dismiss_action(self.dismiss_error_button(cx))
-    }
-
-    fn render_model_request_limit_reached_error(
-        &self,
-        plan: cloud_llm_client::Plan,
-        cx: &mut Context<Self>,
-    ) -> Callout {
-        let error_message = match plan {
-            cloud_llm_client::Plan::V1(PlanV1::ZedPro) => {
-                "Upgrade to usage-based billing for more prompts."
-            }
-            cloud_llm_client::Plan::V1(PlanV1::ZedProTrial)
-            | cloud_llm_client::Plan::V1(PlanV1::ZedFree) => "Upgrade to Zed Pro for more prompts.",
-            cloud_llm_client::Plan::V2(_) => "",
-        };
-
-        Callout::new()
-            .severity(Severity::Error)
-            .title("Model Prompt Limit Reached")
-            .icon(IconName::XCircle)
-            .description(error_message)
-            .actions_slot(
-                h_flex()
-                    .gap_0p5()
-                    .child(self.upgrade_button(cx))
-                    .child(self.create_copy_button(error_message)),
-            )
-            .dismiss_action(self.dismiss_error_button(cx))
-    }
-
-    fn render_tool_use_limit_reached_error(&self, cx: &mut Context<Self>) -> Option<Callout> {
-        let thread = self.as_native_thread(cx)?;
-        let supports_burn_mode = thread
-            .read(cx)
-            .model()
-            .is_some_and(|model| model.supports_burn_mode());
-
-        let focus_handle = self.focus_handle(cx);
-
-        Some(
-            Callout::new()
-                .icon(IconName::Info)
-                .title("Consecutive tool use limit reached.")
-                .actions_slot(
-                    h_flex()
-                        .gap_0p5()
-                        .when(supports_burn_mode, |this| {
-                            this.child(
-                                Button::new("continue-burn-mode", "Continue with Burn Mode")
-                                    .style(ButtonStyle::Filled)
-                                    .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                                    .layer(ElevationIndex::ModalSurface)
-                                    .label_size(LabelSize::Small)
-                                    .key_binding(
-                                        KeyBinding::for_action_in(
-                                            &ContinueWithBurnMode,
-                                            &focus_handle,
-                                            cx,
-                                        )
-                                        .map(|kb| kb.size(rems_from_px(10.))),
-                                    )
-                                    .tooltip(Tooltip::text(
-                                        "Enable Burn Mode for unlimited tool use.",
-                                    ))
-                                    .on_click({
-                                        cx.listener(move |this, _, _window, cx| {
-                                            thread.update(cx, |thread, cx| {
-                                                thread
-                                                    .set_completion_mode(CompletionMode::Burn, cx);
-                                            });
-                                            this.resume_chat(cx);
-                                        })
-                                    }),
-                            )
-                        })
-                        .child(
-                            Button::new("continue-conversation", "Continue")
-                                .layer(ElevationIndex::ModalSurface)
-                                .label_size(LabelSize::Small)
-                                .key_binding(
-                                    KeyBinding::for_action_in(&ContinueThread, &focus_handle, cx)
-                                        .map(|kb| kb.size(rems_from_px(10.))),
-                                )
-                                .on_click(cx.listener(|this, _, _window, cx| {
-                                    this.resume_chat(cx);
-                                })),
-                        ),
-                ),
-        )
     }
 
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
@@ -8009,7 +7886,6 @@ impl AcpThreadView {
 impl Render for AcpThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_messages = self.list_state.item_count() > 0;
-        let line_height = TextSize::Small.rems(cx).to_pixels(window.rem_size()) * 1.5;
 
         v_flex()
             .size_full()
@@ -8196,12 +8072,8 @@ impl Render for AcpThreadView {
                 |this, version| this.child(self.render_new_version_callout(&version, cx)),
             )
             .children(
-                if let Some(usage_callout) = self.render_usage_callout(line_height, cx) {
-                    Some(usage_callout.into_any_element())
-                } else {
-                    self.render_token_limit_callout(cx)
-                        .map(|token_limit_callout| token_limit_callout.into_any_element())
-                },
+                self.render_token_limit_callout(cx)
+                    .map(|token_limit_callout| token_limit_callout.into_any_element()),
             )
             .child(self.render_message_editor(window, cx))
     }

@@ -1265,7 +1265,6 @@ pub fn response_events_to_markdown(
             }
             Ok(
                 LanguageModelCompletionEvent::UsageUpdate(_)
-                | LanguageModelCompletionEvent::ToolUseLimitReached
                 | LanguageModelCompletionEvent::StartMessage { .. }
                 | LanguageModelCompletionEvent::UsageUpdated { .. }
                 | LanguageModelCompletionEvent::Queued { .. }
@@ -1360,8 +1359,7 @@ impl ThreadDialog {
                 | Ok(LanguageModelCompletionEvent::Stop(_))
                 | Ok(LanguageModelCompletionEvent::Queued { .. })
                 | Ok(LanguageModelCompletionEvent::Started)
-                | Ok(LanguageModelCompletionEvent::UsageUpdated { .. })
-                | Ok(LanguageModelCompletionEvent::ToolUseLimitReached) => {}
+                | Ok(LanguageModelCompletionEvent::UsageUpdated { .. }) => {}
 
                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                     json_parse_error,

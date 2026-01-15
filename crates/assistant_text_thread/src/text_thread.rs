@@ -5,9 +5,9 @@ use assistant_slash_command::{
     SlashCommandResult, SlashCommandWorkingSet,
 };
 use assistant_slash_commands::FileCommandMetadata;
-use client::{self, ModelRequestUsage, RequestUsage, proto};
+use client::{self, proto};
 use clock::ReplicaId;
-use cloud_llm_client::{CompletionIntent, UsageLimit};
+use cloud_llm_client::{CompletionIntent};
 use collections::{HashMap, HashSet};
 use fs::{Fs, RenameOptions};
 
