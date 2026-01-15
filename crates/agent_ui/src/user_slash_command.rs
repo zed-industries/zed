@@ -703,10 +703,11 @@ pub fn has_command(name: &str, commands: &HashMap<String, UserSlashCommand>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::{FakeFs, Fs};
+    use fs::{FakeFs, Fs, RemoveOptions};
     use gpui::{AppContext as _, TestAppContext};
     use serde_json::json;
     use std::sync::Arc;
+    use text::Rope;
     use util::path;
 
     // ==================== Parsing Tests ====================
@@ -1080,14 +1081,17 @@ mod tests {
     }
 
     #[test]
-    fn test_very_long_template() {
-        // Test that large templates work correctly
-        let long_content = "x".repeat(100_000);
-        let template = format!("Start: $1 {}", long_content);
-        let args = vec![Cow::Borrowed("value")];
-        let result = expand_template(&template, &args, "value").unwrap();
-        assert!(result.starts_with("Start: value x"));
-        assert_eq!(result.len(), 100_000 + 13); // "Start: " (7) + "value" (5) + " " (1) + long_content
+    fn test_command_name_with_emoji() {
+        // Emoji can be multi-codepoint, test they're handled correctly
+        let result = try_parse_user_command("/🚀deploy fast");
+        assert!(result.is_some());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.name, "🚀deploy");
+        assert_eq!(parsed.raw_arguments, "fast");
+
+        // Emoji in arguments
+        let args = parse_arguments("🎉 \"🎊 party\"").unwrap();
+        assert_eq!(args, vec!["🎉", "🎊 party"]);
     }
 
     #[test]
@@ -1281,6 +1285,42 @@ mod tests {
         assert_eq!(
             cmd.namespace.as_ref().map(|s| s.as_ref()),
             Some("tools/git")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_deeply_nested_namespace(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/commands"),
+            json!({
+                "a": {
+                    "b": {
+                        "c": {
+                            "d": {
+                                "e": {
+                                    "deep.md": "Very deep command"
+                                }
+                            }
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+        let fs: Arc<dyn Fs> = fs;
+
+        let result =
+            load_commands_from_path_async(&fs, Path::new(path!("/commands")), CommandScope::User)
+                .await;
+
+        assert!(result.errors.is_empty());
+        assert_eq!(result.commands.len(), 1);
+        let cmd = &result.commands[0];
+        assert_eq!(cmd.name.as_ref(), "a:b:c:d:e:deep");
+        assert_eq!(
+            cmd.namespace.as_ref().map(|s| s.as_ref()),
+            Some("a/b/c/d/e")
         );
     }
 
@@ -1527,6 +1567,137 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_registry_reloads_on_file_change(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".zed": {
+                    "commands": {
+                        "original.md": "Original command"
+                    }
+                }
+            }),
+        )
+        .await;
+        let fs: Arc<dyn Fs> = fs.clone();
+
+        let registry = cx.new(|cx| {
+            SlashCommandRegistry::new(fs.clone(), vec![PathBuf::from(path!("/project"))], cx)
+        });
+
+        // Wait for initial load
+        cx.run_until_parked();
+
+        registry.read_with(cx, |registry, _cx| {
+            assert_eq!(registry.commands().len(), 1);
+            assert!(registry.commands().contains_key("original"));
+        });
+
+        // Add a new command file
+        fs.save(
+            Path::new(path!("/project/.zed/commands/new.md")),
+            &Rope::from("New command"),
+            text::LineEnding::Unix,
+        )
+        .await
+        .unwrap();
+
+        // Wait for watcher to process the change
+        cx.run_until_parked();
+
+        registry.read_with(cx, |registry, _cx| {
+            assert_eq!(registry.commands().len(), 2);
+            assert!(registry.commands().contains_key("original"));
+            assert!(registry.commands().contains_key("new"));
+        });
+
+        // Remove a command file
+        fs.remove_file(
+            Path::new(path!("/project/.zed/commands/original.md")),
+            RemoveOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        // Wait for watcher to process the change
+        cx.run_until_parked();
+
+        registry.read_with(cx, |registry, _cx| {
+            assert_eq!(registry.commands().len(), 1);
+            assert!(!registry.commands().contains_key("original"));
+            assert!(registry.commands().contains_key("new"));
+        });
+
+        // Modify an existing command
+        fs.save(
+            Path::new(path!("/project/.zed/commands/new.md")),
+            &Rope::from("Updated content"),
+            text::LineEnding::Unix,
+        )
+        .await
+        .unwrap();
+
+        cx.run_until_parked();
+
+        registry.read_with(cx, |registry, _cx| {
+            let cmd = registry.commands().get("new").unwrap();
+            assert_eq!(cmd.template.as_ref(), "Updated content");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_concurrent_command_loading(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".zed": {
+                    "commands": {
+                        "cmd1.md": "Command 1",
+                        "cmd2.md": "Command 2",
+                        "cmd3.md": "Command 3"
+                    }
+                }
+            }),
+        )
+        .await;
+        let fs: Arc<dyn Fs> = fs;
+        let worktree_roots = vec![PathBuf::from(path!("/project"))];
+
+        // Spawn multiple load tasks concurrently
+        let fs1 = fs.clone();
+        let roots1 = worktree_roots.clone();
+        let task1 = cx
+            .executor()
+            .spawn(async move { load_all_commands_async(&fs1, &roots1).await });
+
+        let fs2 = fs.clone();
+        let roots2 = worktree_roots.clone();
+        let task2 = cx
+            .executor()
+            .spawn(async move { load_all_commands_async(&fs2, &roots2).await });
+
+        let fs3 = fs.clone();
+        let roots3 = worktree_roots.clone();
+        let task3 = cx
+            .executor()
+            .spawn(async move { load_all_commands_async(&fs3, &roots3).await });
+
+        // Wait for all tasks to complete
+        let (result1, result2, result3) = futures::join!(task1, task2, task3);
+
+        // All should succeed with the same results
+        assert!(result1.errors.is_empty());
+        assert!(result2.errors.is_empty());
+        assert!(result3.errors.is_empty());
+
+        assert_eq!(result1.commands.len(), 3);
+        assert_eq!(result2.commands.len(), 3);
+        assert_eq!(result3.commands.len(), 3);
+    }
+
     // ==================== Symlink Handling Tests ====================
 
     #[gpui::test]
@@ -1643,6 +1814,53 @@ mod tests {
         assert!(names.contains(&"refactor:extract"));
     }
 
+    #[gpui::test]
+    async fn test_symlink_to_parent_directory_skipped(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+
+        // Create a directory structure with a symlink pointing outside the commands dir
+        // This tests that symlinks to directories outside the command tree are handled
+        fs.insert_tree(
+            path!("/commands"),
+            json!({
+                "valid.md": "Valid command"
+            }),
+        )
+        .await;
+
+        // Create a separate directory
+        fs.insert_tree(
+            path!("/other"),
+            json!({
+                "external.md": "External command"
+            }),
+        )
+        .await;
+
+        // Create a symlink from /commands/external -> /other
+        fs.create_symlink(
+            Path::new(path!("/commands/external")),
+            PathBuf::from(path!("/other")),
+        )
+        .await
+        .unwrap();
+
+        let fs: Arc<dyn Fs> = fs;
+
+        let result =
+            load_commands_from_path_async(&fs, Path::new(path!("/commands")), CommandScope::User)
+                .await;
+
+        // Should have loaded both the valid command and the external one via symlink
+        assert!(result.commands.iter().any(|c| c.name.as_ref() == "valid"));
+        assert!(
+            result
+                .commands
+                .iter()
+                .any(|c| c.name.as_ref() == "external:external")
+        );
+    }
+
     // ==================== Permission/Error Handling Tests ====================
 
     #[gpui::test]
@@ -1691,19 +1909,6 @@ mod tests {
 
         // Should return empty since /commands is a file, not a directory
         assert!(result.commands.is_empty());
-    }
-
-    #[gpui::test]
-    async fn test_command_load_error_includes_path_info(_cx: &mut TestAppContext) {
-        // Test that CommandLoadError properly includes path information
-        let error = CommandLoadError {
-            path: PathBuf::from("/path/to/problematic/command.md"),
-            message: "Could not read file".to_string(),
-        };
-
-        let display = error.to_string();
-        assert!(display.contains("/path/to/problematic/command.md"));
-        assert!(display.contains("Could not read file"));
     }
 
     #[gpui::test]

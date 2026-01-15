@@ -524,6 +524,8 @@ impl AcpThreadView {
             cx.subscribe(&registry, move |this, registry, event, cx| match event {
                 SlashCommandRegistryEvent::CommandsChanged => {
                     this.command_load_errors = registry.read(cx).errors().to_vec();
+                    // Reset dismissed state when errors change so new errors are shown
+                    this.command_load_errors_dismissed = false;
                     *cached_user_commands_for_subscription.borrow_mut() =
                         registry.read(cx).commands().clone();
                     cx.notify();

@@ -185,9 +185,13 @@ pub struct AvailableCommand {
     pub source: CommandSource,
 }
 
+/// The source of a slash command, used to differentiate UI behavior.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CommandSource {
+    /// Command provided by the ACP server
     Server,
+    /// User-defined command from a markdown file
+    /// TODO: Use this to show a different icon/style in the completion menu
     UserDefined { template: Arc<str> },
 }
 
