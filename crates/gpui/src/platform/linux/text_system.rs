@@ -21,7 +21,7 @@ use smallvec::SmallVec;
 use std::{borrow::Cow, sync::Arc};
 use swash::{
     scale::{Render, ScaleContext, Source, StrikeWith},
-    zeno::{Format, Transform, Vector},
+    zeno::{Format, Vector},
 };
 
 pub(crate) struct CosmicTextSystem(RwLock<CosmicTextSystemState>);
