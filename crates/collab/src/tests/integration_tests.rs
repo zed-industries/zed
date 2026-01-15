@@ -6759,6 +6759,13 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let right_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
+    right_pane.update(cx, |pane, cx| {
+        // Nav history is now cloned in an pane split, but that's inconvenient
+        // for this test, which uses the presence of a backwards history item as
+        // an indication that a preview item was successfully opened
+        pane.nav_history_mut().clear(cx);
+    });
+
     pane.update(cx, |pane, cx| {
         assert_eq!(pane.items_len(), 1);
         assert_eq!(get_path(pane, 0, cx), path_1.clone());
