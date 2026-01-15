@@ -65,16 +65,8 @@ pub struct UserSlashCommand {
 
 impl UserSlashCommand {
     /// Returns a description string for display in completions.
-    /// Format: "(project)", "(project:namespace)", "(user)", or "(user:namespace)"
     pub fn description(&self) -> String {
-        let scope_name = match self.scope {
-            CommandScope::Project => "project",
-            CommandScope::User => "user",
-        };
-        match &self.namespace {
-            Some(namespace) => format!("({}:{})", scope_name, namespace),
-            None => format!("({})", scope_name),
-        }
+        String::new()
     }
 
     /// Returns true if this command has any placeholders ($1, $2, etc. or $ARGUMENTS)
@@ -1140,7 +1132,7 @@ mod tests {
             path: PathBuf::from("/test.md"),
             scope: CommandScope::User,
         };
-        assert_eq!(user_cmd.description(), "(user)");
+        assert_eq!(user_cmd.description(), "");
 
         let user_ns_cmd = UserSlashCommand {
             name: "frontend:test".into(),
@@ -1149,7 +1141,7 @@ mod tests {
             path: PathBuf::from("/frontend/test.md"),
             scope: CommandScope::User,
         };
-        assert_eq!(user_ns_cmd.description(), "(user:frontend)");
+        assert_eq!(user_ns_cmd.description(), "");
 
         let project_cmd = UserSlashCommand {
             name: "test".into(),
@@ -1158,7 +1150,7 @@ mod tests {
             path: PathBuf::from("/test.md"),
             scope: CommandScope::Project,
         };
-        assert_eq!(project_cmd.description(), "(project)");
+        assert_eq!(project_cmd.description(), "");
 
         let project_ns_cmd = UserSlashCommand {
             name: "tools:git:test".into(),
@@ -1167,7 +1159,7 @@ mod tests {
             path: PathBuf::from("/tools/git/test.md"),
             scope: CommandScope::Project,
         };
-        assert_eq!(project_ns_cmd.description(), "(project:tools/git)");
+        assert_eq!(project_ns_cmd.description(), "");
     }
 
     // ==================== Async File Loading Tests with FakeFs ====================
