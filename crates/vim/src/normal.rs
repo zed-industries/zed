@@ -100,9 +100,9 @@ actions!(
         GoToTab,
         /// Go to previous tab page (with count support).
         GoToPreviousTab,
-        /// Go to tab page (with count support).
+        /// Goes to the previous reference to the symbol under the cursor.
         GoToPreviousReference,
-        /// Go to previous tab page (with count support).
+        /// Goes to the next reference to the symbol under the cursor.
         GoToNextReference,
     ]
 );
