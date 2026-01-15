@@ -3,11 +3,8 @@ use gpui::Entity;
 use gpui::Task;
 use picker::Picker;
 use picker::PickerDelegate;
-use settings::DevContainerConnection;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::fmt::Display;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use ui::ActiveTheme;
 use ui::Button;
@@ -19,13 +16,8 @@ use ui::ToggleState;
 use ui::h_flex;
 use ui::rems_from_px;
 
-use gpui::{
-    Action, AsyncWindowContext, DismissEvent, EventEmitter, FocusHandle, Focusable, RenderOnce,
-    WeakEntity,
-};
-use node_runtime::NodeRuntime;
+use gpui::{Action, DismissEvent, EventEmitter, FocusHandle, Focusable, RenderOnce, WeakEntity};
 use serde::Deserialize;
-use smol::fs;
 use ui::{
     AnyElement, App, Color, CommonAnimationExt, Context, Headline, HeadlineSize, Icon, IconName,
     InteractiveElement, IntoElement, Label, ListItem, ListSeparator, ModalHeader, Navigable,
@@ -39,358 +31,13 @@ use futures::AsyncReadExt;
 use http::Request;
 use http_client::{AsyncBody, HttpClient};
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DevContainerUp {
-    _outcome: String,
-    container_id: String,
-    _remote_user: String,
-    remote_workspace_folder: String,
-}
+mod devcontainer_api;
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DevContainerApply {
-    files: Vec<String>,
-}
+use devcontainer_api::read_devcontainer_configuration_for_project;
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DevContainerConfiguration {
-    name: Option<String>,
-}
+use crate::devcontainer_api::apply_dev_container_template;
 
-#[derive(Debug, Deserialize)]
-struct DevContainerConfigurationOutput {
-    configuration: DevContainerConfiguration,
-}
-
-#[cfg(not(target_os = "windows"))]
-fn dev_container_cli() -> String {
-    "devcontainer".to_string()
-}
-
-#[cfg(target_os = "windows")]
-fn dev_container_cli() -> String {
-    "devcontainer.cmd".to_string()
-}
-
-async fn check_for_docker() -> Result<(), DevContainerError> {
-    let mut command = util::command::new_smol_command("docker");
-    command.arg("--version");
-
-    match command.output().await {
-        Ok(_) => Ok(()),
-        Err(e) => {
-            log::error!("Unable to find docker in $PATH: {:?}", e);
-            Err(DevContainerError::DockerNotAvailable)
-        }
-    }
-}
-
-async fn ensure_devcontainer_cli(
-    node_runtime: &NodeRuntime,
-) -> Result<(PathBuf, bool), DevContainerError> {
-    let mut command = util::command::new_smol_command(&dev_container_cli());
-    command.arg("--version");
-
-    if let Err(e) = command.output().await {
-        log::error!(
-            "Unable to find devcontainer CLI in $PATH. Checking for a zed installed version. Error: {:?}",
-            e
-        );
-
-        let Ok(node_runtime_path) = node_runtime.binary_path().await else {
-            return Err(DevContainerError::NodeRuntimeNotAvailable);
-        };
-
-        let datadir_cli_path = paths::devcontainer_dir()
-            .join("node_modules")
-            .join("@devcontainers")
-            .join("cli")
-            .join(format!("{}.js", &dev_container_cli()));
-
-        log::debug!(
-            "devcontainer not found in path, using local location: ${}",
-            datadir_cli_path.display()
-        );
-
-        let mut command =
-            util::command::new_smol_command(node_runtime_path.as_os_str().display().to_string());
-        command.arg(datadir_cli_path.display().to_string());
-        command.arg("--version");
-
-        match command.output().await {
-            Err(e) => log::error!(
-                "Unable to find devcontainer CLI in Data dir. Will try to install. Error: {:?}",
-                e
-            ),
-            Ok(output) => {
-                if output.status.success() {
-                    log::info!("Found devcontainer CLI in Data dir");
-                    return Ok((datadir_cli_path.clone(), false));
-                } else {
-                    log::error!(
-                        "Could not run devcontainer CLI from data_dir. Will try once more to install. Output: {:?}",
-                        output
-                    );
-                }
-            }
-        }
-
-        if let Err(e) = fs::create_dir_all(paths::devcontainer_dir()).await {
-            log::error!("Unable to create devcontainer directory. Error: {:?}", e);
-            return Err(DevContainerError::DevContainerCliNotAvailable);
-        }
-
-        if let Err(e) = node_runtime
-            .npm_install_packages(
-                &paths::devcontainer_dir(),
-                &[("@devcontainers/cli", "latest")],
-            )
-            .await
-        {
-            log::error!(
-                "Unable to install devcontainer CLI to data directory. Error: {:?}",
-                e
-            );
-            return Err(DevContainerError::DevContainerCliNotAvailable);
-        };
-
-        let mut command =
-            util::command::new_smol_command(node_runtime_path.as_os_str().display().to_string());
-        command.arg(datadir_cli_path.display().to_string());
-        command.arg("--version");
-        if let Err(e) = command.output().await {
-            log::error!(
-                "Unable to find devcontainer cli after NPM install. Error: {:?}",
-                e
-            );
-            Err(DevContainerError::DevContainerCliNotAvailable)
-        } else {
-            Ok((datadir_cli_path, false))
-        }
-    } else {
-        log::info!("Found devcontainer cli on $PATH, using it");
-        Ok((PathBuf::from(&dev_container_cli()), true))
-    }
-}
-
-async fn devcontainer_up(
-    path_to_cli: &PathBuf,
-    found_in_path: bool,
-    node_runtime: &NodeRuntime,
-    path: Arc<Path>,
-) -> Result<DevContainerUp, DevContainerError> {
-    let Ok(node_runtime_path) = node_runtime.binary_path().await else {
-        log::error!("Unable to find node runtime path");
-        return Err(DevContainerError::NodeRuntimeNotAvailable);
-    };
-
-    let mut command = if found_in_path {
-        let mut command = util::command::new_smol_command(path_to_cli.display().to_string());
-        command.arg("up");
-        command.arg("--workspace-folder");
-        command.arg(path.display().to_string());
-        command
-    } else {
-        let mut command =
-            util::command::new_smol_command(node_runtime_path.as_os_str().display().to_string());
-        command.arg(path_to_cli.display().to_string());
-        command.arg("up");
-        command.arg("--workspace-folder");
-        command.arg(path.display().to_string());
-        command
-    };
-
-    log::debug!("Running full devcontainer up command: {:?}", command);
-
-    match command.output().await {
-        Ok(output) => {
-            if output.status.success() {
-                let raw = String::from_utf8_lossy(&output.stdout);
-                serde_json::from_str::<DevContainerUp>(&raw).map_err(|e| {
-                    log::error!(
-                        "Unable to parse response from 'devcontainer up' command, error: {:?}",
-                        e
-                    );
-                    DevContainerError::DevContainerParseFailed
-                })
-            } else {
-                let message = format!(
-                    "Non-success status running devcontainer up for workspace: out: {:?}, err: {:?}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                );
-
-                log::error!("{}", &message);
-                Err(DevContainerError::DevContainerUpFailed(message))
-            }
-        }
-        Err(e) => {
-            let message = format!("Error running devcontainer up: {:?}", e);
-            log::error!("{}", &message);
-            Err(DevContainerError::DevContainerUpFailed(message))
-        }
-    }
-}
-
-async fn devcontainer_read_configuration(
-    path_to_cli: &PathBuf,
-    path: Arc<Path>,
-) -> Result<DevContainerConfigurationOutput, DevContainerError> {
-    let mut command = util::command::new_smol_command(path_to_cli.display().to_string());
-    command.arg("read-configuration");
-    command.arg("--workspace-folder");
-    command.arg(path.display().to_string());
-    match command.output().await {
-        Ok(output) => {
-            if output.status.success() {
-                let raw = String::from_utf8_lossy(&output.stdout);
-                serde_json::from_str::<DevContainerConfigurationOutput>(&raw).map_err(|e| {
-                    log::error!(
-                        "Unable to parse response from 'devcontainer read-configuration' command, error: {:?}",
-                        e
-                    );
-                    DevContainerError::DevContainerParseFailed
-                })
-            } else {
-                let message = format!(
-                    "Non-success status running devcontainer read-configuration for workspace: out: {:?}, err: {:?}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                log::error!("{}", &message);
-                Err(DevContainerError::DevContainerUpFailed(message))
-            }
-        }
-        Err(e) => {
-            let message = format!("Error running devcontainer read-configuration: {:?}", e);
-            log::error!("{}", &message);
-            Err(DevContainerError::DevContainerUpFailed(message))
-        }
-    }
-}
-
-pub async fn start_dev_container(
-    cx: &mut AsyncWindowContext,
-    node_runtime: NodeRuntime,
-) -> Result<(DevContainerConnection, String), DevContainerError> {
-    check_for_docker().await?;
-
-    let (path_to_devcontainer_cli, found_in_path) = ensure_devcontainer_cli(&node_runtime).await?;
-
-    let Some(directory) = project_directory(cx) else {
-        return Err(DevContainerError::DevContainerNotFound);
-    };
-
-    match devcontainer_up(
-        &path_to_devcontainer_cli,
-        found_in_path,
-        &node_runtime,
-        directory.clone(),
-    )
-    .await
-    {
-        Ok(DevContainerUp {
-            container_id,
-            remote_workspace_folder,
-            ..
-        }) => {
-            let project_name = get_project_name(
-                &path_to_devcontainer_cli,
-                directory,
-                remote_workspace_folder.clone(),
-                container_id.clone(),
-            )
-            .await?;
-
-            let connection = DevContainerConnection {
-                name: project_name.into(),
-                container_id: container_id.into(),
-            };
-
-            Ok((connection, remote_workspace_folder))
-        }
-        Err(err) => {
-            let message = format!("Failed with nested error: {}", err);
-            Err(DevContainerError::DevContainerUpFailed(message))
-        }
-    }
-}
-
-// Name the project with two fallbacks
-async fn get_project_name(
-    path_to_cli: &PathBuf,
-    path: Arc<Path>,
-    remote_workspace_folder: String,
-    container_id: String,
-) -> Result<String, DevContainerError> {
-    if let Ok(dev_container_configuration) =
-        devcontainer_read_configuration(path_to_cli, path).await
-        && let Some(name) = dev_container_configuration.configuration.name
-    {
-        // Ideally, name the project after the name defined in devcontainer.json
-        Ok(name)
-    } else {
-        // Otherwise, name the project after the remote workspace folder name
-        Ok(Path::new(&remote_workspace_folder)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(|string| string.into())
-            // Finally, name the project after the container ID as a last resort
-            .unwrap_or_else(|| container_id.clone()))
-    }
-}
-
-fn project_directory(cx: &mut AsyncWindowContext) -> Option<Arc<Path>> {
-    let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
-        return None;
-    };
-
-    match workspace.update(cx, |workspace, _, cx| {
-        workspace.project().read(cx).active_project_directory(cx)
-    }) {
-        Ok(dir) => dir,
-        Err(e) => {
-            log::error!("Error getting project directory from workspace: {:?}", e);
-            None
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum DevContainerError {
-    DockerNotAvailable,
-    DevContainerCliNotAvailable,
-    DevContainerUpFailed(String),
-    DevContainerNotFound,
-    DevContainerParseFailed,
-    NodeRuntimeNotAvailable,
-}
-
-impl Display for DevContainerError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                DevContainerError::DockerNotAvailable =>
-                    "Docker CLI not found on $PATH".to_string(),
-                DevContainerError::DevContainerCliNotAvailable =>
-                    "Docker not found on path".to_string(),
-                DevContainerError::DevContainerUpFailed(message) => {
-                    format!("DevContainer creation failed with error: {}", message)
-                }
-                DevContainerError::DevContainerNotFound => "TODO what".to_string(),
-                DevContainerError::DevContainerParseFailed =>
-                    "Failed to parse file .devcontainer/devcontainer.json".to_string(),
-                DevContainerError::NodeRuntimeNotAvailable =>
-                    "Cannot find a valid node runtime".to_string(),
-            }
-        )
-    }
-}
+pub use devcontainer_api::start_dev_container;
 
 #[derive(PartialEq, Clone, Deserialize, Default, Action)]
 #[action(namespace = containers)]
@@ -478,6 +125,7 @@ enum DevContainerMessage {
     TemplateOptionsCompleted(TemplateEntry),
     FeaturesRetrieved(Vec<DevContainerFeature>),
     FeaturesSelected(TemplateEntry),
+    NeedConfirmWriteDevContainer(TemplateEntry),
     ConfirmWriteDevContainer(TemplateEntry),
     GoBack,
 }
@@ -1014,12 +662,14 @@ impl DevContainerModal {
             div()
                 .child(
                     div().track_focus(&self.focus_handle).child(
-                        ModalHeader::new().child(
-                            Headline::new("Create Dev Container").size(HeadlineSize::XSmall),
-                        ),
+                        ModalHeader::new()
+                            .icon(Icon::new(IconName::Warning).color(Color::Warning))
+                            .child(
+                                Headline::new("Overwrite Existing Configuration?")
+                                    .size(HeadlineSize::XSmall),
+                            ),
                     ),
                 )
-                .child(ListSeparator)
                 .child(
                     div()
                         .track_focus(&self.confirm_entry.focus_handle)
@@ -1036,11 +686,11 @@ impl DevContainerModal {
                             ListItem::new("li-search-containers")
                                 .inset(true)
                                 .spacing(ui::ListItemSpacing::Sparse)
-                                .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                .start_slot(Icon::new(IconName::Warning).color(Color::Warning))
                                 .toggle_state(
                                     self.confirm_entry.focus_handle.contains_focused(window, cx),
                                 )
-                                .child(Label::new("Create dev container from template")),
+                                .child(Label::new("Overwrite")),
                         ),
                 )
                 .child(ListSeparator)
@@ -1375,75 +1025,130 @@ impl StatefulModal for DevContainerModal {
             DevContainerMessage::FeaturesSelected(template_entry) => {
                 let workspace = self.workspace.upgrade().expect("TODO");
 
-                // let found_existing_configuration = false;
-                workspace.update(cx, |workspace, cx| {
-                    let project = workspace.project().clone();
+                cx.spawn_in(window, async move |this, cx| {
+                    if let Some(tree_id) = workspace.update(cx, |workspace, cx| {
+                        let project = workspace.project().clone();
+                        let worktree = project.read(cx).visible_worktrees(cx).find_map(|tree| {
+                            tree.read(cx)
+                                .root_entry()?
+                                .is_dir()
+                                .then_some(tree.read(cx))
+                        });
+                        worktree.and_then(|w| Some(w.id()))
+                    }) {
+                        let node_runtime = workspace.read_with(cx, |workspace, _| {
+                            workspace.app_state().node_runtime.clone()
+                        });
 
-                    let worktree = project
-                        .read(cx)
-                        .visible_worktrees(cx)
-                        .find_map(|tree| tree.read(cx).root_entry()?.is_dir().then_some(tree));
-
-                    if let Some(worktree) = worktree {
-                        let tree_id = worktree.read(cx).id();
-                        let root_path = worktree.read(cx).abs_path();
-                        cx.spawn_in(window, async move |workspace, cx| {
-                            let node_runtime = workspace
-                                .read_with(cx, |workspace, _| {
-                                    workspace.app_state().node_runtime.clone()
-                                })
-                                .unwrap();
-                            let (path_to_devcontainer_cli, found_in_path) =
-                                ensure_devcontainer_cli(&node_runtime).await.unwrap();
-
-                            // if dev_container_manifest_exists(
-                            //     &path_to_devcontainer_cli,
-                            //     found_in_path,
-                            //     &node_runtime,
-                            //     &root_path,
-                            // )
-                            // .await
-                            // {
-                            //     return;
-                            // }
-
-                            let files = apply_dev_container_template(
-                                &template_entry,
-                                &path_to_devcontainer_cli,
-                                found_in_path,
-                                &node_runtime,
-                                &root_path,
-                            )
+                        if read_devcontainer_configuration_for_project(cx, &node_runtime)
                             .await
+                            .is_ok()
+                        {
+                            this.update_in(cx, |this, window, cx| {
+                                this.accept_message(
+                                    DevContainerMessage::NeedConfirmWriteDevContainer(
+                                        template_entry,
+                                    ),
+                                    window,
+                                    cx,
+                                );
+                            })
                             .unwrap();
+                            return;
+                        }
 
-                            if files
-                                .files
-                                .contains(&"./.devcontainer/devcontainer.json".to_string())
-                            {
-                                workspace
-                                    .update_in(cx, |workspace, window, cx| {
-                                        let path = RelPath::unix(".devcontainer/devcontainer.json")
-                                            .unwrap();
-                                        workspace.open_path((tree_id, path), None, true, window, cx)
-                                    })
-                                    // TODO handle this better
-                                    .unwrap()
-                                    .await
-                                    .unwrap();
-                            }
+                        let files = apply_dev_container_template(
+                            &template_entry.template,
+                            &template_entry.options_selected,
+                            &template_entry.features_selected,
+                            cx,
+                            &node_runtime,
+                        )
+                        .await
+                        .unwrap(); // TODO this must be handled. Can't work on remote right now
+                        if files
+                            .files
+                            .contains(&"./.devcontainer/devcontainer.json".to_string())
+                        {
+                            workspace
+                                .update_in(cx, |workspace, window, cx| {
+                                    let path =
+                                        RelPath::unix(".devcontainer/devcontainer.json").unwrap();
+                                    workspace.open_path((tree_id, path), None, true, window, cx)
+                                })
+                                // TODO handle this better
+                                .unwrap()
+                                .await
+                                .unwrap();
+                        }
+                        this.update_in(cx, |this, window, cx| {
+                            this.dismiss(&menu::Cancel, window, cx);
                         })
-                        .detach();
+                        .unwrap();
                     } else {
                         return;
                     }
-                });
+                })
+                .detach();
 
-                self.dismiss(&menu::Cancel, window, cx);
                 None
             }
+            DevContainerMessage::NeedConfirmWriteDevContainer(template_entry) => Some(
+                DevContainerState::ConfirmingWriteDevContainer(template_entry),
+            ),
             DevContainerMessage::ConfirmWriteDevContainer(template_entry) => {
-                // TODO
+                let workspace = self.workspace.upgrade().expect("TODO");
+
+                cx.spawn_in(window, async move |this, cx| {
+                    if let Some(tree_id) = workspace.update(cx, |workspace, cx| {
+                        let project = workspace.project().clone();
+                        let worktree = project.read(cx).visible_worktrees(cx).find_map(|tree| {
+                            tree.read(cx)
+                                .root_entry()?
+                                .is_dir()
+                                .then_some(tree.read(cx))
+                        });
+                        worktree.and_then(|w| Some(w.id()))
+                    }) {
+                        let node_runtime = workspace.read_with(cx, |workspace, _| {
+                            workspace.app_state().node_runtime.clone()
+                        });
+
+                        let files = apply_dev_container_template(
+                            &template_entry.template,
+                            &template_entry.options_selected,
+                            &template_entry.features_selected,
+                            cx,
+                            &node_runtime,
+                        )
+                        .await
+                        .unwrap();
+                        if files
+                            .files
+                            .contains(&"./.devcontainer/devcontainer.json".to_string())
+                        {
+                            workspace
+                                .update_in(cx, |workspace, window, cx| {
+                                    let path =
+                                        RelPath::unix(".devcontainer/devcontainer.json").unwrap();
+                                    workspace.open_path((tree_id, path), None, true, window, cx)
+                                })
+                                // TODO handle this better
+                                .unwrap()
+                                .await
+                                .unwrap();
+                        }
+                        this.update_in(cx, |this, window, cx| {
+                            this.dismiss(&menu::Cancel, window, cx);
+                        })
+                        .unwrap();
+                    } else {
+                        return;
+                    }
+                })
+                .detach();
+
+                // self.dismiss(&menu::Cancel, window, cx);
                 None
             }
         };
@@ -1501,114 +1206,6 @@ trait StatefulModal: ModalView + EventEmitter<DismissEvent> + Render {
             .on_action(cx.listener(Self::dismiss))
             .child(element)
     }
-}
-
-async fn dev_container_manifest_exists(
-    path_to_cli: &PathBuf,
-    found_in_path: bool,
-    node_runtime: &NodeRuntime,
-    path: &Arc<Path>,
-) -> bool {
-    true // TODO
-}
-
-async fn apply_dev_container_template(
-    template_entry: &TemplateEntry,
-    path_to_cli: &PathBuf,
-    found_in_path: bool,
-    node_runtime: &NodeRuntime,
-    path: &Arc<Path>,
-) -> Result<DevContainerApply, DevContainerError> {
-    let Ok(node_runtime_path) = node_runtime.binary_path().await else {
-        log::error!("Unable to find node runtime path");
-        return Err(DevContainerError::NodeRuntimeNotAvailable);
-    };
-
-    let mut command = if found_in_path {
-        util::command::new_smol_command(path_to_cli.display().to_string())
-    } else {
-        let mut command =
-            util::command::new_smol_command(node_runtime_path.as_os_str().display().to_string());
-        command.arg(path_to_cli.display().to_string());
-        command
-    };
-
-    let Ok(serialized_options) = serde_json::to_string(&template_entry.options_selected) else {
-        log::error!(
-            "Unable to serialize options for {:?}",
-            &template_entry.options_selected
-        );
-        return Err(DevContainerError::DevContainerParseFailed);
-    };
-
-    command.arg("templates");
-    command.arg("apply");
-    command.arg("--workspace-folder");
-    command.arg(path.display().to_string());
-    command.arg("--template-id");
-    command.arg(format!(
-        "{}/{}",
-        template_entry
-            .template
-            .source_repository
-            .as_ref()
-            .unwrap_or(&String::from("")),
-        template_entry.template.id
-    ));
-    command.arg("--template-args");
-    command.arg(serialized_options);
-    command.arg("--features");
-    command.arg(template_features_to_json(&template_entry.features_selected));
-    log::debug!("Running full devcontainer apply command: {:?}", command);
-
-    match command.output().await {
-        Ok(output) => {
-            if output.status.success() {
-                let raw = String::from_utf8_lossy(&output.stdout);
-                serde_json::from_str::<DevContainerApply>(&raw).map_err(|e| {
-                    log::error!(
-                        "Unable to parse response from 'devcontainer up' command, error: {:?}",
-                        e
-                    );
-                    DevContainerError::DevContainerParseFailed
-                })
-            } else {
-                let message = format!(
-                    "Non-success status running devcontainer up for workspace: out: {:?}, err: {:?}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                );
-
-                log::error!("{}", &message);
-                Err(DevContainerError::DevContainerUpFailed(message))
-            }
-        }
-        Err(e) => {
-            let message = format!("Error running devcontainer up: {:?}", e);
-            log::error!("{}", &message);
-            Err(DevContainerError::DevContainerUpFailed(message))
-        }
-    }
-}
-
-fn template_features_to_json(features_selected: &HashMap<String, DevContainerFeature>) -> String {
-    let things = features_selected
-        .iter()
-        .map(|(_, v)| {
-            let mut map = HashMap::new();
-            map.insert(
-                "id",
-                format!(
-                    "{}/{}:{}",
-                    v.source_repository.as_ref().unwrap_or(&String::from("")),
-                    v.id,
-                    v.major_version()
-                ),
-            );
-            map
-        })
-        .collect::<Vec<HashMap<&str, String>>>();
-    serde_json::to_string(&things).unwrap()
 }
 
 #[derive(Debug, Deserialize)]
@@ -1877,8 +1474,8 @@ mod tests {
     use http_client::{FakeHttpClient, anyhow};
 
     use crate::{
-        DevContainerUp, GithubTokenResponse, devcontainer_templates_repository,
-        get_deserialized_response, get_devcontainer_templates, get_ghcr_token, get_latest_manifest,
+        GithubTokenResponse, devcontainer_templates_repository, get_deserialized_response,
+        get_devcontainer_templates, get_ghcr_token, get_latest_manifest,
     };
 
     #[gpui::test]
@@ -2058,18 +1655,5 @@ mod tests {
         let response = response.unwrap();
         assert_eq!(response.templates.len(), 1);
         assert_eq!(response.templates[0].name, "Alpine");
-    }
-
-    #[test]
-    fn should_parse_from_devcontainer_json() {
-        let json = r#"{"outcome":"success","containerId":"826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a","remoteUser":"vscode","remoteWorkspaceFolder":"/workspaces/zed"}"#;
-        let up: DevContainerUp = serde_json::from_str(json).unwrap();
-        assert_eq!(up._outcome, "success");
-        assert_eq!(
-            up.container_id,
-            "826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a"
-        );
-        assert_eq!(up._remote_user, "vscode");
-        assert_eq!(up.remote_workspace_folder, "/workspaces/zed");
     }
 }
