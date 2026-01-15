@@ -62,6 +62,7 @@ ordered-float.workspace = true
 parking_lot.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
+remote.workspace = true
 rand.workspace = true
 regex.workspace = true
 rpc.workspace = true
