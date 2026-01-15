@@ -13,7 +13,9 @@ This plan addresses the findings from the code review of the user-defined slash 
 ## Background: Key Concepts
 
 ### GPUI Framework
+
 Zed uses a custom UI framework called GPUI. Key concepts:
+
 - **Entities:** State containers managed by GPUI, similar to React components with state. Created with `cx.new(|cx| ...)`.
 - **Context (`cx`):** Passed to most functions, provides access to app state and async primitives.
 - **`cx.spawn`:** Spawns async tasks on the foreground thread.
@@ -22,12 +24,15 @@ Zed uses a custom UI framework called GPUI. Key concepts:
 - **`cx.run_until_parked()`:** In tests, advances the executor until all pending work is complete. This is how we make async tests deterministic.
 
 ### FakeFs
+
 Zed has a `FakeFs` implementation for testing filesystem operations without touching the real filesystem. It supports:
+
 - Creating directory trees with `fs.insert_tree(path, json!({...}))`
 - Creating symlinks with `fs.create_symlink()`
 - Simulating file changes for watcher tests
 
 ### File Watching Pattern
+
 File watchers in Zed return a stream of events. In tests with `FakeFs`, you can simulate file changes and then call `cx.run_until_parked()` to process the resulting events deterministically.
 
 **IMPORTANT:** All tests must be completely deterministic. Never use real timers, sleeps, or wall-clock time. Always use GPUI's executor and `run_until_parked()` to advance simulated time.
@@ -97,6 +102,7 @@ async fn test_command_load_error_includes_path_info(_cx: &mut TestAppContext) {
 **Rationale:** The `SlashCommandRegistry` watches for file changes and reloads commands automatically. This behavior is currently untested.
 
 **Pattern for Deterministic Testing:**
+
 1. Create the registry with initial files
 2. Call `cx.run_until_parked()` to let initial load complete
 3. Use `FakeFs` to modify files (add/remove/change)
@@ -175,6 +181,7 @@ async fn test_registry_reloads_on_file_change(cx: &mut TestAppContext) {
 ```
 
 **Note:** You may need to check if `FakeFs` has `insert_file` and `remove_file` methods. If not, look for similar patterns in other tests in the codebase (search for `FakeFs` usage). The exact API might be:
+
 - `fs.save(path, content, ...)` for creating/modifying files
 - `fs.remove_file(path, ...)` for deletion
 
@@ -268,7 +275,7 @@ fn test_command_name_with_emoji() {
 #[gpui::test]
 async fn test_circular_symlink_handling(cx: &mut TestAppContext) {
     let fs = FakeFs::new(cx.executor());
-    
+
     // Create a directory structure
     fs.insert_tree(
         path!("/commands"),
@@ -318,6 +325,7 @@ async fn test_circular_symlink_handling(cx: &mut TestAppContext) {
 **Location:** Around line 185-192
 
 **Current Code:**
+
 ```rust
 #[derive(Debug, Clone, PartialEq)]
 pub enum CommandSource {
@@ -374,6 +382,7 @@ If there are no plans to use this, remove the `source` field entirely and simpli
 **Solution:** Extract the user command loading into a separate helper function.
 
 **Before (current structure):**
+
 ```rust
 pub fn contents(
     &self,
@@ -587,18 +596,18 @@ This ensures that if new errors appear after a reload, they'll be shown even if 
 
 ## Summary Checklist
 
-| Task | Description | Priority |
-|------|-------------|----------|
-| 1.1 | Remove `test_very_long_template` | Low |
-| 1.2 | Remove `test_command_load_error_includes_path_info` | Low |
-| 2.1 | Add `test_registry_reloads_on_file_change` | High |
-| 3.1 | Add `test_deeply_nested_namespace` | Medium |
-| 3.2 | Add `test_command_name_with_emoji` | Medium |
-| 3.3 | Add `test_circular_symlink_handling` | Medium |
-| 4.1 | Document or remove `CommandSource::UserDefined` | Low |
-| 5.1 | Refactor `MessageEditor::contents` | Medium |
-| 6.1 | Add `test_concurrent_command_loading` | Medium |
-| 7.1 | Fix error dismissal on reload | Low |
+| Task | Description                                         | Priority |
+| ---- | --------------------------------------------------- | -------- |
+| 1.1  | Remove `test_very_long_template`                    | Low      |
+| 1.2  | Remove `test_command_load_error_includes_path_info` | Low      |
+| 2.1  | Add `test_registry_reloads_on_file_change`          | High     |
+| 3.1  | Add `test_deeply_nested_namespace`                  | Medium   |
+| 3.2  | Add `test_command_name_with_emoji`                  | Medium   |
+| 3.3  | Add `test_circular_symlink_handling`                | Medium   |
+| 4.1  | Document or remove `CommandSource::UserDefined`     | Low      |
+| 5.1  | Refactor `MessageEditor::contents`                  | Medium   |
+| 6.1  | Add `test_concurrent_command_loading`               | Medium   |
+| 7.1  | Fix error dismissal on reload                       | Low      |
 
 **Estimated Total Effort:** 2-4 hours for an engineer familiar with the codebase, 4-8 hours for someone new.
 
