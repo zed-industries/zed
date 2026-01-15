@@ -678,7 +678,14 @@ impl Item for Editor {
     }
 
     fn tab_content(&self, params: TabContentParams, _: &Window, cx: &App) -> AnyElement {
-        let label_color = if ItemSettings::get_global(cx).git_status {
+        let item_settings = ItemSettings::get_global(cx);
+        let label_color = if item_settings.diagnostic_color {
+            if let Some(diagnostic_color) = params.diagnostic_color() {
+                diagnostic_color
+            } else {
+                entry_label_color(params.selected)
+            }
+        } else if item_settings.git_status {
             self.buffer()
                 .read(cx)
                 .as_singleton()
