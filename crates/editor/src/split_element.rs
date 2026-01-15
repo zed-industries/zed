@@ -1,10 +1,12 @@
 use gpui::{
-    App, AvailableSpace, Background, Bounds, Context, Corners, Edges, Element, Entity,
-    IntoElement, PaintQuad, Pixels, Point, Rgba, Size, Style, colors::Colors, hsla, px, relative,
-    rgba,
+    App, AvailableSpace, Background, Bounds, Context, Corners, Edges, Element, Entity, IntoElement,
+    PaintQuad, Pixels, Point, Rgba, Size, Style, colors::Colors, hsla, px, relative, rgba,
 };
 
-use crate::{Editor, EditorElement, EditorStyle, SplittableEditor, element::SplitSide};
+use crate::{
+    Editor, EditorElement, EditorStyle, SplittableEditor,
+    element::{SplitInfo, SplitSide},
+};
 
 pub struct SplitEditorElement {
     editor: Entity<SplittableEditor>,
@@ -81,8 +83,6 @@ pub struct SplitEditorPrepaintState {
     rhs_bounds: Bounds<Pixels>,
 }
 
-// `IntoElement`, `Element`, `Render`, `RenderOnce`
-// 
 
 impl IntoElement for SplitEditorElement {
     type Element = Self;
@@ -165,9 +165,14 @@ impl Element for SplitEditorElement {
         let mut lhs_element = EditorElement::new(&self.lhs, self.style.clone());
         let mut rhs_element = EditorElement::new(&self.rhs, self.style.clone());
 
-        lhs_element.set_split_side(SplitSide::Left);
-        rhs_element.set_split_side(SplitSide::Right);
-        rhs_element.set_split_bounds(bounds);
+        lhs_element.set_split_info(SplitInfo {
+            bounds,
+            side: SplitSide::Left,
+        });
+        rhs_element.set_split_info(SplitInfo {
+            bounds,
+            side: SplitSide::Right,
+        });
 
         let mut lhs_any = lhs_element.into_any_element();
         let lhs_available_space = Size {

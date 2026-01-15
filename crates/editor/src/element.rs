@@ -199,8 +199,13 @@ pub(crate) enum SplitSide {
 pub struct EditorElement {
     editor: Entity<Editor>,
     style: EditorStyle,
-    is_in_split: Option<SplitSide>,
-    split_bounds: Option<Bounds<Pixels>>,
+    split_info: Option<SplitInfo>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SplitInfo {
+    pub side: SplitSide,
+    pub bounds: Bounds<Pixels>,
 }
 
 impl EditorElement {
@@ -210,17 +215,12 @@ impl EditorElement {
         Self {
             editor: editor.clone(),
             style,
-            is_in_split: None,
-            split_bounds: None,
+            split_info: None,
         }
     }
 
-    pub fn set_split_side(&mut self, split_side: SplitSide) {
-        self.is_in_split = Some(split_side);
-    }
-
-    pub fn set_split_bounds(&mut self, bounds: Bounds<Pixels>) {
-        self.split_bounds = Some(bounds);
+    pub fn set_split_info(&mut self, split_info: SplitInfo) {
+        self.split_info = Some(split_info);
     }
 
     pub fn set_style(&mut self, style: EditorStyle) {
@@ -3952,7 +3952,7 @@ impl EditorElement {
         let header = div()
             .p_1()
             .w_full()
-            .when_some(self.split_bounds, |this, bounds| this.w(bounds.size.width))
+            .when_some(self.split_info, |this, info| this.w(info.bounds.size.width))
             .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
             .child(
                 h_flex()
@@ -4490,10 +4490,10 @@ impl EditorElement {
         cx: &mut App,
     ) {
         for block in blocks {
-            let mut origin = if let Some(bounds) = self.split_bounds
+            let mut origin = if let Some(info) = self.split_info
                 && let Some(row) = block.row
             {
-                bounds.origin
+                info.bounds.origin
                     + point(
                         block.x_offset,
                         Pixels::from(
@@ -6484,7 +6484,7 @@ impl EditorElement {
                     GitGutterSetting::TrackedFiles
                 )
             });
-        if show_git_gutter && self.is_in_split.is_none() {
+        if show_git_gutter && self.split_info.is_none() {
             Self::paint_gutter_diff_hunks(layout, window, cx)
         }
 
@@ -7597,10 +7597,10 @@ impl EditorElement {
     fn paint_blocks(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         for mut block in layout.blocks.drain(..) {
             if self
-                .is_in_split
-                .is_some_and(|split| matches!(split, SplitSide::Left) && block.is_buffer_header)
+                .split_info
+                .is_some_and(|info| matches!(info.side, SplitSide::Left) && block.is_buffer_header)
             {
-                continue; // split editors paint their own unified headers
+                continue; 
             }
 
             if block.overlaps_gutter {
@@ -7611,7 +7611,7 @@ impl EditorElement {
 
                 window.with_content_mask(
                     Some(ContentMask {
-                        bounds: self.split_bounds.unwrap_or(bounds),
+                        bounds: self.split_info.map(|info| info.bounds).unwrap_or(bounds),
                     }),
                     |window| {
                         block.element.paint(window, cx);
@@ -9094,7 +9094,7 @@ impl Element for EditorElement {
         if !is_minimap {
             let focus_handle = self.editor.focus_handle(cx);
             let is_focused = focus_handle.is_focused(window);
-            let should_register_focus = self.is_in_split.is_none() || is_focused;
+            let should_register_focus = self.split_info.is_none() || is_focused;
             if should_register_focus {
                 window.set_view_id(self.editor.entity_id());
                 window.set_focus_handle(&focus_handle, cx);
@@ -9106,7 +9106,7 @@ impl Element for EditorElement {
             window.with_text_style(Some(text_style), |window| {
                 window.with_content_mask(
                     Some(ContentMask {
-                        bounds: self.split_bounds.unwrap_or(bounds),
+                        bounds: self.split_info.map(|info| info.bounds).unwrap_or(bounds),
                     }),
                     |window| {
                         let (mut snapshot, is_read_only) = self.editor.update(cx, |editor, cx| {
@@ -10375,7 +10375,7 @@ impl Element for EditorElement {
         if !layout.mode.is_minimap() {
             let focus_handle = self.editor.focus_handle(cx);
             let is_focused = focus_handle.is_focused(window);
-            let should_register_input = self.is_in_split.is_none() || is_focused;
+            let should_register_input = self.split_info.is_none() || is_focused;
             if should_register_input {
                 let key_context = self
                     .editor
@@ -10402,7 +10402,7 @@ impl Element for EditorElement {
             window.with_text_style(Some(text_style), |window| {
                 window.with_content_mask(
                     Some(ContentMask {
-                        bounds: self.split_bounds.unwrap_or(bounds),
+                        bounds: self.split_info.map(|info| info.bounds).unwrap_or(bounds),
                     }),
                     |window| {
                         self.paint_mouse_listeners(layout, window, cx);
@@ -10427,7 +10427,7 @@ impl Element for EditorElement {
                             });
                         }
 
-                        if self.is_in_split.is_none() {
+                        if self.split_info.is_none() {
                             window.with_element_namespace("blocks", |window| {
                                 if let Some(mut sticky_header) = layout.sticky_buffer_header.take()
                                 {
@@ -10435,7 +10435,7 @@ impl Element for EditorElement {
                                 }
                             });
                         }
-                        if self.is_in_split != Some(SplitSide::Left) {
+                        if self.split_info.map(|info| info.side) != Some(SplitSide::Left) {
                             self.paint_scrollbars(layout, window, cx);
                         }
 
