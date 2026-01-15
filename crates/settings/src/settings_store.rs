@@ -2383,4 +2383,60 @@ mod tests {
 
         assert_eq!(init_options_ref, "zed://schemas/settings/lsp/rust-analyzer");
     }
+
+    #[gpui::test]
+    fn test_project_search_presets_parsing(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &default_settings());
+        let worktree_id = WorktreeId::from_usize(1);
+
+        store
+            .set_local_settings(
+                worktree_id,
+                RelPath::empty().into_arc(),
+                LocalSettingsKind::Settings,
+                Some(
+                    r#"{
+                        "project_search_presets": {
+                            "source_only": {
+                                "include": "src/**",
+                                "exclude": "**/*.test.ts"
+                            },
+                            "tests_only": {
+                                "include": "**/*.test.ts"
+                            },
+                            "no_vendor": {
+                                "exclude": "vendor/**"
+                            }
+                        }
+                    }"#,
+                ),
+                cx,
+            )
+            .unwrap();
+
+        let presets = store
+            .get_content_for_file(SettingsFile::Project((
+                worktree_id,
+                RelPath::empty().into_arc(),
+            )))
+            .unwrap()
+            .project
+            .project_search_presets
+            .as_ref()
+            .unwrap();
+
+        assert_eq!(presets.len(), 3);
+
+        let source_only = presets.get("source_only").unwrap();
+        assert_eq!(source_only.include.as_deref(), Some("src/**"));
+        assert_eq!(source_only.exclude.as_deref(), Some("**/*.test.ts"));
+
+        let tests_only = presets.get("tests_only").unwrap();
+        assert_eq!(tests_only.include.as_deref(), Some("**/*.test.ts"));
+        assert_eq!(tests_only.exclude, None);
+
+        let no_vendor = presets.get("no_vendor").unwrap();
+        assert_eq!(no_vendor.include, None);
+        assert_eq!(no_vendor.exclude.as_deref(), Some("vendor/**"));
+    }
 }
