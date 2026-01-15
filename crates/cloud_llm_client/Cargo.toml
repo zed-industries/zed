@@ -21,6 +21,7 @@ serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 strum = { workspace = true, features = ["derive"] }
 uuid = { workspace = true, features = ["serde"] }
+zeta_prompt.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

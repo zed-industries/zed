@@ -2,7 +2,8 @@ use anyhow::Result;
 use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::predict_edits_v3::{
-    self, PromptFormat, RawCompletionRequest, RawCompletionResponse,
+    self, PredictEditsV3Request, PredictEditsV3Response, PromptFormat, RawCompletionRequest,
+    RawCompletionResponse,
 };
 use cloud_llm_client::{
     EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason, EditPredictionRejection,
@@ -39,6 +40,7 @@ use settings::{EditPredictionProvider, SettingsStore, update_settings_file};
 use std::collections::{VecDeque, hash_map};
 use text::Edit;
 use workspace::Workspace;
+use zeta_prompt::ZetaPromptInput;
 use zeta_prompt::ZetaVersion;
 
 use std::ops::Range;
@@ -1998,6 +2000,38 @@ impl EditPredictionStore {
         }
 
         Ok((response, usage))
+    }
+
+    pub(crate) async fn send_v3_request(
+        input: ZetaPromptInput,
+        prompt_version: ZetaVersion,
+        client: Arc<Client>,
+        llm_token: LlmApiToken,
+        app_version: Version,
+    ) -> Result<(PredictEditsV3Response, Option<EditPredictionUsage>)> {
+        let url = client
+            .http_client()
+            .build_zed_llm_url("/predict_edits/v3", &[])?;
+
+        let request = PredictEditsV3Request {
+            input,
+            model: None,
+            prompt_version,
+        };
+
+        Self::send_api_request(
+            |builder| {
+                let req = builder
+                    .uri(url.as_ref())
+                    .body(serde_json::to_string(&request)?.into());
+                Ok(req?)
+            },
+            client,
+            llm_token,
+            app_version,
+            true,
+        )
+        .await
     }
 
     fn handle_api_response<T>(

@@ -33,10 +33,10 @@ pub struct ZetaPromptInput {
 )]
 #[allow(non_camel_case_types)]
 pub enum ZetaVersion {
-    V0112_MiddleAtEnd,
-    V0113_Ordered,
+    V0112MiddleAtEnd,
+    V0113Ordered,
     #[default]
-    V0114_180EditableRegion,
+    V0114180EditableRegion,
 }
 
 impl std::fmt::Display for ZetaVersion {
@@ -134,10 +134,10 @@ pub fn format_zeta_prompt(input: &ZetaPromptInput, version: ZetaVersion) -> Stri
     write_edit_history_section(&mut prompt, input);
 
     match version {
-        ZetaVersion::V0112_MiddleAtEnd => {
+        ZetaVersion::V0112MiddleAtEnd => {
             v0112_middle_at_end::write_cursor_excerpt_section(&mut prompt, input);
         }
-        ZetaVersion::V0113_Ordered | ZetaVersion::V0114_180EditableRegion => {
+        ZetaVersion::V0113Ordered | ZetaVersion::V0114180EditableRegion => {
             v0113_ordered::write_cursor_excerpt_section(&mut prompt, input)
         }
     }

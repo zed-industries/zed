@@ -226,6 +226,32 @@ pub struct RawCompletionRequest {
     pub stop: Vec<Cow<'static, str>>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PredictEditsV3Request {
+    #[serde(flatten)]
+    pub input: zeta_prompt::ZetaPromptInput,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub prompt_version: zeta_prompt::ZetaVersion,
+}
+
+impl From<zeta_prompt::ZetaPromptInput> for PredictEditsV3Request {
+    fn from(input: zeta_prompt::ZetaPromptInput) -> Self {
+        Self {
+            input,
+            model: None,
+            prompt_version: zeta_prompt::ZetaVersion::default(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct PredictEditsV3Response {
+    pub request_id: String,
+    pub output: String,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RawCompletionResponse {
     pub id: String,
