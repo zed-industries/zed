@@ -3061,6 +3061,34 @@ fn beam_jump_find_backward(
     if search_end <= range_start {
         return None;
     }
+
+    if search_range.is_some() {
+        // When scoped to a search_range (Beam Jump viewport), match counting must be non-overlapping
+        // to align with Beam Jump's canonical viewport candidate set.
+        let mut matches: Vec<MultiBufferOffset> = Vec::new();
+        let mut offset = range_start;
+        while offset < search_end {
+            if let Some((match_end, _)) = match_pattern_at(buffer, offset, &pattern, smartcase) {
+                if match_end <= search_end {
+                    matches.push(offset);
+                    offset = match_end;
+                    continue;
+                }
+            }
+
+            let Some(ch) = buffer.chars_at(offset).next() else {
+                break;
+            };
+            offset += ch.len_utf8();
+        }
+
+        if matches.len() < times {
+            return None;
+        }
+
+        return Some(matches[matches.len() - times].to_display_point(map));
+    }
+
     let mut found_start = None;
 
     for _ in 0..times {
