@@ -3920,7 +3920,7 @@ impl GitPanel {
                             .with_rotate_animation(2),
                     )
                     .child(
-                        Label::new("Generating Commit...")
+                        Label::new("Generating Commit…")
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
@@ -3935,6 +3935,7 @@ impl GitPanel {
         let can_commit = self.can_commit();
 
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
+
         Some(
             IconButton::new("generate-commit-message", IconName::AiEdit)
                 .shape(ui::IconButtonShape::Square)
@@ -3945,9 +3946,9 @@ impl GitPanel {
                 })
                 .tooltip(move |_window, cx| {
                     if !can_commit {
-                        Tooltip::simple("No changes to commit", cx)
+                        Tooltip::simple("No Changes to Commit", cx)
                     } else if has_commit_model_configuration_error {
-                        Tooltip::simple("Configure an AI provider to generate commit messages", cx)
+                        Tooltip::simple("Configure an LLM provider to generate commit messages", cx)
                     } else {
                         Tooltip::for_action_in(
                             "Generate Commit Message",
