@@ -19,6 +19,12 @@ world extension {
     /// Initializes the extension.
     export init-extension: func();
 
+    import log-trace: func(message: string);
+    import log-debug: func(message: string);
+    import log-info: func(message: string);
+    import log-warn: func(message: string);
+    import log-error: func(message: string);
+
     /// The type of a downloaded file.
     enum downloaded-file-type {
         /// A gzipped file (`.gz`).

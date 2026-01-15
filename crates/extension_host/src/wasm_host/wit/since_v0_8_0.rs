@@ -1110,4 +1110,45 @@ impl ExtensionImports for WasmState {
             .with_context(|| format!("setting permissions for path {path:?}"))
             .to_wasmtime_result()
     }
+
+    async fn log_trace(&mut self, message: String) -> wasmtime::Result<()> {
+        let logger = get_logger(&self.manifest.id);
+        zlog::trace!(logger => "{:?}", message);
+
+        Ok(())
+    }
+
+    async fn log_debug(&mut self, message: String) -> wasmtime::Result<()> {
+        let logger = get_logger(&self.manifest.id);
+        zlog::debug!(logger => "{:?}", message);
+
+        Ok(())
+    }
+
+    async fn log_info(&mut self, message: String) -> wasmtime::Result<()> {
+        let logger = get_logger(&self.manifest.id);
+        zlog::info!(logger => "{:?}", message);
+
+        Ok(())
+    }
+
+    async fn log_warn(&mut self, message: String) -> wasmtime::Result<()> {
+        let logger = get_logger(&self.manifest.id);
+        zlog::warn!(logger => "{:?}", message);
+
+        Ok(())
+    }
+
+    async fn log_error(&mut self, message: String) -> wasmtime::Result<()> {
+        let logger = get_logger(&self.manifest.id);
+        zlog::error!(logger => "{:?}", message);
+
+        Ok(())
+    }
+}
+
+fn get_logger(extension_id: &Arc<str>) -> zlog::Logger {
+    let all_extensions_logger = zlog::scoped!("extension");
+    let current_extension_scope = Box::leak(Box::new(extension_id.to_string()));
+    zlog::scoped!(all_extensions_logger => current_extension_scope)
 }
