@@ -781,7 +781,10 @@ fn build_diff_options(
         }
     }
 
-    language_settings(language, file, cx)
+    language_settings(cx)
+        .language(language)
+        .file(file)
+        .get()
         .word_diff_enabled
         .then_some(DiffOptions {
             language_scope,
