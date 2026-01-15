@@ -1,4 +1,3 @@
-//! # json_schema_store
 use std::sync::{Arc, LazyLock};
 
 use anyhow::{Context as _, Result};
@@ -12,8 +11,6 @@ use util::schemars::{AllowTrailingCommas, DefaultDenyUnknownFields};
 
 const SCHEMA_URI_PREFIX: &str = "zed://schemas/";
 
-// Bundled from https://github.com/SchemaStore/schemastore at compile time.
-// These are snapshots that ship with Zed - they don't update at runtime.
 const TSCONFIG_SCHEMA: &str = include_str!("schemas/tsconfig.json");
 const PACKAGE_JSON_SCHEMA: &str = include_str!("schemas/package.json");
 
@@ -98,7 +95,6 @@ impl gpui::Global for SchemaStore {}
 
 impl SchemaStore {
     fn notify_schema_changed(&mut self, uri: &str, cx: &mut App) {
-        // Invalidate cache for this URI so it will be regenerated on next request
         DYNAMIC_SCHEMA_CACHE.write().remove(uri);
 
         let uri = uri.to_string();
@@ -116,8 +112,6 @@ impl SchemaStore {
     }
 }
 
-/// Handle a schema request from the JSON language server.
-/// Returns a Task that resolves to the JSON schema as a string.
 pub fn handle_schema_request(
     lsp_store: Entity<LspStore>,
     uri: String,
@@ -128,53 +122,37 @@ pub fn handle_schema_request(
         None => return Task::ready(Err(anyhow::anyhow!("Invalid schema URI: {}", uri))),
     };
 
-    // Try to get a cached/static schema without spawning foreground work
     if let Some(json) = resolve_static_schema(path) {
         return Task::ready(Ok(json));
     }
 
-    // Check runtime cache for dynamic schemas
     if let Some(cached) = DYNAMIC_SCHEMA_CACHE.read().get(&uri).cloned() {
         return Task::ready(Ok(cached));
     }
 
-    // Cache miss for dynamic schema - need to generate on foreground thread
     let path = path.to_string();
     let uri_clone = uri.clone();
     cx.spawn(async move |cx| {
         let schema = resolve_dynamic_schema(lsp_store, &path, cx).await?;
         let json = serde_json::to_string(&schema).context("Failed to serialize schema")?;
 
-        // Store in cache for future requests
         DYNAMIC_SCHEMA_CACHE.write().insert(uri_clone, json.clone());
 
         Ok(json)
     })
 }
 
-/// Try to get a static schema as a JSON string, without any async work.
-/// Returns None if this is a dynamic schema that requires runtime data.
 fn resolve_static_schema(path: &str) -> Option<String> {
     let (schema_name, rest) = path.split_once('/').unzip();
     let schema_name = schema_name.unwrap_or(path);
 
     match schema_name {
-        // Bundled from SchemaStore at compile time via include_str!. These are snapshots
-        // that ship with Zed and don't update at runtime (would need a Zed update).
         "tsconfig" => Some(TSCONFIG_SCHEMA.to_string()),
         "package_json" => Some(PACKAGE_JSON_SCHEMA.to_string()),
-
-        // Derived from Rust types via schemars - the schema is determined by the type
-        // definition which is fixed at compile time.
         "tasks" => Some(TASKS_SCHEMA.clone()),
         "snippets" => Some(SNIPPETS_SCHEMA.clone()),
         "jsonc" => Some(JSONC_SCHEMA.clone()),
-
-        // Actions are registered at compile/link time via the `inventory` crate.
-        // Extensions cannot register new actions, so this is effectively static.
         "keymap" => Some(KEYMAP_SCHEMA.clone()),
-
-        // Derived from gpui::StyleRefinement Rust type - fixed at compile time.
         "zed_inspector_style" => {
             #[cfg(debug_assertions)]
             {
@@ -189,8 +167,6 @@ fn resolve_static_schema(path: &str) -> Option<String> {
             }
         }
 
-        // Individual action schemas - also static since actions are registered at
-        // compile/link time via `inventory`. Cached after first generation.
         "action" => {
             let normalized_action_name = match rest {
                 Some(name) => name,
@@ -198,7 +174,6 @@ fn resolve_static_schema(path: &str) -> Option<String> {
             };
             let action_name = denormalize_action_name(normalized_action_name);
 
-            // Check cache first
             if let Some(cached) = ACTION_SCHEMA_CACHE.read().get(&action_name).cloned() {
                 return Some(cached);
             }
@@ -217,12 +192,10 @@ fn resolve_static_schema(path: &str) -> Option<String> {
             Some(json)
         }
 
-        // Dynamic schemas - return None to indicate async resolution is needed
         _ => None,
     }
 }
 
-/// Resolve a dynamic schema that depends on runtime state.
 async fn resolve_dynamic_schema(
     lsp_store: Entity<LspStore>,
     path: &str,
