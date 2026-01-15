@@ -5,16 +5,16 @@ use assistant_slash_command::{
     SlashCommandResult, SlashCommandWorkingSet,
 };
 use assistant_slash_commands::FileCommandMetadata;
-use client::{self, ModelRequestUsage, RequestUsage, proto};
+use client::{self, proto};
 use clock::ReplicaId;
-use cloud_llm_client::{CompletionIntent, UsageLimit};
+use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet};
 use fs::{Fs, RenameOptions};
 
 use futures::{FutureExt, StreamExt, future::Shared};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
-    Task, WeakEntity,
+    Task,
 };
 use itertools::Itertools as _;
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
@@ -27,7 +27,6 @@ use language_model::{
 };
 use open_ai::Model as OpenAiModel;
 use paths::text_threads_dir;
-use project::Project;
 use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -688,7 +687,6 @@ pub struct TextThread {
     path: Option<Arc<Path>>,
     _subscriptions: Vec<Subscription>,
     language_registry: Arc<LanguageRegistry>,
-    project: Option<WeakEntity<Project>>,
     prompt_builder: Arc<PromptBuilder>,
     completion_mode: agent_settings::CompletionMode,
 }
@@ -708,7 +706,6 @@ impl EventEmitter<TextThreadEvent> for TextThread {}
 impl TextThread {
     pub fn local(
         language_registry: Arc<LanguageRegistry>,
-        project: Option<WeakEntity<Project>>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
         cx: &mut Context<Self>,
@@ -720,7 +717,6 @@ impl TextThread {
             language_registry,
             prompt_builder,
             slash_commands,
-            project,
             cx,
         )
     }
@@ -740,7 +736,6 @@ impl TextThread {
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
-        project: Option<WeakEntity<Project>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let buffer = cx.new(|_cx| {
@@ -781,7 +776,6 @@ impl TextThread {
             completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             path: None,
             buffer,
-            project,
             language_registry,
             slash_commands,
             prompt_builder,
@@ -869,7 +863,6 @@ impl TextThread {
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
-        project: Option<WeakEntity<Project>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let id = saved_context.id.clone().unwrap_or_else(TextThreadId::new);
@@ -880,7 +873,6 @@ impl TextThread {
             language_registry,
             prompt_builder,
             slash_commands,
-            project,
             cx,
         );
         this.path = Some(path);
@@ -2068,15 +2060,7 @@ impl TextThread {
 
                                 match event {
                                     LanguageModelCompletionEvent::Started |
-                                    LanguageModelCompletionEvent::Queued {..} |
-                                    LanguageModelCompletionEvent::ToolUseLimitReached { .. } => {}
-                                    LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
-                                        this.update_model_request_usage(
-                                            amount as u32,
-                                            limit,
-                                            cx,
-                                        );
-                                    }
+                                    LanguageModelCompletionEvent::Queued {..} => {}
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
                                     LanguageModelCompletionEvent::ReasoningDetails(_) => {
                                         // ReasoningDetails are metadata (signatures, encrypted data, format info)
@@ -2956,21 +2940,6 @@ impl TextThread {
         summary.done = true;
         summary.text = custom_summary;
         cx.emit(TextThreadEvent::SummaryChanged);
-    }
-
-    fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut App) {
-        let Some(project) = self.project.as_ref().and_then(|project| project.upgrade()) else {
-            return;
-        };
-        project.read(cx).user_store().update(cx, |user_store, cx| {
-            user_store.update_model_request_usage(
-                ModelRequestUsage(RequestUsage {
-                    amount: amount as i32,
-                    limit,
-                }),
-                cx,
-            )
-        });
     }
 }
 

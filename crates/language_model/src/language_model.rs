@@ -13,7 +13,7 @@ pub mod fake_provider;
 use anthropic::{AnthropicError, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::Client;
-use cloud_llm_client::{CompletionMode, CompletionRequestStatus, UsageLimit};
+use cloud_llm_client::{CompletionMode, CompletionRequestStatus};
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, SharedString, Task, Window};
@@ -77,11 +77,6 @@ pub enum LanguageModelCompletionEvent {
         position: usize,
     },
     Started,
-    UsageUpdated {
-        amount: usize,
-        limit: UsageLimit,
-    },
-    ToolUseLimitReached,
     Stop(StopReason),
     Text(String),
     Thinking {
@@ -115,12 +110,10 @@ impl LanguageModelCompletionEvent {
                 Ok(LanguageModelCompletionEvent::Queued { position })
             }
             CompletionRequestStatus::Started => Ok(LanguageModelCompletionEvent::Started),
-            CompletionRequestStatus::UsageUpdated { amount, limit } => {
-                Ok(LanguageModelCompletionEvent::UsageUpdated { amount, limit })
-            }
-            CompletionRequestStatus::ToolUseLimitReached => {
-                Ok(LanguageModelCompletionEvent::ToolUseLimitReached)
-            }
+            CompletionRequestStatus::UsageUpdated { .. }
+            | CompletionRequestStatus::ToolUseLimitReached => Err(
+                LanguageModelCompletionError::Other(anyhow!("Unexpected status: {status:?}")),
+            ),
             CompletionRequestStatus::Failed {
                 code,
                 message,
@@ -689,8 +682,6 @@ pub trait LanguageModel: Send + Sync {
                             match result {
                                 Ok(LanguageModelCompletionEvent::Queued { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Started) => None,
-                                Ok(LanguageModelCompletionEvent::UsageUpdated { .. }) => None,
-                                Ok(LanguageModelCompletionEvent::ToolUseLimitReached) => None,
                                 Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
