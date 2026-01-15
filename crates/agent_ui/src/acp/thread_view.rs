@@ -6392,7 +6392,7 @@ impl AcpThreadView {
             let can_fast_track = self.can_fast_track_queue && !self.message_queue.is_empty();
 
             if can_fast_track {
-                IconButton::new("fast-track-queue", IconName::ArrowUp)
+                IconButton::new("fast-track-queue", IconName::Send)
                     .icon_color(Color::Accent)
                     .style(ButtonStyle::Filled)
                     .tooltip(move |_window, cx| {
