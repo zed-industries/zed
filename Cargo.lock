@@ -8684,10 +8684,12 @@ name = "json_schema_store"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "dap",
  "extension",
  "gpui",
  "language",
+ "parking_lot",
  "paths",
  "project",
  "schemars",

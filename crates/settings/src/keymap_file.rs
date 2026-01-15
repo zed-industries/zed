@@ -4,7 +4,7 @@ use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
     KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, KeybindingKeystroke, Keystroke,
-    NoAction, SharedString, register_action,
+    NoAction, SharedString, generate_list_of_all_registered_actions, register_action,
 };
 use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
@@ -477,6 +477,58 @@ impl KeymapFile {
             deprecations,
             deprecation_messages,
         )
+    }
+
+    pub fn generate_json_schema_from_inventory() -> Value {
+        let mut generator = Self::action_schema_generator();
+
+        let mut action_schemas = Vec::new();
+        let mut documentation = HashMap::default();
+        let mut deprecations = HashMap::default();
+        let mut deprecation_messages = HashMap::default();
+
+        for action_data in generate_list_of_all_registered_actions() {
+            let schema = (action_data.json_schema)(&mut generator);
+            action_schemas.push((action_data.name, schema));
+
+            if let Some(doc) = action_data.documentation {
+                documentation.insert(action_data.name, doc);
+            }
+            if let Some(msg) = action_data.deprecation_message {
+                deprecation_messages.insert(action_data.name, msg);
+            }
+            for &alias in action_data.deprecated_aliases {
+                deprecations.insert(alias, action_data.name);
+
+                let alias_schema = (action_data.json_schema)(&mut generator);
+                action_schemas.push((alias, alias_schema));
+            }
+        }
+
+        KeymapFile::generate_json_schema(
+            generator,
+            action_schemas,
+            &documentation,
+            &deprecations,
+            &deprecation_messages,
+        )
+    }
+
+    pub fn get_action_schema_by_name(
+        action_name: &str,
+        generator: &mut schemars::SchemaGenerator,
+    ) -> Option<schemars::Schema> {
+        for action_data in generate_list_of_all_registered_actions() {
+            if action_data.name == action_name {
+                return (action_data.json_schema)(generator);
+            }
+            for &alias in action_data.deprecated_aliases {
+                if alias == action_name {
+                    return (action_data.json_schema)(generator);
+                }
+            }
+        }
+        None
     }
 
     fn generate_json_schema(

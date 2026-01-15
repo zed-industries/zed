@@ -931,16 +931,15 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                     .project()
                                     .update(cx, |project, _| project.lsp_store())
                             })?;
+                            let uri = format!("zed://schemas/{}", schema_path);
                             let json_schema_content =
-                                json_schema_store::resolve_schema_request_inner(
-                                    &app_state.languages,
-                                    lsp_store,
-                                    &schema_path,
-                                    cx,
-                                )
-                                .await?;
+                                json_schema_store::handle_schema_request(lsp_store, uri, cx)
+                                    .await?;
+                            let json_schema_value: serde_json::Value =
+                                serde_json::from_str(&json_schema_content)
+                                    .context("Failed to parse JSON Schema")?;
                             let json_schema_content =
-                                serde_json::to_string_pretty(&json_schema_content)
+                                serde_json::to_string_pretty(&json_schema_value)
                                     .context("Failed to serialize JSON Schema as JSON")?;
                             let buffer_task = workspace.update(cx, |workspace, cx| {
                                 workspace
