@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use crate::{
     Vim,
-    motion::right,
+    motion::{is_subword_end, is_subword_start, right},
     state::{Mode, Operator},
 };
 use editor::{
@@ -569,10 +569,19 @@ impl Object {
         let relative_to = selection.head();
         match self {
             Object::Word { ignore_punctuation } => {
+                let count = times.unwrap_or(1);
                 if around {
-                    around_word(map, relative_to, ignore_punctuation)
+                    around_word(map, relative_to, ignore_punctuation, count)
                 } else {
-                    in_word(map, relative_to, ignore_punctuation)
+                    in_word(map, relative_to, ignore_punctuation, count).map(|range| {
+                        // For iw with count > 1, vim includes trailing whitespace
+                        if count > 1 {
+                            let spans_multiple_lines = range.start.row() != range.end.row();
+                            expand_to_include_whitespace(map, range, !spans_multiple_lines)
+                        } else {
+                            range
+                        }
+                    })
                 }
             }
             Object::Subword { ignore_punctuation } => {
@@ -789,10 +798,12 @@ impl Object {
 ///
 /// If `relative_to` is at the start of a word, return the word.
 /// If `relative_to` is between words, return the space between.
+/// If `times` > 1, extend to include additional words.
 fn in_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
+    times: usize,
 ) -> Option<Range<DisplayPoint>> {
     // Use motion::right so that we consider the character under the cursor when looking for the start
     let classifier = map
@@ -806,9 +817,32 @@ fn in_word(
         |left, right| classifier.kind(left) != classifier.kind(right),
     );
 
-    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        classifier.kind(left) != classifier.kind(right)
-    });
+    let mut end =
+        movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
+            classifier.kind(left) != classifier.kind(right)
+        });
+
+    let is_boundary = |left: char, right: char| classifier.kind(left) != classifier.kind(right);
+
+    for _ in 1..times {
+        let kind_at_end = map
+            .buffer_chars_at(end.to_offset(map, Bias::Right))
+            .next()
+            .map(|(c, _)| classifier.kind(c));
+
+        // Skip whitespace but not punctuation (punctuation is its own word unit).
+        let next_end = if kind_at_end == Some(CharKind::Whitespace) {
+            let after_whitespace =
+                movement::find_boundary(map, end, FindRange::MultiLine, is_boundary);
+            movement::find_boundary(map, after_whitespace, FindRange::MultiLine, is_boundary)
+        } else {
+            movement::find_boundary(map, end, FindRange::MultiLine, is_boundary)
+        };
+        if next_end == end {
+            break;
+        }
+        end = next_end;
+    }
 
     Some(start..end)
 }
@@ -828,11 +862,8 @@ fn in_subword(
         .buffer_chars_at(offset)
         .next()
         .map(|(c, _)| {
-            if classifier.is_word('-') {
-                !classifier.is_whitespace(c) && c != '_' && c != '-'
-            } else {
-                !classifier.is_whitespace(c) && c != '_'
-            }
+            let is_separator = "._-".contains(c);
+            !classifier.is_whitespace(c) && !is_separator
         })
         .unwrap_or(false);
 
@@ -843,28 +874,19 @@ fn in_subword(
             movement::FindRange::SingleLine,
             |left, right| {
                 let is_word_start = classifier.kind(left) != classifier.kind(right);
-                let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
-                    || left == '_' && right != '_'
-                    || left.is_lowercase() && right.is_uppercase();
-                is_word_start || is_subword_start
+                is_word_start || is_subword_start(left, right, "._-")
             },
         )
     } else {
         movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
             let is_word_start = classifier.kind(left) != classifier.kind(right);
-            let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
-                || left == '_' && right != '_'
-                || left.is_lowercase() && right.is_uppercase();
-            is_word_start || is_subword_start
+            is_word_start || is_subword_start(left, right, "._-")
         })
     };
 
     let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
         let is_word_end = classifier.kind(left) != classifier.kind(right);
-        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
-            || left != '_' && right == '_'
-            || left.is_lowercase() && right.is_uppercase();
-        is_word_end || is_subword_end
+        is_word_end || is_subword_end(left, right, "._-")
     });
 
     Some(start..end)
@@ -965,10 +987,12 @@ pub fn surrounding_html_tag(
 /// otherwise
 ///   delete whitespace around cursor
 ///   delete word following the cursor
+/// If `times` > 1, extend to include additional words.
 fn around_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
+    times: usize,
 ) -> Option<Range<DisplayPoint>> {
     let offset = relative_to.to_offset(map, Bias::Left);
     let classifier = map
@@ -982,9 +1006,9 @@ fn around_word(
         .unwrap_or(false);
 
     if in_word {
-        around_containing_word(map, relative_to, ignore_punctuation)
+        around_containing_word(map, relative_to, ignore_punctuation, times)
     } else {
-        around_next_word(map, relative_to, ignore_punctuation)
+        around_next_word(map, relative_to, ignore_punctuation, times)
     }
 }
 
@@ -1003,20 +1027,17 @@ fn around_subword(
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
         |left, right| {
-            let is_word_start = classifier.kind(left) != classifier.kind(right);
-            let is_subword_start = classifier.is_word('-') && left != '-' && right == '-'
-                || left != '_' && right == '_'
-                || left.is_lowercase() && right.is_uppercase();
-            is_word_start || is_subword_start
+            let is_separator = |c: char| "._-".contains(c);
+            let is_word_start =
+                classifier.kind(left) != classifier.kind(right) && !is_separator(left);
+            is_word_start || is_subword_start(left, right, "._-")
         },
     );
 
     let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        let is_word_end = classifier.kind(left) != classifier.kind(right);
-        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
-            || left != '_' && right == '_'
-            || left.is_lowercase() && right.is_uppercase();
-        is_word_end || is_subword_end
+        let is_separator = |c: char| "._-".contains(c);
+        let is_word_end = classifier.kind(left) != classifier.kind(right) && !is_separator(right);
+        is_word_end || is_subword_end(left, right, "._-")
     });
 
     Some(start..end).map(|range| expand_to_include_whitespace(map, range, true))
@@ -1026,8 +1047,12 @@ fn around_containing_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
+    times: usize,
 ) -> Option<Range<DisplayPoint>> {
-    in_word(map, relative_to, ignore_punctuation).map(|range| {
+    in_word(map, relative_to, ignore_punctuation, times).map(|range| {
+        let spans_multiple_lines = range.start.row() != range.end.row();
+        let stop_at_newline = !spans_multiple_lines;
+
         let line_start = DisplayPoint::new(range.start.row(), 0);
         let is_first_word = map
             .buffer_chars_at(line_start.to_offset(map, Bias::Left))
@@ -1039,11 +1064,11 @@ fn around_containing_word(
 
         if is_first_word {
             // For first word on line, trim indentation
-            let mut expanded = expand_to_include_whitespace(map, range.clone(), true);
+            let mut expanded = expand_to_include_whitespace(map, range.clone(), stop_at_newline);
             expanded.start = range.start;
             expanded
         } else {
-            expand_to_include_whitespace(map, range, true)
+            expand_to_include_whitespace(map, range, stop_at_newline)
         }
     })
 }
@@ -1052,12 +1077,12 @@ fn around_next_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
+    times: usize,
 ) -> Option<Range<DisplayPoint>> {
     let classifier = map
         .buffer_snapshot()
         .char_classifier_at(relative_to.to_point(map))
         .ignore_punctuation(ignore_punctuation);
-    // Get the start of the word
     let start = movement::find_preceding_boundary_display_point(
         map,
         right(map, relative_to, 1),
@@ -1066,7 +1091,7 @@ fn around_next_word(
     );
 
     let mut word_found = false;
-    let end = movement::find_boundary(map, relative_to, FindRange::MultiLine, |left, right| {
+    let mut end = movement::find_boundary(map, relative_to, FindRange::MultiLine, |left, right| {
         let left_kind = classifier.kind(left);
         let right_kind = classifier.kind(right);
 
@@ -1078,6 +1103,20 @@ fn around_next_word(
 
         found
     });
+
+    for _ in 1..times {
+        let next_end = movement::find_boundary(map, end, FindRange::MultiLine, |left, right| {
+            let left_kind = classifier.kind(left);
+            let right_kind = classifier.kind(right);
+
+            let in_word_unit = left_kind != CharKind::Whitespace;
+            (in_word_unit && left_kind != right_kind) || right == '\n' && left == '\n'
+        });
+        if next_end == end {
+            break;
+        }
+        end = next_end;
+    }
 
     Some(start..end)
 }
@@ -1445,7 +1484,7 @@ pub fn expand_to_include_whitespace(
         }
 
         if char.is_whitespace() {
-            if char != '\n' {
+            if char != '\n' || !stop_at_newline {
                 range.end = offset + char.len_utf8();
                 whitespace_included = true;
             }
@@ -1853,6 +1892,68 @@ mod test {
         cx.simulate_at_each_offset("v i shift-w", WORD_LOCATIONS)
             .await
             .assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_word_object_with_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes("2 d a w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes("d 2 a w").await;
+        cx.shared_state().await.assert_matches();
+
+        // WORD (shift-w) ignores punctuation
+        cx.set_shared_state("ˇone-two three-four five").await;
+        cx.simulate_shared_keystrokes("2 d a shift-w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("ˇone two three four five").await;
+        cx.simulate_shared_keystrokes("3 d a w").await;
+        cx.shared_state().await.assert_matches();
+
+        // Multiplied counts: 2d2aw deletes 4 words (2*2)
+        cx.set_shared_state("ˇone two three four five six").await;
+        cx.simulate_shared_keystrokes("2 d 2 a w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes("2 c a w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes("2 y a w p").await;
+        cx.shared_state().await.assert_matches();
+
+        // Punctuation: foo-bar is 3 word units (foo, -, bar), so 2aw selects "foo-"
+        cx.set_shared_state("  ˇfoo-bar baz").await;
+        cx.simulate_shared_keystrokes("2 d a w").await;
+        cx.shared_state().await.assert_matches();
+
+        // Trailing whitespace counts as a word unit for iw
+        cx.set_shared_state("ˇfoo   ").await;
+        cx.simulate_shared_keystrokes("2 d i w").await;
+        cx.shared_state().await.assert_matches();
+
+        // Multi-line: count > 1 crosses line boundaries
+        cx.set_shared_state("ˇone\ntwo\nthree").await;
+        cx.simulate_shared_keystrokes("2 d a w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("ˇone\ntwo\nthree\nfour").await;
+        cx.simulate_shared_keystrokes("3 d a w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("ˇone\ntwo\nthree").await;
+        cx.simulate_shared_keystrokes("2 d i w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("one ˇtwo\nthree four").await;
+        cx.simulate_shared_keystrokes("2 d a w").await;
+        cx.shared_state().await.assert_matches();
     }
 
     const PARAGRAPH_EXAMPLES: &[&str] = &[
@@ -3792,5 +3893,74 @@ mod test {
             "#},
             Mode::VisualLine,
         );
+    }
+
+    #[gpui::test]
+    async fn test_subword_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Setup custom keybindings for subword object so we can use the
+        // bindings in `simulate_keystrokes`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "w",
+                super::Subword {
+                    ignore_punctuation: false,
+                },
+                Some("vim_operator"),
+            )]);
+        });
+
+        cx.set_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("foo_ˇ_baz", Mode::Insert);
+
+        cx.set_state("ˇfoo_bar_baz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("ˇ_bar_baz", Mode::Insert);
+
+        cx.set_state("foo_bar_baˇz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("foo_bar_ˇ", Mode::Insert);
+
+        cx.set_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("fooˇBaz", Mode::Insert);
+
+        cx.set_state("ˇfooBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("ˇBarBaz", Mode::Insert);
+
+        cx.set_state("fooBarBaˇz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("fooBarˇ", Mode::Insert);
+
+        cx.set_state("foo.ˇbar.baz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("foo.ˇ.baz", Mode::Insert);
+
+        cx.set_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("d i w");
+        cx.assert_state("foo_ˇ_baz", Mode::Normal);
+
+        cx.set_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("d i w");
+        cx.assert_state("fooˇBaz", Mode::Normal);
+
+        cx.set_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("c a w");
+        cx.assert_state("foo_ˇ_baz", Mode::Insert);
+
+        cx.set_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("c a w");
+        cx.assert_state("fooˇBaz", Mode::Insert);
+
+        cx.set_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("d a w");
+        cx.assert_state("foo_ˇ_baz", Mode::Normal);
+
+        cx.set_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("d a w");
+        cx.assert_state("fooˇBaz", Mode::Normal);
     }
 }

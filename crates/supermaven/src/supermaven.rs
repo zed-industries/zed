@@ -291,31 +291,6 @@ impl SupermavenAgent {
 
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
 
-        cx.spawn({
-            let client = client.clone();
-            let outgoing_tx = outgoing_tx.clone();
-            async move |this, cx| {
-                let mut status = client.status();
-                while let Some(status) = status.next().await {
-                    if status.is_connected() {
-                        let api_key = client.request(proto::GetSupermavenApiKey {}).await?.api_key;
-                        outgoing_tx
-                            .unbounded_send(OutboundMessage::SetApiKey(SetApiKey { api_key }))
-                            .ok();
-                        this.update(cx, |this, cx| {
-                            if let Supermaven::Spawned(this) = this {
-                                this.account_status = AccountStatus::Ready;
-                                cx.notify();
-                            }
-                        })?;
-                        break;
-                    }
-                }
-                anyhow::Ok(())
-            }
-        })
-        .detach();
-
         Ok(Self {
             _process: process,
             next_state_id: SupermavenCompletionStateId::default(),

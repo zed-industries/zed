@@ -63,9 +63,6 @@ use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
 
-#[cfg(any(test, feature = "test-support"))]
-pub use fake_git_repo::{LOAD_HEAD_TEXT_TASK, LOAD_INDEX_TEXT_TASK};
-
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
     fn remove(&self, path: &Path) -> Result<()>;
@@ -548,7 +545,10 @@ impl Fs for RealFs {
         } else if !options.ignore_if_exists {
             open_options.create_new(true);
         }
-        open_options.open(path).await?;
+        open_options
+            .open(path)
+            .await
+            .with_context(|| format!("Failed to create file at {:?}", path))?;
         Ok(())
     }
 
@@ -557,7 +557,9 @@ impl Fs for RealFs {
         path: &Path,
         content: Pin<&mut (dyn AsyncRead + Send)>,
     ) -> Result<()> {
-        let mut file = smol::fs::File::create(&path).await?;
+        let mut file = smol::fs::File::create(&path)
+            .await
+            .with_context(|| format!("Failed to create file at {:?}", path))?;
         futures::io::copy(content, &mut file).await?;
         Ok(())
     }
@@ -751,7 +753,10 @@ impl Fs for RealFs {
     async fn load(&self, path: &Path) -> Result<String> {
         let path = path.to_path_buf();
         self.executor
-            .spawn(async move { Ok(std::fs::read_to_string(path)?) })
+            .spawn(async move {
+                std::fs::read_to_string(&path)
+                    .with_context(|| format!("Failed to read file {}", path.display()))
+            })
             .await
     }
 
@@ -813,9 +818,13 @@ impl Fs for RealFs {
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         let buffer_size = text.summary().len.min(10 * 1024);
         if let Some(path) = path.parent() {
-            self.create_dir(path).await?;
+            self.create_dir(path)
+                .await
+                .with_context(|| format!("Failed to create directory at {:?}", path))?;
         }
-        let file = smol::fs::File::create(path).await?;
+        let file = smol::fs::File::create(path)
+            .await
+            .with_context(|| format!("Failed to create file at {:?}", path))?;
         let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
         for chunk in text::chunks_with_line_ending(text, line_ending) {
             writer.write_all(chunk.as_bytes()).await?;
@@ -826,7 +835,9 @@ impl Fs for RealFs {
 
     async fn write(&self, path: &Path, content: &[u8]) -> Result<()> {
         if let Some(path) = path.parent() {
-            self.create_dir(path).await?;
+            self.create_dir(path)
+                .await
+                .with_context(|| format!("Failed to create directory at {:?}", path))?;
         }
         let path = path.to_owned();
         let contents = content.to_owned();
@@ -886,22 +897,25 @@ impl Fs for RealFs {
         let is_symlink = symlink_metadata.file_type().is_symlink();
         let metadata = if is_symlink {
             let path_buf = path.to_path_buf();
-            let path_exists = self
+            // Read target metadata, if the target exists
+            match self
                 .executor
-                .spawn(async move {
-                    path_buf
-                        .try_exists()
-                        .with_context(|| format!("checking existence for path {path_buf:?}"))
-                })
-                .await?;
-            if path_exists {
-                let path_buf = path.to_path_buf();
-                self.executor
-                    .spawn(async move { std::fs::metadata(path_buf) })
-                    .await
-                    .with_context(|| "accessing symlink for path {path}")?
-            } else {
-                symlink_metadata
+                .spawn(async move { std::fs::metadata(path_buf) })
+                .await
+            {
+                Ok(target_metadata) => target_metadata,
+                Err(err) => {
+                    if err.kind() != io::ErrorKind::NotFound {
+                        // TODO: Also FilesystemLoop when that's stable
+                        log::warn!(
+                            "Failed to read symlink target metadata for path {path:?}: {err}"
+                        );
+                    }
+                    // For a broken or recursive symlink, return the symlink metadata. (Or
+                    // as edge cases, a symlink into a directory we can't read, which is hard
+                    // to distinguish from just being broken.)
+                    symlink_metadata
+                }
             }
         } else {
             symlink_metadata
@@ -1027,6 +1041,7 @@ impl Fs for RealFs {
         Arc<dyn Watcher>,
     ) {
         use util::{ResultExt as _, paths::SanitizedPath};
+        let executor = self.executor.clone();
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
@@ -1065,11 +1080,13 @@ impl Fs for RealFs {
         (
             Box::pin(rx.filter_map({
                 let watcher = watcher.clone();
+                let executor = executor.clone();
                 move |_| {
                     let _ = watcher.clone();
                     let pending_paths = pending_paths.clone();
+                    let executor = executor.clone();
                     async move {
-                        smol::Timer::after(latency).await;
+                        executor.timer(latency).await;
                         let paths = std::mem::take(&mut *pending_paths.lock());
                         (!paths.is_empty()).then_some(paths)
                     }
@@ -3495,5 +3512,55 @@ mod tests {
                 PathBuf::from(path!("/root/src/new/renamed_a.txt")),
             ]
         );
+    }
+
+    #[gpui::test]
+    #[cfg(unix)]
+    async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
+        let tempdir = TempDir::new().unwrap();
+        let path = tempdir.path();
+        let fs = RealFs {
+            bundled_git_binary_path: None,
+            executor,
+            next_job_id: Arc::new(AtomicUsize::new(0)),
+            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
+        };
+        let symlink_path = path.join("symlink");
+        smol::block_on(fs.create_symlink(&symlink_path, PathBuf::from("file_a.txt"))).unwrap();
+        let metadata = fs
+            .metadata(&symlink_path)
+            .await
+            .expect("metadata call succeeds")
+            .expect("metadata returned");
+        assert!(metadata.is_symlink);
+        assert!(!metadata.is_dir);
+        assert!(!metadata.is_fifo);
+        assert!(!metadata.is_executable);
+        // don't care about len or mtime on symlinks?
+    }
+
+    #[gpui::test]
+    #[cfg(unix)]
+    async fn test_realfs_symlink_loop_metadata(executor: BackgroundExecutor) {
+        let tempdir = TempDir::new().unwrap();
+        let path = tempdir.path();
+        let fs = RealFs {
+            bundled_git_binary_path: None,
+            executor,
+            next_job_id: Arc::new(AtomicUsize::new(0)),
+            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
+        };
+        let symlink_path = path.join("symlink");
+        smol::block_on(fs.create_symlink(&symlink_path, PathBuf::from("symlink"))).unwrap();
+        let metadata = fs
+            .metadata(&symlink_path)
+            .await
+            .expect("metadata call succeeds")
+            .expect("metadata returned");
+        assert!(metadata.is_symlink);
+        assert!(!metadata.is_dir);
+        assert!(!metadata.is_fifo);
+        assert!(!metadata.is_executable);
+        // don't care about len or mtime on symlinks?
     }
 }
