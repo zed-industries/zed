@@ -7,13 +7,11 @@ use crate::{
 use anyhow::{Context as _, Result};
 use edit_prediction::{
     EditPredictionStore,
-    cursor_excerpt::editable_and_context_ranges_for_cursor_position,
     udiff::{OpenedBuffers, refresh_worktree_entries, strip_diff_path_prefix},
-    zeta2,
 };
 use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity};
-use language::{Anchor, Buffer, LanguageNotFound, OffsetRangeExt as _, ToOffset, ToPoint};
+use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
 use project::Project;
 use project::buffer_store::BufferStoreEvent;
 use std::{fs, path::PathBuf, sync::Arc};
@@ -55,15 +53,6 @@ pub async fn run_load_project(
 
     let (prompt_inputs, language_name) = buffer.read_with(&cx, |buffer, _cx| {
         let cursor_point = cursor_position.to_point(&buffer);
-        let snapshot = buffer.snapshot();
-        let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
-            cursor_point,
-            &snapshot,
-            zeta2::MAX_EDITABLE_TOKENS,
-            zeta2::MAX_CONTEXT_TOKENS,
-        );
-        let editable_range = editable_range.to_offset(&snapshot);
-        let context_range = context_range.to_offset(&snapshot);
         let language_name = buffer
             .language()
             .map(|l| l.name().to_string())
@@ -74,10 +63,12 @@ pub async fn run_load_project(
                 cursor_row: cursor_point.row,
                 cursor_column: cursor_point.column,
                 cursor_offset: cursor_position.to_offset(&buffer),
-                context_range,
-                editable_range,
                 edit_history,
-                related_files: None,
+                related_files: example
+                    .prompt_inputs
+                    .take()
+                    .map(|inputs| inputs.related_files)
+                    .unwrap_or_default(),
             },
             language_name,
         )

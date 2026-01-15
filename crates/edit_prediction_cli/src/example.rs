@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     io::Read,
-    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -60,8 +59,6 @@ pub struct ExamplePromptInputs {
     pub cursor_row: u32,
     pub cursor_column: u32,
     pub cursor_offset: usize,
-    pub context_range: Range<usize>,
-    pub editable_range: Range<usize>,
     pub edit_history: Vec<Arc<zeta_prompt::Event>>,
     pub related_files: Option<Vec<RelatedFile>>,
 }

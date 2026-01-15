@@ -287,7 +287,7 @@ async fn predict_anthropic(
         .collect::<Vec<String>>()
         .join("\n");
 
-    let actual_patch = TeacherPrompt::parse(example, &actual_output)?;
+    let actual_patch = TeacherPrompt::parse(&example, &actual_output)?;
 
     let prediction = ExamplePrediction {
         actual_patch,
