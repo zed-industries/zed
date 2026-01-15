@@ -201,13 +201,6 @@ pub enum EditPredictionRejectReason {
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CompletionMode {
-    Normal,
-    Max,
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum CompletionIntent {
     UserPrompt,
     ToolResults,
@@ -228,8 +221,6 @@ pub struct CompletionBody {
     pub prompt_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub intent: Option<CompletionIntent>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub mode: Option<CompletionMode>,
     pub provider: LanguageModelProvider,
     pub model: String,
     pub provider_request: serde_json::Value,
@@ -328,10 +319,9 @@ pub struct LanguageModel {
     pub supports_tools: bool,
     pub supports_images: bool,
     pub supports_thinking: bool,
-    pub supports_max_mode: bool,
     #[serde(default)]
     pub supports_streaming_tools: bool,
-    // only used by OpenAI and xAI
+    /// Only used by OpenAI and xAI.
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,
 }

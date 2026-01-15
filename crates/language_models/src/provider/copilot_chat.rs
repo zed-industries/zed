@@ -923,7 +923,6 @@ fn into_copilot_responses(
         thread_id: _,
         prompt_id: _,
         intent: _,
-        mode: _,
         messages,
         tools,
         tool_choice,

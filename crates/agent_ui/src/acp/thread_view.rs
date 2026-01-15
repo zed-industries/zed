@@ -8,7 +8,7 @@ use action_log::{ActionLog, ActionLogTelemetry};
 use agent::{NativeAgentServer, NativeAgentSessionList, SharedThread, ThreadStore};
 use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
-use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
+use agent_settings::{AgentProfileId, AgentSettings};
 use anyhow::{Result, anyhow};
 use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
@@ -67,12 +67,12 @@ use crate::acp::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
-use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip};
+use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
     CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread,
     OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, SelectPermissionGranularity,
-    SendImmediately, SendNextQueuedMessage, ToggleBurnMode, ToggleProfileSelector,
+    SendImmediately, SendNextQueuedMessage, ToggleProfileSelector,
 };
 
 const MAX_COLLAPSED_LINES: usize = 3;
@@ -5953,8 +5953,7 @@ impl AcpThreadView {
                         h_flex()
                             .gap_0p5()
                             .child(self.render_add_context_button(cx))
-                            .child(self.render_follow_toggle(cx))
-                            .children(self.render_burn_mode_toggle(cx)),
+                            .child(self.render_follow_toggle(cx)),
                     )
                     .child(
                         h_flex()
@@ -6107,28 +6106,6 @@ impl AcpThreadView {
                     .child(Label::new(max).size(LabelSize::Small).color(Color::Muted)),
             )
         }
-    }
-
-    fn toggle_burn_mode(
-        &mut self,
-        _: &ToggleBurnMode,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(thread) = self.as_native_thread(cx) else {
-            return;
-        };
-
-        thread.update(cx, |thread, cx| {
-            let current_mode = thread.completion_mode();
-            thread.set_completion_mode(
-                match current_mode {
-                    CompletionMode::Burn => CompletionMode::Normal,
-                    CompletionMode::Normal => CompletionMode::Burn,
-                },
-                cx,
-            );
-        });
     }
 
     fn keep_all(&mut self, _: &KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
@@ -6302,41 +6279,6 @@ impl AcpThreadView {
         );
 
         Some(())
-    }
-
-    fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let thread = self.as_native_thread(cx)?.read(cx);
-
-        if thread
-            .model()
-            .is_none_or(|model| !model.supports_burn_mode())
-        {
-            return None;
-        }
-
-        let active_completion_mode = thread.completion_mode();
-        let burn_mode_enabled = active_completion_mode == CompletionMode::Burn;
-        let icon = if burn_mode_enabled {
-            IconName::ZedBurnModeOn
-        } else {
-            IconName::ZedBurnMode
-        };
-
-        Some(
-            IconButton::new("burn-mode", icon)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .toggle_state(burn_mode_enabled)
-                .selected_icon_color(Color::Error)
-                .on_click(cx.listener(|this, _event, window, cx| {
-                    this.toggle_burn_mode(&ToggleBurnMode, window, cx);
-                }))
-                .tooltip(move |_window, cx| {
-                    cx.new(|_| BurnModeTooltip::new().selected(burn_mode_enabled))
-                        .into()
-                })
-                .into_any_element(),
-        )
     }
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -7313,19 +7255,7 @@ impl AcpThreadView {
             ),
         };
 
-        let burn_mode_available = self.as_native_thread(cx).is_some_and(|thread| {
-            thread.read(cx).completion_mode() == CompletionMode::Normal
-                && thread
-                    .read(cx)
-                    .model()
-                    .is_some_and(|model| model.supports_burn_mode())
-        });
-
-        let description = if burn_mode_available {
-            "To continue, start a new thread from a summary or turn Burn Mode on."
-        } else {
-            "To continue, start a new thread from a summary."
-        };
+        let description = "To continue, start a new thread from a summary.";
 
         Some(
             Callout::new()
@@ -7334,34 +7264,23 @@ impl AcpThreadView {
                 .title(title)
                 .description(description)
                 .actions_slot(
-                    h_flex()
-                        .gap_0p5()
-                        .child(
-                            Button::new("start-new-thread", "Start New Thread")
-                                .label_size(LabelSize::Small)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    let Some(thread) = this.thread() else {
-                                        return;
-                                    };
-                                    let session_id = thread.read(cx).session_id().clone();
-                                    window.dispatch_action(
-                                        crate::NewNativeAgentThreadFromSummary {
-                                            from_session_id: session_id,
-                                        }
-                                        .boxed_clone(),
-                                        cx,
-                                    );
-                                })),
-                        )
-                        .when(burn_mode_available, |this| {
-                            this.child(
-                                IconButton::new("burn-mode-callout", IconName::ZedBurnMode)
-                                    .icon_size(IconSize::XSmall)
-                                    .on_click(cx.listener(|this, _event, window, cx| {
-                                        this.toggle_burn_mode(&ToggleBurnMode, window, cx);
-                                    })),
-                            )
-                        }),
+                    h_flex().gap_0p5().child(
+                        Button::new("start-new-thread", "Start New Thread")
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let Some(thread) = this.thread() else {
+                                    return;
+                                };
+                                let session_id = thread.read(cx).session_id().clone();
+                                window.dispatch_action(
+                                    crate::NewNativeAgentThreadFromSummary {
+                                        from_session_id: session_id,
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                );
+                            })),
+                    ),
                 )
                 .dismiss_action(self.dismiss_error_button(cx)),
         )
@@ -7585,14 +7504,6 @@ impl AcpThreadView {
             .thread()
             .map_or(false, |thread| thread.read(cx).can_resume(cx));
 
-        let can_enable_burn_mode = self.as_native_thread(cx).map_or(false, |thread| {
-            let thread = thread.read(cx);
-            let supports_burn_mode = thread
-                .model()
-                .map_or(false, |model| model.supports_burn_mode());
-            supports_burn_mode && thread.completion_mode() == CompletionMode::Normal
-        });
-
         let markdown = if let Some(markdown) = &self.thread_error_markdown {
             markdown.clone()
         } else {
@@ -7614,19 +7525,6 @@ impl AcpThreadView {
             .actions_slot(
                 h_flex()
                     .gap_0p5()
-                    .when(can_resume && can_enable_burn_mode, |this| {
-                        this.child(
-                            Button::new("enable-burn-mode-and-retry", "Enable Burn Mode and Retry")
-                                .icon(IconName::ZedBurnMode)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Small)
-                                .label_size(LabelSize::Small)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.toggle_burn_mode(&ToggleBurnMode, window, cx);
-                                    this.resume_chat(cx);
-                                })),
-                        )
-                    })
                     .when(can_resume, |this| {
                         this.child(
                             IconButton::new("retry", IconName::RotateCw)
@@ -7893,7 +7791,6 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
                 this.cancel_generation(cx);
             }))
-            .on_action(cx.listener(Self::toggle_burn_mode))
             .on_action(cx.listener(Self::keep_all))
             .on_action(cx.listener(Self::reject_all))
             .on_action(cx.listener(Self::allow_always))

@@ -98,10 +98,6 @@ pub struct AgentSettingsContent {
     /// Default: []
     #[serde(default)]
     pub model_parameters: Vec<LanguageModelParameters>,
-    /// What completion mode to enable for new threads
-    ///
-    /// Default: normal
-    pub preferred_completion_mode: Option<CompletionMode>,
     /// Whether to show thumb buttons for feedback in the agent panel.
     ///
     /// Default: true
