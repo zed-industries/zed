@@ -364,6 +364,7 @@ pub struct AcpThreadView {
     last_turn_duration: Option<Duration>,
     turn_generation: usize,
     _turn_timer_task: Option<Task<()>>,
+    hovered_edited_file_buttons: Option<usize>,
 }
 
 struct QueuedMessage {
@@ -558,6 +559,7 @@ impl AcpThreadView {
             last_turn_duration: None,
             turn_generation: 0,
             _turn_timer_task: None,
+            hovered_edited_file_buttons: None,
         }
     }
 
@@ -5470,6 +5472,146 @@ impl AcpThreadView {
             })
     }
 
+    fn render_edited_files_buttons(
+        &self,
+        index: usize,
+        buffer: &Entity<Buffer>,
+        action_log: &Entity<ActionLog>,
+        telemetry: &ActionLogTelemetry,
+        pending_edits: bool,
+        use_keep_reject_buttons: bool,
+        editor_bg_color: Hsla,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let container = h_flex()
+            .id("edited-buttons-container")
+            .visible_on_hover("edited-code")
+            .absolute()
+            .right_0()
+            .px_1()
+            .gap_1()
+            .bg(editor_bg_color)
+            .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
+                if *is_hovered {
+                    this.hovered_edited_file_buttons = Some(index);
+                } else if this.hovered_edited_file_buttons == Some(index) {
+                    this.hovered_edited_file_buttons = None;
+                }
+                cx.notify();
+            }));
+
+        if use_keep_reject_buttons {
+            container
+                .child(
+                    Button::new(("review", index), "Review")
+                        .label_size(LabelSize::Small)
+                        .on_click({
+                            let buffer = buffer.clone();
+                            let workspace = self.workspace.clone();
+                            cx.listener(move |_, _, window, cx| {
+                                let Some(workspace) = workspace.upgrade() else {
+                                    return;
+                                };
+                                let Some(file) = buffer.read(cx).file() else {
+                                    return;
+                                };
+                                let project_path = project::ProjectPath {
+                                    worktree_id: file.worktree_id(cx),
+                                    path: file.path().clone(),
+                                };
+                                workspace.update(cx, |workspace, cx| {
+                                    git_ui::project_diff::ProjectDiff::deploy_at_project_path(
+                                        workspace,
+                                        project_path,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            })
+                        }),
+                )
+                .child(Divider::vertical().color(DividerColor::BorderVariant))
+                .child(
+                    Button::new(("reject-file", index), "Reject")
+                        .label_size(LabelSize::Small)
+                        .disabled(pending_edits)
+                        .on_click({
+                            let buffer = buffer.clone();
+                            let action_log = action_log.clone();
+                            let telemetry = telemetry.clone();
+                            move |_, _, cx| {
+                                action_log.update(cx, |action_log, cx| {
+                                    action_log
+                                        .reject_edits_in_ranges(
+                                            buffer.clone(),
+                                            vec![Anchor::min_max_range_for_buffer(
+                                                buffer.read(cx).remote_id(),
+                                            )],
+                                            Some(telemetry.clone()),
+                                            cx,
+                                        )
+                                        .detach_and_log_err(cx);
+                                })
+                            }
+                        }),
+                )
+                .child(
+                    Button::new(("keep-file", index), "Keep")
+                        .label_size(LabelSize::Small)
+                        .disabled(pending_edits)
+                        .on_click({
+                            let buffer = buffer.clone();
+                            let action_log = action_log.clone();
+                            let telemetry = telemetry.clone();
+                            move |_, _, cx| {
+                                action_log.update(cx, |action_log, cx| {
+                                    action_log.keep_edits_in_range(
+                                        buffer.clone(),
+                                        Anchor::min_max_range_for_buffer(
+                                            buffer.read(cx).remote_id(),
+                                        ),
+                                        Some(telemetry.clone()),
+                                        cx,
+                                    );
+                                })
+                            }
+                        }),
+                )
+                .into_any_element()
+        } else {
+            container
+                .child(
+                    Button::new(("review", index), "Review")
+                        .label_size(LabelSize::Small)
+                        .on_click({
+                            let buffer = buffer.clone();
+                            let workspace = self.workspace.clone();
+                            cx.listener(move |_, _, window, cx| {
+                                let Some(workspace) = workspace.upgrade() else {
+                                    return;
+                                };
+                                let Some(file) = buffer.read(cx).file() else {
+                                    return;
+                                };
+                                let project_path = project::ProjectPath {
+                                    worktree_id: file.worktree_id(cx),
+                                    path: file.path().clone(),
+                                };
+                                workspace.update(cx, |workspace, cx| {
+                                    git_ui::project_diff::ProjectDiff::deploy_at_project_path(
+                                        workspace,
+                                        project_path,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            })
+                        }),
+                )
+                .into_any_element()
+        }
+    }
+
     fn render_edited_files(
         &self,
         action_log: &Entity<ActionLog>,
@@ -5529,20 +5671,25 @@ impl AcpThreadView {
                                     .size(IconSize::Small)
                             });
 
-                        let overlay_gradient = linear_gradient(
-                            90.,
-                            linear_color_stop(editor_bg_color, 1.),
-                            linear_color_stop(editor_bg_color.opacity(0.2), 0.),
-                        );
-
                         let file_stats = DiffStats::single_file(buffer.read(cx), diff.read(cx), cx);
+
+                        let buttons = self.render_edited_files_buttons(
+                            index,
+                            buffer,
+                            action_log,
+                            &telemetry,
+                            pending_edits,
+                            use_keep_reject_buttons,
+                            editor_bg_color,
+                            cx,
+                        );
 
                         let element = h_flex()
                             .group("edited-code")
                             .id(("file-container", index))
-                            .py_1()
-                            .pl_2()
-                            .pr_1()
+                            .relative()
+                            .min_w_0()
+                            .p_1p5()
                             .gap_2()
                             .justify_between()
                             .bg(editor_bg_color)
@@ -5551,172 +5698,47 @@ impl AcpThreadView {
                             })
                             .child(
                                 h_flex()
-                                    .id(("file-name-row", index))
-                                    .relative()
-                                    .pr_8()
-                                    .w_full()
+                                    .id(("file-name-path", index))
+                                    .cursor_pointer()
+                                    .pr_0p5()
+                                    .gap_0p5()
+                                    .rounded_xs()
+                                    .child(file_icon)
+                                    .children(file_name)
+                                    .children(file_path)
                                     .child(
-                                        h_flex()
-                                            .id(("file-name-path", index))
-                                            .cursor_pointer()
-                                            .pr_0p5()
-                                            .gap_0p5()
-                                            .hover(|s| s.bg(cx.theme().colors().element_hover))
-                                            .rounded_xs()
-                                            .child(file_icon)
-                                            .children(file_name)
-                                            .children(file_path)
-                                            .child(
-                                                DiffStat::new(
-                                                    "file",
-                                                    file_stats.lines_added as usize,
-                                                    file_stats.lines_removed as usize,
-                                                )
-                                                .label_size(LabelSize::XSmall),
-                                            )
-                                            .tooltip(move |_, cx| {
-                                                Tooltip::with_meta(
-                                                    "Go to File",
-                                                    None,
-                                                    full_path.clone(),
-                                                    cx,
-                                                )
-                                            })
-                                            .on_click({
-                                                let buffer = buffer.clone();
-                                                cx.listener(move |this, _, window, cx| {
-                                                    this.open_edited_buffer(&buffer, window, cx);
-                                                })
-                                            }),
+                                        DiffStat::new(
+                                            "file",
+                                            file_stats.lines_added as usize,
+                                            file_stats.lines_removed as usize,
+                                        )
+                                        .label_size(LabelSize::XSmall),
                                     )
-                                    .child(
-                                        div()
-                                            .absolute()
-                                            .h_full()
-                                            .w_12()
-                                            .top_0()
-                                            .bottom_0()
-                                            .right_0()
-                                            .bg(overlay_gradient),
+                                    .when(
+                                        self.hovered_edited_file_buttons != Some(index),
+                                        |this| {
+                                            let full_path = full_path.clone();
+                                            this.hover(|s| s.bg(cx.theme().colors().element_hover))
+                                                .tooltip(move |_, cx| {
+                                                    Tooltip::with_meta(
+                                                        "Go to File",
+                                                        None,
+                                                        full_path.clone(),
+                                                        cx,
+                                                    )
+                                                })
+                                                .on_click({
+                                                    let buffer = buffer.clone();
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        this.open_edited_buffer(
+                                                            &buffer, window, cx,
+                                                        );
+                                                    })
+                                                })
+                                        },
                                     ),
                             )
-                            .when(use_keep_reject_buttons, |parent| {
-                                parent.child(
-                                    h_flex()
-                                        .gap_1()
-                                        .visible_on_hover("edited-code")
-                                        .child(
-                                            Button::new("review", "Review")
-                                                .label_size(LabelSize::Small)
-                                                .on_click({
-                                                    let buffer = buffer.clone();
-                                                    let workspace = self.workspace.clone();
-                                                    cx.listener(move |_, _, window, cx| {
-                                                        let Some(workspace) = workspace.upgrade() else {
-                                                            return;
-                                                        };
-                                                        let Some(file) = buffer.read(cx).file() else {
-                                                            return;
-                                                        };
-                                                        let project_path = project::ProjectPath {
-                                                            worktree_id: file.worktree_id(cx),
-                                                            path: file.path().clone(),
-                                                        };
-                                                        workspace.update(cx, |workspace, cx| {
-                                                            git_ui::project_diff::ProjectDiff::deploy_at_project_path(
-                                                                workspace,
-                                                                project_path,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        });
-                                                    })
-                                                }),
-                                        )
-                                        .child(Divider::vertical().color(DividerColor::BorderVariant))
-                                        .child(
-                                            Button::new("reject-file", "Reject")
-                                                .label_size(LabelSize::Small)
-                                                .disabled(pending_edits)
-                                                .on_click({
-                                                    let buffer = buffer.clone();
-                                                    let action_log = action_log.clone();
-                                                    let telemetry = telemetry.clone();
-                                                    move |_, _, cx| {
-                                                        action_log.update(cx, |action_log, cx| {
-                                                            action_log
-                                                        .reject_edits_in_ranges(
-                                                            buffer.clone(),
-                                                            vec![Anchor::min_max_range_for_buffer(
-                                                                buffer.read(cx).remote_id(),
-                                                            )],
-                                                            Some(telemetry.clone()),
-                                                            cx,
-                                                        )
-                                                        .detach_and_log_err(cx);
-                                                        })
-                                                    }
-                                                }),
-                                        )
-                                        .child(
-                                            Button::new("keep-file", "Keep")
-                                                .label_size(LabelSize::Small)
-                                                .disabled(pending_edits)
-                                                .on_click({
-                                                    let buffer = buffer.clone();
-                                                    let action_log = action_log.clone();
-                                                    let telemetry = telemetry.clone();
-                                                    move |_, _, cx| {
-                                                        action_log.update(cx, |action_log, cx| {
-                                                            action_log.keep_edits_in_range(
-                                                                buffer.clone(),
-                                                                Anchor::min_max_range_for_buffer(
-                                                                    buffer.read(cx).remote_id(),
-                                                                ),
-                                                                Some(telemetry.clone()),
-                                                                cx,
-                                                            );
-                                                        })
-                                                    }
-                                                }),
-                                        ),
-                                )
-                            })
-                            .when(!use_keep_reject_buttons, |parent| {
-                                parent.child(
-                                    h_flex()
-                                        .gap_1()
-                                        .visible_on_hover("edited-code")
-                                        .child(
-                                            Button::new("review", "Review")
-                                                .label_size(LabelSize::Small)
-                                                .on_click({
-                                                    let buffer = buffer.clone();
-                                                    let workspace = self.workspace.clone();
-                                                    cx.listener(move |_, _, window, cx| {
-                                                        let Some(workspace) = workspace.upgrade() else {
-                                                            return;
-                                                        };
-                                                        let Some(file) = buffer.read(cx).file() else {
-                                                            return;
-                                                        };
-                                                        let project_path = project::ProjectPath {
-                                                            worktree_id: file.worktree_id(cx),
-                                                            path: file.path().clone(),
-                                                        };
-                                                        workspace.update(cx, |workspace, cx| {
-                                                            git_ui::project_diff::ProjectDiff::deploy_at_project_path(
-                                                                workspace,
-                                                                project_path,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        });
-                                                    })
-                                                }),
-                                        ),
-                                )
-                            });
+                            .child(buttons);
 
                         Some(element)
                     }),

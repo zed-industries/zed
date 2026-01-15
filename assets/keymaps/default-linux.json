@@ -303,6 +303,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-shift-r": "agent::OpenAgentDiff",
+      "ctrl-shift-d": "git::Diff",
       "shift-alt-y": "agent::KeepAll",
       "shift-alt-z": "agent::RejectAll",
       "ctrl-enter": "agent::ChatWithFollow",
