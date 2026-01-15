@@ -40,8 +40,6 @@ use std::{
 
 use outline_panel_settings::{DockSide, OutlinePanelSettings, ShowIndentGuides};
 use project::{File, Fs, GitEntry, GitTraversal, Project, ProjectItem};
-#[cfg(target_os = "windows")]
-use remote::RemoteConnectionOptions;
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -2014,18 +2012,8 @@ impl OutlinePanel {
             .selected_entry()
             .and_then(|entry| self.abs_path(entry, cx))
         {
-            #[cfg(target_os = "windows")]
-            let abs_path = {
-                if let Some(RemoteConnectionOptions::Wsl(wsl_options)) =
-                    self.project.read(cx).remote_connection_options(cx)
-                {
-                    wsl_options.to_unc_path(&abs_path)
-                } else {
-                    abs_path
-                }
-            };
-
-            cx.reveal_path(&abs_path);
+            self.project
+                .update(cx, |project, cx| project.reveal_path(&abs_path, cx));
         }
     }
 
