@@ -1,5 +1,6 @@
 use crate::{
     RemoteArch, RemoteClientDelegate, RemoteOs, RemotePlatform,
+    binary_cache,
     remote_client::{CommandTemplate, Interactive, RemoteConnection, RemoteConnectionOptions},
     transport::{parse_platform, parse_shell},
 };
@@ -17,7 +18,7 @@ use std::{
     fmt::Write as _,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::Arc,
+    sync::{Arc, LazyLock, Mutex},
     time::Instant,
 };
 use util::{
@@ -50,8 +51,12 @@ pub(crate) struct WslRemoteConnection {
     shell_kind: ShellKind,
     default_system_shell: String,
     has_wsl_interop: bool,
+    app_version: Version,
     connection_options: WslConnectionOptions,
 }
+
+const DEFAULT_UPLOAD_BYTES_PER_SEC: f64 = 10.0 * 1024.0 * 1024.0;
+static LAST_WSL_UPLOAD_SPEED: LazyLock<Mutex<Option<f64>>> = LazyLock::new(|| Mutex::new(None));
 
 impl WslRemoteConnection {
     pub(crate) async fn new(
@@ -78,6 +83,7 @@ impl WslRemoteConnection {
             shell_kind: ShellKind::Posix,
             default_system_shell: String::from("/bin/sh"),
             has_wsl_interop: false,
+            app_version: version.clone(),
         };
         delegate.set_status(Some("Detecting WSL environment"), cx);
         this.shell = this
@@ -200,7 +206,18 @@ impl WslRemoteConnection {
             return Ok(dst_path);
         }
 
-        if self
+        let expected_version =
+            binary_cache::expected_remote_server_version(release_channel, &version);
+        if let Some(expected_version) = expected_version {
+            if let Ok(output) = self
+                .run_wsl_command_with_output(&dst_path.display(PathStyle::Posix), &["version"])
+                .await
+            {
+                if output.trim() == expected_version {
+                    return Ok(dst_path);
+                }
+            }
+        } else if self
             .run_wsl_command(&dst_path.display(PathStyle::Posix), &["version"])
             .await
             .is_ok()
@@ -213,9 +230,15 @@ impl WslRemoteConnection {
             _ => Some(cx.update(|cx| AppVersion::global(cx))),
         };
 
-        let src_path = delegate
-            .download_server_binary_locally(self.platform, release_channel, wanted_version, cx)
-            .await?;
+        let src_path = binary_cache::get_or_download_server_binary(
+            delegate.as_ref(),
+            self.platform,
+            release_channel,
+            wanted_version,
+            &self.app_version,
+            cx,
+        )
+        .await?;
 
         let tmp_path = format!(
             "{}.{}.gz",
@@ -238,8 +261,6 @@ impl WslRemoteConnection {
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        delegate.set_status(Some("Uploading remote server"), cx);
-
         if let Some(parent) = dst_path.parent() {
             let parent = parent.display(PathStyle::Posix);
             let mkdir = self.shell_kind.prepend_command_prefix("mkdir");
@@ -248,11 +269,23 @@ impl WslRemoteConnection {
                 .context("Failed to create directory when uploading file")?;
         }
 
-        let t0 = Instant::now();
         let src_stat = fs::metadata(&src_path)
             .await
             .with_context(|| format!("source path does not exist: {}", src_path.display()))?;
         let size = src_stat.len();
+        let last_speed = LAST_WSL_UPLOAD_SPEED
+            .lock()
+            .ok()
+            .and_then(|speed| *speed);
+        let estimate_seconds = last_speed
+            .map(|speed| (size as f64 / speed).ceil() as u64)
+            .or_else(|| Some((size as f64 / DEFAULT_UPLOAD_BYTES_PER_SEC).ceil() as u64));
+        let status_message = estimate_seconds
+            .map(|seconds| format!("Uploading remote server ({}kb, ~{}s)", size / 1024, seconds))
+            .unwrap_or_else(|| format!("Uploading remote server ({}kb)", size / 1024));
+        delegate.set_status(Some(&status_message), cx);
+
+        let t0 = Instant::now();
         log::info!(
             "uploading remote server to WSL {:?} ({}kb)",
             dst_path,
@@ -276,7 +309,13 @@ impl WslRemoteConnection {
             )
         })?;
 
-        log::info!("uploaded remote server in {:?}", t0.elapsed());
+        let elapsed = t0.elapsed();
+        if elapsed.as_secs_f64() > 0.0 {
+            if let Ok(mut speed) = LAST_WSL_UPLOAD_SPEED.lock() {
+                *speed = Some(size as f64 / elapsed.as_secs_f64());
+            }
+        }
+        log::info!("uploaded remote server in {:?}", elapsed);
         Ok(())
     }
 
@@ -560,17 +599,22 @@ async fn run_wsl_command_impl(
     exec: bool,
 ) -> Result<String> {
     let mut command = wsl_command_impl(options, program, args, exec);
-    let output = command
-        .output()
-        .await
-        .with_context(|| format!("Failed to run command '{:?}'", command))?;
+    let output = command.output().await.with_context(|| {
+        format!(
+            "Failed to run wsl.exe for distro '{}'. Ensure WSL is installed and enabled.",
+            options.distro_name
+        )
+    })?;
 
     if !output.status.success() {
-        return Err(anyhow!(
-            "Command '{:?}' failed: {}",
-            command,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.contains("There is no distribution") {
+            return Err(anyhow!(
+                "WSL distro '{}' not found. Run `wsl.exe --list --quiet` to see available distros.",
+                options.distro_name
+            ));
+        }
+        return Err(anyhow!("Command '{:?}' failed: {}", command, stderr));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
