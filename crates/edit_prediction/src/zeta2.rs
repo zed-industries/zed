@@ -1,5 +1,3 @@
-#[cfg(feature = "cli-support")]
-use crate::EvalCacheEntryKind;
 use crate::prediction::EditPredictionResult;
 use crate::{
     CurrentEditPrediction, DebugEvent, EDIT_PREDICTIONS_MODEL_ID, EditPredictionFinishedDebugEvent,
@@ -55,9 +53,6 @@ pub fn request_prediction_with_zeta2(
     let llm_token = store.llm_token.clone();
     let app_version = AppVersion::global(cx);
 
-    #[cfg(feature = "cli-support")]
-    let eval_cache = store.eval_cache.clone();
-
     let request_task = cx.background_spawn({
         async move {
             let cursor_offset = position.to_offset(&snapshot);
@@ -102,10 +97,6 @@ pub fn request_prediction_with_zeta2(
                     Some(custom_url),
                     llm_token,
                     app_version,
-                    #[cfg(feature = "cli-support")]
-                    eval_cache,
-                    #[cfg(feature = "cli-support")]
-                    EvalCacheEntryKind::Prediction,
                 )
                 .await?;
 
