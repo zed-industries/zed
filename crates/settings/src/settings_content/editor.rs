@@ -220,6 +220,13 @@ pub struct EditorSettingsContent {
     ///
     /// Default: left
     pub completion_detail_alignment: Option<CompletionDetailAlignment>,
+
+    /// Whether word navigation (alt-arrow) should stop at subword boundaries
+    /// (CamelCase and snake_case). When enabled, `thisFeature` is treated as
+    /// two words: `this|Feature`, and `snake_case` as `snake|_|case`.
+    ///
+    /// Default: false
+    pub use_subword_navigation: Option<bool>,
 }
 
 #[derive(
