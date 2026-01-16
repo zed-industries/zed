@@ -2,7 +2,7 @@ use anyhow::Result;
 use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::predict_edits_v3::{
-    self, PromptFormat, RawCompletionRequest, RawCompletionResponse,
+    PredictEditsV3Request, PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
 };
 use cloud_llm_client::{
     EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason, EditPredictionRejection,
@@ -12,7 +12,6 @@ use cloud_llm_client::{
 use collections::{HashMap, HashSet};
 use copilot::Copilot;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
-use edit_prediction_context::EditPredictionExcerptOptions;
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use futures::{
@@ -39,6 +38,7 @@ use settings::{EditPredictionProvider, SettingsStore, update_settings_file};
 use std::collections::{VecDeque, hash_map};
 use text::Edit;
 use workspace::Workspace;
+use zeta_prompt::ZetaPromptInput;
 use zeta_prompt::ZetaVersion;
 
 use std::ops::Range;
@@ -113,27 +113,8 @@ impl FeatureFlag for MercuryFeatureFlag {
     const NAME: &str = "mercury";
 }
 
-pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
-    context: EditPredictionExcerptOptions {
-        max_bytes: 512,
-        min_bytes: 128,
-        target_before_cursor_over_total_bytes: 0.5,
-    },
-    prompt_format: PromptFormat::DEFAULT,
-};
-
-static USE_OLLAMA: LazyLock<bool> =
-    LazyLock::new(|| env::var("ZED_ZETA2_OLLAMA").is_ok_and(|var| !var.is_empty()));
-
-static EDIT_PREDICTIONS_MODEL_ID: LazyLock<String> = LazyLock::new(|| {
-    match env::var("ZED_ZETA2_MODEL").as_deref() {
-        Ok("zeta2-exp") => "4w5n28vw", // Fine-tuned model @ Baseten
-        Ok(model) => model,
-        Err(_) if *USE_OLLAMA => "qwen3-coder:30b",
-        Err(_) => "yqvev8r3", // Vanilla qwen3-coder @ Baseten
-    }
-    .to_string()
-});
+static EDIT_PREDICTIONS_MODEL_ID: LazyLock<Option<String>> =
+    LazyLock::new(|| env::var("ZED_ZETA_MODEL").ok());
 
 pub struct Zeta2FeatureFlag;
 
@@ -167,10 +148,7 @@ pub struct EditPredictionStore {
     _llm_token_subscription: Subscription,
     projects: HashMap<EntityId, ProjectState>,
     use_context: bool,
-    options: ZetaOptions,
     update_required: bool,
-    #[cfg(feature = "cli-support")]
-    eval_cache: Option<Arc<dyn EvalCache>>,
     edit_prediction_model: EditPredictionModel,
     pub sweep_ai: SweepAi,
     pub mercury: Mercury,
@@ -204,12 +182,6 @@ pub struct EditPredictionModelInput {
     diagnostic_search_range: Range<Point>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
     pub user_actions: Vec<UserActionRecord>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ZetaOptions {
-    pub context: EditPredictionExcerptOptions,
-    pub prompt_format: predict_edits_v3::PromptFormat,
 }
 
 #[derive(Debug)]
@@ -247,8 +219,6 @@ pub struct EditPredictionFinishedDebugEvent {
     pub position: Anchor,
     pub model_output: Option<String>,
 }
-
-pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
 
 const USER_ACTION_HISTORY_SIZE: usize = 16;
 
@@ -641,7 +611,6 @@ impl EditPredictionStore {
             projects: HashMap::default(),
             client,
             user_store,
-            options: DEFAULT_OPTIONS,
             use_context: false,
             llm_token,
             _llm_token_subscription: cx.subscribe(
@@ -657,8 +626,6 @@ impl EditPredictionStore {
                 },
             ),
             update_required: false,
-            #[cfg(feature = "cli-support")]
-            eval_cache: None,
             edit_prediction_model: EditPredictionModel::Zeta2 {
                 version: Default::default(),
             },
@@ -671,17 +638,7 @@ impl EditPredictionStore {
             shown_predictions: Default::default(),
             custom_predict_edits_url: match env::var("ZED_PREDICT_EDITS_URL") {
                 Ok(custom_url) => Url::parse(&custom_url).log_err().map(Into::into),
-                Err(_) => {
-                    if *USE_OLLAMA {
-                        Some(
-                            Url::parse("http://localhost:11434/v1/chat/completions")
-                                .unwrap()
-                                .into(),
-                        )
-                    } else {
-                        None
-                    }
-                }
+                Err(_) => None,
             },
         };
 
@@ -716,19 +673,6 @@ impl EditPredictionStore {
 
     pub fn has_mercury_api_token(&self, cx: &App) -> bool {
         self.mercury.api_token.read(cx).has_key()
-    }
-
-    #[cfg(feature = "cli-support")]
-    pub fn with_eval_cache(&mut self, cache: Arc<dyn EvalCache>) {
-        self.eval_cache = Some(cache);
-    }
-
-    pub fn options(&self) -> &ZetaOptions {
-        &self.options
-    }
-
-    pub fn set_options(&mut self, options: ZetaOptions) {
-        self.options = options;
     }
 
     pub fn set_use_context(&mut self, use_context: bool) {
@@ -1946,8 +1890,6 @@ impl EditPredictionStore {
         custom_url: Option<Arc<Url>>,
         llm_token: LlmApiToken,
         app_version: Version,
-        #[cfg(feature = "cli-support")] eval_cache: Option<Arc<dyn EvalCache>>,
-        #[cfg(feature = "cli-support")] eval_cache_kind: EvalCacheEntryKind,
     ) -> Result<(RawCompletionResponse, Option<EditPredictionUsage>)> {
         let url = if let Some(custom_url) = custom_url {
             custom_url.as_ref().clone()
@@ -1957,28 +1899,7 @@ impl EditPredictionStore {
                 .build_zed_llm_url("/predict_edits/raw", &[])?
         };
 
-        #[cfg(feature = "cli-support")]
-        let cache_key = if let Some(cache) = eval_cache {
-            use collections::FxHasher;
-            use std::hash::{Hash, Hasher};
-
-            let mut hasher = FxHasher::default();
-            url.hash(&mut hasher);
-            let request_str = serde_json::to_string_pretty(&request)?;
-            request_str.hash(&mut hasher);
-            let hash = hasher.finish();
-
-            let key = (eval_cache_kind, hash);
-            if let Some(response_str) = cache.read(key) {
-                return Ok((serde_json::from_str(&response_str)?, None));
-            }
-
-            Some((cache, request_str, key))
-        } else {
-            None
-        };
-
-        let (response, usage) = Self::send_api_request(
+        Self::send_api_request(
             |builder| {
                 let req = builder
                     .uri(url.as_ref())
@@ -1990,14 +1911,39 @@ impl EditPredictionStore {
             app_version,
             true,
         )
-        .await?;
+        .await
+    }
 
-        #[cfg(feature = "cli-support")]
-        if let Some((cache, request, key)) = cache_key {
-            cache.write(key, &request, &serde_json::to_string_pretty(&response)?);
-        }
+    pub(crate) async fn send_v3_request(
+        input: ZetaPromptInput,
+        prompt_version: ZetaVersion,
+        client: Arc<Client>,
+        llm_token: LlmApiToken,
+        app_version: Version,
+    ) -> Result<(PredictEditsV3Response, Option<EditPredictionUsage>)> {
+        let url = client
+            .http_client()
+            .build_zed_llm_url("/predict_edits/v3", &[])?;
 
-        Ok((response, usage))
+        let request = PredictEditsV3Request {
+            input,
+            model: EDIT_PREDICTIONS_MODEL_ID.clone(),
+            prompt_version,
+        };
+
+        Self::send_api_request(
+            |builder| {
+                let req = builder
+                    .uri(url.as_ref())
+                    .body(serde_json::to_string(&request)?.into());
+                Ok(req?)
+            },
+            client,
+            llm_token,
+            app_version,
+            true,
+        )
+        .await
     }
 
     fn handle_api_response<T>(
@@ -2280,34 +2226,6 @@ pub(crate) fn filter_redundant_excerpts(
 )]
 pub struct ZedUpdateRequiredError {
     minimum_version: Version,
-}
-
-#[cfg(feature = "cli-support")]
-pub type EvalCacheKey = (EvalCacheEntryKind, u64);
-
-#[cfg(feature = "cli-support")]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum EvalCacheEntryKind {
-    Context,
-    Search,
-    Prediction,
-}
-
-#[cfg(feature = "cli-support")]
-impl std::fmt::Display for EvalCacheEntryKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            EvalCacheEntryKind::Search => write!(f, "search"),
-            EvalCacheEntryKind::Context => write!(f, "context"),
-            EvalCacheEntryKind::Prediction => write!(f, "prediction"),
-        }
-    }
-}
-
-#[cfg(feature = "cli-support")]
-pub trait EvalCache: Send + Sync {
-    fn read(&self, key: EvalCacheKey) -> Option<String>;
-    fn write(&self, key: EvalCacheKey, input: &str, value: &str);
 }
 
 #[derive(Debug, Clone, Copy)]
