@@ -6,7 +6,7 @@ We are refactoring Zed to support multiple Workspaces that share worktrees. The 
 
 ### Current Architecture
 ```
-Workspace
+Workspace (being renamed to MultiWorkspace)
 └── Entity<Project>
     └── Entity<WorktreeStore>  // Project creates and owns this
         └── Entity<Worktree>...
@@ -16,10 +16,10 @@ Workspace
     └── ... other stores
 ```
 
-### New Architecture
+### Target Architecture
 ```
-MultiWorkspace (new top-level container)
-├── Entity<WorktreeStore>     // Shared, contains mix of local AND remote worktrees
+MultiWorkspace (window-level container)
+├── Entity<WorktreeStore>     // Shared, eventually contains mix of local AND remote worktrees
 ├── Entity<BufferStore>       // Shared - same file = same buffer
 ├── Entity<GitStore>          // Shared - git state is per-repo
 ├── Entity<LspStore>          // Shared - one LSP instance per worktree
@@ -33,6 +33,7 @@ MultiWorkspace (new top-level container)
 │       ├── Entity<DapStore>                      // Per-workspace (debugging sessions)
 │       ├── Entity<TaskStore>                     // Per-workspace (task execution context)
 │       └── (references to shared stores)
+│   └── Panes, Panels, Docks (UI)
 │
 └── Workspace B
     └── Entity<Project>
@@ -40,40 +41,115 @@ MultiWorkspace (new top-level container)
         ├── client_state: ProjectClientState
         ├── Entity<DapStore>
         └── Entity<TaskStore>
+    └── Panes, Panels, Docks (UI)
 ```
+
+## Implementation Strategy
+
+The key insight is: **defer store complexity until we actually have two workspaces trying to share them**. This gives us concrete test cases and clearer requirements.
+
+### Phase A: Structural Rename (Ship First)
+
+**Goal**: Extract `Workspace` from `MultiWorkspace` as a mechanical refactor with no behavior change.
+
+**Current State**:
+- `Workspace` has been renamed to `MultiWorkspace` ✅
+- Stub `single_workspace::Workspace` module created ✅
+
+**What Moves to `Workspace`** (the new inner struct):
+- `Entity<Project>` - workspace owns its project
+- `center: PaneGroup` - pane layout
+- `panes: Vec<Entity<Pane>>` - all panes
+- `active_pane: Entity<Pane>`
+- `left_dock`, `right_dock`, `bottom_dock` - dock UI
+- `status_bar` - per-workspace status
+- `modal_layer`, `toast_layer` - per-workspace overlays
+- `notifications` - per-workspace notifications
+- Most UI rendering logic
+
+**What Stays in `MultiWorkspace`**:
+- `Entity<WorktreeStore>` - shared (passed down to Projects)
+- `Entity<Workspace>` - just one for now
+- `weak_self`, `app_state` - window-level concerns
+- `workspace_actions` - action registration
+- `database_id`, serialization concerns
+- `WorkspaceStore` registration
+- Window title management
+
+**This is "extract class" refactoring** - moving fields/methods down without changing behavior. Risk is low because it's mechanical.
+
+**Merge Point**: Ship this rename, get it tested in the wild.
+
+### Phase B: Enable Second Workspace (Real Refactor)
+
+**Goal**: Actually support multiple Workspace instances, refactoring stores as needed.
+
+**Why This Order?**: You can't write integration tests for shared state without two workspaces. Once you have:
+
+```rust
+struct MultiWorkspace {
+    worktree_store: Entity<WorktreeStore>,
+    workspaces: Vec<Entity<Workspace>>,
+}
+```
+
+Then you can write tests like:
+
+```rust
+#[gpui::test]
+async fn test_two_workspaces_share_buffer(cx: &mut TestAppContext) {
+    let multi = cx.new(|cx| MultiWorkspace::new(...));
+    
+    // Add a worktree to the shared store
+    let worktree_id = multi.update(cx, |m, cx| m.add_worktree("/path", cx)).await;
+    
+    // Create two workspaces viewing the same worktree
+    let ws_a = multi.update(cx, |m, cx| m.add_workspace(cx));
+    let ws_b = multi.update(cx, |m, cx| m.add_workspace(cx));
+    
+    // Open same file in both, verify it's the same buffer
+    // Edit in one, verify it appears in the other
+}
+```
+
+**Store Refactors** (driven by test failures):
+1. `WorktreeStore` - Remove `WorktreeStoreState` enum, push local/remote distinction into individual worktrees
+2. `BufferStore` - Lift to MultiWorkspace so same file = same buffer
+3. `GitStore` - Lift to MultiWorkspace (git state is per-repo)
+4. `LspStore` - Lift to MultiWorkspace (one LSP per worktree)
+5. Keep `DapStore`, `TaskStore` per-workspace
+
+**Project Changes**:
+- Add `worktree_ids: HashSet<WorktreeId>` to filter which worktrees it "views"
+- `Project::worktrees()` filters by this set
+- Project receives shared store references from MultiWorkspace
 
 ## Key Design Decisions
 
-### 1. WorktreeStore Contains Mixed Local/Remote Worktrees
+### 1. WorktreeStore Will Contain Mixed Local/Remote Worktrees
 
-The shared WorktreeStore can contain both local and remote worktrees simultaneously:
+Eventually the shared WorktreeStore can contain both local and remote worktrees:
 - `LocalWorktree` for `~/projects/foo` (local filesystem)
 - `RemoteWorktree` for `server-a:/home/user/bar` (SSH connection)
-- `RemoteWorktree` for `server-b:/work/baz` (different SSH connection)
 
-This works because **transport lives at the Worktree level**, not WorktreeStore level:
+This works because **transport lives at the Worktree level**:
 - `LocalWorktree` has `fs: Arc<dyn Fs>`
 - `RemoteWorktree` has `client: AnyProtoClient` and `project_id: u64`
 
-When BufferStore opens a file, it delegates to the Worktree via `worktree.load_file()`, so the Worktree handles its own transport.
-
-**Required change**: Remove `WorktreeStoreState` enum (currently Local vs Remote). Instead, provide explicit methods for adding local vs remote worktrees:
+**Required change** (Phase B): Remove `WorktreeStoreState` enum. Add explicit methods:
 ```rust
 impl WorktreeStore {
-    pub fn add_local_worktree(&mut self, path: &Path, fs: Arc<dyn Fs>, cx: ...) -> Task<...>
+    pub fn add_local_worktree(&mut self, path: &Path, fs: Arc<dyn Fs>, ...) -> Task<...>
     pub fn add_remote_worktree(&mut self, client: AnyProtoClient, project_id: u64, ...) -> Task<...>
 }
 ```
 
 ### 2. Project Becomes a "View" Over Shared Worktrees
 
-Project tracks which worktrees it contains via `worktree_ids: HashSet<WorktreeId>`:
-
 ```rust
 struct Project {
     worktree_ids: HashSet<WorktreeId>,
     worktree_store: Entity<WorktreeStore>,  // Reference to shared store
-    // ...
 }
 
 impl Project {
@@ -85,38 +161,28 @@ impl Project {
 }
 ```
 
-Worktrees are **oblivious to Projects** - they don't track which Projects reference them. This keeps the relationship clean and unidirectional.
+Worktrees are **oblivious to Projects** - they don't track which Projects reference them.
 
 ### 3. Shared Stores vs Per-Workspace Stores
 
-**Shared at MultiWorkspace level** (same file = same entity everywhere):
-- `BufferStore` - Edits in Workspace A are immediately visible in Workspace B
+**Eventually Shared** (same file = same entity everywhere):
+- `BufferStore` - Edits in Workspace A visible in Workspace B
 - `GitStore` - Git state is per-repository
-- `LspStore` - One language server instance per worktree, shared across workspaces
+- `LspStore` - One language server instance per worktree
 - `ImageStore` - Same as BufferStore
 - `BreakpointStore` - Breakpoints are on files
 
 **Per-Workspace** (workspace-specific context):
 - `DapStore` - Debugging sessions are focused activities
 - `TaskStore` - Tasks run in a specific workspace context
-- `ContextServerStore` - Context servers may be workspace-scoped
 
-### 4. Collaboration Model (Option C: Share at Project Level)
+### 4. Collaboration Constraint
 
-Collaboration happens at the **Project level**, not WorktreeStore level:
-- A Project can be shared (gets a `remote_id` in `ProjectClientState::Shared`)
-- Collaborators join a specific Project and see its worktrees
-- The same worktree can be in multiple Projects, but...
-
-**Constraint**: A worktree can only be in ONE shared Project at a time.
-
-
-When sharing, validate:
+A worktree can only be in ONE shared Project at a time. Validate when sharing:
 ```rust
 impl Project {
     pub fn share(&mut self, cx: &mut Context<Self>) -> Task<Result<u64>> {
         // Check if any of our worktrees are already in a shared project
-        let multi_workspace = MultiWorkspace::global(cx);
         for worktree_id in &self.worktree_ids {
             if let Some(other_project) = multi_workspace.find_sharing_project_for_worktree(*worktree_id, cx) {
                 if other_project != cx.entity() {
@@ -132,100 +198,19 @@ impl Project {
 }
 ```
 
-### 5. RemoteWorktree.project_id Clarification
+## Key Files
 
-There are two different IDs to understand:
-1. **`RemoteWorktree.project_id`** - The upstream source ID (e.g., SSH server's project ID). This is for RPC with the server hosting the files.
-2. **`Project.client_state.remote_id`** - The collaboration ID when this Project is shared with others.
+- `crates/workspace/src/workspace.rs` - Contains `MultiWorkspace`, will contain `Workspace`
+- `crates/workspace/src/single_workspace.rs` - Stub module (created)
+- `crates/project/src/project.rs` - Will add `worktree_ids` filter
+- `crates/project/src/worktree_store.rs` - Will remove `WorktreeStoreState` enum
 
-These are orthogonal. A RemoteWorktree connected via SSH has a fixed `project_id` for that connection. That worktree can be part of multiple local Projects with different collaboration states.
+## Current Status
 
-### 6. Worktree Lifecycle
-
-Worktrees are reference-counted in the shared WorktreeStore:
-- When a Workspace closes, its Project removes its worktree references
-- The worktree stays alive if another Project still references it
-- When the last reference is removed, the worktree is dropped
-
-## Implementation Plan
-
-### Phase 1: Create MultiWorkspace Container
-
-1. Create new `MultiWorkspace` struct that holds:
-   - `Entity<WorktreeStore>`
-   - `Entity<BufferStore>`
-   - `Entity<GitStore>`
-   - `Entity<LspStore>`
-   - `Entity<ImageStore>`
-   - `Entity<BreakpointStore>`
-   - `Vec<Entity<Workspace>>` or similar
-
-2. Make MultiWorkspace global or per-window (TBD based on window model)
-
-3. Update Workspace creation to:
-   - Get/create MultiWorkspace
-   - Create Project with reference to shared WorktreeStore
-   - Pass shared stores to Project
-
-### Phase 2: Refactor WorktreeStore
-
-1. Remove `WorktreeStoreState` enum
-2. Add explicit `add_local_worktree` and `add_remote_worktree` methods
-3. Update `find_or_create_worktree` to take connection info parameter
-
-### Phase 3: Refactor Project
-
-1. Add `worktree_ids: HashSet<WorktreeId>` field
-2. Change `worktree_store` from owned to shared reference
-3. Update all methods that iterate worktrees to filter by `worktree_ids`
-4. Move DapStore and TaskStore creation into Project (keep them per-workspace)
-5. Add references to shared stores (BufferStore, GitStore, etc.)
-
-### Phase 4: Refactor Store Creation
-
-1. Move BufferStore, GitStore, LspStore, ImageStore, BreakpointStore creation to MultiWorkspace
-2. Update these stores to work with the shared WorktreeStore
-3. Ensure stores handle worktrees being added/removed dynamically
-
-### Phase 5: Update Collaboration
-
-1. Add sharing validation (prevent double-sharing of worktrees)
-2. Update `share_project` to work with the new architecture
-3. Test collaboration scenarios with multiple workspaces
-
-### Phase 6: Update Consumers
-
-Many places call `workspace.project()` and expect to access stores. Audit and update:
-- Panels (AgentPanel, GitPanel, etc.)
-- Activity indicator
-- File opening code paths
-- Search functionality
-
-## Key Files to Modify
-
-- `crates/project/src/project.rs` - Major refactor
-- `crates/project/src/worktree_store.rs` - Remove state enum, add explicit methods
-- `crates/project/src/buffer_store.rs` - May need state simplification
-- `crates/workspace/src/workspace.rs` - Update to use MultiWorkspace
-- `crates/call/src/call_impl/room.rs` - Update sharing logic
-- New file: `crates/workspace/src/multi_workspace.rs` or similar
-
-## Testing Considerations
-
-1. **Multi-workspace scenarios**: Create tests where two workspaces share worktrees
-2. **Edit propagation**: Verify edits in one workspace appear in another
-3. **Collaboration with shared worktrees**: Test sharing when worktrees overlap
-4. **Mixed local/remote**: Test WorktreeStore with both local and SSH worktrees
-5. **Worktree lifecycle**: Test closing workspaces and worktree cleanup
-
-## Open Questions for Implementation
-
-1. Should MultiWorkspace be global (one per app) or per-window?
-2. How should we handle the transition for existing serialized workspaces?
-3. Should there be UI for managing worktrees across workspaces?
-
-## References
-
-- Original detailed plan: `threads-sidebar-plan.md` (some concepts superseded)
-- Comment in `crates/project/src/project.rs` lines 162-172 showing target architecture
-- Current Project::local() and Project::remote() constructors show store creation patterns
+- [x] Rename `Workspace` → `MultiWorkspace` (done)
+- [x] Create stub `single_workspace::Workspace` module (done)
+- [ ] Extract UI/pane/panel ownership from `MultiWorkspace` into `Workspace`
+- [ ] Pass `WorktreeStore` from `MultiWorkspace` down to `Project`
+- [ ] **MERGE POINT**
+- [ ] Add second `Workspace` support
+- [ ] Refactor stores as needed for sharing
