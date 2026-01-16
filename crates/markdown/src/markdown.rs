@@ -1120,7 +1120,7 @@ impl Element for MarkdownElement {
                                     .when(!self.style.table_columns_min_size, |this| {
                                         this.grid_cols(column_count as u16)
                                     })
-                                    .size_full()
+                                    .w_full()
                                     .mb_2()
                                     .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
