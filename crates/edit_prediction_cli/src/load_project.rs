@@ -259,7 +259,16 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
         fs::remove_file(&index_lock).ok();
     }
 
-    if !repo_dir.is_dir() {
+    let mut git_repo_exists = false;
+    if repo_dir.is_dir() {
+        if git::run_git(&repo_dir, &["status"]).await.is_ok() {
+            git_repo_exists = true;
+        } else {
+            fs::remove_dir_all(&repo_dir).ok();
+        }
+    }
+
+    if !git_repo_exists {
         step_progress.set_substatus(format!("cloning {}", repo_name.name));
         fs::create_dir_all(&repo_dir)?;
         git::run_git(&repo_dir, &["init"]).await?;
