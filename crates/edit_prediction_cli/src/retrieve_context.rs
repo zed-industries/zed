@@ -96,10 +96,13 @@ async fn wait_for_language_servers_to_start(
 
     step_progress.set_substatus(format!("waiting for {} LSPs", language_server_ids.len()));
 
-    let timeout = cx
-        .background_executor()
-        .timer(Duration::from_secs(60 * 5))
-        .shared();
+    let timeout_duration = if starting_language_server_ids.is_empty() {
+        Duration::from_secs(30)
+    } else {
+        Duration::from_secs(60 * 5)
+    };
+
+    let timeout = cx.background_executor().timer(timeout_duration).shared();
 
     let (mut tx, mut rx) = mpsc::channel(language_server_ids.len());
     let added_subscription = cx.subscribe(project, {
@@ -121,7 +124,7 @@ async fn wait_for_language_servers_to_start(
                 }
             },
             _ = timeout.clone().fuse() => {
-                return Err(anyhow::anyhow!("LSP wait timed out after 5 minutes"));
+                return Err(anyhow::anyhow!("LSP wait timed out after {} minutes", timeout_duration.as_secs() / 60));
             }
         }
     }
@@ -190,7 +193,7 @@ async fn wait_for_language_servers_to_start(
                 }
             },
             _ = timeout.clone().fuse() => {
-                return Err(anyhow::anyhow!("LSP wait timed out after 5 minutes"));
+                return Err(anyhow::anyhow!("LSP wait timed out after {} minutes", timeout_duration.as_secs() / 60));
             }
         }
     }
