@@ -30,14 +30,18 @@
 //! ```
 
 use crate::remote_client::{
-    ChannelClient, CommandTemplate, RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
+    ChannelClient, CommandTemplate, Interactive, RemoteClientDelegate, RemoteConnection,
+    RemoteConnectionOptions,
 };
 use anyhow::Result;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
     FutureExt, SinkExt, StreamExt,
-    channel::mpsc::{self, Sender},
+    channel::{
+        mpsc::{self, Sender},
+        oneshot,
+    },
     select_biased,
 };
 use gpui::{App, AppContext as _, AsyncApp, Global, Task, TestAppContext};
@@ -94,20 +98,29 @@ unsafe impl Sync for SendableCx {}
 /// it retrieves the connection from this registry.
 #[derive(Default)]
 pub struct MockConnectionRegistry {
-    pending: HashMap<MockConnectionOptions, Arc<MockRemoteConnection>>,
+    pending: HashMap<u64, (oneshot::Receiver<()>, Arc<MockRemoteConnection>)>,
 }
 
 impl Global for MockConnectionRegistry {}
 
 impl MockConnectionRegistry {
     /// Called by `ConnectionPool::connect` to retrieve a pre-registered mock connection.
-    pub fn take(&mut self, opts: &MockConnectionOptions) -> Option<Arc<MockRemoteConnection>> {
-        self.pending.remove(opts)
+    pub fn take(
+        &mut self,
+        opts: &MockConnectionOptions,
+    ) -> Option<impl Future<Output = Arc<MockRemoteConnection>> + use<>> {
+        let (guard, con) = self.pending.remove(&opts.id)?;
+        Some(async move {
+            _ = guard.await;
+            con
+        })
     }
 }
 
 /// Helper for creating mock connection pairs in tests.
 pub struct MockConnection;
+
+pub type ConnectGuard = oneshot::Sender<()>;
 
 impl MockConnection {
     /// Creates a new mock connection pair for testing.
@@ -125,10 +138,10 @@ impl MockConnection {
     /// # Arguments
     /// - `client_cx`: The test context for the client side
     /// - `server_cx`: The test context for the server/headless side
-    pub fn new(
+    pub(crate) fn new(
         client_cx: &mut TestAppContext,
         server_cx: &mut TestAppContext,
-    ) -> (MockConnectionOptions, AnyProtoClient) {
+    ) -> (MockConnectionOptions, AnyProtoClient, ConnectGuard) {
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
         let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
         let opts = MockConnectionOptions { id };
@@ -144,13 +157,15 @@ impl MockConnection {
             server_cx: SendableCx::new(server_cx),
         });
 
+        let (tx, rx) = oneshot::channel();
+
         client_cx.update(|cx| {
             cx.default_global::<MockConnectionRegistry>()
                 .pending
-                .insert(opts.clone(), connection);
+                .insert(opts.id, (rx, connection));
         });
 
-        (opts, server_client.into())
+        (opts, server_client.into(), tx)
     }
 }
 
@@ -171,6 +186,7 @@ impl RemoteConnection for MockRemoteConnection {
         env: &HashMap<String, String>,
         _working_dir: Option<String>,
         _port_forward: Option<(u16, String, u16)>,
+        _interactive: Interactive,
     ) -> Result<CommandTemplate> {
         let shell_program = program.unwrap_or_else(|| "sh".to_string());
         let mut shell_args = Vec::new();

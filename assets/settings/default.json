@@ -913,8 +913,6 @@
     "inline_assistant_use_streaming_tools": true,
     // Whether the agent is enabled.
     "enabled": true,
-    // What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
-    "preferred_completion_mode": "normal",
     // Whether to show the agent panel button in the status bar.
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
@@ -961,6 +959,80 @@
     // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
     //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
     "always_allow_tool_actions": false,
+    // Per-tool permission rules for granular control over tool actions.
+    // This setting only applies to the native Zed agent.
+    "tool_permissions": {
+      "tools": {
+        "terminal": {
+          "default_mode": "confirm",
+          "always_deny": [
+            // Dangerous rm commands
+            { "pattern": "rm\\s+-rf\\s+(/|\\.\\.|\"|~|\\*)" },
+            { "pattern": "rm\\s+-rf\\s*$" },
+            // Disk destruction
+            { "pattern": "> /dev/sd" },
+            { "pattern": "mkfs\\." },
+            { "pattern": "dd\\s+if=/dev/(zero|random)" },
+            // Fork bomb
+            { "pattern": ":\\(\\)\\{\\s*:\\|:&\\s*\\};:" },
+            // System files
+            { "pattern": "/etc/passwd" },
+            { "pattern": "/etc/shadow" },
+            // Windows destructive commands
+            { "pattern": "del /f /s /q c:\\\\" },
+            { "pattern": "format c:" },
+            { "pattern": "rd /s /q" },
+          ],
+          "always_confirm": [
+            // File deletion
+            { "pattern": "rm\\s" },
+            // Destructive git operations
+            { "pattern": "git\\s+(reset|clean)\\s+--hard" },
+            { "pattern": "git\\s+push\\s+(-f|--force)" },
+            // Database operations
+            { "pattern": "DROP\\s+TABLE", "case_sensitive": true },
+            { "pattern": "DELETE\\s+FROM", "case_sensitive": true },
+            // Privileged commands
+            { "pattern": "sudo\\s" },
+          ],
+        },
+        "edit_file": {
+          "default_mode": "confirm",
+          "always_deny": [
+            // Secrets and credentials
+            { "pattern": "\\.env($|\\.)" },
+            { "pattern": "secrets?/" },
+            { "pattern": "\\.pem$" },
+            { "pattern": "\\.key$" },
+          ],
+        },
+        "delete_path": {
+          "default_mode": "confirm",
+          "always_deny": [
+            // System directories
+            { "pattern": "^/etc" },
+            { "pattern": "^/usr" },
+            { "pattern": "^/bin" },
+            { "pattern": "^/sbin" },
+            { "pattern": "^/var" },
+            { "pattern": "^/boot" },
+            { "pattern": "^/root" },
+            // Home directory root
+            { "pattern": "^~$" },
+            { "pattern": "^/Users/[^/]+$" },
+            { "pattern": "^/home/[^/]+$" },
+            // Git directory
+            { "pattern": "\\.git/?$" },
+            // Windows system directories
+            { "pattern": "^C:\\\\Windows" },
+            { "pattern": "^C:\\\\Program Files" },
+          ],
+        },
+        "fetch": {
+          "default_mode": "confirm",
+        },
+      },
+    },
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": true,
     // When enabled, show voting thumbs for feedback on agent edits.
@@ -987,6 +1059,7 @@
           "save_file": true,
           "open": true,
           "grep": true,
+          "subagent": true,
           "terminal": true,
           "thinking": true,
           "web_search": true,
@@ -1006,6 +1079,7 @@
           "read_file": true,
           "open": true,
           "grep": true,
+          "subagent": true,
           "thinking": true,
           "web_search": true,
         },
@@ -1044,6 +1118,10 @@
     //
     // Default: 4
     "message_editor_min_lines": 4,
+    // Whether to show turn statistics (elapsed time during generation, final turn duration).
+    //
+    // Default: false
+    "show_turn_stats": false,
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
@@ -1079,6 +1157,10 @@
     "show_nav_history_buttons": true,
     // Whether or not to show the tab bar buttons.
     "show_tab_bar_buttons": true,
+    // Whether or not to show pinned tabs in a separate row.
+    // When enabled, pinned tabs appear in a top row and unpinned tabs in a bottom row.
+    // When disabled, all tabs appear in a single row (default behavior).
+    "show_pinned_tabs_in_separate_row": false,
   },
   // Settings related to the editor's tabs
   "tabs": {
@@ -2180,11 +2262,15 @@
     "use_smartcase_find": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},
-    // Cursor shape for the each mode.
-    // Specify the mode as the key and the shape as the value.
-    // The mode can be one of the following: "normal", "replace", "insert", "visual".
+    // Cursor shape for each mode.
     // The shape can be one of the following: "block", "bar", "underline", "hollow".
-    "cursor_shape": {},
+    "cursor_shape": {
+      "normal": "block",
+      "replace": "underline",
+      "visual": "block",
+      // Set to "inherit" to use the editor's cursor_shape.
+      "insert": "inherit",
+    },
   },
   // Which-key popup settings
   "which_key": {

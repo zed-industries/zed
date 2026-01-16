@@ -1,6 +1,5 @@
 #[cfg(feature = "cli-support")]
 use crate::EvalCacheEntryKind;
-use crate::open_ai_response::text_from_response;
 use crate::prediction::EditPredictionResult;
 use crate::{
     CurrentEditPrediction, DebugEvent, EDIT_PREDICTIONS_MODEL_ID, EditPredictionFinishedDebugEvent,
@@ -8,6 +7,7 @@ use crate::{
     EditPredictionStore,
 };
 use anyhow::{Result, anyhow};
+use cloud_llm_client::predict_edits_v3::RawCompletionRequest;
 use cloud_llm_client::{AcceptEditPredictionBody, EditPredictionRejectReason};
 use gpui::{App, Task, prelude::*};
 use language::{OffsetRangeExt as _, ToOffset as _, ToPoint};
@@ -15,11 +15,17 @@ use release_channel::AppVersion;
 
 use std::env;
 use std::{path::Path, sync::Arc, time::Instant};
-use zeta_prompt::CURSOR_MARKER;
 use zeta_prompt::format_zeta_prompt;
+use zeta_prompt::{CURSOR_MARKER, ZetaVersion};
 
-pub const MAX_CONTEXT_TOKENS: usize = 150;
-pub const MAX_REWRITE_TOKENS: usize = 350;
+pub const MAX_CONTEXT_TOKENS: usize = 350;
+
+pub fn max_editable_tokens(version: ZetaVersion) -> usize {
+    match version {
+        ZetaVersion::V0112_MiddleAtEnd | ZetaVersion::V0113_Ordered => 150,
+        ZetaVersion::V0114_180EditableRegion => 180,
+    }
+}
 
 pub fn request_prediction_with_zeta2(
     store: &mut EditPredictionStore,
@@ -32,9 +38,11 @@ pub fn request_prediction_with_zeta2(
         debug_tx,
         ..
     }: EditPredictionModelInput,
+    zeta_version: ZetaVersion,
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
     let buffer_snapshotted_at = Instant::now();
+    let url = store.custom_predict_edits_url.clone();
 
     let Some(excerpt_path) = snapshot
         .file()
@@ -59,9 +67,10 @@ pub fn request_prediction_with_zeta2(
                 events,
                 excerpt_path,
                 cursor_offset,
+                zeta_version,
             );
 
-            let prompt = format_zeta_prompt(&prompt_input);
+            let prompt = format_zeta_prompt(&prompt_input, zeta_version);
 
             if let Some(debug_tx) = &debug_tx {
                 debug_tx
@@ -75,20 +84,12 @@ pub fn request_prediction_with_zeta2(
                     .ok();
             }
 
-            let request = open_ai::Request {
+            let request = RawCompletionRequest {
                 model: EDIT_PREDICTIONS_MODEL_ID.clone(),
-                messages: vec![open_ai::RequestMessage::User {
-                    content: open_ai::MessageContent::Plain(prompt),
-                }],
-                stream: false,
-                max_completion_tokens: None,
-                stop: Default::default(),
-                temperature: Default::default(),
-                tool_choice: None,
-                parallel_tool_calls: None,
-                tools: vec![],
-                prompt_cache_key: None,
-                reasoning_effort: None,
+                prompt,
+                temperature: None,
+                stop: vec![],
+                max_tokens: Some(2048),
             };
 
             log::trace!("Sending edit prediction request");
@@ -96,6 +97,7 @@ pub fn request_prediction_with_zeta2(
             let response = EditPredictionStore::send_raw_llm_request(
                 request,
                 client,
+                url,
                 llm_token,
                 app_version,
                 #[cfg(feature = "cli-support")]
@@ -108,9 +110,9 @@ pub fn request_prediction_with_zeta2(
 
             log::trace!("Got edit prediction response");
 
-            let (res, usage) = response?;
+            let (mut res, usage) = response?;
             let request_id = EditPredictionId(res.id.clone().into());
-            let Some(mut output_text) = text_from_response(res) else {
+            let Some(mut output_text) = res.choices.pop().map(|choice| choice.text) else {
                 return Ok((Some((request_id, None)), usage));
             };
 
@@ -131,9 +133,17 @@ pub fn request_prediction_with_zeta2(
                 output_text = output_text.replace(CURSOR_MARKER, "");
             }
 
-            let old_text = snapshot
+            let mut old_text = snapshot
                 .text_for_range(editable_offset_range.clone())
                 .collect::<String>();
+
+            if !output_text.is_empty() && !output_text.ends_with('\n') {
+                output_text.push('\n');
+            }
+            if !old_text.is_empty() && !old_text.ends_with('\n') {
+                old_text.push('\n');
+            }
+
             let edits: Vec<_> = language::text_diff(&old_text, &output_text)
                 .into_iter()
                 .map(|(range, text)| {
@@ -195,10 +205,11 @@ pub fn request_prediction_with_zeta2(
 
 pub fn zeta2_prompt_input(
     snapshot: &language::BufferSnapshot,
-    related_files: Arc<[zeta_prompt::RelatedFile]>,
+    related_files: Vec<zeta_prompt::RelatedFile>,
     events: Vec<Arc<zeta_prompt::Event>>,
     excerpt_path: Arc<Path>,
     cursor_offset: usize,
+    zeta_version: ZetaVersion,
 ) -> (std::ops::Range<usize>, zeta_prompt::ZetaPromptInput) {
     let cursor_point = cursor_offset.to_point(snapshot);
 
@@ -206,9 +217,15 @@ pub fn zeta2_prompt_input(
         crate::cursor_excerpt::editable_and_context_ranges_for_cursor_position(
             cursor_point,
             snapshot,
+            max_editable_tokens(zeta_version),
             MAX_CONTEXT_TOKENS,
-            MAX_REWRITE_TOKENS,
         );
+
+    let related_files = crate::filter_redundant_excerpts(
+        related_files,
+        excerpt_path.as_ref(),
+        context_range.start.row..context_range.end.row,
+    );
 
     let context_start_offset = context_range.start.to_offset(snapshot);
     let editable_offset_range = editable_range.to_offset(snapshot);
@@ -276,35 +293,4 @@ pub(crate) fn edit_prediction_accepted(
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
-}
-
-#[cfg(feature = "cli-support")]
-pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str) -> Result<String> {
-    let text = &input.cursor_excerpt;
-    let editable_region = input.editable_range_in_excerpt.clone();
-    let old_prefix = &text[..editable_region.start];
-    let old_suffix = &text[editable_region.end..];
-
-    // Try applying the patch directly first
-    let new = match crate::udiff::apply_diff_to_string(patch, text) {
-        Ok(new) => new,
-        Err(_) if !text.ends_with('\n') => {
-            // If the text doesn't end with a newline, the patch context may expect one
-            // (due to missing "no newline at EOF" markers). Try again with a trailing newline.
-            let text_with_newline = format!("{}\n", text);
-            let mut new = crate::udiff::apply_diff_to_string(patch, &text_with_newline)?;
-            // Remove the trailing newline we added if the result still has it
-            if new.ends_with('\n') && !text.ends_with('\n') {
-                new.pop();
-            }
-            new
-        }
-        Err(e) => return Err(e),
-    };
-
-    if !new.starts_with(old_prefix) || !new.ends_with(old_suffix) {
-        anyhow::bail!("Patch shouldn't affect text outside of editable region");
-    }
-
-    Ok(new[editable_region.start..new.len() - old_suffix.len()].to_string())
 }

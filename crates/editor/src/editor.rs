@@ -108,10 +108,10 @@ use gpui::{
     DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
     Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
     MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement, Pixels, PressureStage,
-    Render, ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, TextRun,
-    TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
-    WeakEntity, WeakFocusHandle, Window, div, point, prelude::*, pulsating_between, px, relative,
-    size,
+    Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled, Subscription, Task,
+    TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
+    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, point, prelude::*,
+    pulsating_between, px, relative, size,
 };
 use hover_links::{HoverLink, HoveredLinkState, find_file};
 use hover_popover::{HoverState, hide_hover};
@@ -198,14 +198,14 @@ use theme::{
     observe_buffer_font_size_adjustment,
 };
 use ui::{
-    ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape, IconName,
-    IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
+    Avatar, ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape,
+    IconName, IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
-    CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
-    RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
-    ViewId, Workspace, WorkspaceId, WorkspaceSettings,
+    CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, NavigationEntry, OpenInTerminal,
+    OpenTerminal, Pane, RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection,
+    TabBarSettings, Toast, ViewId, Workspace, WorkspaceId, WorkspaceSettings,
     item::{BreadcrumbText, ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::{CollapseDirection, SearchEvent},
@@ -1021,6 +1021,85 @@ struct PhantomBreakpointIndicator {
     collides_with_existing_breakpoint: bool,
 }
 
+/// Represents a diff review button indicator that shows up when hovering over lines in the gutter
+/// in diff view mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PhantomDiffReviewIndicator {
+    pub display_row: DisplayRow,
+    /// There's a small debounce between hovering over the line and showing the indicator.
+    /// We don't want to show the indicator when moving the mouse from editor to e.g. project panel.
+    pub is_active: bool,
+}
+
+/// Identifies a specific hunk in the diff buffer.
+/// Used as a key to group comments by their location.
+#[derive(Clone, Debug)]
+pub struct DiffHunkKey {
+    /// The file path (relative to worktree) this hunk belongs to.
+    pub file_path: Arc<util::rel_path::RelPath>,
+    /// An anchor at the start of the hunk. This tracks position as the buffer changes.
+    pub hunk_start_anchor: Anchor,
+}
+
+/// A review comment stored locally before being sent to the Agent panel.
+#[derive(Clone)]
+pub struct StoredReviewComment {
+    /// Unique identifier for this comment (for edit/delete operations).
+    pub id: usize,
+    /// The comment text entered by the user.
+    pub comment: String,
+    /// The display row where this comment was added (within the hunk).
+    pub display_row: DisplayRow,
+    /// Anchors for the code range being reviewed.
+    pub anchor_range: Range<Anchor>,
+    /// Timestamp when the comment was created (for chronological ordering).
+    pub created_at: Instant,
+    /// Whether this comment is currently being edited inline.
+    pub is_editing: bool,
+}
+
+impl StoredReviewComment {
+    pub fn new(
+        id: usize,
+        comment: String,
+        display_row: DisplayRow,
+        anchor_range: Range<Anchor>,
+    ) -> Self {
+        Self {
+            id,
+            comment,
+            display_row,
+            anchor_range,
+            created_at: Instant::now(),
+            is_editing: false,
+        }
+    }
+}
+
+/// Represents an active diff review overlay that appears when clicking the "Add Review" button.
+pub(crate) struct DiffReviewOverlay {
+    /// The display row where the overlay is anchored.
+    pub display_row: DisplayRow,
+    /// The block ID for the overlay.
+    pub block_id: CustomBlockId,
+    /// The editor entity for the review input.
+    pub prompt_editor: Entity<Editor>,
+    /// The hunk key this overlay belongs to.
+    pub hunk_key: DiffHunkKey,
+    /// Whether the comments section is expanded.
+    pub comments_expanded: bool,
+    /// Editors for comments currently being edited inline.
+    /// Key: comment ID, Value: Editor entity for inline editing.
+    pub inline_edit_editors: HashMap<usize, Entity<Editor>>,
+    /// Subscriptions for inline edit editors' action handlers.
+    /// Key: comment ID, Value: Subscription keeping the Newline action handler alive.
+    pub inline_edit_subscriptions: HashMap<usize, Subscription>,
+    /// The current user's avatar URI for display in comment rows.
+    pub user_avatar_uri: Option<SharedUri>,
+    /// Subscription to keep the action handler alive.
+    _subscription: Subscription,
+}
+
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -1081,6 +1160,7 @@ pub struct Editor {
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_breakpoints: Option<bool>,
+    show_diff_review_button: bool,
     show_wrap_guides: Option<bool>,
     show_indent_guides: Option<bool>,
     buffers_with_disabled_indent_guides: HashSet<BufferId>,
@@ -1105,6 +1185,7 @@ pub struct Editor {
     code_actions_task: Option<Task<Result<()>>>,
     quick_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
     debounced_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
+    debounced_selection_highlight_complete: bool,
     document_highlights_task: Option<Task<()>>,
     linked_editing_range_task: Option<Task<Option<()>>>,
     linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
@@ -1183,6 +1264,16 @@ pub struct Editor {
     tasks_update_task: Option<Task<()>>,
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
+    pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
+    /// Active diff review overlays. Multiple overlays can be open simultaneously
+    /// when hunks have comments stored.
+    pub(crate) diff_review_overlays: Vec<DiffReviewOverlay>,
+    /// Stored review comments grouped by hunk.
+    /// Uses a Vec instead of HashMap because DiffHunkKey contains an Anchor
+    /// which doesn't implement Hash/Eq in a way suitable for HashMap keys.
+    stored_review_comments: Vec<(DiffHunkKey, Vec<StoredReviewComment>)>,
+    /// Counter for generating unique comment IDs.
+    next_review_comment_id: usize,
     hovered_diff_hunk_row: Option<DisplayRow>,
     pull_diagnostics_task: Task<()>,
     pull_diagnostics_background_task: Task<()>,
@@ -1631,7 +1722,15 @@ impl ClipboardSelection {
             project.absolute_path(&project_path, cx)
         });
 
-        let line_range = file_path.as_ref().map(|_| range.start.row..=range.end.row);
+        let line_range = file_path.as_ref().and_then(|_| {
+            let (_, start_point, start_excerpt_id) = buffer.point_to_buffer_point(range.start)?;
+            let (_, end_point, end_excerpt_id) = buffer.point_to_buffer_point(range.end)?;
+            if start_excerpt_id == end_excerpt_id {
+                Some(start_point.row..=end_point.row)
+            } else {
+                None
+            }
+        });
 
         Self {
             len,
@@ -1679,7 +1778,7 @@ enum SelectSyntaxNodeScrollBehavior {
     CursorBottom,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct NavigationData {
     cursor_anchor: Anchor,
     cursor_position: Point,
@@ -2246,6 +2345,7 @@ impl Editor {
             show_code_actions: None,
             show_runnables: None,
             show_breakpoints: None,
+            show_diff_review_button: false,
             show_wrap_guides: None,
             show_indent_guides,
             buffers_with_disabled_indent_guides: HashSet::default(),
@@ -2272,6 +2372,7 @@ impl Editor {
             code_actions_task: None,
             quick_selection_highlight_task: None,
             debounced_selection_highlight_task: None,
+            debounced_selection_highlight_complete: false,
             document_highlights_task: None,
             linked_editing_range_task: None,
             pending_rename: None,
@@ -2346,6 +2447,10 @@ impl Editor {
 
             breakpoint_store,
             gutter_breakpoint_indicator: (None, None),
+            gutter_diff_review_indicator: (None, None),
+            diff_review_overlays: Vec::new(),
+            stored_review_comments: Vec::new(),
+            next_review_comment_id: 0,
             hovered_diff_hunk_row: None,
             _subscriptions: (!is_minimap)
                 .then(|| {
@@ -2824,7 +2929,7 @@ impl Editor {
         cx: &mut Context<Workspace>,
     ) -> Task<Result<Entity<Editor>>> {
         let project = workspace.project().clone();
-        let create = project.update(cx, |project, cx| project.create_buffer(true, cx));
+        let create = project.update(cx, |project, cx| project.create_buffer(None, true, cx));
 
         cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
@@ -2871,7 +2976,7 @@ impl Editor {
         cx: &mut Context<Workspace>,
     ) {
         let project = workspace.project().clone();
-        let create = project.update(cx, |project, cx| project.create_buffer(true, cx));
+        let create = project.update(cx, |project, cx| project.create_buffer(None, true, cx));
 
         cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
@@ -3505,15 +3610,30 @@ impl Editor {
         };
         let background_executor = cx.background_executor().clone();
         let editor_id = cx.entity().entity_id().as_u64() as ItemId;
+        const FINGERPRINT_LEN: usize = 32;
         let db_folds = display_snapshot
             .folds_in_range(MultiBufferOffset(0)..display_snapshot.buffer_snapshot().len())
             .map(|fold| {
-                (
-                    fold.range.start.text_anchor.to_offset(&snapshot),
-                    fold.range.end.text_anchor.to_offset(&snapshot),
-                )
+                let start = fold.range.start.text_anchor.to_offset(&snapshot);
+                let end = fold.range.end.text_anchor.to_offset(&snapshot);
+
+                // Extract fingerprints - content at fold boundaries for validation on restore
+                // Both fingerprints must be INSIDE the fold to avoid capturing surrounding
+                // content that might change independently.
+                // start_fp: first min(32, fold_len) bytes of fold content
+                // end_fp: last min(32, fold_len) bytes of fold content
+                // Clip to character boundaries to handle multibyte UTF-8 characters.
+                let fold_len = end - start;
+                let start_fp_end = snapshot
+                    .clip_offset(start + std::cmp::min(FINGERPRINT_LEN, fold_len), Bias::Left);
+                let start_fp: String = snapshot.text_for_range(start..start_fp_end).collect();
+                let end_fp_start = snapshot
+                    .clip_offset(end.saturating_sub(FINGERPRINT_LEN).max(start), Bias::Right);
+                let end_fp: String = snapshot.text_for_range(end_fp_start..end).collect();
+
+                (start, end, start_fp, end_fp)
             })
-            .collect();
+            .collect::<Vec<_>>();
         self.serialize_folds = cx.background_spawn(async move {
             background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
             DB.save_editor_folds(editor_id, workspace_id, db_folds)
@@ -4245,6 +4365,10 @@ impl Editor {
         dismissed |= self.mouse_context_menu.take().is_some();
         dismissed |= is_user_requested && self.discard_edit_prediction(true, cx);
         dismissed |= self.snippet_stack.pop().is_some();
+        if !self.diff_review_overlays.is_empty() {
+            self.dismiss_all_diff_review_overlays(cx);
+            dismissed = true;
+        }
 
         if self.mode.is_full() && matches!(self.active_diagnostics, ActiveDiagnostic::Group(_)) {
             self.dismiss_diagnostics(cx);
@@ -7261,7 +7385,12 @@ impl Editor {
             let match_ranges = match_task.await;
             editor
                 .update_in(cx, |editor, _, cx| {
-                    editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                    if use_debounce {
+                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                        editor.debounced_selection_highlight_complete = true;
+                    } else if editor.debounced_selection_highlight_complete {
+                        return;
+                    }
                     if !match_ranges.is_empty() {
                         editor.highlight_background::<SelectedTextHighlight>(
                             &match_ranges,
@@ -7358,15 +7487,18 @@ impl Editor {
             self.clear_background_highlights::<SelectedTextHighlight>(cx);
             self.quick_selection_highlight_task.take();
             self.debounced_selection_highlight_task.take();
+            self.debounced_selection_highlight_complete = false;
             return;
         };
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        if on_buffer_edit
-            || self
-                .quick_selection_highlight_task
-                .as_ref()
-                .is_none_or(|(prev_anchor_range, _)| prev_anchor_range != &query_range)
-        {
+        let query_changed = self
+            .quick_selection_highlight_task
+            .as_ref()
+            .is_none_or(|(prev_anchor_range, _)| prev_anchor_range != &query_range);
+        if query_changed {
+            self.debounced_selection_highlight_complete = false;
+        }
+        if on_buffer_edit || query_changed {
             let multi_buffer_visible_start = self
                 .scroll_manager
                 .anchor()
@@ -8617,11 +8749,15 @@ impl Editor {
                 (true, true) => ui::IconName::DebugDisabledLogBreakpoint,
             };
 
-            let color = cx.theme().colors();
+            let theme_colors = cx.theme().colors();
 
             let color = if is_phantom {
                 if collides_with_existing {
-                    Color::Custom(color.debugger_accent.blend(color.text.opacity(0.6)))
+                    Color::Custom(
+                        theme_colors
+                            .debugger_accent
+                            .blend(theme_colors.text.opacity(0.6)),
+                    )
                 } else {
                     Color::Hint
                 }
@@ -11250,7 +11386,14 @@ impl Editor {
             .to_path_buf();
             Some(parent)
         }) {
-            window.dispatch_action(OpenTerminal { working_directory }.boxed_clone(), cx);
+            window.dispatch_action(
+                OpenTerminal {
+                    working_directory,
+                    local: false,
+                }
+                .boxed_clone(),
+                cx,
+            );
         }
     }
 
@@ -13239,13 +13382,14 @@ impl Editor {
                     trimmed_selections.push(start..end);
                 }
 
+                let is_multiline_trim = trimmed_selections.len() > 1;
                 for trimmed_range in trimmed_selections {
                     if is_first {
                         is_first = false;
-                    } else if !prev_selection_was_entire_line {
+                    } else if is_multiline_trim || !prev_selection_was_entire_line {
                         text += "\n";
                     }
-                    prev_selection_was_entire_line = is_entire_line;
+                    prev_selection_was_entire_line = is_entire_line && !is_multiline_trim;
                     let mut len = 0;
                     for chunk in buffer.text_for_range(trimmed_range.start..trimmed_range.end) {
                         text.push_str(chunk);
@@ -14143,7 +14287,7 @@ impl Editor {
 
     pub fn delete_to_previous_subword_start(
         &mut self,
-        _: &DeleteToPreviousSubwordStart,
+        action: &DeleteToPreviousSubwordStart,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -14153,9 +14297,17 @@ impl Editor {
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     if selection.is_empty() {
-                        let mut cursor = movement::previous_subword_start(map, selection.head());
-                        cursor =
-                            movement::adjust_greedy_deletion(map, selection.head(), cursor, false);
+                        let mut cursor = if action.ignore_newlines {
+                            movement::previous_subword_start(map, selection.head())
+                        } else {
+                            movement::previous_subword_start_or_newline(map, selection.head())
+                        };
+                        cursor = movement::adjust_greedy_deletion(
+                            map,
+                            selection.head(),
+                            cursor,
+                            action.ignore_brackets,
+                        );
                         selection.set_head(cursor, SelectionGoal::None);
                     }
                 });
@@ -14252,7 +14404,7 @@ impl Editor {
 
     pub fn delete_to_next_subword_end(
         &mut self,
-        _: &DeleteToNextSubwordEnd,
+        action: &DeleteToNextSubwordEnd,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -14261,9 +14413,17 @@ impl Editor {
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     if selection.is_empty() {
-                        let mut cursor = movement::next_subword_end(map, selection.head());
-                        cursor =
-                            movement::adjust_greedy_deletion(map, selection.head(), cursor, false);
+                        let mut cursor = if action.ignore_newlines {
+                            movement::next_subword_end(map, selection.head())
+                        } else {
+                            movement::next_subword_end_or_newline(map, selection.head())
+                        };
+                        cursor = movement::adjust_greedy_deletion(
+                            map,
+                            selection.head(),
+                            cursor,
+                            action.ignore_brackets,
+                        );
                         selection.set_head(cursor, SelectionGoal::None);
                     }
                 });
@@ -14753,6 +14913,29 @@ impl Editor {
         );
     }
 
+    fn navigation_data(&self, cursor_anchor: Anchor, cx: &App) -> NavigationData {
+        let buffer = self.buffer.read(cx).read(cx);
+        let cursor_position = cursor_anchor.to_point(&buffer);
+        let scroll_anchor = self.scroll_manager.anchor();
+        let scroll_top_row = scroll_anchor.top_row(&buffer);
+        drop(buffer);
+
+        NavigationData {
+            cursor_anchor,
+            cursor_position,
+            scroll_anchor,
+            scroll_top_row,
+        }
+    }
+
+    fn navigation_entry(&self, cursor_anchor: Anchor, cx: &App) -> Option<NavigationEntry> {
+        let Some(history) = self.nav_history.clone() else {
+            return None;
+        };
+        let data = self.navigation_data(cursor_anchor, cx);
+        Some(history.navigation_entry(Some(Arc::new(data) as Arc<dyn Any + Send + Sync>)))
+    }
+
     fn push_to_nav_history(
         &mut self,
         cursor_anchor: Anchor,
@@ -14761,29 +14944,16 @@ impl Editor {
         always: bool,
         cx: &mut Context<Self>,
     ) {
+        let data = self.navigation_data(cursor_anchor, cx);
         if let Some(nav_history) = self.nav_history.as_mut() {
-            let buffer = self.buffer.read(cx).read(cx);
-            let cursor_position = cursor_anchor.to_point(&buffer);
-            let scroll_state = self.scroll_manager.anchor();
-            let scroll_top_row = scroll_state.top_row(&buffer);
-            drop(buffer);
-
             if let Some(new_position) = new_position {
-                let row_delta = (new_position.row as i64 - cursor_position.row as i64).abs();
+                let row_delta = (new_position.row as i64 - data.cursor_position.row as i64).abs();
                 if row_delta == 0 || (row_delta < MIN_NAVIGATION_HISTORY_ROW_DELTA && !always) {
                     return;
                 }
             }
 
-            nav_history.push(
-                Some(NavigationData {
-                    cursor_anchor,
-                    cursor_position,
-                    scroll_anchor: scroll_state,
-                    scroll_top_row,
-                }),
-                cx,
-            );
+            nav_history.push(Some(data), cx);
             cx.emit(EditorEvent::PushedToNavHistory {
                 anchor: cursor_anchor,
                 is_deactivate,
@@ -14971,6 +15141,32 @@ impl Editor {
             display_map.max_point().row()
         };
 
+        // When `skip_soft_wrap` is true, we use buffer columns instead of pixel
+        // positions to place new selections, so we need to keep track of the
+        // column range of the oldest selection in each group, because
+        // intermediate selections may have been clamped to shorter lines.
+        // selections may have been clamped to shorter lines.
+        let mut goal_columns_by_selection_id = if skip_soft_wrap {
+            let mut map = HashMap::default();
+            for group in state.groups.iter() {
+                if let Some(oldest_id) = group.stack.first() {
+                    if let Some(oldest_selection) =
+                        columnar_selections.iter().find(|s| s.id == *oldest_id)
+                    {
+                        let start_col = oldest_selection.start.column;
+                        let end_col = oldest_selection.end.column;
+                        let goal_columns = start_col.min(end_col)..start_col.max(end_col);
+                        for id in &group.stack {
+                            map.insert(*id, goal_columns.clone());
+                        }
+                    }
+                }
+            }
+            map
+        } else {
+            HashMap::default()
+        };
+
         let mut last_added_item_per_group = HashMap::default();
         for group in state.groups.iter_mut() {
             if let Some(last_id) = group.stack.last() {
@@ -14983,7 +15179,7 @@ impl Editor {
                 if above == group.above {
                     let range = selection.display_range(&display_map).sorted();
                     debug_assert_eq!(range.start.row(), range.end.row());
-                    let mut row = range.start.row();
+                    let row = range.start.row();
                     let positions =
                         if let SelectionGoal::HorizontalRange { start, end } = selection.goal {
                             Pixels::from(start)..Pixels::from(end)
@@ -14995,52 +15191,34 @@ impl Editor {
                             start_x.min(end_x)..start_x.max(end_x)
                         };
 
-                    let mut maybe_new_selection = None;
-                    let direction = if above { -1 } else { 1 };
-
-                    while row != end_row {
-                        let new_buffer_row = if skip_soft_wrap {
-                            let new_row = display_map
-                                .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction);
-                            row = new_row.row();
-                            Some(new_row.to_point(&display_map).row)
-                        } else {
-                            if above {
-                                row.0 -= 1;
-                            } else {
-                                row.0 += 1;
-                            }
-                            None
-                        };
-
-                        let new_selection = if let Some(buffer_row) = new_buffer_row {
-                            let start_col = selection.start.column;
-                            let end_col = selection.end.column;
-                            let buffer_columns = start_col.min(end_col)..start_col.max(end_col);
-
-                            self.selections
-                                .build_columnar_selection_from_buffer_columns(
-                                    &display_map,
-                                    buffer_row,
-                                    &buffer_columns,
-                                    selection.reversed,
-                                    &text_layout_details,
-                                )
-                        } else {
-                            self.selections.build_columnar_selection(
-                                &display_map,
-                                row,
-                                &positions,
-                                selection.reversed,
-                                &text_layout_details,
-                            )
-                        };
-
-                        if let Some(new_selection) = new_selection {
-                            maybe_new_selection = Some(new_selection);
-                            break;
-                        }
-                    }
+                    let maybe_new_selection = if skip_soft_wrap {
+                        let goal_columns = goal_columns_by_selection_id
+                            .remove(&selection.id)
+                            .unwrap_or_else(|| {
+                                let start_col = selection.start.column;
+                                let end_col = selection.end.column;
+                                start_col.min(end_col)..start_col.max(end_col)
+                            });
+                        self.selections.find_next_columnar_selection_by_buffer_row(
+                            &display_map,
+                            row,
+                            end_row,
+                            above,
+                            &goal_columns,
+                            selection.reversed,
+                            &text_layout_details,
+                        )
+                    } else {
+                        self.selections.find_next_columnar_selection_by_display_row(
+                            &display_map,
+                            row,
+                            end_row,
+                            above,
+                            &positions,
+                            selection.reversed,
+                            &text_layout_details,
+                        )
+                    };
 
                     if let Some(new_selection) = maybe_new_selection {
                         group.stack.push(new_selection.id);
@@ -15327,12 +15505,10 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         self.select_next_match_internal(&display_map, false, None, window, cx)?;
-        let Some(select_next_state) = self.select_next_state.as_mut() else {
+        let Some(select_next_state) = self.select_next_state.as_mut().filter(|state| !state.done)
+        else {
             return Ok(());
         };
-        if select_next_state.done {
-            return Ok(());
-        }
 
         let mut new_selections = Vec::new();
 
@@ -15368,7 +15544,7 @@ impl Editor {
             return Ok(());
         }
 
-        self.unfold_ranges(&new_selections.clone(), false, false, cx);
+        self.unfold_ranges(&new_selections, false, false, cx);
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
             selections.select_ranges(new_selections)
         });
@@ -15390,8 +15566,7 @@ impl Editor {
             Some(Autoscroll::newest()),
             window,
             cx,
-        )?;
-        Ok(())
+        )
     }
 
     pub fn select_previous(
@@ -16319,6 +16494,119 @@ impl Editor {
                 },
             );
         }
+    }
+
+    pub fn move_to_start_of_larger_syntax_node(
+        &mut self,
+        _: &MoveToStartOfLargerSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_cursors_to_syntax_nodes(window, cx, false);
+    }
+
+    pub fn move_to_end_of_larger_syntax_node(
+        &mut self,
+        _: &MoveToEndOfLargerSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_cursors_to_syntax_nodes(window, cx, true);
+    }
+
+    fn move_cursors_to_syntax_nodes(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        move_to_end: bool,
+    ) -> bool {
+        let old_selections: Box<[_]> = self
+            .selections
+            .all::<MultiBufferOffset>(&self.display_snapshot(cx))
+            .into();
+        if old_selections.is_empty() {
+            return false;
+        }
+
+        self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = self.buffer.read(cx).snapshot(cx);
+
+        let mut any_cursor_moved = false;
+        let new_selections = old_selections
+            .iter()
+            .map(|selection| {
+                if !selection.is_empty() {
+                    return selection.clone();
+                }
+
+                let selection_pos = selection.head();
+                let old_range = selection_pos..selection_pos;
+
+                let mut new_pos = selection_pos;
+                let mut search_range = old_range;
+                while let Some((node, range)) = buffer.syntax_ancestor(search_range.clone()) {
+                    search_range = range.clone();
+                    if !node.is_named()
+                        || display_map.intersects_fold(range.start)
+                        || display_map.intersects_fold(range.end)
+                        // If cursor is already at the end of the syntax node, continue searching
+                        || (move_to_end && range.end == selection_pos)
+                        // If cursor is already at the start of the syntax node, continue searching
+                        || (!move_to_end && range.start == selection_pos)
+                    {
+                        continue;
+                    }
+
+                    // If we found a string_content node, find the largest parent that is still string_content
+                    // Enables us to skip to the end of strings without taking multiple steps inside the string
+                    let (_, final_range) = if node.kind() == "string_content" {
+                        let mut current_node = node;
+                        let mut current_range = range;
+                        while let Some((parent, parent_range)) =
+                            buffer.syntax_ancestor(current_range.clone())
+                        {
+                            if parent.kind() == "string_content" {
+                                current_node = parent;
+                                current_range = parent_range;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        (current_node, current_range)
+                    } else {
+                        (node, range)
+                    };
+
+                    new_pos = if move_to_end {
+                        final_range.end
+                    } else {
+                        final_range.start
+                    };
+
+                    break;
+                }
+
+                any_cursor_moved |= new_pos != selection_pos;
+
+                Selection {
+                    id: selection.id,
+                    start: new_pos,
+                    end: new_pos,
+                    goal: SelectionGoal::None,
+                    reversed: false,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        self.change_selections(Default::default(), window, cx, |s| {
+            s.select(new_selections);
+        });
+        self.request_autoscroll(Autoscroll::newest(), cx);
+
+        any_cursor_moved
     }
 
     fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
@@ -17286,6 +17574,8 @@ impl Editor {
             return Task::ready(Ok(Navigated::No));
         };
 
+        let nav_entry = self.navigation_entry(self.selections.newest_anchor().head(), cx);
+
         cx.spawn_in(window, async move |editor, cx| {
             let Some(definitions) = definitions.await? else {
                 return Ok(Navigated::No);
@@ -17301,6 +17591,7 @@ impl Editor {
                             })
                             .map(HoverLink::Text)
                             .collect::<Vec<_>>(),
+                        nav_entry,
                         split,
                         window,
                         cx,
@@ -17393,6 +17684,7 @@ impl Editor {
         &mut self,
         kind: Option<GotoDefinitionKind>,
         definitions: Vec<HoverLink>,
+        origin: Option<NavigationEntry>,
         split: bool,
         window: &mut Window,
         cx: &mut Context<Editor>,
@@ -17482,16 +17774,34 @@ impl Editor {
                     .update_in(cx, |workspace, window, cx| {
                         let allow_preview = PreviewTabsSettings::get_global(cx)
                             .enable_preview_multibuffer_from_code_navigation;
-                        Self::open_locations_in_multibuffer(
-                            workspace,
-                            locations,
-                            title,
-                            split,
-                            allow_preview,
-                            MultibufferSelectionMode::First,
-                            window,
-                            cx,
-                        )
+                        if let Some((target_editor, target_pane)) =
+                            Self::open_locations_in_multibuffer(
+                                workspace,
+                                locations,
+                                title,
+                                split,
+                                allow_preview,
+                                MultibufferSelectionMode::First,
+                                window,
+                                cx,
+                            )
+                        {
+                            // We create our own nav history instead of using
+                            // `target_editor.nav_history` because `nav_history`
+                            // seems to be populated asynchronously when an item
+                            // is added to a pane
+                            let mut nav_history = target_pane
+                                .update(cx, |pane, _| pane.nav_history_for_item(&target_editor));
+                            target_editor.update(cx, |editor, cx| {
+                                let nav_data = editor
+                                    .navigation_data(editor.selections.newest_anchor().head(), cx);
+                                let target =
+                                    Some(nav_history.navigation_entry(Some(
+                                        Arc::new(nav_data) as Arc<dyn Any + Send + Sync>
+                                    )));
+                                nav_history.push_tag(origin, target);
+                            })
+                        }
                     })
                     .is_ok();
 
@@ -17531,21 +17841,26 @@ impl Editor {
                 let target_range = target_ranges.first().unwrap().clone();
 
                 editor.update_in(cx, |editor, window, cx| {
-                    let range = target_range.to_point(target_buffer.read(cx));
-                    let range = editor.range_for_match(&range);
+                    let range = editor.range_for_match(&target_range);
                     let range = collapse_multiline_range(range);
 
                     if !split
                         && Some(&target_buffer) == editor.buffer.read(cx).as_singleton().as_ref()
                     {
                         editor.go_to_singleton_buffer_range(range, window, cx);
+
+                        let target =
+                            editor.navigation_entry(editor.selections.newest_anchor().head(), cx);
+                        if let Some(mut nav_history) = editor.nav_history.clone() {
+                            nav_history.push_tag(origin, target);
+                        }
                     } else {
                         let Some(workspace) = workspace else {
                             return Navigated::No;
                         };
                         let pane = workspace.read(cx).active_pane().clone();
                         window.defer(cx, move |window, cx| {
-                            let target_editor: Entity<Self> =
+                            let (target_editor, target_pane): (Entity<Self>, Entity<Pane>) =
                                 workspace.update(cx, |workspace, cx| {
                                     let pane = if split {
                                         workspace.adjacent_pane(window, cx)
@@ -17559,8 +17874,8 @@ impl Editor {
                                     let allow_new_preview = preview_tabs_settings
                                         .enable_preview_file_from_code_navigation;
 
-                                    workspace.open_project_item(
-                                        pane,
+                                    let editor = workspace.open_project_item(
+                                        pane.clone(),
                                         target_buffer.clone(),
                                         true,
                                         true,
@@ -17568,13 +17883,30 @@ impl Editor {
                                         allow_new_preview,
                                         window,
                                         cx,
-                                    )
+                                    );
+                                    (editor, pane)
                                 });
+                            // We create our own nav history instead of using
+                            // `target_editor.nav_history` because `nav_history`
+                            // seems to be populated asynchronously when an item
+                            // is added to a pane
+                            let mut nav_history = target_pane
+                                .update(cx, |pane, _| pane.nav_history_for_item(&target_editor));
                             target_editor.update(cx, |target_editor, cx| {
                                 // When selecting a definition in a different buffer, disable the nav history
                                 // to avoid creating a history entry at the previous cursor location.
                                 pane.update(cx, |pane, _| pane.disable_history());
                                 target_editor.go_to_singleton_buffer_range(range, window, cx);
+
+                                let nav_data = target_editor.navigation_data(
+                                    target_editor.selections.newest_anchor().head(),
+                                    cx,
+                                );
+                                let target =
+                                    Some(nav_history.navigation_entry(Some(
+                                        Arc::new(nav_data) as Arc<dyn Any + Send + Sync>
+                                    )));
+                                nav_history.push_tag(origin, target);
                                 pane.update(cx, |pane, _| pane.enable_history());
                             });
                         });
@@ -17933,10 +18265,10 @@ impl Editor {
         multibuffer_selection_mode: MultibufferSelectionMode,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) {
+    ) -> Option<(Entity<Editor>, Entity<Pane>)> {
         if locations.is_empty() {
             log::error!("bug: open_locations_in_multibuffer called with empty list of locations");
-            return;
+            return None;
         }
 
         let capability = workspace.project().read(cx).capability();
@@ -18017,7 +18349,7 @@ impl Editor {
             }
         });
 
-        let item = Box::new(editor);
+        let item = Box::new(editor.clone());
 
         let pane = if split {
             workspace.adjacent_pane(window, cx)
@@ -18036,6 +18368,8 @@ impl Editor {
             }
             pane.add_item(item, activate_pane, true, destination_index, window, cx);
         });
+
+        Some((editor, pane))
     }
 
     pub fn rename(
@@ -20704,6 +21038,1119 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_show_diff_review_button(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_diff_review_button = show;
+        cx.notify();
+    }
+
+    pub fn show_diff_review_button(&self) -> bool {
+        self.show_diff_review_button
+    }
+
+    pub fn render_diff_review_button(
+        &self,
+        display_row: DisplayRow,
+        width: Pixels,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let text_color = cx.theme().colors().text;
+        let icon_color = cx.theme().colors().icon_accent;
+
+        h_flex()
+            .id("diff_review_button")
+            .cursor_pointer()
+            .w(width - px(1.))
+            .h(relative(0.9))
+            .justify_center()
+            .rounded_sm()
+            .border_1()
+            .border_color(text_color.opacity(0.1))
+            .bg(text_color.opacity(0.15))
+            .hover(|s| {
+                s.bg(icon_color.opacity(0.4))
+                    .border_color(icon_color.opacity(0.5))
+            })
+            .child(Icon::new(IconName::Plus).size(IconSize::Small))
+            .tooltip(Tooltip::text("Add Review"))
+            .on_click(cx.listener(move |editor, _event: &ClickEvent, window, cx| {
+                editor.show_diff_review_overlay(display_row, window, cx);
+            }))
+    }
+
+    /// Calculates the appropriate block height for the diff review overlay.
+    /// Height is in lines: 2 for input row, 1 for header when comments exist,
+    /// and 2 lines per comment when expanded.
+    fn calculate_overlay_height(
+        &self,
+        hunk_key: &DiffHunkKey,
+        comments_expanded: bool,
+        snapshot: &MultiBufferSnapshot,
+    ) -> u32 {
+        let comment_count = self.hunk_comment_count(hunk_key, snapshot);
+        let base_height: u32 = 2; // Input row with avatar and buttons
+
+        if comment_count == 0 {
+            base_height
+        } else if comments_expanded {
+            // Header (1 line) + 2 lines per comment
+            base_height + 1 + (comment_count as u32 * 2)
+        } else {
+            // Just header when collapsed
+            base_height + 1
+        }
+    }
+
+    pub fn show_diff_review_overlay(
+        &mut self,
+        display_row: DisplayRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Check if there's already an overlay for the same hunk - if so, just focus it
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let editor_snapshot = self.snapshot(window, cx);
+        let display_point = DisplayPoint::new(display_row, 0);
+        let buffer_point = editor_snapshot
+            .display_snapshot
+            .display_point_to_point(display_point, Bias::Left);
+
+        // Compute the hunk key for this display row
+        let file_path = buffer_snapshot
+            .file_at(Point::new(buffer_point.row, 0))
+            .map(|file: &Arc<dyn language::File>| file.path().clone())
+            .unwrap_or_else(|| Arc::from(util::rel_path::RelPath::empty()));
+        let hunk_start_anchor = buffer_snapshot.anchor_before(Point::new(buffer_point.row, 0));
+        let new_hunk_key = DiffHunkKey {
+            file_path,
+            hunk_start_anchor,
+        };
+
+        // Check if we already have an overlay for this hunk
+        if let Some(existing_overlay) = self.diff_review_overlays.iter().find(|overlay| {
+            Self::hunk_keys_match(&overlay.hunk_key, &new_hunk_key, &buffer_snapshot)
+        }) {
+            // Just focus the existing overlay's prompt editor
+            let focus_handle = existing_overlay.prompt_editor.focus_handle(cx);
+            window.focus(&focus_handle, cx);
+            return;
+        }
+
+        // Dismiss overlays that have no comments for their hunks
+        self.dismiss_overlays_without_comments(cx);
+
+        // Get the current user's avatar URI from the project's user_store
+        let user_avatar_uri = self.project.as_ref().and_then(|project| {
+            let user_store = project.read(cx).user_store();
+            user_store
+                .read(cx)
+                .current_user()
+                .map(|user| user.avatar_uri.clone())
+        });
+
+        // Create anchor at the end of the row so the block appears immediately below it
+        let line_len = buffer_snapshot.line_len(MultiBufferRow(buffer_point.row));
+        let anchor = buffer_snapshot.anchor_after(Point::new(buffer_point.row, line_len));
+
+        // Use the hunk key we already computed
+        let hunk_key = new_hunk_key;
+
+        // Create the prompt editor for the review input
+        let prompt_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Add a review comment...", window, cx);
+            editor
+        });
+
+        // Register the Newline action on the prompt editor to submit the review
+        let parent_editor = cx.entity().downgrade();
+        let subscription = prompt_editor.update(cx, |prompt_editor, _cx| {
+            prompt_editor.register_action({
+                let parent_editor = parent_editor.clone();
+                move |_: &crate::actions::Newline, window, cx| {
+                    if let Some(editor) = parent_editor.upgrade() {
+                        editor.update(cx, |editor, cx| {
+                            editor.submit_diff_review_comment(window, cx);
+                        });
+                    }
+                }
+            })
+        });
+
+        // Calculate initial height based on existing comments for this hunk
+        let initial_height = self.calculate_overlay_height(&hunk_key, true, &buffer_snapshot);
+
+        // Create the overlay block
+        let prompt_editor_for_render = prompt_editor.clone();
+        let hunk_key_for_render = hunk_key.clone();
+        let editor_handle = cx.entity().downgrade();
+        let block = BlockProperties {
+            style: BlockStyle::Sticky,
+            placement: BlockPlacement::Below(anchor),
+            height: Some(initial_height),
+            render: Arc::new(move |cx| {
+                Self::render_diff_review_overlay(
+                    &prompt_editor_for_render,
+                    &hunk_key_for_render,
+                    &editor_handle,
+                    cx,
+                )
+            }),
+            priority: 0,
+        };
+
+        let block_ids = self.insert_blocks([block], None, cx);
+        let Some(block_id) = block_ids.into_iter().next() else {
+            log::error!("Failed to insert diff review overlay block");
+            return;
+        };
+
+        self.diff_review_overlays.push(DiffReviewOverlay {
+            display_row,
+            block_id,
+            prompt_editor: prompt_editor.clone(),
+            hunk_key,
+            comments_expanded: true,
+            inline_edit_editors: HashMap::default(),
+            inline_edit_subscriptions: HashMap::default(),
+            user_avatar_uri,
+            _subscription: subscription,
+        });
+
+        // Focus the prompt editor
+        let focus_handle = prompt_editor.focus_handle(cx);
+        window.focus(&focus_handle, cx);
+
+        cx.notify();
+    }
+
+    /// Dismisses all diff review overlays.
+    pub fn dismiss_all_diff_review_overlays(&mut self, cx: &mut Context<Self>) {
+        if self.diff_review_overlays.is_empty() {
+            return;
+        }
+        let block_ids: HashSet<_> = self
+            .diff_review_overlays
+            .drain(..)
+            .map(|overlay| overlay.block_id)
+            .collect();
+        self.remove_blocks(block_ids, None, cx);
+        cx.notify();
+    }
+
+    /// Dismisses overlays that have no comments stored for their hunks.
+    /// Keeps overlays that have at least one comment.
+    fn dismiss_overlays_without_comments(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+
+        // First, compute which overlays have comments (to avoid borrow issues with retain)
+        let overlays_with_comments: Vec<bool> = self
+            .diff_review_overlays
+            .iter()
+            .map(|overlay| self.hunk_comment_count(&overlay.hunk_key, &snapshot) > 0)
+            .collect();
+
+        // Now collect block IDs to remove and retain overlays
+        let mut block_ids_to_remove = HashSet::default();
+        let mut index = 0;
+        self.diff_review_overlays.retain(|overlay| {
+            let has_comments = overlays_with_comments[index];
+            index += 1;
+            if !has_comments {
+                block_ids_to_remove.insert(overlay.block_id);
+            }
+            has_comments
+        });
+
+        if !block_ids_to_remove.is_empty() {
+            self.remove_blocks(block_ids_to_remove, None, cx);
+            cx.notify();
+        }
+    }
+
+    /// Refreshes the diff review overlay block to update its height and render function.
+    /// Uses resize_blocks and replace_blocks to avoid visual flicker from remove+insert.
+    fn refresh_diff_review_overlay_height(
+        &mut self,
+        hunk_key: &DiffHunkKey,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Extract all needed data from overlay first to avoid borrow conflicts
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let (comments_expanded, block_id, prompt_editor) = {
+            let Some(overlay) = self
+                .diff_review_overlays
+                .iter()
+                .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot))
+            else {
+                return;
+            };
+
+            (
+                overlay.comments_expanded,
+                overlay.block_id,
+                overlay.prompt_editor.clone(),
+            )
+        };
+
+        // Calculate new height
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let new_height = self.calculate_overlay_height(hunk_key, comments_expanded, &snapshot);
+
+        // Update the block height using resize_blocks (avoids flicker)
+        let mut heights = HashMap::default();
+        heights.insert(block_id, new_height);
+        self.resize_blocks(heights, None, cx);
+
+        // Update the render function using replace_blocks (avoids flicker)
+        let hunk_key_for_render = hunk_key.clone();
+        let editor_handle = cx.entity().downgrade();
+        let render: Arc<dyn Fn(&mut BlockContext) -> AnyElement + Send + Sync> =
+            Arc::new(move |cx| {
+                Self::render_diff_review_overlay(
+                    &prompt_editor,
+                    &hunk_key_for_render,
+                    &editor_handle,
+                    cx,
+                )
+            });
+
+        let mut renderers = HashMap::default();
+        renderers.insert(block_id, render);
+        self.replace_blocks(renderers, None, cx);
+    }
+
+    /// Action handler for SubmitDiffReviewComment.
+    pub fn submit_diff_review_comment_action(
+        &mut self,
+        _: &SubmitDiffReviewComment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.submit_diff_review_comment(window, cx);
+    }
+
+    /// Stores the diff review comment locally.
+    /// Comments are stored per-hunk and can later be batch-submitted to the Agent panel.
+    pub fn submit_diff_review_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Find the overlay that currently has focus
+        let overlay_index = self
+            .diff_review_overlays
+            .iter()
+            .position(|overlay| overlay.prompt_editor.focus_handle(cx).is_focused(window));
+        let Some(overlay_index) = overlay_index else {
+            return;
+        };
+        let overlay = &self.diff_review_overlays[overlay_index];
+
+        // Get the comment text from the prompt editor
+        let comment_text = overlay.prompt_editor.read(cx).text(cx).trim().to_string();
+
+        // Don't submit if the comment is empty
+        if comment_text.is_empty() {
+            return;
+        }
+
+        // Get the display row and hunk key
+        let display_row = overlay.display_row;
+        let hunk_key = overlay.hunk_key.clone();
+
+        // Convert to buffer position for anchors
+        let snapshot = self.snapshot(window, cx);
+        let display_point = DisplayPoint::new(display_row, 0);
+        let buffer_point = snapshot
+            .display_snapshot
+            .display_point_to_point(display_point, Bias::Left);
+
+        // Get the line range
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let line_start = Point::new(buffer_point.row, 0);
+        let line_end = Point::new(
+            buffer_point.row,
+            buffer_snapshot.line_len(MultiBufferRow(buffer_point.row)),
+        );
+
+        // Create anchors for the selection
+        let anchor_start = buffer_snapshot.anchor_after(line_start);
+        let anchor_end = buffer_snapshot.anchor_before(line_end);
+
+        // Store the comment locally
+        self.add_review_comment(
+            hunk_key.clone(),
+            comment_text,
+            display_row,
+            anchor_start..anchor_end,
+            cx,
+        );
+
+        // Clear the prompt editor but keep the overlay open
+        if let Some(overlay) = self.diff_review_overlays.get(overlay_index) {
+            overlay.prompt_editor.update(cx, |editor, cx| {
+                editor.clear(window, cx);
+            });
+        }
+
+        // Refresh the overlay to update the block height for the new comment
+        self.refresh_diff_review_overlay_height(&hunk_key, window, cx);
+
+        cx.notify();
+    }
+
+    /// Returns the prompt editor for the diff review overlay, if one is active.
+    /// This is primarily used for testing.
+    pub fn diff_review_prompt_editor(&self) -> Option<&Entity<Editor>> {
+        self.diff_review_overlays
+            .first()
+            .map(|overlay| &overlay.prompt_editor)
+    }
+
+    /// Returns the display row for the first diff review overlay, if one is active.
+    pub fn diff_review_display_row(&self) -> Option<DisplayRow> {
+        self.diff_review_overlays
+            .first()
+            .map(|overlay| overlay.display_row)
+    }
+
+    /// Sets whether the comments section is expanded in the diff review overlay.
+    /// This is primarily used for testing.
+    pub fn set_diff_review_comments_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
+        for overlay in &mut self.diff_review_overlays {
+            overlay.comments_expanded = expanded;
+        }
+        cx.notify();
+    }
+
+    /// Compares two DiffHunkKeys for equality by resolving their anchors.
+    fn hunk_keys_match(a: &DiffHunkKey, b: &DiffHunkKey, snapshot: &MultiBufferSnapshot) -> bool {
+        a.file_path == b.file_path
+            && a.hunk_start_anchor.to_point(snapshot) == b.hunk_start_anchor.to_point(snapshot)
+    }
+
+    /// Returns comments for a specific hunk, ordered by creation time.
+    pub fn comments_for_hunk<'a>(
+        &'a self,
+        key: &DiffHunkKey,
+        snapshot: &MultiBufferSnapshot,
+    ) -> &'a [StoredReviewComment] {
+        let key_point = key.hunk_start_anchor.to_point(snapshot);
+        self.stored_review_comments
+            .iter()
+            .find(|(k, _)| {
+                k.file_path == key.file_path && k.hunk_start_anchor.to_point(snapshot) == key_point
+            })
+            .map(|(_, comments)| comments.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Returns the total count of stored review comments across all hunks.
+    pub fn total_review_comment_count(&self) -> usize {
+        self.stored_review_comments
+            .iter()
+            .map(|(_, v)| v.len())
+            .sum()
+    }
+
+    /// Returns the count of comments for a specific hunk.
+    pub fn hunk_comment_count(&self, key: &DiffHunkKey, snapshot: &MultiBufferSnapshot) -> usize {
+        let key_point = key.hunk_start_anchor.to_point(snapshot);
+        self.stored_review_comments
+            .iter()
+            .find(|(k, _)| {
+                k.file_path == key.file_path && k.hunk_start_anchor.to_point(snapshot) == key_point
+            })
+            .map(|(_, v)| v.len())
+            .unwrap_or(0)
+    }
+
+    /// Adds a new review comment to a specific hunk.
+    pub fn add_review_comment(
+        &mut self,
+        hunk_key: DiffHunkKey,
+        comment: String,
+        display_row: DisplayRow,
+        anchor_range: Range<Anchor>,
+        cx: &mut Context<Self>,
+    ) -> usize {
+        let id = self.next_review_comment_id;
+        self.next_review_comment_id += 1;
+
+        let stored_comment = StoredReviewComment::new(id, comment, display_row, anchor_range);
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let key_point = hunk_key.hunk_start_anchor.to_point(&snapshot);
+
+        // Find existing entry for this hunk or add a new one
+        if let Some((_, comments)) = self.stored_review_comments.iter_mut().find(|(k, _)| {
+            k.file_path == hunk_key.file_path
+                && k.hunk_start_anchor.to_point(&snapshot) == key_point
+        }) {
+            comments.push(stored_comment);
+        } else {
+            self.stored_review_comments
+                .push((hunk_key, vec![stored_comment]));
+        }
+
+        cx.emit(EditorEvent::ReviewCommentsChanged {
+            total_count: self.total_review_comment_count(),
+        });
+        cx.notify();
+        id
+    }
+
+    /// Removes a review comment by ID from any hunk.
+    pub fn remove_review_comment(&mut self, id: usize, cx: &mut Context<Self>) -> bool {
+        for (_, comments) in self.stored_review_comments.iter_mut() {
+            if let Some(index) = comments.iter().position(|c| c.id == id) {
+                comments.remove(index);
+                cx.emit(EditorEvent::ReviewCommentsChanged {
+                    total_count: self.total_review_comment_count(),
+                });
+                cx.notify();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Updates a review comment's text by ID.
+    pub fn update_review_comment(
+        &mut self,
+        id: usize,
+        new_comment: String,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        for (_, comments) in self.stored_review_comments.iter_mut() {
+            if let Some(comment) = comments.iter_mut().find(|c| c.id == id) {
+                comment.comment = new_comment;
+                comment.is_editing = false;
+                cx.emit(EditorEvent::ReviewCommentsChanged {
+                    total_count: self.total_review_comment_count(),
+                });
+                cx.notify();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Sets a comment's editing state.
+    pub fn set_comment_editing(&mut self, id: usize, is_editing: bool, cx: &mut Context<Self>) {
+        for (_, comments) in self.stored_review_comments.iter_mut() {
+            if let Some(comment) = comments.iter_mut().find(|c| c.id == id) {
+                comment.is_editing = is_editing;
+                cx.notify();
+                return;
+            }
+        }
+    }
+
+    /// Takes all stored comments from all hunks, clearing the storage.
+    /// Returns a Vec of (hunk_key, comments) pairs.
+    pub fn take_all_review_comments(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Vec<(DiffHunkKey, Vec<StoredReviewComment>)> {
+        // Dismiss all overlays when taking comments (e.g., when sending to agent)
+        self.dismiss_all_diff_review_overlays(cx);
+        let comments = std::mem::take(&mut self.stored_review_comments);
+        // Reset the ID counter since all comments have been taken
+        self.next_review_comment_id = 0;
+        cx.emit(EditorEvent::ReviewCommentsChanged { total_count: 0 });
+        cx.notify();
+        comments
+    }
+
+    /// Removes review comments whose anchors are no longer valid or whose
+    /// associated diff hunks no longer exist.
+    ///
+    /// This should be called when the buffer changes to prevent orphaned comments
+    /// from accumulating.
+    pub fn cleanup_orphaned_review_comments(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let original_count = self.total_review_comment_count();
+
+        // Remove comments with invalid hunk anchors
+        self.stored_review_comments
+            .retain(|(hunk_key, _)| hunk_key.hunk_start_anchor.is_valid(&snapshot));
+
+        // Also clean up individual comments with invalid anchor ranges
+        for (_, comments) in &mut self.stored_review_comments {
+            comments.retain(|comment| {
+                comment.anchor_range.start.is_valid(&snapshot)
+                    && comment.anchor_range.end.is_valid(&snapshot)
+            });
+        }
+
+        // Remove empty hunk entries
+        self.stored_review_comments
+            .retain(|(_, comments)| !comments.is_empty());
+
+        let new_count = self.total_review_comment_count();
+        if new_count != original_count {
+            cx.emit(EditorEvent::ReviewCommentsChanged {
+                total_count: new_count,
+            });
+            cx.notify();
+        }
+    }
+
+    /// Toggles the expanded state of the comments section in the overlay.
+    pub fn toggle_review_comments_expanded(
+        &mut self,
+        _: &ToggleReviewCommentsExpanded,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Find the overlay that currently has focus, or use the first one
+        let overlay_info = self.diff_review_overlays.iter_mut().find_map(|overlay| {
+            if overlay.prompt_editor.focus_handle(cx).is_focused(window) {
+                overlay.comments_expanded = !overlay.comments_expanded;
+                Some(overlay.hunk_key.clone())
+            } else {
+                None
+            }
+        });
+
+        // If no focused overlay found, toggle the first one
+        let hunk_key = overlay_info.or_else(|| {
+            self.diff_review_overlays.first_mut().map(|overlay| {
+                overlay.comments_expanded = !overlay.comments_expanded;
+                overlay.hunk_key.clone()
+            })
+        });
+
+        if let Some(hunk_key) = hunk_key {
+            self.refresh_diff_review_overlay_height(&hunk_key, window, cx);
+            cx.notify();
+        }
+    }
+
+    /// Handles the EditReviewComment action - sets a comment into editing mode.
+    pub fn edit_review_comment(
+        &mut self,
+        action: &EditReviewComment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let comment_id = action.id;
+
+        // Set the comment to editing mode
+        self.set_comment_editing(comment_id, true, cx);
+
+        // Find the overlay that contains this comment and create an inline editor if needed
+        // First, find which hunk this comment belongs to
+        let hunk_key = self
+            .stored_review_comments
+            .iter()
+            .find_map(|(key, comments)| {
+                if comments.iter().any(|c| c.id == comment_id) {
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            });
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        if let Some(hunk_key) = hunk_key {
+            if let Some(overlay) = self
+                .diff_review_overlays
+                .iter_mut()
+                .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, &hunk_key, &snapshot))
+            {
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    overlay.inline_edit_editors.entry(comment_id)
+                {
+                    // Find the comment text
+                    let comment_text = self
+                        .stored_review_comments
+                        .iter()
+                        .flat_map(|(_, comments)| comments)
+                        .find(|c| c.id == comment_id)
+                        .map(|c| c.comment.clone())
+                        .unwrap_or_default();
+
+                    // Create inline editor
+                    let parent_editor = cx.entity().downgrade();
+                    let inline_editor = cx.new(|cx| {
+                        let mut editor = Editor::single_line(window, cx);
+                        editor.set_text(&*comment_text, window, cx);
+                        // Select all text for easy replacement
+                        editor.select_all(&crate::actions::SelectAll, window, cx);
+                        editor
+                    });
+
+                    // Register the Newline action to confirm the edit
+                    let subscription = inline_editor.update(cx, |inline_editor, _cx| {
+                        inline_editor.register_action({
+                            let parent_editor = parent_editor.clone();
+                            move |_: &crate::actions::Newline, window, cx| {
+                                if let Some(editor) = parent_editor.upgrade() {
+                                    editor.update(cx, |editor, cx| {
+                                        editor.confirm_edit_review_comment(comment_id, window, cx);
+                                    });
+                                }
+                            }
+                        })
+                    });
+
+                    // Store the subscription to keep the action handler alive
+                    overlay
+                        .inline_edit_subscriptions
+                        .insert(comment_id, subscription);
+
+                    // Focus the inline editor
+                    let focus_handle = inline_editor.focus_handle(cx);
+                    window.focus(&focus_handle, cx);
+
+                    entry.insert(inline_editor);
+                }
+            }
+        }
+
+        cx.notify();
+    }
+
+    /// Confirms an inline edit of a review comment.
+    pub fn confirm_edit_review_comment(
+        &mut self,
+        comment_id: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Get the new text from the inline editor
+        // Find the overlay containing this comment's inline editor
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let hunk_key = self
+            .stored_review_comments
+            .iter()
+            .find_map(|(key, comments)| {
+                if comments.iter().any(|c| c.id == comment_id) {
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            });
+
+        let new_text = hunk_key
+            .as_ref()
+            .and_then(|hunk_key| {
+                self.diff_review_overlays
+                    .iter()
+                    .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot))
+            })
+            .as_ref()
+            .and_then(|overlay| overlay.inline_edit_editors.get(&comment_id))
+            .map(|editor| editor.read(cx).text(cx).trim().to_string());
+
+        if let Some(new_text) = new_text {
+            if !new_text.is_empty() {
+                self.update_review_comment(comment_id, new_text, cx);
+            }
+        }
+
+        // Remove the inline editor and its subscription
+        if let Some(hunk_key) = hunk_key {
+            if let Some(overlay) = self
+                .diff_review_overlays
+                .iter_mut()
+                .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, &hunk_key, &snapshot))
+            {
+                overlay.inline_edit_editors.remove(&comment_id);
+                overlay.inline_edit_subscriptions.remove(&comment_id);
+            }
+        }
+
+        // Clear editing state
+        self.set_comment_editing(comment_id, false, cx);
+    }
+
+    /// Cancels an inline edit of a review comment.
+    pub fn cancel_edit_review_comment(
+        &mut self,
+        comment_id: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Find which hunk this comment belongs to
+        let hunk_key = self
+            .stored_review_comments
+            .iter()
+            .find_map(|(key, comments)| {
+                if comments.iter().any(|c| c.id == comment_id) {
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            });
+
+        // Remove the inline editor and its subscription
+        if let Some(hunk_key) = hunk_key {
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+            if let Some(overlay) = self
+                .diff_review_overlays
+                .iter_mut()
+                .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, &hunk_key, &snapshot))
+            {
+                overlay.inline_edit_editors.remove(&comment_id);
+                overlay.inline_edit_subscriptions.remove(&comment_id);
+            }
+        }
+
+        // Clear editing state
+        self.set_comment_editing(comment_id, false, cx);
+    }
+
+    /// Action handler for ConfirmEditReviewComment.
+    pub fn confirm_edit_review_comment_action(
+        &mut self,
+        action: &ConfirmEditReviewComment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.confirm_edit_review_comment(action.id, window, cx);
+    }
+
+    /// Action handler for CancelEditReviewComment.
+    pub fn cancel_edit_review_comment_action(
+        &mut self,
+        action: &CancelEditReviewComment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cancel_edit_review_comment(action.id, window, cx);
+    }
+
+    /// Handles the DeleteReviewComment action - removes a comment.
+    pub fn delete_review_comment(
+        &mut self,
+        action: &DeleteReviewComment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Get the hunk key before removing the comment
+        // Find the hunk key from the comment itself
+        let comment_id = action.id;
+        let hunk_key = self
+            .stored_review_comments
+            .iter()
+            .find_map(|(key, comments)| {
+                if comments.iter().any(|c| c.id == comment_id) {
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            });
+
+        // Also get it from the overlay for refresh purposes
+        let overlay_hunk_key = self
+            .diff_review_overlays
+            .first()
+            .map(|o| o.hunk_key.clone());
+
+        self.remove_review_comment(action.id, cx);
+
+        // Refresh the overlay height after removing a comment
+        if let Some(hunk_key) = hunk_key.or(overlay_hunk_key) {
+            self.refresh_diff_review_overlay_height(&hunk_key, window, cx);
+        }
+    }
+
+    fn render_diff_review_overlay(
+        prompt_editor: &Entity<Editor>,
+        hunk_key: &DiffHunkKey,
+        editor_handle: &WeakEntity<Editor>,
+        cx: &mut BlockContext,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let colors = theme.colors();
+
+        // Get stored comments, expanded state, inline editors, and user avatar from the editor
+        let (comments, comments_expanded, inline_editors, user_avatar_uri) = editor_handle
+            .upgrade()
+            .map(|editor| {
+                let editor = editor.read(cx);
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                let comments = editor.comments_for_hunk(hunk_key, &snapshot).to_vec();
+                let snapshot = editor.buffer.read(cx).snapshot(cx);
+                let (expanded, editors, avatar_uri) = editor
+                    .diff_review_overlays
+                    .iter()
+                    .find(|overlay| Editor::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot))
+                    .as_ref()
+                    .map(|o| {
+                        (
+                            o.comments_expanded,
+                            o.inline_edit_editors.clone(),
+                            o.user_avatar_uri.clone(),
+                        )
+                    })
+                    .unwrap_or((true, HashMap::default(), None));
+                (comments, expanded, editors, avatar_uri)
+            })
+            .unwrap_or((Vec::new(), true, HashMap::default(), None));
+
+        let comment_count = comments.len();
+        let avatar_size = px(20.);
+        let action_icon_size = IconSize::XSmall;
+
+        v_flex()
+            .w_full()
+            .bg(colors.editor_background)
+            .border_b_1()
+            .border_color(colors.border)
+            .px_2()
+            .pb_2()
+            .gap_2()
+            // Top row: editable input with user's avatar
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1p5()
+                    .rounded_md()
+                    .bg(colors.surface_background)
+                    .child(
+                        div()
+                            .size(avatar_size)
+                            .flex_shrink_0()
+                            .rounded_full()
+                            .overflow_hidden()
+                            .child(if let Some(ref avatar_uri) = user_avatar_uri {
+                                Avatar::new(avatar_uri.clone())
+                                    .size(avatar_size)
+                                    .into_any_element()
+                            } else {
+                                Icon::new(IconName::Person)
+                                    .size(IconSize::Small)
+                                    .color(ui::Color::Muted)
+                                    .into_any_element()
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .border_1()
+                            .border_color(colors.border)
+                            .rounded_md()
+                            .bg(colors.editor_background)
+                            .px_2()
+                            .py_1()
+                            .child(prompt_editor.clone()),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_shrink_0()
+                            .gap_1()
+                            .child(
+                                IconButton::new("diff-review-close", IconName::Close)
+                                    .icon_color(ui::Color::Muted)
+                                    .icon_size(action_icon_size)
+                                    .tooltip(Tooltip::text("Close"))
+                                    .on_click(|_, window, cx| {
+                                        window
+                                            .dispatch_action(Box::new(crate::actions::Cancel), cx);
+                                    }),
+                            )
+                            .child(
+                                IconButton::new("diff-review-add", IconName::Return)
+                                    .icon_color(ui::Color::Muted)
+                                    .icon_size(action_icon_size)
+                                    .tooltip(Tooltip::text("Add comment"))
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(crate::actions::SubmitDiffReviewComment),
+                                            cx,
+                                        );
+                                    }),
+                            ),
+                    ),
+            )
+            // Expandable comments section (only shown when there are comments)
+            .when(comment_count > 0, |el| {
+                el.child(Self::render_comments_section(
+                    comments,
+                    comments_expanded,
+                    inline_editors,
+                    user_avatar_uri,
+                    avatar_size,
+                    action_icon_size,
+                    colors,
+                ))
+            })
+            .into_any_element()
+    }
+
+    fn render_comments_section(
+        comments: Vec<StoredReviewComment>,
+        expanded: bool,
+        inline_editors: HashMap<usize, Entity<Editor>>,
+        user_avatar_uri: Option<SharedUri>,
+        avatar_size: Pixels,
+        action_icon_size: IconSize,
+        colors: &theme::ThemeColors,
+    ) -> impl IntoElement {
+        let comment_count = comments.len();
+
+        v_flex()
+            .w_full()
+            .gap_1()
+            // Header with expand/collapse toggle
+            .child(
+                h_flex()
+                    .id("review-comments-header")
+                    .w_full()
+                    .items_center()
+                    .gap_1()
+                    .px_2()
+                    .py_1()
+                    .cursor_pointer()
+                    .rounded_md()
+                    .hover(|style| style.bg(colors.ghost_element_hover))
+                    .on_click(|_, window: &mut Window, cx| {
+                        window.dispatch_action(
+                            Box::new(crate::actions::ToggleReviewCommentsExpanded),
+                            cx,
+                        );
+                    })
+                    .child(
+                        Icon::new(if expanded {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        })
+                        .size(IconSize::Small)
+                        .color(ui::Color::Muted),
+                    )
+                    .child(
+                        Label::new(format!(
+                            "{} Comment{}",
+                            comment_count,
+                            if comment_count == 1 { "" } else { "s" }
+                        ))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                    ),
+            )
+            // Comments list (when expanded)
+            .when(expanded, |el| {
+                el.children(comments.into_iter().map(|comment| {
+                    let inline_editor = inline_editors.get(&comment.id).cloned();
+                    Self::render_comment_row(
+                        comment,
+                        inline_editor,
+                        user_avatar_uri.clone(),
+                        avatar_size,
+                        action_icon_size,
+                        colors,
+                    )
+                }))
+            })
+    }
+
+    fn render_comment_row(
+        comment: StoredReviewComment,
+        inline_editor: Option<Entity<Editor>>,
+        user_avatar_uri: Option<SharedUri>,
+        avatar_size: Pixels,
+        action_icon_size: IconSize,
+        colors: &theme::ThemeColors,
+    ) -> impl IntoElement {
+        let comment_id = comment.id;
+        let is_editing = inline_editor.is_some();
+
+        h_flex()
+            .w_full()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1p5()
+            .rounded_md()
+            .bg(colors.surface_background)
+            .child(
+                div()
+                    .size(avatar_size)
+                    .flex_shrink_0()
+                    .rounded_full()
+                    .overflow_hidden()
+                    .child(if let Some(ref avatar_uri) = user_avatar_uri {
+                        Avatar::new(avatar_uri.clone())
+                            .size(avatar_size)
+                            .into_any_element()
+                    } else {
+                        Icon::new(IconName::Person)
+                            .size(IconSize::Small)
+                            .color(ui::Color::Muted)
+                            .into_any_element()
+                    }),
+            )
+            .child(if let Some(editor) = inline_editor {
+                // Inline edit mode: show an editable text field
+                div()
+                    .flex_1()
+                    .border_1()
+                    .border_color(colors.border)
+                    .rounded_md()
+                    .bg(colors.editor_background)
+                    .px_2()
+                    .py_1()
+                    .child(editor)
+                    .into_any_element()
+            } else {
+                // Display mode: show the comment text
+                div()
+                    .flex_1()
+                    .text_sm()
+                    .text_color(colors.text)
+                    .child(comment.comment)
+                    .into_any_element()
+            })
+            .child(if is_editing {
+                // Editing mode: show close and confirm buttons
+                h_flex()
+                    .gap_1()
+                    .child(
+                        IconButton::new(
+                            format!("diff-review-cancel-edit-{comment_id}"),
+                            IconName::Close,
+                        )
+                        .icon_color(ui::Color::Muted)
+                        .icon_size(action_icon_size)
+                        .tooltip(Tooltip::text("Cancel"))
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(crate::actions::CancelEditReviewComment {
+                                    id: comment_id,
+                                }),
+                                cx,
+                            );
+                        }),
+                    )
+                    .child(
+                        IconButton::new(
+                            format!("diff-review-confirm-edit-{comment_id}"),
+                            IconName::Return,
+                        )
+                        .icon_color(ui::Color::Muted)
+                        .icon_size(action_icon_size)
+                        .tooltip(Tooltip::text("Confirm"))
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(crate::actions::ConfirmEditReviewComment {
+                                    id: comment_id,
+                                }),
+                                cx,
+                            );
+                        }),
+                    )
+                    .into_any_element()
+            } else {
+                // Display mode: no action buttons for now (edit/delete not yet implemented)
+                gpui::Empty.into_any_element()
+            })
+    }
+
     pub fn set_masked(&mut self, masked: bool, cx: &mut Context<Self>) {
         if self.display_map.read(cx).masked != masked {
             self.display_map.update(cx, |map, _| map.masked = masked);
@@ -22043,6 +23490,9 @@ impl Editor {
                     self.update_visible_edit_prediction(window, cx);
                 }
 
+                // Clean up orphaned review comments after edits
+                self.cleanup_orphaned_review_comments(cx);
+
                 if let Some(buffer) = edited_buffer {
                     if buffer.read(cx).file().is_none() {
                         cx.emit(EditorEvent::TitleChanged);
@@ -22093,6 +23543,7 @@ impl Editor {
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.colorize_brackets(false, cx);
+                self.refresh_selected_text_highlights(true, window, cx);
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
@@ -22235,7 +23686,7 @@ impl Editor {
                     .into_iter()
                     .flatten(),
             )
-            .flat_map(|accent| accent.0.clone())
+            .flat_map(|accent| accent.0.clone().map(SharedString::from))
             .collect();
 
         Some(AccentData {
@@ -23179,18 +24630,100 @@ impl Editor {
                 && !folds.is_empty()
             {
                 let snapshot = buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
-                self.fold_ranges(
-                    folds
-                        .into_iter()
-                        .map(|(start, end)| {
-                            snapshot.clip_offset(MultiBufferOffset(start), Bias::Left)
-                                ..snapshot.clip_offset(MultiBufferOffset(end), Bias::Right)
+                let snapshot_len = snapshot.len().0;
+
+                // Helper: search for fingerprint in buffer, return offset if found
+                let find_fingerprint = |fingerprint: &str, search_start: usize| -> Option<usize> {
+                    // Ensure we start at a character boundary (defensive)
+                    let search_start = snapshot
+                        .clip_offset(MultiBufferOffset(search_start), Bias::Left)
+                        .0;
+                    let search_end = snapshot_len.saturating_sub(fingerprint.len());
+
+                    let mut byte_offset = search_start;
+                    for ch in snapshot.chars_at(MultiBufferOffset(search_start)) {
+                        if byte_offset > search_end {
+                            break;
+                        }
+                        if snapshot.contains_str_at(MultiBufferOffset(byte_offset), fingerprint) {
+                            return Some(byte_offset);
+                        }
+                        byte_offset += ch.len_utf8();
+                    }
+                    None
+                };
+
+                // Track search position to handle duplicate fingerprints correctly.
+                // Folds are stored in document order, so we advance after each match.
+                let mut search_start = 0usize;
+
+                let valid_folds: Vec<_> = folds
+                    .into_iter()
+                    .filter_map(|(stored_start, stored_end, start_fp, end_fp)| {
+                        // Skip folds without fingerprints (old data before migration)
+                        let sfp = start_fp?;
+                        let efp = end_fp?;
+                        let efp_len = efp.len();
+
+                        // Fast path: check if fingerprints match at stored offsets
+                        // Note: end_fp is content BEFORE fold end, so check at (stored_end - efp_len)
+                        let start_matches = stored_start < snapshot_len
+                            && snapshot.contains_str_at(MultiBufferOffset(stored_start), &sfp);
+                        let efp_check_pos = stored_end.saturating_sub(efp_len);
+                        let end_matches = efp_check_pos >= stored_start
+                            && stored_end <= snapshot_len
+                            && snapshot.contains_str_at(MultiBufferOffset(efp_check_pos), &efp);
+
+                        let (new_start, new_end) = if start_matches && end_matches {
+                            // Offsets unchanged, use stored values
+                            (stored_start, stored_end)
+                        } else if sfp == efp {
+                            // Short fold: identical fingerprints can only match once per search
+                            // Use stored fold length to compute new_end
+                            let new_start = find_fingerprint(&sfp, search_start)?;
+                            let fold_len = stored_end - stored_start;
+                            let new_end = new_start + fold_len;
+                            (new_start, new_end)
+                        } else {
+                            // Slow path: search for fingerprints in buffer
+                            let new_start = find_fingerprint(&sfp, search_start)?;
+                            // Search for end_fp after start, then add efp_len to get actual fold end
+                            let efp_pos = find_fingerprint(&efp, new_start + sfp.len())?;
+                            let new_end = efp_pos + efp_len;
+                            (new_start, new_end)
+                        };
+
+                        // Advance search position for next fold
+                        search_start = new_end;
+
+                        // Validate fold makes sense (end must be after start)
+                        if new_end <= new_start {
+                            return None;
+                        }
+
+                        Some(
+                            snapshot.clip_offset(MultiBufferOffset(new_start), Bias::Left)
+                                ..snapshot.clip_offset(MultiBufferOffset(new_end), Bias::Right),
+                        )
+                    })
+                    .collect();
+
+                if !valid_folds.is_empty() {
+                    self.fold_ranges(valid_folds, false, window, cx);
+
+                    // Migrate folds to current entity_id before workspace cleanup runs.
+                    // Entity IDs change between sessions, but workspace cleanup deletes
+                    // old editor rows (cascading to folds) based on current entity IDs.
+                    let new_editor_id = cx.entity().entity_id().as_u64() as ItemId;
+                    if new_editor_id != item_id {
+                        cx.spawn(async move |_, _| {
+                            DB.migrate_editor_folds(item_id, new_editor_id, workspace_id)
+                                .await
+                                .log_err();
                         })
-                        .collect(),
-                    false,
-                    window,
-                    cx,
-                );
+                        .detach();
+                    }
+                }
             }
 
             if let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err()
@@ -25446,31 +26979,37 @@ impl EditorSnapshot {
     /// This is positive if `base` is before `line`.
     fn relative_line_delta(
         &self,
-        base: DisplayRow,
-        line: DisplayRow,
+        current_selection_head: DisplayRow,
+        first_visible_row: DisplayRow,
         consider_wrapped_lines: bool,
     ) -> i64 {
-        let point = DisplayPoint::new(line, 0).to_point(self);
-        self.relative_line_delta_to_point(base, point, consider_wrapped_lines)
-    }
+        let current_selection_head = current_selection_head.as_display_point().to_point(self);
+        let first_visible_row = first_visible_row.as_display_point().to_point(self);
 
-    /// Returns the line delta from `base` to `point` in the multibuffer.
-    ///
-    /// This is positive if `base` is before `point`.
-    pub fn relative_line_delta_to_point(
-        &self,
-        base: DisplayRow,
-        point: Point,
-        consider_wrapped_lines: bool,
-    ) -> i64 {
-        let base_point = DisplayPoint::new(base, 0).to_point(self);
         if consider_wrapped_lines {
             let wrap_snapshot = self.wrap_snapshot();
-            let base_wrap_row = wrap_snapshot.make_wrap_point(base_point, Bias::Left).row();
-            let wrap_row = wrap_snapshot.make_wrap_point(point, Bias::Left).row();
+            let base_wrap_row = wrap_snapshot
+                .make_wrap_point(current_selection_head, Bias::Left)
+                .row();
+            let wrap_row = wrap_snapshot
+                .make_wrap_point(first_visible_row, Bias::Left)
+                .row();
             wrap_row.0 as i64 - base_wrap_row.0 as i64
         } else {
-            point.row as i64 - base_point.row as i64
+            let folds = if current_selection_head < first_visible_row {
+                self.folds_in_range(current_selection_head..first_visible_row)
+            } else {
+                self.folds_in_range(first_visible_row..current_selection_head)
+            };
+
+            let folded_lines = folds
+                .map(|fold| {
+                    let range = fold.range.0.to_point(self);
+                    range.end.row.saturating_sub(range.start.row)
+                })
+                .sum::<u32>() as i64;
+
+            first_visible_row.row as i64 - current_selection_head.row as i64 + folded_lines
         }
     }
 
@@ -25480,10 +27019,12 @@ impl EditorSnapshot {
     pub fn calculate_relative_line_numbers(
         &self,
         rows: &Range<DisplayRow>,
-        relative_to: DisplayRow,
+        current_selection_head: DisplayRow,
         count_wrapped_lines: bool,
     ) -> HashMap<DisplayRow, u32> {
-        let initial_offset = self.relative_line_delta(relative_to, rows.start, count_wrapped_lines);
+        let initial_offset =
+            self.relative_line_delta(current_selection_head, rows.start, count_wrapped_lines);
+        let current_selection_point = current_selection_head.as_display_point().to_point(self);
 
         self.row_infos(rows.start)
             .take(rows.len())
@@ -25494,10 +27035,23 @@ impl EditorSnapshot {
                     || (count_wrapped_lines && row_info.wrapped_buffer_row.is_some())
             })
             .enumerate()
-            .flat_map(|(i, (row, _row_info))| {
-                (row != relative_to)
-                    .then_some((row, (initial_offset + i as i64).unsigned_abs() as u32))
+            .filter(|(_, (row, row_info))| {
+                // We want to check here that
+                // - the row is not the current selection head to ensure the current
+                // line has absolute numbering
+                // - similarly, should the selection head live in a soft-wrapped line
+                // and we are not counting those, that the parent line keeps its
+                // absolute number
+                // - lastly, if we are in a deleted line, it is fine to number this
+                // relative with 0, as otherwise it would have no line number at all
+                (*row != current_selection_head
+                    && (count_wrapped_lines
+                        || row_info.buffer_row != Some(current_selection_point.row)))
+                    || row_info
+                        .diff_status
+                        .is_some_and(|status| status.is_deleted())
             })
+            .map(|(i, (row, _))| (row, (initial_offset + i as i64).unsigned_abs() as u32))
             .collect()
     }
 }
@@ -25529,6 +27083,11 @@ impl Deref for EditorSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditorEvent {
+    /// Emitted when the stored review comments change (added, removed, or updated).
+    ReviewCommentsChanged {
+        /// The new total count of review comments.
+        total_count: usize,
+    },
     InputIgnored {
         text: Arc<str>,
     },

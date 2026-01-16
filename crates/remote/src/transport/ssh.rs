@@ -1,6 +1,6 @@
 use crate::{
     RemoteArch, RemoteClientDelegate, RemoteOs, RemotePlatform,
-    remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
+    remote_client::{CommandTemplate, Interactive, RemoteConnection, RemoteConnectionOptions},
     transport::{parse_platform, parse_shell},
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -292,6 +292,7 @@ impl RemoteConnection for SshRemoteConnection {
         input_env: &HashMap<String, String>,
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
+        interactive: Interactive,
     ) -> Result<CommandTemplate> {
         let Self {
             ssh_path_style,
@@ -312,6 +313,7 @@ impl RemoteConnection for SshRemoteConnection {
             ssh_shell,
             *ssh_shell_kind,
             socket.ssh_args(),
+            interactive,
         )
     }
 
@@ -492,7 +494,8 @@ impl SshRemoteConnection {
         });
 
         let mut askpass =
-            askpass::AskPassSession::new(cx.background_executor(), askpass_delegate).await?;
+            askpass::AskPassSession::new(cx.background_executor().clone(), askpass_delegate)
+                .await?;
 
         delegate.set_status(Some("Connecting"), cx);
 
@@ -625,7 +628,7 @@ impl SshRemoteConnection {
         let dst_path =
             paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
 
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
         if let Some(remote_server_path) =
             super::build_remote_server_from_source(&self.ssh_platform, delegate.as_ref(), cx)
                 .await?
@@ -1486,6 +1489,7 @@ fn build_command(
     ssh_shell: &str,
     ssh_shell_kind: ShellKind,
     ssh_args: Vec<String>,
+    interactive: Interactive,
 ) -> Result<CommandTemplate> {
     use std::fmt::Write as _;
 
@@ -1552,7 +1556,15 @@ fn build_command(
         args.push(format!("{local_port}:{host}:{remote_port}"));
     }
 
-    args.push("-t".into());
+    // -q suppresses the "Connection to ... closed." message that SSH prints when
+    // the connection terminates with -t (pseudo-terminal allocation)
+    args.push("-q".into());
+    match interactive {
+        // -t forces pseudo-TTY allocation (for interactive use)
+        Interactive::Yes => args.push("-t".into()),
+        // -T disables pseudo-TTY allocation (for non-interactive piped stdio)
+        Interactive::No => args.push("-T".into()),
+    }
     args.push(exec);
 
     Ok(CommandTemplate {
@@ -1573,6 +1585,26 @@ mod tests {
         let mut env = HashMap::default();
         env.insert("SSH_VAR".to_string(), "ssh-val".to_string());
 
+        // Test non-interactive command (interactive=false should use -T)
+        let command = build_command(
+            Some("remote_program".to_string()),
+            &["arg1".to_string(), "arg2".to_string()],
+            &input_env,
+            Some("~/work".to_string()),
+            None,
+            env.clone(),
+            PathStyle::Posix,
+            "/bin/bash",
+            ShellKind::Posix,
+            vec!["-o".to_string(), "ControlMaster=auto".to_string()],
+            Interactive::No,
+        )?;
+        assert_eq!(command.program, "ssh");
+        // Should contain -T for non-interactive
+        assert!(command.args.iter().any(|arg| arg == "-T"));
+        assert!(!command.args.iter().any(|arg| arg == "-t"));
+
+        // Test interactive command (interactive=true should use -t)
         let command = build_command(
             Some("remote_program".to_string()),
             &["arg1".to_string(), "arg2".to_string()],
@@ -1584,6 +1616,7 @@ mod tests {
             "/bin/fish",
             ShellKind::Fish,
             vec!["-p".to_string(), "2222".to_string()],
+            Interactive::Yes,
         )?;
 
         assert_eq!(command.program, "ssh");
@@ -1592,6 +1625,7 @@ mod tests {
             [
                 "-p",
                 "2222",
+                "-q",
                 "-t",
                 "cd \"$HOME/work\" && exec env INPUT_VA=val remote_program arg1 arg2"
             ]
@@ -1605,7 +1639,7 @@ mod tests {
 
         let command = build_command(
             None,
-            &["arg1".to_string(), "arg2".to_string()],
+            &[],
             &input_env,
             None,
             Some((1, "foo".to_owned(), 2)),
@@ -1614,6 +1648,7 @@ mod tests {
             "/bin/fish",
             ShellKind::Fish,
             vec!["-p".to_string(), "2222".to_string()],
+            Interactive::Yes,
         )?;
 
         assert_eq!(command.program, "ssh");
@@ -1624,6 +1659,7 @@ mod tests {
                 "2222",
                 "-L",
                 "1:foo:2",
+                "-q",
                 "-t",
                 "cd && exec env INPUT_VA=val /bin/fish -l"
             ]

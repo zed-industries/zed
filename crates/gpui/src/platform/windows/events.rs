@@ -250,7 +250,7 @@ impl WindowsWindowInner {
         if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
             let mut runnables = self.main_receiver.clone().try_iter();
             while let Some(Ok(runnable)) = runnables.next() {
-                runnable.run_and_profile();
+                WindowsDispatcher::execute_runnable(runnable);
             }
             self.handle_paint_msg(handle)
         } else {
@@ -632,22 +632,34 @@ impl WindowsWindowInner {
             })?;
             Some(0)
         } else {
+            if lparam & GCS_RESULTSTR.0 > 0 {
+                let comp_result = parse_ime_composition_string(ctx, GCS_RESULTSTR)?;
+                self.with_input_handler(|input_handler| {
+                    input_handler
+                        .replace_text_in_range(None, &String::from_utf16_lossy(&comp_result));
+                })?;
+            }
             if lparam & GCS_COMPSTR.0 > 0 {
                 let comp_string = parse_ime_composition_string(ctx, GCS_COMPSTR)?;
                 let caret_pos =
                     (!comp_string.is_empty() && lparam & GCS_CURSORPOS.0 > 0).then(|| {
-                        let pos = retrieve_composition_cursor_position(ctx);
+                        let cursor_pos = retrieve_composition_cursor_position(ctx);
+                        let pos = if should_use_ime_cursor_position(ctx, cursor_pos) {
+                            cursor_pos
+                        } else {
+                            comp_string.len()
+                        };
                         pos..pos
                     });
                 self.with_input_handler(|input_handler| {
-                    input_handler.replace_and_mark_text_in_range(None, &comp_string, caret_pos);
+                    input_handler.replace_and_mark_text_in_range(
+                        None,
+                        &String::from_utf16_lossy(&comp_string),
+                        caret_pos,
+                    );
                 })?;
             }
-            if lparam & GCS_RESULTSTR.0 > 0 {
-                let comp_result = parse_ime_composition_string(ctx, GCS_RESULTSTR)?;
-                self.with_input_handler(|input_handler| {
-                    input_handler.replace_text_in_range(None, &comp_result);
-                })?;
+            if lparam & (GCS_RESULTSTR.0 | GCS_COMPSTR.0) > 0 {
                 return Some(0);
             }
 
@@ -1450,7 +1462,7 @@ fn process_key(vkey: VIRTUAL_KEY, scan_code: u16) -> (Option<String>, bool) {
     )
 }
 
-fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) -> Option<String> {
+fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) -> Option<Vec<u16>> {
     unsafe {
         let string_len = ImmGetCompositionStringW(ctx, comp_type, None, 0);
         if string_len >= 0 {
@@ -1465,7 +1477,7 @@ fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) ->
                 buffer.as_mut_ptr().cast::<u16>(),
                 string_len as usize / 2,
             );
-            Some(String::from_utf16_lossy(wstring))
+            Some(wstring.to_vec())
         } else {
             None
         }
@@ -1475,6 +1487,35 @@ fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) ->
 #[inline]
 fn retrieve_composition_cursor_position(ctx: HIMC) -> usize {
     unsafe { ImmGetCompositionStringW(ctx, GCS_CURSORPOS, None, 0) as usize }
+}
+
+fn should_use_ime_cursor_position(ctx: HIMC, cursor_pos: usize) -> bool {
+    let attrs_size = unsafe { ImmGetCompositionStringW(ctx, GCS_COMPATTR, None, 0) } as usize;
+    if attrs_size == 0 {
+        return false;
+    }
+
+    let mut attrs = vec![0u8; attrs_size];
+    let result = unsafe {
+        ImmGetCompositionStringW(
+            ctx,
+            GCS_COMPATTR,
+            Some(attrs.as_mut_ptr() as *mut _),
+            attrs_size as u32,
+        )
+    };
+    if result <= 0 {
+        return false;
+    }
+
+    // Keep the cursor adjacent to the inserted text by only using the suggested position
+    // if it's adjacent to unconverted text.
+    let at_cursor_is_input = cursor_pos < attrs.len() && attrs[cursor_pos] == (ATTR_INPUT as u8);
+    let before_cursor_is_input = cursor_pos > 0
+        && (cursor_pos - 1) < attrs.len()
+        && attrs[cursor_pos - 1] == (ATTR_INPUT as u8);
+
+    at_cursor_is_input || before_cursor_is_input
 }
 
 #[inline]
