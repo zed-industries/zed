@@ -1,5 +1,5 @@
 use crate::{
-    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModel2,
+    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModel,
     EditPredictionModelInput, EditPredictionStartedDebugEvent,
     open_ai_response::text_from_response, prediction::EditPredictionResult,
 };
@@ -30,7 +30,7 @@ impl MercuryModel {
     }
 }
 
-impl EditPredictionModel2 for MercuryModel {
+impl EditPredictionModel for MercuryModel {
     fn requires_context(&self) -> bool {
         true
     }

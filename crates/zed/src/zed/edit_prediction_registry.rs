@@ -204,7 +204,7 @@ fn assign_edit_prediction_provider(
                 && buffer.read(cx).file().is_some()
             {
                 let has_model = ep_store.update(cx, |ep_store, cx| {
-                    let model: Box<dyn edit_prediction::EditPredictionModel2> =
+                    let model: Box<dyn edit_prediction::EditPredictionModel> =
                         if let EditPredictionProvider::Experimental(name) = value {
                             if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
                                 && cx.has_flag::<SweepFeatureFlag>()

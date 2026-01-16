@@ -1,6 +1,6 @@
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
-    EditPredictionModel2, EditPredictionModelInput, EditPredictionStartedDebugEvent,
+    EditPredictionModel, EditPredictionModelInput, EditPredictionStartedDebugEvent,
     UserActionRecord, UserActionType, prediction::EditPredictionResult,
 };
 use anyhow::{Result, bail};
@@ -42,7 +42,7 @@ impl SweepModel {
     }
 }
 
-impl EditPredictionModel2 for SweepModel {
+impl EditPredictionModel for SweepModel {
     fn requires_context(&self) -> bool {
         true
     }

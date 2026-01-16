@@ -134,7 +134,7 @@ pub struct EditPredictionStore {
     _llm_token_subscription: Subscription,
     projects: HashMap<EntityId, ProjectState>,
     use_context: bool,
-    edit_prediction_model: Option<Box<dyn EditPredictionModel2>>,
+    edit_prediction_model: Option<Box<dyn EditPredictionModel>>,
     data_collection_choice: DataCollectionChoice,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
     shown_predictions: VecDeque<EditPrediction>,
@@ -220,7 +220,7 @@ pub struct StoredEvent {
     pub old_snapshot: TextBufferSnapshot,
 }
 
-pub trait EditPredictionModel2: 'static {
+pub trait EditPredictionModel: 'static {
     /// Whether the edit prediction store should collect LSP-based context.
     /// If `false` is returned, [Self::request_prediction] will get an empty `context` slice.
     fn requires_context(&self) -> bool {
@@ -675,7 +675,7 @@ impl EditPredictionStore {
         self.custom_predict_edits_url = Some(url.into());
     }
 
-    pub fn set_edit_prediction_model(&mut self, model: Box<dyn EditPredictionModel2>) {
+    pub fn set_edit_prediction_model(&mut self, model: Box<dyn EditPredictionModel>) {
         self.edit_prediction_model = Some(model);
     }
 
@@ -697,7 +697,7 @@ impl EditPredictionStore {
             .is_some_and(|model| model.is_enabled(cx))
     }
 
-    pub fn model(&self) -> Option<&dyn EditPredictionModel2> {
+    pub fn model(&self) -> Option<&dyn EditPredictionModel> {
         self.edit_prediction_model.as_deref()
     }
 

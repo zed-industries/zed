@@ -1,7 +1,7 @@
 use crate::prediction::EditPredictionResult;
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
-    EditPredictionModel2, EditPredictionModelInput, EditPredictionStartedDebugEvent,
+    EditPredictionModel, EditPredictionModelInput, EditPredictionStartedDebugEvent,
     ZedUpdateRequiredError, zeta_api,
 };
 use anyhow::{Result, anyhow};
@@ -60,7 +60,7 @@ impl Zeta2Model {
     }
 }
 
-impl EditPredictionModel2 for Zeta2Model {
+impl EditPredictionModel for Zeta2Model {
     fn requires_context(&self) -> bool {
         true
     }

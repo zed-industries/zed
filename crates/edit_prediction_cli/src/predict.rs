@@ -11,7 +11,7 @@ use crate::{
 };
 use anyhow::Context as _;
 use edit_prediction::{
-    DebugEvent, EditPredictionModel2, EditPredictionStore, mercury::MercuryModel,
+    DebugEvent, EditPredictionModel, EditPredictionStore, mercury::MercuryModel,
     sweep_ai::SweepModel, zeta1::Zeta1Model, zeta2::Zeta2Model,
 };
 use futures::{FutureExt as _, StreamExt as _, future::Shared};
@@ -92,7 +92,7 @@ pub async fn run_prediction(
         .context("EditPredictionStore not initialized")?;
 
     ep_store.update(&mut cx, |store, cx| {
-        let model: Box<dyn EditPredictionModel2> = match provider {
+        let model: Box<dyn EditPredictionModel> = match provider {
             PredictionProvider::Zeta1 => Box::new(Zeta1Model::new(
                 app_state.client.clone(),
                 app_state.user_store.clone(),

@@ -2,7 +2,7 @@ use std::{fmt::Write, ops::Range, path::Path, sync::Arc, time::Instant};
 
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
-    EditPredictionModel2, EditPredictionModelInput, EditPredictionStartedDebugEvent,
+    EditPredictionModel, EditPredictionModelInput, EditPredictionStartedDebugEvent,
     ZedUpdateRequiredError,
     cursor_excerpt::{editable_and_context_ranges_for_cursor_position, guess_token_count},
     prediction::EditPredictionResult,
@@ -60,7 +60,7 @@ impl Zeta1Model {
     }
 }
 
-impl EditPredictionModel2 for Zeta1Model {
+impl EditPredictionModel for Zeta1Model {
     fn requires_edit_history(&self) -> bool {
         true
     }
