@@ -6673,7 +6673,7 @@ impl AcpThreadView {
                 MentionUri::Thread { id, name } => {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
-                            panel.load_agent_thread(
+                            panel.open_thread(
                                 AgentSessionInfo {
                                     session_id: id,
                                     cwd: None,
