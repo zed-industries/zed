@@ -80,7 +80,7 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|workspace, _: &SwitchProject, window, cx| {
             if let Some(titlebar) = workspace
-                .titlebar_item()
+                .titlebar_item(cx)
                 .and_then(|item| item.downcast::<TitleBar>().ok())
             {
                 titlebar.update(cx, |titlebar, cx| {
@@ -375,7 +375,7 @@ impl TitleBar {
         let project = self.project.read(cx);
 
         if let Some(workspace) = self.workspace.upgrade() {
-            if let Some(override_id) = workspace.read(cx).active_worktree_override() {
+            if let Some(override_id) = workspace.read(cx).active_worktree_override(cx) {
                 if let Some(worktree) = project.worktree_for_id(override_id, cx) {
                     return Some(worktree);
                 }

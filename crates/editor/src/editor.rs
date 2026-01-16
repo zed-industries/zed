@@ -203,9 +203,9 @@ use ui::{
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
-    CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
-    RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
-    ViewId, MultiWorkspace, WorkspaceId, WorkspaceSettings,
+    CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, MultiWorkspace, OpenInTerminal,
+    OpenTerminal, Pane, RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection,
+    TabBarSettings, Toast, ViewId, WorkspaceId, WorkspaceSettings,
     item::{BreadcrumbText, ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::{CollapseDirection, SearchEvent},
@@ -330,7 +330,9 @@ pub fn init(cx: &mut App) {
     workspace::register_serializable_item::<Editor>(cx);
 
     cx.observe_new(
-        |workspace: &mut MultiWorkspace, _: Option<&mut Window>, _cx: &mut Context<MultiWorkspace>| {
+        |workspace: &mut MultiWorkspace,
+         _: Option<&mut Window>,
+         _cx: &mut Context<MultiWorkspace>| {
             workspace.register_action(Editor::new_file);
             workspace.register_action(Editor::new_file_split);
             workspace.register_action(Editor::new_file_vertical);
@@ -2151,11 +2153,11 @@ impl Editor {
                         if active_editor.entity_id() == cx.entity_id() {
                             let entity_id = cx.entity_id();
                             workspace.update(cx, |this, cx| {
-                                this.panes_mut()
-                                    .iter_mut()
-                                    .filter(|pane| pane.entity_id() != entity_id)
-                                    .for_each(|p| {
-                                        p.update(cx, |pane, _| {
+                                this.panes(cx)
+                                    .iter()
+                                    .filter(|pane: &&Entity<Pane>| pane.entity_id() != entity_id)
+                                    .for_each(|p: &Entity<Pane>| {
+                                        p.update(cx, |pane: &mut Pane, _| {
                                             pane.nav_history_mut().rename_item(
                                                 entity_id,
                                                 project_path.clone(),
@@ -6766,7 +6768,7 @@ impl Editor {
         let edited_buffers_already_open = {
             let other_editors: Vec<Entity<Editor>> = workspace
                 .read(cx)
-                .panes()
+                .panes(cx)
                 .iter()
                 .flat_map(|pane| pane.read(cx).items_of_type::<Editor>())
                 .filter(|editor| editor.entity_id() != cx.entity_id())
@@ -17813,14 +17815,14 @@ impl Editor {
                         let Some(workspace) = workspace else {
                             return Navigated::No;
                         };
-                        let pane = workspace.read(cx).active_pane().clone();
+                        let pane = workspace.read(cx).active_pane(cx);
                         window.defer(cx, move |window, cx| {
                             let target_editor: Entity<Self> =
                                 workspace.update(cx, |workspace, cx| {
                                     let pane = if split {
                                         workspace.adjacent_pane(window, cx)
                                     } else {
-                                        workspace.active_pane().clone()
+                                        workspace.active_pane(cx)
                                     };
 
                                     let preview_tabs_settings = PreviewTabsSettings::get_global(cx);
@@ -18121,11 +18123,11 @@ impl Editor {
                     if Some(&target_buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
                         editor.go_to_singleton_buffer_range(range, window, cx);
                     } else {
-                        let pane = workspace.read(cx).active_pane().clone();
+                        let pane = workspace.read(cx).active_pane(cx);
                         window.defer(cx, move |window, cx| {
                             let target_editor: Entity<Self> =
                                 workspace.update(cx, |workspace, cx| {
-                                    let pane = workspace.active_pane().clone();
+                                    let pane = workspace.active_pane(cx);
 
                                     let preview_tabs_settings = PreviewTabsSettings::get_global(cx);
                                     let keep_old_preview = preview_tabs_settings
@@ -18233,7 +18235,7 @@ impl Editor {
 
             multibuffer.with_title(title)
         });
-        let existing = workspace.active_pane().update(cx, |pane, cx| {
+        let existing = workspace.active_pane(cx).update(cx, |pane, cx| {
             pane.items()
                 .filter_map(|item| item.downcast::<Editor>())
                 .find(|editor| {
@@ -18292,7 +18294,7 @@ impl Editor {
         let pane = if split {
             workspace.adjacent_pane(window, cx)
         } else {
-            workspace.active_pane().clone()
+            workspace.active_pane(cx)
         };
         let activate_pane = split;
 
@@ -19198,7 +19200,7 @@ impl Editor {
             .as_ref()
             .and_then(|(workspace, _)| workspace.upgrade())
             .into_iter()
-            .flat_map(|workspace| workspace.read(cx).panes())
+            .flat_map(|workspace| workspace.read(cx).panes(cx))
             .flat_map(|pane| pane.read(cx).items_of_type::<Editor>())
             .filter(|editor| editor != &cx.entity())
             .flat_map(|editor| editor.read(cx).buffer().read(cx).all_buffers())
@@ -23890,7 +23892,7 @@ impl Editor {
                 let pane = if split {
                     workspace.adjacent_pane(window, cx)
                 } else {
-                    workspace.active_pane().clone()
+                    workspace.active_pane(cx)
                 };
 
                 for (buffer, (ranges, scroll_offset)) in new_selections_by_buffer {

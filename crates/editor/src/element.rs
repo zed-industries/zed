@@ -95,8 +95,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use util::post_inc;
 use util::{RangeExt, ResultExt, debug_panic};
 use workspace::{
-    CollaboratorId, ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel,
-    MultiWorkspace,
+    CollaboratorId, ItemHandle, ItemSettings, MultiWorkspace, OpenInTerminal, OpenTerminal,
+    RevealInProjectPanel,
     item::{BreadcrumbText, Item, ItemBufferKind},
     notifications::NotifyTaskExt,
 };
@@ -2002,7 +2002,7 @@ impl EditorElement {
         if minimap_settings.on_active_editor() {
             let active_editor = self.editor.read(cx).workspace().and_then(|ws| {
                 ws.read(cx)
-                    .active_pane()
+                    .active_pane(cx)
                     .read(cx)
                     .active_item()
                     .and_then(|i| i.act_as::<Editor>(cx))

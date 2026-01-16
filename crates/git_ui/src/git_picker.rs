@@ -556,7 +556,7 @@ fn open_with_tab(
     // explicitly selected in the title bar, not just the focused file's project.
     // This is only relevant if for multi-projects workspaces.
     let repository = workspace
-        .active_worktree_override()
+        .active_worktree_override(cx)
         .and_then(|override_id| {
             let project_ref = project.read(cx);
             project_ref

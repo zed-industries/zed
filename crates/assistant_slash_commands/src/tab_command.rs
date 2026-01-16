@@ -192,7 +192,7 @@ fn tab_items_for_queries(
                     let mut visited_buffers = HashSet::default();
                     let mut open_buffers = Vec::new();
 
-                    for pane in workspace.panes() {
+                    for pane in workspace.panes(cx) {
                         let pane = pane.read(cx);
                         for entry in pane.activation_history() {
                             timestamps_by_entity_id.insert(entry.entity_id, entry.timestamp);

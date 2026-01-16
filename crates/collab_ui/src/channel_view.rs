@@ -61,7 +61,7 @@ impl ChannelView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        let pane = workspace.read(cx).active_pane().clone();
+        let pane = workspace.read(cx).active_pane(cx);
         let channel_view = Self::open_in_pane(
             channel_id,
             link_position,

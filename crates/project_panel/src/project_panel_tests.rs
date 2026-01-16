@@ -1985,7 +1985,7 @@ async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
     workspace
         .update(cx, |workspace, window, cx| {
             let active_items = workspace
-                .panes()
+                .panes(cx)
                 .iter()
                 .filter_map(|pane| pane.read(cx).active_item())
                 .collect::<Vec<_>>();
@@ -7498,7 +7498,7 @@ async fn test_compare_selected_files(cx: &mut gpui::TestAppContext) {
     workspace
         .update(cx, |workspace, _, cx| {
             let active_items = workspace
-                .panes()
+                .panes(cx)
                 .iter()
                 .filter_map(|pane| pane.read(cx).active_item())
                 .collect::<Vec<_>>();
@@ -8236,7 +8236,7 @@ fn ensure_single_file_is_opened(
             let worktree_id = worktrees[0].read(cx).id();
 
             let open_project_paths = workspace
-                .panes()
+                .panes(cx)
                 .iter()
                 .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
                 .collect::<Vec<_>>();
@@ -8292,7 +8292,7 @@ fn ensure_no_open_items_and_panes(workspace: &WindowHandle<MultiWorkspace>, cx: 
     workspace
         .read_with(cx, |workspace, cx| {
             let open_project_paths = workspace
-                .panes()
+                .panes(cx)
                 .iter()
                 .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
                 .collect::<Vec<_>>();

@@ -122,7 +122,7 @@ impl EditorLspTestContext {
         editor.update_in(&mut cx, |editor, window, cx| {
             let nav_history = workspace
                 .read(cx)
-                .active_pane()
+                .active_pane(cx)
                 .read(cx)
                 .nav_history_for_item(&cx.entity());
             editor.set_nav_history(Some(nav_history));

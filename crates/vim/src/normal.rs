@@ -2254,29 +2254,29 @@ mod test {
         cx.simulate_keystrokes(": tabnew");
         cx.simulate_keystrokes("enter");
         cx.workspace(|workspace, _, cx| {
-            assert_eq!(workspace.items(cx).count(), 4);
-            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 3);
+            assert_eq!(workspace.items(cx).len(), 4);
+            assert_eq!(workspace.active_pane(cx).read(cx).active_item_index(), 3);
         });
 
         cx.simulate_keystrokes("1 g t");
         cx.workspace(|workspace, _, cx| {
-            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 0);
+            assert_eq!(workspace.active_pane(cx).read(cx).active_item_index(), 0);
         });
 
         cx.simulate_keystrokes("3 g t");
         cx.workspace(|workspace, _, cx| {
-            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 2);
+            assert_eq!(workspace.active_pane(cx).read(cx).active_item_index(), 2);
         });
 
         cx.simulate_keystrokes("4 g t");
         cx.workspace(|workspace, _, cx| {
-            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 3);
+            assert_eq!(workspace.active_pane(cx).read(cx).active_item_index(), 3);
         });
 
         cx.simulate_keystrokes("1 g t");
         cx.simulate_keystrokes("g t");
         cx.workspace(|workspace, _, cx| {
-            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
+            assert_eq!(workspace.active_pane(cx).read(cx).active_item_index(), 1);
         });
     }
 
@@ -2292,29 +2292,29 @@ mod test {
         cx.simulate_keystrokes(": tabnew");
         cx.simulate_keystrokes("enter");
         cx.workspace(|workspace, _, cx| {
-            assert_eq!(workspace.items(cx).count(), 4);
-            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 3);
+            assert_eq!(workspace.items(cx).len(), 4);
+            assert_eq!(workspace.active_pane(cx).read(cx).active_item_index(), 3);
         });
 
         cx.simulate_keystrokes("2 g shift-t");
         cx.workspace(|workspace, _, cx| {
-            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
+            assert_eq!(workspace.active_pane(cx).read(cx).active_item_index(), 1);
         });
 
         cx.simulate_keystrokes("g shift-t");
         cx.workspace(|workspace, _, cx| {
-            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 0);
+            assert_eq!(workspace.active_pane(cx).read(cx).active_item_index(), 0);
         });
 
         // Wraparound: gT from first tab should go to last.
         cx.simulate_keystrokes("g shift-t");
         cx.workspace(|workspace, _, cx| {
-            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 3);
+            assert_eq!(workspace.active_pane(cx).read(cx).active_item_index(), 3);
         });
 
         cx.simulate_keystrokes("6 g shift-t");
         cx.workspace(|workspace, _, cx| {
-            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
+            assert_eq!(workspace.active_pane(cx).read(cx).active_item_index(), 1);
         });
     }
 

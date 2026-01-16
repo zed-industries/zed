@@ -4229,7 +4229,7 @@ impl OutlinePanel {
             .and_then(|active_item| {
                 self.workspace
                     .upgrade()
-                    .and_then(|workspace| workspace.read(cx).pane_for(active_item))
+                    .and_then(|workspace| workspace.read(cx).pane_for(active_item, cx))
             })
             .and_then(|pane| {
                 pane.read(cx)
@@ -5372,7 +5372,7 @@ mod tests {
         let search_view = workspace
             .update(cx, |workspace, _, cx| {
                 workspace
-                    .active_pane()
+                    .active_pane(cx)
                     .read(cx)
                     .items()
                     .find_map(|item| item.downcast::<ProjectSearchView>())
@@ -5605,7 +5605,7 @@ mod tests {
         let search_view = workspace
             .update(cx, |workspace, _, cx| {
                 workspace
-                    .active_pane()
+                    .active_pane(cx)
                     .read(cx)
                     .items()
                     .find_map(|item| item.downcast::<ProjectSearchView>())
@@ -5742,7 +5742,7 @@ mod tests {
         let search_view = workspace
             .update(cx, |workspace, _, cx| {
                 workspace
-                    .active_pane()
+                    .active_pane(cx)
                     .read(cx)
                     .items()
                     .find_map(|item| item.downcast::<ProjectSearchView>())
@@ -5989,7 +5989,7 @@ outline: fn hints_lifetimes_named  <==== selected"
         let search_view = workspace
             .update(cx, |workspace, _, cx| {
                 workspace
-                    .active_pane()
+                    .active_pane(cx)
                     .read(cx)
                     .items()
                     .find_map(|item| item.downcast::<ProjectSearchView>())
@@ -6515,7 +6515,7 @@ outline: struct OutlineEntryExcerpt
         let search_view = workspace
             .update(cx, |workspace, _, cx| {
                 workspace
-                    .active_pane()
+                    .active_pane(cx)
                     .read(cx)
                     .items()
                     .find_map(|item| item.downcast::<ProjectSearchView>())

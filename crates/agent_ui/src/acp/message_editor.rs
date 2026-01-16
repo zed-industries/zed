@@ -1469,7 +1469,7 @@ mod tests {
                     cx,
                 )
             });
-            workspace.active_pane().update(cx, |pane, cx| {
+            workspace.active_pane(cx).update(cx, |pane, cx| {
                 pane.add_item(
                     Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
                     true,
@@ -1693,7 +1693,7 @@ mod tests {
                     cx,
                 )
             });
-            workspace.active_pane().update(cx, |pane, cx| {
+            workspace.active_pane(cx).update(cx, |pane, cx| {
                 pane.add_item(
                     Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
                     true,
@@ -2600,7 +2600,7 @@ mod tests {
                     cx,
                 )
             });
-            workspace.active_pane().update(cx, |pane, cx| {
+            workspace.active_pane(cx).update(cx, |pane, cx| {
                 pane.add_item(
                     Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
                     true,
@@ -2757,7 +2757,7 @@ mod tests {
                     cx,
                 )
             });
-            workspace.active_pane().update(cx, |pane, cx| {
+            workspace.active_pane(cx).update(cx, |pane, cx| {
                 pane.add_item(
                     Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
                     true,

@@ -67,7 +67,7 @@ impl SearchActionsRegistrar for MultiWorkspace {
                 return;
             }
 
-            let pane = workspace.active_pane();
+            let pane = workspace.active_pane(cx);
             let callback = callback.clone();
             pane.update(cx, |this, cx| {
                 this.toolbar().update(cx, move |this, cx| {

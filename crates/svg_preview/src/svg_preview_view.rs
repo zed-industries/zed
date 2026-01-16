@@ -10,7 +10,7 @@ use language::{Buffer, BufferEvent};
 use multi_buffer::MultiBuffer;
 use ui::prelude::*;
 use workspace::item::Item;
-use workspace::{Pane, MultiWorkspace};
+use workspace::{MultiWorkspace, Pane};
 
 use crate::{OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide};
 
@@ -202,7 +202,11 @@ impl SvgPreviewView {
             })
     }
 
-    pub fn register(workspace: &mut MultiWorkspace, _window: &mut Window, _cx: &mut Context<MultiWorkspace>) {
+    pub fn register(
+        workspace: &mut MultiWorkspace,
+        _window: &mut Window,
+        _cx: &mut Context<MultiWorkspace>,
+    ) {
         workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
             if let Some(buffer) = Self::resolve_active_item_as_svg_buffer(workspace, cx)
                 && Self::is_svg_file(&buffer, cx)
@@ -214,7 +218,7 @@ impl SvgPreviewView {
                     window,
                     cx,
                 );
-                workspace.active_pane().update(cx, |pane, cx| {
+                workspace.active_pane(cx).update(cx, |pane, cx| {
                     if let Some(existing_view_idx) =
                         Self::find_existing_preview_item_idx(pane, &buffer, cx)
                     {
@@ -243,7 +247,7 @@ impl SvgPreviewView {
                     .find_pane_in_direction(workspace::SplitDirection::Right, cx)
                     .unwrap_or_else(|| {
                         workspace.split_pane(
-                            workspace.active_pane().clone(),
+                            workspace.active_pane(cx),
                             workspace::SplitDirection::Right,
                             window,
                             cx,
@@ -268,7 +272,7 @@ impl SvgPreviewView {
             {
                 let view =
                     Self::create_svg_view(SvgPreviewMode::Follow, workspace, editor, window, cx);
-                workspace.active_pane().update(cx, |pane, cx| {
+                workspace.active_pane(cx).update(cx, |pane, cx| {
                     pane.add_item(Box::new(view), true, true, None, window, cx)
                 });
                 cx.notify();

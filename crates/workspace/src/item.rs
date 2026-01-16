@@ -1,6 +1,6 @@
 use crate::{
     CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
-    SerializableItemRegistry, ToolbarItemLocation, ViewId, MultiWorkspace, WorkspaceId,
+    MultiWorkspace, SerializableItemRegistry, ToolbarItemLocation, ViewId, WorkspaceId,
     invalid_item_view::InvalidItemView,
     pane::{self, Pane},
     persistence::model::ItemId,
@@ -718,8 +718,11 @@ impl<T: Item> ItemHandle for Entity<T> {
         }
 
         if workspace
-            .panes_by_item
-            .insert(self.item_id(), pane.downgrade())
+            .workspace
+            .update(cx, |ws, _| {
+                ws.panes_by_item_mut()
+                    .insert(self.item_id(), pane.downgrade())
+            })
             .is_none()
         {
             let mut pending_autosave = DelayedDebouncedEditAction::new();
@@ -767,11 +770,7 @@ impl<T: Item> ItemHandle for Entity<T> {
                 self,
                 window,
                 move |workspace, item: &Entity<T>, event, window, cx| {
-                    let pane = if let Some(pane) = workspace
-                        .panes_by_item
-                        .get(&item.item_id())
-                        .and_then(|pane| pane.upgrade())
-                    {
+                    let pane = if let Some(pane) = workspace.pane_for(item, cx) {
                         pane
                     } else {
                         return;
@@ -919,8 +918,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
             let item_id = self.item_id();
             workspace.update_item_dirty_state(self, window, cx);
-            cx.observe_release_in(self, window, move |workspace, _, _, _| {
-                workspace.panes_by_item.remove(&item_id);
+            cx.observe_release_in(self, window, move |workspace, _, _, cx| {
+                workspace
+                    .workspace
+                    .update(cx, |ws, _| ws.panes_by_item_mut().remove(&item_id));
                 event_subscription.take();
                 send_follower_updates.take();
             })

@@ -129,7 +129,7 @@ async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
 
     let search_bar = cx.workspace(|workspace, _, cx| {
         workspace
-            .active_pane()
+            .active_pane(cx)
             .read(cx)
             .toolbar()
             .read(cx)
@@ -277,7 +277,7 @@ async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
 
     let search_bar = cx.workspace(|workspace, _, cx| {
         workspace
-            .active_pane()
+            .active_pane(cx)
             .read(cx)
             .toolbar()
             .read(cx)

@@ -85,14 +85,14 @@ impl Vim {
             return;
         };
         workspace.update(cx, |workspace, cx| {
-            let item = workspace.items(cx).find(|item| {
+            let item = workspace.items(cx).into_iter().find(|item| {
                 item.act_as::<Editor>(cx)
                     .is_some_and(|editor| editor.read(cx).buffer().entity_id() == entity_id)
             });
-            let Some(item) = item.cloned() else {
+            let Some(item) = item else {
                 return;
             };
-            if let Some(pane) = workspace.pane_for(item.as_ref()) {
+            if let Some(pane) = workspace.pane_for(item.as_ref(), cx) {
                 pane.update(cx, |pane, cx| {
                     if let Some(index) = pane.index_for_item(item.as_ref()) {
                         pane.activate_item(index, true, true, window, cx);
@@ -436,7 +436,7 @@ mod test {
 
         let _ = cx
             .workspace(|workspace, window, cx| {
-                workspace.active_pane().update(cx, |pane, cx| {
+                workspace.active_pane(cx).update(cx, |pane, cx| {
                     pane.close_active_item(&CloseActiveItem::default(), window, cx)
                 })
             })

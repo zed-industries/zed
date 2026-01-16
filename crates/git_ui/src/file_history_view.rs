@@ -86,7 +86,7 @@ impl FileHistoryView {
                             )
                         });
 
-                        let pane = workspace.active_pane();
+                        let pane = workspace.active_pane(cx);
                         pane.update(cx, |pane, cx| {
                             let ix = pane.items().position(|item| {
                                 let view = item.downcast::<FileHistoryView>();

@@ -363,8 +363,8 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &MaximizePane, window, cx| {
-            let pane = workspace.active_pane();
-            let Some(size) = workspace.bounding_box_for_pane(pane) else {
+            let pane = workspace.active_pane(cx);
+            let Some(size) = workspace.bounding_box_for_pane(&pane, cx) else {
                 return;
             };
 
@@ -458,10 +458,11 @@ pub fn init(cx: &mut App) {
 
             if let Some(count) = count {
                 // gT with count goes back that many tabs with wraparound (not the same as gt!).
-                let pane = workspace.active_pane().read(cx);
-                let item_count = pane.items().count();
+                let pane = workspace.active_pane(cx);
+                let pane_read = pane.read(cx);
+                let item_count = pane_read.items().count();
                 if item_count > 0 {
-                    let current_index = pane.active_item_index();
+                    let current_index = pane_read.active_item_index();
                     let target_index = (current_index as isize - count as isize)
                         .rem_euclid(item_count as isize)
                         as usize;

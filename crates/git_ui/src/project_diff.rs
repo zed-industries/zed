@@ -116,6 +116,7 @@ impl ProjectDiff {
 
         let existing = workspace
             .items_of_type::<Self>(cx)
+            .into_iter()
             .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Merge { .. }));
         if let Some(existing) = existing {
             workspace.activate_item(&existing, true, true, window, cx);
@@ -155,6 +156,7 @@ impl ProjectDiff {
         );
         let existing = workspace
             .items_of_type::<Self>(cx)
+            .into_iter()
             .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Head));
         let project_diff = if let Some(existing) = existing {
             existing.update(cx, |project_diff, cx| {
@@ -192,6 +194,7 @@ impl ProjectDiff {
         telemetry::event!("Git Diff Opened", source = "Agent Panel");
         let existing = workspace
             .items_of_type::<Self>(cx)
+            .into_iter()
             .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Head));
         let project_diff = if let Some(existing) = existing {
             workspace.activate_item(&existing, true, true, window, cx);

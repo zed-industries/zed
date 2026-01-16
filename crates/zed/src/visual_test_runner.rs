@@ -323,7 +323,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         if let Ok(item) = block_result {
             workspace_window
                 .update(&mut cx, |workspace, window, cx| {
-                    let pane = workspace.active_pane().clone();
+                    let pane = workspace.active_pane(cx);
                     pane.update(cx, |pane, cx| {
                         if let Some(index) = pane.index_for_item(item.as_ref()) {
                             pane.activate_item(index, true, true, window, cx);

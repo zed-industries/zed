@@ -932,7 +932,7 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
     cx.run_until_parked();
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.active_pane().update(cx, |pane, cx| {
+            workspace.active_pane(cx).update(cx, |pane, cx| {
                 pane.close_active_item(&CloseActiveItem::default(), window, cx)
             })
         })
@@ -3504,7 +3504,7 @@ async fn test_clear_navigation_history(cx: &mut TestAppContext) {
 
     // Verify navigation state before clear
     workspace.update(cx, |workspace, cx| {
-        let pane = workspace.active_pane();
+        let pane = workspace.active_pane(cx);
         pane.read(cx).can_navigate_backward()
     });
 
@@ -3513,7 +3513,7 @@ async fn test_clear_navigation_history(cx: &mut TestAppContext) {
 
     // Verify that navigation is disabled immediately after clear
     workspace.update(cx, |workspace, cx| {
-        let pane = workspace.active_pane();
+        let pane = workspace.active_pane(cx);
         assert!(
             !pane.read(cx).can_navigate_backward(),
             "Should not be able to navigate backward after clearing history"

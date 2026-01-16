@@ -764,7 +764,7 @@ impl AgentPanel {
             .map(|panel| {
                 let panel_id = Entity::entity_id(&panel);
 
-                let is_visible = workspace_read.all_docks().iter().any(|dock| {
+                let is_visible = workspace_read.all_docks(cx).iter().any(|dock| {
                     dock.read(cx)
                         .visible_panel()
                         .is_some_and(|visible_panel| visible_panel.panel_id() == panel_id)

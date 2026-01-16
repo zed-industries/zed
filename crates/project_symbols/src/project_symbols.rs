@@ -131,7 +131,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                     let pane = if secondary {
                         workspace.adjacent_pane(window, cx)
                     } else {
-                        workspace.active_pane().clone()
+                        workspace.active_pane(cx)
                     };
 
                     let editor = workspace.open_project_item::<Editor>(

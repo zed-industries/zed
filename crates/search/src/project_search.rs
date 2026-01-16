@@ -142,7 +142,7 @@ pub fn init(cx: &mut App) {
             workspace,
             |workspace, _: &menu::Cancel, window, cx| {
                 if let Some(project_search_bar) = workspace
-                    .active_pane()
+                    .active_pane(cx)
                     .read(cx)
                     .toolbar()
                     .read(cx)
@@ -997,7 +997,7 @@ impl ProjectSearchView {
         cx: &mut Context<MultiWorkspace>,
     ) {
         let existing = workspace
-            .active_pane()
+            .active_pane(cx)
             .read(cx)
             .items()
             .find_map(|item| item.downcast::<ProjectSearchView>());
@@ -1659,7 +1659,7 @@ fn buffer_search_query(
     cx: &mut Context<MultiWorkspace>,
 ) -> Option<String> {
     let buffer_search_bar = workspace
-        .pane_for(item)
+        .pane_for(item, cx)
         .and_then(|pane| {
             pane.read(cx)
                 .toolbar()
@@ -2396,7 +2396,7 @@ fn register_workspace_action<A: Action>(
             return;
         }
 
-        workspace.active_pane().update(cx, |pane, cx| {
+        workspace.active_pane(cx).update(cx, |pane, cx| {
             pane.toolbar().update(cx, move |workspace, cx| {
                 if let Some(search_bar) = workspace.item_of_type::<ProjectSearchBar>() {
                     search_bar.update(cx, move |search_bar, cx| {
@@ -2424,7 +2424,7 @@ fn register_workspace_action_for_present_search<A: Action>(
         }
 
         let should_notify = workspace
-            .active_pane()
+            .active_pane(cx)
             .read(cx)
             .toolbar()
             .read(cx)
@@ -2763,7 +2763,7 @@ pub mod tests {
             workspace
                 .read(cx)
                 .unwrap()
-                .active_pane()
+                .active_pane(cx)
                 .read(cx)
                 .active_item()
                 .and_then(|item| item.downcast::<ProjectSearchView>())
@@ -2775,8 +2775,8 @@ pub mod tests {
 
         window
             .update(cx, move |workspace, window, cx| {
-                assert_eq!(workspace.panes().len(), 1);
-                workspace.panes()[0].update(cx, |pane, cx| {
+                assert_eq!(workspace.panes(cx).len(), 1);
+                workspace.panes(cx)[0].update(cx, |pane, cx| {
                     pane.toolbar()
                         .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
                 });
@@ -2794,7 +2794,7 @@ pub mod tests {
             workspace
                 .read(cx)
                 .unwrap()
-                .active_pane()
+                .active_pane(cx)
                 .read(cx)
                 .active_item()
                 .and_then(|item| item.downcast::<ProjectSearchView>())
@@ -3002,7 +3002,7 @@ pub mod tests {
 
         window
             .update(cx, move |workspace, window, cx| {
-                workspace.panes()[0].update(cx, |pane, cx| {
+                workspace.panes(cx)[0].update(cx, |pane, cx| {
                     pane.toolbar()
                         .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
                 });
@@ -3020,7 +3020,7 @@ pub mod tests {
             workspace
                 .read(cx)
                 .unwrap()
-                .active_pane()
+                .active_pane(cx)
                 .read(cx)
                 .active_item()
                 .and_then(|item| item.downcast::<ProjectSearchView>())
@@ -3125,7 +3125,7 @@ pub mod tests {
             workspace
                 .read(cx)
                 .unwrap()
-                .active_pane()
+                .active_pane(cx)
                 .read(cx)
                 .active_item()
                 .and_then(|item| item.downcast::<ProjectSearchView>())
@@ -3137,8 +3137,8 @@ pub mod tests {
 
         window
             .update(cx, move |workspace, window, cx| {
-                assert_eq!(workspace.panes().len(), 1);
-                workspace.panes()[0].update(cx, |pane, cx| {
+                assert_eq!(workspace.panes(cx).len(), 1);
+                workspace.panes(cx)[0].update(cx, |pane, cx| {
                     pane.toolbar()
                         .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
                 });
@@ -3151,7 +3151,7 @@ pub mod tests {
             workspace
                 .read(cx)
                 .unwrap()
-                .active_pane()
+                .active_pane(cx)
                 .read(cx)
                 .active_item()
                 .and_then(|item| item.downcast::<ProjectSearchView>())
@@ -3300,7 +3300,7 @@ pub mod tests {
             workspace
                 .read(cx)
                 .unwrap()
-                .active_pane()
+                .active_pane(cx)
                 .read(cx)
                 .active_item()
                 .and_then(|item| item.downcast::<ProjectSearchView>())
@@ -3427,7 +3427,7 @@ pub mod tests {
         let active_item = cx.read(|cx| {
             workspace
                 .read(cx)
-                .active_pane()
+                .active_pane(cx)
                 .read(cx)
                 .active_item()
                 .and_then(|item| item.downcast::<ProjectSearchView>())
@@ -3439,8 +3439,8 @@ pub mod tests {
 
         window
             .update(cx, move |workspace, window, cx| {
-                assert_eq!(workspace.panes().len(), 1);
-                workspace.panes()[0].update(cx, move |pane, cx| {
+                assert_eq!(workspace.panes(cx).len(), 1);
+                workspace.panes(cx)[0].update(cx, move |pane, cx| {
                     pane.toolbar()
                         .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
                 });
@@ -3466,7 +3466,7 @@ pub mod tests {
         let Some(search_view) = cx.read(|cx| {
             workspace
                 .read(cx)
-                .active_pane()
+                .active_pane(cx)
                 .read(cx)
                 .active_item()
                 .and_then(|item| item.downcast::<ProjectSearchView>())
@@ -3548,8 +3548,8 @@ pub mod tests {
             .update(cx, {
                 let search_bar = search_bar.clone();
                 |workspace, window, cx| {
-                    assert_eq!(workspace.panes().len(), 1);
-                    workspace.panes()[0].update(cx, |pane, cx| {
+                    assert_eq!(workspace.panes(cx).len(), 1);
+                    workspace.panes(cx)[0].update(cx, |pane, cx| {
                         pane.toolbar()
                             .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
                     });
@@ -3562,7 +3562,7 @@ pub mod tests {
         let search_view = cx.read(|cx| {
             workspace
                 .read(cx)
-                .active_pane()
+                .active_pane(cx)
                 .read(cx)
                 .active_item()
                 .and_then(|item| item.downcast::<ProjectSearchView>())
@@ -3876,7 +3876,7 @@ pub mod tests {
         let workspace = window.root(cx).unwrap();
 
         let panes: Vec<_> = window
-            .update(cx, |this, _, _| this.panes().to_owned())
+            .update(cx, |this, _, cx| this.panes(cx))
             .unwrap();
 
         let search_bar_1 = window.build_entity(cx, |_, _| ProjectSearchBar::new());
@@ -3945,7 +3945,7 @@ pub mod tests {
                 let search_bar = search_bar_2.clone();
                 let pane = second_pane.clone();
                 move |workspace, window, cx| {
-                    assert_eq!(workspace.panes().len(), 2);
+                    assert_eq!(workspace.panes(cx).len(), 2);
                     pane.update(cx, |pane, cx| {
                         pane.toolbar()
                             .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
@@ -4099,7 +4099,7 @@ pub mod tests {
         });
         let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let panes: Vec<_> = window
-            .update(cx, |this, _, _| this.panes().to_owned())
+            .update(cx, |this, _, cx| this.panes(cx))
             .unwrap();
         assert_eq!(panes.len(), 1);
         let first_pane = panes.first().cloned().unwrap();
@@ -4144,7 +4144,7 @@ pub mod tests {
                 let search_bar = search_bar.clone();
                 let pane = first_pane.clone();
                 move |workspace, window, cx| {
-                    assert_eq!(workspace.panes().len(), 2);
+                    assert_eq!(workspace.panes(cx).len(), 2);
                     pane.update(cx, move |pane, cx| {
                         pane.toolbar()
                             .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
@@ -4157,7 +4157,7 @@ pub mod tests {
         window
             .update(cx, {
                 |workspace, window, cx| {
-                    assert_eq!(workspace.panes().len(), 2);
+                    assert_eq!(workspace.panes(cx).len(), 2);
                     second_pane.update(cx, |pane, cx| {
                         pane.toolbar()
                             .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
@@ -4175,7 +4175,7 @@ pub mod tests {
         // Focus the first pane
         window
             .update(cx, |workspace, window, cx| {
-                assert_eq!(workspace.active_pane(), &second_pane);
+                assert_eq!(workspace.active_pane(cx), second_pane);
                 second_pane.update(cx, |this, cx| {
                     assert_eq!(this.active_item_index(), 1);
                     this.activate_previous_item(&Default::default(), window, cx);
@@ -4186,7 +4186,7 @@ pub mod tests {
             .unwrap();
         window
             .update(cx, |workspace, _, cx| {
-                assert_eq!(workspace.active_pane(), &first_pane);
+                assert_eq!(workspace.active_pane(cx), first_pane);
                 assert_eq!(first_pane.read(cx).items_len(), 1);
                 assert_eq!(second_pane.read(cx).items_len(), 2);
             })
@@ -4198,7 +4198,7 @@ pub mod tests {
         // Both panes should now have a project search in them
         window
             .update(cx, |workspace, window, cx| {
-                assert_eq!(workspace.active_pane(), &first_pane);
+                assert_eq!(workspace.active_pane(cx), first_pane);
                 first_pane.read_with(cx, |this, _| {
                     assert_eq!(this.active_item_index(), 1);
                     assert_eq!(this.items_len(), 2);
@@ -4363,7 +4363,7 @@ pub mod tests {
         });
 
         let panes: Vec<_> = window
-            .update(&mut cx, |this, _, _| this.panes().to_owned())
+            .update(&mut cx, |this, _, cx| this.panes(cx))
             .unwrap();
         assert_eq!(panes.len(), 1);
         let pane = panes.first().cloned().unwrap();

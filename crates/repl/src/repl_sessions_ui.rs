@@ -39,7 +39,7 @@ pub fn init(cx: &mut App) {
         |workspace: &mut MultiWorkspace, _window, _cx: &mut Context<MultiWorkspace>| {
             workspace.register_action(|workspace, _: &Sessions, window, cx| {
                 let existing = workspace
-                    .active_pane()
+                    .active_pane(cx)
                     .read(cx)
                     .items()
                     .find_map(|item| item.downcast::<ReplSessionsPage>());

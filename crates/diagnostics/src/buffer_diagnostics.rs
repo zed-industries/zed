@@ -226,6 +226,7 @@ impl BufferDiagnosticsEditor {
             // one.
             let existing_editor = workspace
                 .items_of_type::<BufferDiagnosticsEditor>(cx)
+                .into_iter()
                 .find(|editor| editor.read(cx).project_path == project_path);
 
             if let Some(editor) = existing_editor {

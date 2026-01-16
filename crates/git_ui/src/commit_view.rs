@@ -142,7 +142,7 @@ impl CommitView {
                             )
                         });
 
-                        let pane = workspace.active_pane();
+                        let pane = workspace.active_pane(cx);
                         pane.update(cx, |pane, cx| {
                             let ix = pane.items().position(|item| {
                                 let commit_view = item.downcast::<CommitView>();
@@ -776,7 +776,7 @@ impl CommitView {
     ) -> anyhow::Result<()> {
         workspace
             .update_in(cx, |workspace, window, cx| {
-                let active_pane = workspace.active_pane();
+                let active_pane = workspace.active_pane(cx);
                 let commit_view_id = commit_view.entity_id();
                 active_pane.update(cx, |pane, cx| {
                     pane.close_item_by_id(commit_view_id, SaveIntent::Skip, window, cx)

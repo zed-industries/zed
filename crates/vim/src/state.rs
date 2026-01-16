@@ -1525,6 +1525,7 @@ impl PickerDelegate for MarksViewDelegate {
                             {
                                 let Some((info, snapshot)) = workspace
                                     .items(cx)
+                                    .into_iter()
                                     .filter_map(|item| item.act_as::<Editor>(cx))
                                     .map(|entity| entity.read(cx).buffer())
                                     .find(|buffer| buffer.entity_id().eq(entity_id))

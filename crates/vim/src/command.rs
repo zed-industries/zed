@@ -2816,13 +2816,13 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.simulate_keystrokes(": n e w enter");
-        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).len(), 2));
         cx.simulate_keystrokes(": q enter");
-        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 1));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).len(), 1));
         cx.simulate_keystrokes(": n e w enter");
-        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).len(), 2));
         cx.simulate_keystrokes(": q a enter");
-        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 0));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).len(), 0));
     }
 
     #[gpui::test]
@@ -2935,7 +2935,7 @@ mod test {
         cx.simulate_keystrokes("g f");
 
         // We now have two items
-        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).len(), 2));
         cx.workspace(|workspace, _, cx| {
             assert_active_item(
                 workspace,
@@ -2957,7 +2957,7 @@ mod test {
         cx.simulate_keystrokes("g f");
 
         // We now have three items
-        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 3));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).len(), 3));
         cx.workspace(|workspace, _, cx| {
             assert_active_item(workspace, path!("/root/dir/file3.rs"), "go to file3", cx);
         });
@@ -3269,7 +3269,7 @@ mod test {
 
         cx.simulate_keystrokes(": tabnew");
         cx.simulate_keystrokes("enter");
-        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).len(), 2));
 
         // Assert that the new tab is empty and not associated with any file, as
         // no file path was provided to the `:tabnew` command.
@@ -3291,7 +3291,7 @@ mod test {
         cx.simulate_keystrokes(": tabnew space dir/file_2.rs");
         cx.simulate_keystrokes("enter");
 
-        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 3));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).len(), 3));
         cx.workspace(|workspace, _, cx| {
             assert_active_item(workspace, path!("/root/dir/file_2.rs"), "file_2", cx);
         });
@@ -3303,7 +3303,7 @@ mod test {
         cx.simulate_keystrokes(": tabnew space dir/file_3.rs");
         cx.simulate_keystrokes("enter");
 
-        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 4));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).len(), 4));
         cx.workspace(|workspace, _, cx| {
             assert_active_item(workspace, path!("/root/dir/file_3.rs"), "", cx);
         });
@@ -3322,7 +3322,7 @@ mod test {
 
         cx.simulate_keystrokes(": tabedit");
         cx.simulate_keystrokes("enter");
-        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).len(), 2));
 
         // Assert that the new tab is empty and not associated with any file, as
         // no file path was provided to the `:tabedit` command.
@@ -3344,7 +3344,7 @@ mod test {
         cx.simulate_keystrokes(": tabedit space dir/file_2.rs");
         cx.simulate_keystrokes("enter");
 
-        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 3));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).len(), 3));
         cx.workspace(|workspace, _, cx| {
             assert_active_item(workspace, path!("/root/dir/file_2.rs"), "file_2", cx);
         });
@@ -3356,7 +3356,7 @@ mod test {
         cx.simulate_keystrokes(": tabedit space dir/file_3.rs");
         cx.simulate_keystrokes("enter");
 
-        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 4));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).len(), 4));
         cx.workspace(|workspace, _, cx| {
             assert_active_item(workspace, path!("/root/dir/file_3.rs"), "", cx);
         });

@@ -857,7 +857,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
     let project = Project::test(fs, [], cx).await;
     let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
     let pane = workspace
-        .update(cx, |workspace, _, _| workspace.active_pane().clone())
+        .update(cx, |workspace, _, cx| workspace.active_pane(cx))
         .unwrap();
 
     _ = workspace.update(cx, |_v, window, cx| {
@@ -14846,7 +14846,7 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
         .unwrap();
 
     let pane = workspace
-        .update(cx, |workspace, _, _| workspace.active_pane().clone())
+        .update(cx, |workspace, _, cx| workspace.active_pane(cx))
         .unwrap();
     pane.update_in(cx, |pane, window, cx| {
         pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
@@ -17639,7 +17639,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let pane = workspace
-        .update(cx, |workspace, _, _| workspace.active_pane().clone())
+        .update(cx, |workspace, _, cx| workspace.active_pane(cx))
         .unwrap();
 
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
@@ -20253,7 +20253,7 @@ async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
             );
 
             workspace
-                .go_back(workspace.active_pane().downgrade(), window, cx)
+                .go_back(workspace.active_pane(cx).downgrade(), window, cx)
                 .detach_and_log_err(cx);
 
             first_item_id
@@ -20313,7 +20313,7 @@ async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
             );
 
             workspace
-                .go_back(workspace.active_pane().downgrade(), window, cx)
+                .go_back(workspace.active_pane(cx).downgrade(), window, cx)
                 .detach_and_log_err(cx);
 
             second_item_id
@@ -20371,7 +20371,7 @@ async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
             );
 
             workspace
-                .go_back(workspace.active_pane().downgrade(), window, cx)
+                .go_back(workspace.active_pane(cx).downgrade(), window, cx)
                 .detach_and_log_err(cx);
         })
         .unwrap();
@@ -22933,7 +22933,7 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
     );
 
     let editors = cx.update_workspace(|workspace, _, cx| {
-        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+        workspace.items_of_type::<Editor>(cx)
     });
     cx.update_editor(|_, _, test_editor_cx| {
         assert_eq!(
@@ -22968,7 +22968,7 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
             .unindent(),
     );
     let editors = cx.update_workspace(|workspace, _, cx| {
-        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+        workspace.items_of_type::<Editor>(cx)
     });
     cx.update_editor(|_, _, test_editor_cx| {
         assert_eq!(
@@ -23041,7 +23041,7 @@ async fn test_goto_definition_no_fallback(cx: &mut TestAppContext) {
     );
     cx.assert_editor_state(&original_state);
     let editors = cx.update_workspace(|workspace, _, cx| {
-        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+        workspace.items_of_type::<Editor>(cx)
     });
     cx.update_editor(|_, _, _| {
         assert_eq!(
@@ -23108,7 +23108,7 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
     );
 
     let editors = cx.update_workspace(|workspace, _, cx| {
-        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+        workspace.items_of_type::<Editor>(cx)
     });
     cx.update_editor(|_, _, _| {
         assert_eq!(editors.len(), 2, "We should have opened a new multibuffer");
@@ -23143,7 +23143,7 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
             .unindent(),
     );
     let editors = cx.update_workspace(|workspace, _, cx| {
-        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+        workspace.items_of_type::<Editor>(cx)
     });
     cx.update_editor(|_, _, _| {
         assert_eq!(
@@ -23195,7 +23195,7 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
             .unindent(),
     );
     let editors = cx.update_workspace(|workspace, _, cx| {
-        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+        workspace.items_of_type::<Editor>(cx)
     });
     cx.update_editor(|_, _, _| {
         assert_eq!(
@@ -25029,7 +25029,7 @@ println!("5");
         Point::new(3, 0)..Point::new(3, 3),
     ];
 
-    let pane_1 = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let pane_1 = workspace.update(cx, |workspace, cx| workspace.active_pane(cx));
     let editor_1 = workspace
         .update_in(cx, |workspace, window, cx| {
             workspace.open_path(
@@ -25292,7 +25292,7 @@ println!("5");
         })
     });
 
-    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let pane = workspace.update(cx, |workspace, cx| workspace.active_pane(cx));
     let editor = workspace
         .update_in(cx, |workspace, window, cx| {
             workspace.open_path(
@@ -25713,7 +25713,7 @@ async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
         "No servers should be running before any file is open",
         cx,
     );
-    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let pane = workspace.update(cx, |workspace, cx| workspace.active_pane(cx));
     let main_editor = workspace
         .update_in(cx, |workspace, window, cx| {
             workspace.open_path(
@@ -27726,7 +27726,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     workspace
         .update(cx, |workspace, window, cx| {
             assert_eq!(
-                workspace.panes().len(),
+                workspace.panes(cx).len(),
                 1,
                 "Should have one pane with one editor"
             );
@@ -27744,7 +27744,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     cx.run_until_parked();
     workspace
         .update(cx, |workspace, _, cx| {
-            let panes = workspace.panes();
+            let panes = workspace.panes(cx);
             assert_eq!(panes.len(), 2, "Should have two panes after splitting");
             for pane in panes {
                 let editor = pane
@@ -27798,7 +27798,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     drop(editor);
     let close = workspace
         .update(cx, |workspace, window, cx| {
-            workspace.active_pane().update(cx, |pane, cx| {
+            workspace.active_pane(cx).update(cx, |pane, cx| {
                 pane.close_active_item(&CloseActiveItem::default(), window, cx)
             })
         })
@@ -27806,7 +27806,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     close.await.unwrap();
     let close = workspace
         .update(cx, |workspace, window, cx| {
-            workspace.active_pane().update(cx, |pane, cx| {
+            workspace.active_pane(cx).update(cx, |pane, cx| {
                 pane.close_active_item(&CloseActiveItem::default(), window, cx)
             })
         })
@@ -27828,7 +27828,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
 
     workspace
         .update(cx, |workspace, window, cx| {
-            workspace.active_pane().update(cx, |pane, cx| {
+            workspace.active_pane(cx).update(cx, |pane, cx| {
                 pane.navigate_backward(&workspace::GoBack, window, cx);
             })
         })

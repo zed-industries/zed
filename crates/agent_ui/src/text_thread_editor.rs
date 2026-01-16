@@ -1532,7 +1532,7 @@ impl TextThreadEditor {
         use git_ui::project_diff::ProjectDiff;
 
         // Find the ProjectDiff item
-        let Some(project_diff) = workspace.items_of_type::<ProjectDiff>(cx).next() else {
+        let Some(project_diff) = workspace.items_of_type::<ProjectDiff>(cx).into_iter().next() else {
             workspace.show_toast(
                 Toast::new(
                     NotificationId::unique::<SendReviewToAgent>(),

@@ -701,9 +701,8 @@ impl TerminalPanel {
             .chain(
                 workspace
                     .read(cx)
-                    .panes()
-                    .iter()
-                    .cloned()
+                    .panes(cx)
+                    .into_iter()
                     .flat_map(pane_terminal_views),
             )
             .sorted_by_key(|(_, _, terminal_view)| terminal_view.entity_id())
@@ -1039,7 +1038,7 @@ impl TerminalPanel {
                 RevealStrategy::NoFocus => match reveal_target {
                     RevealTarget::Center => {
                         task_workspace.update_in(cx, |workspace, window, cx| {
-                            workspace.active_pane().focus_handle(cx).focus(window, cx);
+                            workspace.active_pane(cx).focus_handle(cx).focus(window, cx);
                         })?;
                     }
                     RevealTarget::Dock => {
@@ -1465,8 +1464,9 @@ impl Render for TerminalPanel {
         let registrar = registrar.into_div();
         self.workspace
             .update(cx, |workspace, cx| {
+                let zoomed_item = workspace.zoomed_item(cx);
                 registrar.size_full().child(self.center.render(
-                    workspace.zoomed_item(),
+                    zoomed_item.as_ref(),
                     &workspace::PaneRenderContext {
                         follower_states: &HashMap::default(),
                         active_call: workspace.active_call(),

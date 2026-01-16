@@ -125,7 +125,7 @@ impl VimTestContext {
 
         // Setup search toolbars and keypress hook
         cx.update_workspace(|workspace, window, cx| {
-            workspace.active_pane().update(cx, |pane, cx| {
+            workspace.active_pane(cx).update(cx, |pane, cx| {
                 pane.toolbar().update(cx, |toolbar, cx| {
                     let buffer_search_bar = cx.new(|cx| BufferSearchBar::new(None, window, cx));
                     toolbar.add_item(buffer_search_bar, window, cx);

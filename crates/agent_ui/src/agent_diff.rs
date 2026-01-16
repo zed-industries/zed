@@ -68,6 +68,7 @@ impl AgentDiffPane {
     ) -> Entity<Self> {
         let existing_diff = workspace
             .items_of_type::<AgentDiffPane>(cx)
+            .into_iter()
             .find(|diff| diff.read(cx).thread == thread);
 
         if let Some(existing_diff) = existing_diff {
@@ -1279,7 +1280,7 @@ impl AgentDiff {
             Self::register_review_action::<KeepAll>(workspace, Self::keep_all, &agent_diff);
             Self::register_review_action::<RejectAll>(workspace, Self::reject_all, &agent_diff);
 
-            workspace.items_of_type(cx).collect::<Vec<_>>()
+            workspace.items_of_type::<Editor>(cx)
         });
 
         let weak_workspace = workspace.downgrade();
@@ -1925,7 +1926,7 @@ mod tests {
             let diff_toolbar = diff_toolbar.clone();
 
             move |workspace, window, cx| {
-                workspace.active_pane().update(cx, |pane, cx| {
+                workspace.active_pane(cx).update(cx, |pane, cx| {
                     pane.toolbar().update(cx, |toolbar, cx| {
                         toolbar.add_item(diff_toolbar, window, cx);
                     });

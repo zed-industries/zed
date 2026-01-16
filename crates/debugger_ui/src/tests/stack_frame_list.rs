@@ -329,7 +329,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
 
     workspace
         .update(cx, |workspace, window, cx| {
-            let editors = workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>();
+            let editors = workspace.items_of_type::<Editor>(cx);
             assert_eq!(1, editors.len());
 
             let project_path = editors[0]
@@ -392,7 +392,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
     });
 
     let _ = workspace.update(cx, |workspace, window, cx| {
-        let editors = workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>();
+        let editors = workspace.items_of_type::<Editor>(cx);
         assert_eq!(1, editors.len());
 
         let project_path = editors[0]

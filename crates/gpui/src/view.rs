@@ -336,6 +336,15 @@ impl<V: 'static + Render> From<WeakEntity<V>> for AnyWeakView {
     }
 }
 
+impl Clone for AnyWeakView {
+    fn clone(&self) -> Self {
+        Self {
+            entity: self.entity.clone(),
+            render: self.render,
+        }
+    }
+}
+
 impl PartialEq for AnyWeakView {
     fn eq(&self, other: &Self) -> bool {
         self.entity == other.entity

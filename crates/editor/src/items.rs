@@ -42,7 +42,8 @@ use theme::Theme;
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
-    CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, MultiWorkspace, WorkspaceId,
+    CollaboratorId, ItemId, ItemNavHistory, MultiWorkspace, ToolbarItemLocation, ViewId,
+    WorkspaceId,
     invalid_item_view::InvalidItemView,
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
@@ -1422,7 +1423,7 @@ impl Editor {
         cx.defer(move |cx| {
             editor.update(cx, |editor, cx| {
                 let kind = Editor::project_item_kind()?;
-                let pane = editor.workspace()?.read(cx).pane_for(&cx.entity())?;
+                let pane = editor.workspace()?.read(cx).pane_for(&cx.entity(), cx)?;
                 let buffer = editor.buffer().read(cx).as_singleton()?;
                 let file_abs_path = project::File::from_dyn(buffer.read(cx).file())?.abs_path(cx);
                 pane.update(cx, |pane, _| {
@@ -1968,7 +1969,7 @@ mod tests {
     ) -> Entity<Editor> {
         workspace
             .update_in(cx, |workspace, window, cx| {
-                let pane = workspace.active_pane();
+                let pane = workspace.active_pane(cx);
                 pane.update(cx, |_, cx| {
                     Editor::deserialize(
                         project.clone(),
@@ -1994,8 +1995,9 @@ mod tests {
         // Test case 1: Deserialize with path and contents
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            let (workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
             let item_id = 1234 as ItemId;
             let mtime = fs
@@ -2031,8 +2033,9 @@ mod tests {
         // Test case 2: Deserialize with only path
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            let (workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -2069,8 +2072,9 @@ mod tests {
                 project.languages().add(languages::rust_lang())
             });
 
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            let (workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -2105,8 +2109,9 @@ mod tests {
         // Test case 4: Deserialize with path, content, and old mtime
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            let (workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -2135,8 +2140,9 @@ mod tests {
         // Test case 5: Deserialize with no path, no content, no language, and no old mtime (new, empty, unsaved buffer)
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+            let (workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 

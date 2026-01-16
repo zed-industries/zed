@@ -429,32 +429,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent_ui_v2"
-version = "0.1.0"
-dependencies = [
- "acp_thread",
- "agent",
- "agent-client-protocol",
- "agent_servers",
- "agent_settings",
- "agent_ui",
- "anyhow",
- "db",
- "feature_flags",
- "fs",
- "gpui",
- "log",
- "project",
- "prompt_store",
- "serde",
- "serde_json",
- "settings",
- "ui",
- "util",
- "workspace",
-]
-
-[[package]]
 name = "ahash"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20746,7 +20720,6 @@ dependencies = [
  "agent_servers",
  "agent_settings",
  "agent_ui",
- "agent_ui_v2",
  "anyhow",
  "ashpd",
  "askpass",

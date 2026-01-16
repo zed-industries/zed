@@ -884,7 +884,7 @@ mod tests {
         workspace_2
             .update(cx, |workspace, _, cx| {
                 assert!(workspace.active_item_as::<Editor>(cx).is_some());
-                let items = workspace.items(cx).collect::<Vec<_>>();
+                let items = workspace.items(cx);
                 assert_eq!(items.len(), 1, "Workspace should have two items");
             })
             .unwrap();
@@ -974,7 +974,7 @@ mod tests {
         assert_eq!(cx.windows().len(), 1);
         workspace_1
             .update(cx, |workspace, _, cx| {
-                let items = workspace.items(cx).collect::<Vec<_>>();
+                let items = workspace.items(cx);
                 assert_eq!(items.len(), 2, "Workspace should have two items");
             })
             .unwrap();
@@ -987,7 +987,7 @@ mod tests {
         let workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
         workspace_2
             .update(cx, |workspace, _, cx| {
-                let items = workspace.items(cx).collect::<Vec<_>>();
+                let items = workspace.items(cx);
                 assert_eq!(items.len(), 1, "Workspace should have two items");
             })
             .unwrap();

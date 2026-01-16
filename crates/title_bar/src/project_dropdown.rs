@@ -116,7 +116,7 @@ impl ProjectDropdown {
             let active_worktree_id = if menu_shell.borrow().is_some() {
                 workspace
                     .upgrade()
-                    .and_then(|ws| ws.read(cx).active_worktree_override())
+                    .and_then(|ws| ws.read(cx).active_worktree_override(cx))
                     .or(initial_active_worktree_id)
             } else {
                 initial_active_worktree_id
@@ -505,7 +505,7 @@ impl ProjectDropdown {
             workspace.update(cx, |workspace, cx| {
                 let project = workspace.project().clone();
 
-                let current_active_id = workspace.active_worktree_override();
+                let current_active_id = workspace.active_worktree_override(cx);
                 let is_removing_active = current_active_id == Some(worktree_id);
 
                 if is_removing_active {

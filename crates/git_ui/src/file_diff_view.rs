@@ -68,7 +68,7 @@ impl FileDiffView {
                     )
                 });
 
-                let pane = workspace.active_pane();
+                let pane = workspace.active_pane(cx);
                 pane.update(cx, |pane, cx| {
                     pane.add_item(Box::new(diff_view.clone()), true, true, None, window, cx);
                 });

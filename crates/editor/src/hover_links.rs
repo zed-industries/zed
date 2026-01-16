@@ -1693,7 +1693,7 @@ mod tests {
 
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
 
-        cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).len(), 2));
         cx.update_workspace(|workspace, _, cx| {
             let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
 
@@ -1755,7 +1755,7 @@ mod tests {
 
         // Does not open the directory
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
-        cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 1));
+        cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).len(), 1));
     }
 
     #[gpui::test]
@@ -1793,7 +1793,7 @@ mod tests {
 
         // Does not open the directory
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
-        cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 1));
+        cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).len(), 1));
     }
 
     #[gpui::test]

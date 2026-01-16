@@ -95,7 +95,7 @@ pub fn init(cx: &mut App) {
         workspace
             .with_local_workspace(window, cx, |workspace, window, cx| {
                 let existing = workspace
-                    .active_pane()
+                    .active_pane(cx)
                     .read(cx)
                     .items()
                     .find_map(|item| item.downcast::<KeymapEditor>());

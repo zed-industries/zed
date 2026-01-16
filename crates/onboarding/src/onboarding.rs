@@ -79,7 +79,7 @@ pub fn init(cx: &mut App) {
             workspace
                 .with_local_workspace(window, cx, |workspace, window, cx| {
                     let existing = workspace
-                        .active_pane()
+                        .active_pane(cx)
                         .read(cx)
                         .items()
                         .find_map(|item| item.downcast::<Onboarding>());
@@ -106,7 +106,7 @@ pub fn init(cx: &mut App) {
             workspace
                 .with_local_workspace(window, cx, |workspace, window, cx| {
                     let existing = workspace
-                        .active_pane()
+                        .active_pane(cx)
                         .read(cx)
                         .items()
                         .find_map(|item| item.downcast::<WelcomePage>());
@@ -399,7 +399,7 @@ impl Item for Onboarding {
 fn go_to_welcome_page(cx: &mut App) {
     with_active_or_new_workspace(cx, |workspace, window, cx| {
         let Some((onboarding_id, onboarding_idx)) = workspace
-            .active_pane()
+            .active_pane(cx)
             .read(cx)
             .items()
             .enumerate()
@@ -411,7 +411,7 @@ fn go_to_welcome_page(cx: &mut App) {
             return;
         };
 
-        workspace.active_pane().update(cx, |pane, cx| {
+        workspace.active_pane(cx).update(cx, |pane, cx| {
             // Get the index here to get around the borrow checker
             let idx = pane.items().enumerate().find_map(|(idx, item)| {
                 let _ = item.downcast::<WelcomePage>()?;

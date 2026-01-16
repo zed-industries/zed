@@ -61,7 +61,7 @@ impl MarkdownPreviewView {
         workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
             if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
                 let view = Self::create_markdown_view(workspace, editor.clone(), window, cx);
-                workspace.active_pane().update(cx, |pane, cx| {
+                workspace.active_pane(cx).update(cx, |pane, cx| {
                     if let Some(existing_view_idx) =
                         Self::find_existing_independent_preview_item_idx(pane, &editor, cx)
                     {
@@ -81,7 +81,7 @@ impl MarkdownPreviewView {
                     .find_pane_in_direction(workspace::SplitDirection::Right, cx)
                     .unwrap_or_else(|| {
                         workspace.split_pane(
-                            workspace.active_pane().clone(),
+                            workspace.active_pane(cx),
                             workspace::SplitDirection::Right,
                             window,
                             cx,
@@ -105,20 +105,21 @@ impl MarkdownPreviewView {
             if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
                 // Check if there's already a following preview
                 let existing_follow_view_idx = {
-                    let active_pane = workspace.active_pane().read(cx);
-                    active_pane
+                    let active_pane = workspace.active_pane(cx);
+                    let active_pane_read = active_pane.read(cx);
+                    active_pane_read
                         .items_of_type::<MarkdownPreviewView>()
                         .find(|view| view.read(cx).mode == MarkdownPreviewMode::Follow)
-                        .and_then(|view| active_pane.index_for_item(&view))
+                        .and_then(|view| active_pane_read.index_for_item(&view))
                 };
 
                 if let Some(existing_follow_view_idx) = existing_follow_view_idx {
-                    workspace.active_pane().update(cx, |pane, cx| {
+                    workspace.active_pane(cx).update(cx, |pane, cx| {
                         pane.activate_item(existing_follow_view_idx, true, true, window, cx);
                     });
                 } else {
                     let view = Self::create_following_markdown_view(workspace, editor, window, cx);
-                    workspace.active_pane().update(cx, |pane, cx| {
+                    workspace.active_pane(cx).update(cx, |pane, cx| {
                         pane.add_item(Box::new(view.clone()), true, true, None, window, cx)
                     });
                 }

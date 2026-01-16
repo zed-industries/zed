@@ -510,7 +510,7 @@ async fn open_remote_worktree(
             cx.new(|cx| {
                 let mut workspace =
                     MultiWorkspace::new(None, new_project.clone(), app_state.clone(), window, cx);
-                workspace.centered_layout = workspace_position.centered_layout;
+                workspace.set_centered_layout(workspace_position.centered_layout, cx);
                 workspace
             })
         })?

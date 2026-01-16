@@ -30,69 +30,6 @@ pub use proto::PanelId;
 pub struct MinimizePane;
 pub struct ClosePane;
 
-pub trait UtilityPane: EventEmitter<MinimizePane> + EventEmitter<ClosePane> + Render {
-    fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition;
-    /// The icon to render in the adjacent pane's tab bar for toggling this utility pane
-    fn toggle_icon(&self, cx: &App) -> IconName;
-    fn expanded(&self, cx: &App) -> bool;
-    fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>);
-    fn width(&self, cx: &App) -> Pixels;
-    fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
-}
-
-pub trait UtilityPaneHandle: 'static + Send + Sync {
-    fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition;
-    fn toggle_icon(&self, cx: &App) -> IconName;
-    fn expanded(&self, cx: &App) -> bool;
-    fn set_expanded(&self, expanded: bool, cx: &mut App);
-    fn width(&self, cx: &App) -> Pixels;
-    fn set_width(&self, width: Option<Pixels>, cx: &mut App);
-    fn to_any(&self) -> AnyView;
-    fn box_clone(&self) -> Box<dyn UtilityPaneHandle>;
-}
-
-impl<T> UtilityPaneHandle for Entity<T>
-where
-    T: UtilityPane,
-{
-    fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition {
-        self.read(cx).position(window, cx)
-    }
-
-    fn toggle_icon(&self, cx: &App) -> IconName {
-        self.read(cx).toggle_icon(cx)
-    }
-
-    fn expanded(&self, cx: &App) -> bool {
-        self.read(cx).expanded(cx)
-    }
-
-    fn set_expanded(&self, expanded: bool, cx: &mut App) {
-        self.update(cx, |this, cx| this.set_expanded(expanded, cx))
-    }
-
-    fn width(&self, cx: &App) -> Pixels {
-        self.read(cx).width(cx)
-    }
-
-    fn set_width(&self, width: Option<Pixels>, cx: &mut App) {
-        self.update(cx, |this, cx| this.set_width(width, cx))
-    }
-
-    fn to_any(&self) -> AnyView {
-        self.clone().into()
-    }
-
-    fn box_clone(&self) -> Box<dyn UtilityPaneHandle> {
-        Box::new(self.clone())
-    }
-}
-
-pub enum UtilityPanePosition {
-    Left,
-    Right,
-}
-
 pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
     fn panel_key() -> &'static str;
@@ -354,7 +291,7 @@ impl Dock {
                 });
             let zoom_subscription = cx.subscribe(&workspace, |dock, workspace, e: &Event, cx| {
                 if matches!(e, Event::ZoomChanged) {
-                    let is_zoomed = workspace.read(cx).zoomed.is_some();
+                    let is_zoomed = workspace.read(cx).is_zoomed(cx);
                     dock.zoom_layer_open = is_zoomed;
                 }
             });
@@ -382,11 +319,11 @@ impl Dock {
                     return;
                 };
                 if panel.is_zoomed(window, cx) {
-                    workspace.zoomed = Some(panel.to_any().downgrade());
-                    workspace.zoomed_position = Some(position);
+                    workspace.set_zoomed(Some(panel.to_any().downgrade()), cx);
+                    workspace.set_zoomed_position(Some(position), cx);
                 } else {
-                    workspace.zoomed = None;
-                    workspace.zoomed_position = None;
+                    workspace.set_zoomed(None, cx);
+                    workspace.set_zoomed_position(None, cx);
                 }
                 cx.emit(Event::ZoomChanged);
                 workspace.dismiss_zoomed_items_to_reveal(Some(position), window, cx);
@@ -400,14 +337,14 @@ impl Dock {
                 && let Some(panel) = dock.read(cx).active_panel()
                 && panel.is_zoomed(window, cx)
             {
-                workspace.zoomed = Some(panel.to_any().downgrade());
-                workspace.zoomed_position = Some(position);
+                workspace.set_zoomed(Some(panel.to_any().downgrade()), cx);
+                workspace.set_zoomed_position(Some(position), cx);
                 cx.emit(Event::ZoomChanged);
                 return;
             }
-            if workspace.zoomed_position == Some(position) {
-                workspace.zoomed = None;
-                workspace.zoomed_position = None;
+            if workspace.zoomed_position(cx) == Some(position) {
+                workspace.set_zoomed(None, cx);
+                workspace.set_zoomed_position(None, cx);
                 cx.emit(Event::ZoomChanged);
             }
         })
@@ -545,14 +482,9 @@ impl Dock {
 
                     let Ok(new_dock) = workspace.update(cx, |workspace, cx| {
                         if panel.is_zoomed(window, cx) {
-                            workspace.zoomed_position = Some(new_position);
+                            workspace.set_zoomed_position(Some(new_position), cx);
                         }
-                        match new_position {
-                            DockPosition::Left => &workspace.left_dock,
-                            DockPosition::Bottom => &workspace.bottom_dock,
-                            DockPosition::Right => &workspace.right_dock,
-                        }
-                        .clone()
+                        workspace.dock_at_position(new_position, cx)
                     }) else {
                         return;
                     };
@@ -596,9 +528,9 @@ impl Dock {
                         }
                         workspace
                             .update(cx, |workspace, cx| {
-                                workspace.zoomed = Some(panel.downgrade().into());
-                                workspace.zoomed_position =
-                                    Some(panel.read(cx).position(window, cx));
+                                let new_position = panel.read(cx).position(window, cx);
+                                workspace.set_zoomed(Some(panel.downgrade().into()), cx);
+                                workspace.set_zoomed_position(Some(new_position), cx);
                                 cx.emit(Event::ZoomChanged);
                             })
                             .ok();
@@ -607,9 +539,9 @@ impl Dock {
                         this.set_panel_zoomed(&panel.to_any(), false, window, cx);
                         workspace
                             .update(cx, |workspace, cx| {
-                                if workspace.zoomed_position == Some(this.position) {
-                                    workspace.zoomed = None;
-                                    workspace.zoomed_position = None;
+                                if workspace.zoomed_position(cx) == Some(this.position) {
+                                    workspace.set_zoomed(None, cx);
+                                    workspace.set_zoomed_position(None, cx);
                                     cx.emit(Event::ZoomChanged);
                                 }
                                 cx.notify();

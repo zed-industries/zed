@@ -6547,11 +6547,11 @@ async fn test_pane_split_left(cx: &mut TestAppContext) {
 
     cx.simulate_keystrokes("cmd-n");
     workspace.update(cx, |workspace, cx| {
-        assert!(workspace.items(cx).collect::<Vec<_>>().len() == 1);
+        assert!(workspace.items(cx).len() == 1);
     });
     cx.simulate_keystrokes("cmd-k left");
     workspace.update(cx, |workspace, cx| {
-        assert!(workspace.items(cx).collect::<Vec<_>>().len() == 2);
+        assert!(workspace.items(cx).len() == 2);
     });
     cx.simulate_keystrokes("cmd-k");
     // Sleep past the historical timeout to ensure the multi-stroke binding
@@ -6559,7 +6559,7 @@ async fn test_pane_split_left(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_secs(2));
     cx.simulate_keystrokes("left");
     workspace.update(cx, |workspace, cx| {
-        assert!(workspace.items(cx).collect::<Vec<_>>().len() == 3);
+        assert!(workspace.items(cx).len() == 3);
     });
 }
 
@@ -6599,7 +6599,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         path: rel_path("3.rs").into(),
     };
 
-    let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+    let pane = workspace.read_with(cx, |workspace, cx| workspace.active_pane(cx));
 
     let get_path = |pane: &Pane, idx: usize, cx: &App| {
         pane.item_for_index(idx).unwrap().project_path(cx).unwrap()
@@ -6757,7 +6757,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         );
     });
     cx.run_until_parked();
-    let right_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+    let right_pane = workspace.read_with(cx, |workspace, cx| workspace.active_pane(cx));
 
     pane.update(cx, |pane, cx| {
         assert_eq!(pane.items_len(), 1);

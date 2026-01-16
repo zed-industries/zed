@@ -153,7 +153,7 @@ impl CommitModal {
             git_panel.load_local_committer(cx);
         });
 
-        let dock = workspace.dock_at_position(git_panel.position(window, cx));
+        let dock = workspace.dock_at_position(git_panel.position(window, cx), cx);
         let is_open = dock.read(cx).is_open();
         let active_index = dock.read(cx).active_panel_index();
         let dock = dock.downgrade();

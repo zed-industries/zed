@@ -14,7 +14,6 @@ pub mod visual_tests;
 pub(crate) mod windows_only_instance;
 
 use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
-use agent_ui_v2::agents_panel::AgentsPanel;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
@@ -86,7 +85,6 @@ use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{
     NotificationId, SuppressEvent, dismiss_app_notification, show_app_notification,
 };
-use workspace::utility_pane::utility_slot_for_dock_position;
 use workspace::{
     AppState, NewFile, NewWindow, OpenLog, Panel, Toast, MultiWorkspace, WorkspaceSettings,
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
@@ -361,7 +359,7 @@ pub fn initialize_workspace(
         };
 
         let workspace_handle = cx.entity();
-        let center_pane = workspace.active_pane().clone();
+        let center_pane = workspace.active_pane(cx);
         initialize_pane(workspace, &center_pane, window, cx);
 
         cx.subscribe_in(&workspace_handle, window, {
@@ -448,7 +446,7 @@ pub fn initialize_workspace(
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         let line_ending_indicator =
             cx.new(|_| line_ending_selector::LineEndingIndicator::default());
-        workspace.status_bar().update(cx, |status_bar, cx| {
+        workspace.status_bar(cx).update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(lsp_button, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
@@ -682,8 +680,7 @@ fn initialize_panels(
             add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(notification_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
-            initialize_agent_panel(workspace_handle.clone(), prompt_builder, cx.clone()).map(|r| r.log_err()),
-            initialize_agents_panel(workspace_handle, cx.clone()).map(|r| r.log_err())
+            initialize_agent_panel(workspace_handle, prompt_builder, cx.clone()).map(|r| r.log_err())
         );
 
         anyhow::Ok(())
@@ -768,31 +765,6 @@ async fn initialize_agent_panel(
                 .register_action(agent_ui::AgentPanel::toggle_focus)
                 .register_action(agent_ui::InlineAssistant::inline_assist);
         }
-    })?;
-
-    anyhow::Ok(())
-}
-
-async fn initialize_agents_panel(
-    workspace_handle: WeakEntity<MultiWorkspace>,
-    mut cx: AsyncWindowContext,
-) -> anyhow::Result<()> {
-    workspace_handle
-        .update_in(&mut cx, |workspace, window, cx| {
-            setup_or_teardown_ai_panel(workspace, window, cx, |workspace, cx| {
-                AgentsPanel::load(workspace, cx)
-            })
-        })?
-        .await?;
-
-    workspace_handle.update_in(&mut cx, |_workspace, window, cx| {
-        cx.observe_global_in::<SettingsStore>(window, move |workspace, window, cx| {
-            setup_or_teardown_ai_panel(workspace, window, cx, |workspace, cx| {
-                AgentsPanel::load(workspace, cx)
-            })
-            .detach_and_log_err(cx);
-        })
-        .detach();
     })?;
 
     anyhow::Ok(())
@@ -1090,18 +1062,6 @@ fn register_actions(
              window: &mut Window,
              cx: &mut Context<MultiWorkspace>| {
                 workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
-            },
-        )
-        .register_action(
-            |workspace: &mut MultiWorkspace,
-             _: &zed_actions::agent::ToggleAgentPane,
-             window: &mut Window,
-             cx: &mut Context<MultiWorkspace>| {
-                if let Some(panel) = workspace.panel::<AgentsPanel>(cx) {
-                    let position = panel.read(cx).position(window, cx);
-                    let slot = utility_slot_for_dock_position(position);
-                    workspace.toggle_utility_pane(slot, window, cx);
-                }
             },
         )
         .register_action({
@@ -2377,7 +2337,7 @@ mod tests {
                 assert!(workspace.left_dock().read(cx).is_open());
                 assert!(
                     workspace
-                        .active_pane()
+                        .active_pane(cx)
                         .read(cx)
                         .focus_handle(cx)
                         .is_focused(window)
@@ -2429,7 +2389,7 @@ mod tests {
                     &[Path::new("/root/e").into()]
                 );
                 assert!(workspace.left_dock().read(cx).is_open());
-                assert!(workspace.active_pane().focus_handle(cx).is_focused(window));
+                assert!(workspace.active_pane(cx).focus_handle(cx).is_focused(window));
             })
             .unwrap();
     }
@@ -2598,7 +2558,7 @@ mod tests {
             cx.update(|cx| window.read(cx).unwrap().is_edited())
         };
         let pane = window
-            .read_with(cx, |workspace, _| workspace.active_pane().clone())
+            .read_with(cx, |workspace, cx| workspace.active_pane(cx))
             .unwrap();
         let editor = window
             .read_with(cx, |workspace, cx| {
@@ -2911,7 +2871,7 @@ mod tests {
             .await
             .unwrap();
         cx.read(|cx| {
-            let pane = workspace.read(cx).active_pane().read(cx);
+            let pane = workspace.read(cx).active_pane(cx).read(cx);
             assert_eq!(
                 pane.active_item().unwrap().project_path(cx),
                 Some(file1.clone())
@@ -2928,7 +2888,7 @@ mod tests {
             .await
             .unwrap();
         cx.read(|cx| {
-            let pane = workspace.read(cx).active_pane().read(cx);
+            let pane = workspace.read(cx).active_pane(cx).read(cx);
             assert_eq!(
                 pane.active_item().unwrap().project_path(cx),
                 Some(file2.clone())
@@ -2947,7 +2907,7 @@ mod tests {
         assert_eq!(entry_1.item_id(), entry_1b.item_id());
 
         cx.read(|cx| {
-            let pane = workspace.read(cx).active_pane().read(cx);
+            let pane = workspace.read(cx).active_pane(cx).read(cx);
             assert_eq!(
                 pane.active_item().unwrap().project_path(cx),
                 Some(file1.clone())
@@ -2958,7 +2918,7 @@ mod tests {
         // Split the pane with the first entry, then open the second entry again.
         window
             .update(cx, |w, window, cx| {
-                w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx)
+                w.split_and_clone(w.active_pane(cx), SplitDirection::Right, window, cx)
             })
             .unwrap()
             .await
@@ -2974,7 +2934,7 @@ mod tests {
         window
             .read_with(cx, |w, cx| {
                 assert_eq!(
-                    w.active_pane()
+                    w.active_pane(cx)
                         .read(cx)
                         .active_item()
                         .unwrap()
@@ -2996,7 +2956,7 @@ mod tests {
         t1.await.unwrap();
         t2.await.unwrap();
         cx.read(|cx| {
-            let pane = workspace.read(cx).active_pane().read(cx);
+            let pane = workspace.read(cx).active_pane(cx).read(cx);
             assert_eq!(
                 pane.active_item().unwrap().project_path(cx),
                 Some(file3.clone())
@@ -3106,7 +3066,7 @@ mod tests {
             );
             assert_eq!(
                 workspace
-                    .active_pane()
+                    .active_pane(cx)
                     .read(cx)
                     .active_item()
                     .unwrap()
@@ -3156,7 +3116,7 @@ mod tests {
             );
             assert_eq!(
                 workspace
-                    .active_pane()
+                    .active_pane(cx)
                     .read(cx)
                     .active_item()
                     .unwrap()
@@ -3206,7 +3166,7 @@ mod tests {
             );
             assert_eq!(
                 workspace
-                    .active_pane()
+                    .active_pane(cx)
                     .read(cx)
                     .active_item()
                     .unwrap()
@@ -3269,7 +3229,7 @@ mod tests {
 
             assert_eq!(
                 workspace
-                    .active_pane()
+                    .active_pane(cx)
                     .read(cx)
                     .active_item()
                     .unwrap()
@@ -3387,7 +3347,7 @@ mod tests {
         );
 
         cx.read(|cx| {
-                let pane = workspace.read(cx).active_pane().read(cx);
+                let pane = workspace.read(cx).active_pane(cx).read(cx);
                 let mut opened_buffer_paths = pane
                     .items()
                     .map(|i| {
@@ -3436,7 +3396,7 @@ mod tests {
             .unwrap()
             .await;
         let editor = cx.read(|cx| {
-            let pane = workspace.read(cx).active_pane().read(cx);
+            let pane = workspace.read(cx).active_pane(cx).read(cx);
             let item = pane.active_item().unwrap();
             item.downcast::<Editor>().unwrap()
         });
@@ -3593,7 +3553,7 @@ mod tests {
         window
             .update(cx, |workspace, window, cx| {
                 workspace.split_and_clone(
-                    workspace.active_pane().clone(),
+                    workspace.active_pane(cx),
                     SplitDirection::Right,
                     window,
                     cx,
@@ -3726,7 +3686,7 @@ mod tests {
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
 
-        let pane_1 = cx.read(|cx| workspace.read(cx).active_pane().clone());
+        let pane_1 = cx.read(|cx| workspace.read(cx).active_pane(cx));
 
         window
             .update(cx, |w, window, cx| {
@@ -3752,7 +3712,7 @@ mod tests {
 
         cx.dispatch_action(window.into(), pane::SplitRight::default());
         let editor_2 = cx.update(|cx| {
-            let pane_2 = workspace.read(cx).active_pane().clone();
+            let pane_2 = workspace.read(cx).active_pane(cx);
             assert_ne!(pane_1, pane_2);
 
             let pane2_item = pane_2.read(cx).active_item().unwrap();
@@ -3770,9 +3730,9 @@ mod tests {
 
         cx.background_executor.run_until_parked();
         window
-            .read_with(cx, |workspace, _| {
-                assert_eq!(workspace.panes().len(), 1);
-                assert_eq!(workspace.active_pane(), &pane_1);
+            .read_with(cx, |workspace, cx| {
+                assert_eq!(workspace.panes(cx).len(), 1);
+                assert_eq!(workspace.active_pane(cx), pane_1);
             })
             .unwrap();
 
@@ -3789,7 +3749,7 @@ mod tests {
 
         window
             .update(cx, |workspace, _, cx| {
-                assert_eq!(workspace.panes().len(), 1);
+                assert_eq!(workspace.panes(cx).len(), 1);
                 assert!(workspace.active_item(cx).is_none());
             })
             .unwrap();
@@ -3825,7 +3785,7 @@ mod tests {
         let workspace =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let pane = workspace
-            .read_with(cx, |workspace, _| workspace.active_pane().clone())
+            .read_with(cx, |workspace, cx| workspace.active_pane(cx))
             .unwrap();
 
         let entries = cx.update(|cx| workspace.root(cx).unwrap().file_project_paths(cx));
@@ -3911,7 +3871,7 @@ mod tests {
 
         workspace
             .update(cx, |w, window, cx| {
-                w.go_back(w.active_pane().downgrade(), window, cx)
+                w.go_back(w.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -3923,7 +3883,7 @@ mod tests {
 
         workspace
             .update(cx, |w, window, cx| {
-                w.go_back(w.active_pane().downgrade(), window, cx)
+                w.go_back(w.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -3935,7 +3895,7 @@ mod tests {
 
         workspace
             .update(cx, |w, window, cx| {
-                w.go_back(w.active_pane().downgrade(), window, cx)
+                w.go_back(w.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -3947,7 +3907,7 @@ mod tests {
 
         workspace
             .update(cx, |w, window, cx| {
-                w.go_back(w.active_pane().downgrade(), window, cx)
+                w.go_back(w.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -3960,7 +3920,7 @@ mod tests {
         // Go back one more time and ensure we don't navigate past the first item in the history.
         workspace
             .update(cx, |w, window, cx| {
-                w.go_back(w.active_pane().downgrade(), window, cx)
+                w.go_back(w.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -3972,7 +3932,7 @@ mod tests {
 
         workspace
             .update(cx, |w, window, cx| {
-                w.go_forward(w.active_pane().downgrade(), window, cx)
+                w.go_forward(w.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -3984,7 +3944,7 @@ mod tests {
 
         workspace
             .update(cx, |w, window, cx| {
-                w.go_forward(w.active_pane().downgrade(), window, cx)
+                w.go_forward(w.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -4009,7 +3969,7 @@ mod tests {
             .unwrap();
         workspace
             .update(cx, |w, window, cx| {
-                w.go_forward(w.active_pane().downgrade(), window, cx)
+                w.go_forward(w.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -4021,7 +3981,7 @@ mod tests {
 
         workspace
             .update(cx, |w, window, cx| {
-                w.go_forward(w.active_pane().downgrade(), window, cx)
+                w.go_forward(w.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -4033,7 +3993,7 @@ mod tests {
 
         workspace
             .update(cx, |w, window, cx| {
-                w.go_back(w.active_pane().downgrade(), window, cx)
+                w.go_back(w.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -4064,7 +4024,7 @@ mod tests {
 
         workspace
             .update(cx, |w, window, cx| {
-                w.go_back(w.active_pane().downgrade(), window, cx)
+                w.go_back(w.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -4075,7 +4035,7 @@ mod tests {
         );
         workspace
             .update(cx, |w, window, cx| {
-                w.go_forward(w.active_pane().downgrade(), window, cx)
+                w.go_forward(w.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -4146,7 +4106,7 @@ mod tests {
             .unwrap();
         workspace
             .update(cx, |w, window, cx| {
-                w.go_back(w.active_pane().downgrade(), window, cx)
+                w.go_back(w.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -4157,7 +4117,7 @@ mod tests {
         );
         workspace
             .update(cx, |w, window, cx| {
-                w.go_back(w.active_pane().downgrade(), window, cx)
+                w.go_back(w.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -4216,7 +4176,7 @@ mod tests {
         project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let pane = workspace
-            .read_with(cx, |workspace, _| workspace.active_pane().clone())
+            .read_with(cx, |workspace, cx| workspace.active_pane(cx))
             .unwrap();
 
         let entries = cx.update(|cx| workspace.root(cx).unwrap().file_project_paths(cx));
@@ -4345,7 +4305,7 @@ mod tests {
         // Reopening closed items doesn't interfere with navigation history.
         workspace
             .update(cx, |workspace, window, cx| {
-                workspace.go_back(workspace.active_pane().downgrade(), window, cx)
+                workspace.go_back(workspace.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -4354,7 +4314,7 @@ mod tests {
 
         workspace
             .update(cx, |workspace, window, cx| {
-                workspace.go_back(workspace.active_pane().downgrade(), window, cx)
+                workspace.go_back(workspace.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -4363,7 +4323,7 @@ mod tests {
 
         workspace
             .update(cx, |workspace, window, cx| {
-                workspace.go_back(workspace.active_pane().downgrade(), window, cx)
+                workspace.go_back(workspace.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -4372,7 +4332,7 @@ mod tests {
 
         workspace
             .update(cx, |workspace, window, cx| {
-                workspace.go_back(workspace.active_pane().downgrade(), window, cx)
+                workspace.go_back(workspace.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -4381,7 +4341,7 @@ mod tests {
 
         workspace
             .update(cx, |workspace, window, cx| {
-                workspace.go_back(workspace.active_pane().downgrade(), window, cx)
+                workspace.go_back(workspace.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -4390,7 +4350,7 @@ mod tests {
 
         workspace
             .update(cx, |workspace, window, cx| {
-                workspace.go_back(workspace.active_pane().downgrade(), window, cx)
+                workspace.go_back(workspace.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -4399,7 +4359,7 @@ mod tests {
 
         workspace
             .update(cx, |workspace, window, cx| {
-                workspace.go_back(workspace.active_pane().downgrade(), window, cx)
+                workspace.go_back(workspace.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -4408,7 +4368,7 @@ mod tests {
 
         workspace
             .update(cx, |workspace, window, cx| {
-                workspace.go_back(workspace.active_pane().downgrade(), window, cx)
+                workspace.go_back(workspace.active_pane(cx).downgrade(), window, cx)
             })
             .unwrap()
             .await
@@ -4943,7 +4903,6 @@ mod tests {
                 false,
                 cx,
             );
-            agent_ui_v2::agents_panel::init(cx);
             repl::init(app_state.fs.clone(), cx);
             repl::notebook::init(cx);
             tasks_ui::init(cx);
@@ -5175,7 +5134,7 @@ mod tests {
                 .unwrap();
 
             let _ = window.read_with(cx, |workspace, cx| {
-                let pane = workspace.active_pane().read(cx);
+                let pane = workspace.active_pane(cx).read(cx);
                 let project_path = pane.active_item().unwrap().project_path(cx).unwrap();
 
                 assert_eq!(

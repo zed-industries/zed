@@ -4266,7 +4266,7 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
     cx_a.run_until_parked();
 
     workspace_a.update(cx_a, |workspace, cx| {
-        workspace.active_pane().update(cx, |pane, cx| {
+        workspace.active_pane(cx).update(cx, |pane, cx| {
             assert_eq!(
                 pane.items_len(),
                 2,
@@ -4306,7 +4306,7 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
     cx_b.run_until_parked();
 
     workspace_b.update(cx_b, |workspace, cx| {
-        workspace.active_pane().update(cx, |pane, cx| {
+        workspace.active_pane(cx).update(cx, |pane, cx| {
             assert_eq!(
                 pane.items_len(),
                 2,

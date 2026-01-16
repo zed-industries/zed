@@ -98,11 +98,11 @@ impl TabSwitcher {
         window: &mut Window,
         cx: &mut Context<MultiWorkspace>,
     ) {
-        let mut weak_pane = workspace.active_pane().downgrade();
+        let mut weak_pane = workspace.active_pane(cx).downgrade();
         for dock in [
-            workspace.left_dock(),
-            workspace.bottom_dock(),
-            workspace.right_dock(),
+            workspace.left_dock(cx),
+            workspace.bottom_dock(cx),
+            workspace.right_dock(cx),
         ] {
             dock.update(cx, |this, cx| {
                 let Some(panel) = this
@@ -121,7 +121,7 @@ impl TabSwitcher {
 
         let project = workspace.project().clone();
         let original_items: Vec<_> = workspace
-            .panes()
+            .panes(cx)
             .iter()
             .map(|p| (p.clone(), p.read(cx).active_item_index()))
             .collect();
@@ -385,7 +385,7 @@ impl TabSwitcherDelegate {
         };
         let mut all_items = Vec::new();
         let mut item_index = 0;
-        for pane_handle in workspace.read(cx).panes() {
+        for pane_handle in workspace.read(cx).panes(cx) {
             let pane = pane_handle.read(cx);
             let items: Vec<Box<dyn ItemHandle>> =
                 pane.items().map(|item| item.boxed_clone()).collect();

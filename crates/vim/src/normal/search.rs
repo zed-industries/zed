@@ -815,7 +815,7 @@ mod test {
 
         let search_bar = cx.workspace(|workspace, _, cx| {
             workspace
-                .active_pane()
+                .active_pane(cx)
                 .read(cx)
                 .toolbar()
                 .read(cx)
@@ -1103,7 +1103,7 @@ mod test {
         });
 
         let search_bar = cx.update_workspace(|workspace, _, cx| {
-            workspace.active_pane().update(cx, |pane, cx| {
+            workspace.active_pane(cx).update(cx, |pane, cx| {
                 pane.toolbar()
                     .read(cx)
                     .item_of_type::<BufferSearchBar>()

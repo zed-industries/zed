@@ -83,7 +83,7 @@ async fn test_basic_following(
     });
 
     // Client A opens some editors.
-    let pane_a = workspace_a.update(cx_a, |workspace, _| workspace.active_pane().clone());
+    let pane_a = workspace_a.update(cx_a, |workspace, cx| workspace.active_pane(cx));
     let editor_a1 = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
             workspace.open_path((worktree_id, rel_path("1.txt")), None, true, window, cx)
@@ -343,7 +343,7 @@ async fn test_basic_following(
     // When client A navigates back and forth, client B does so as well.
     workspace_a
         .update_in(cx_a, |workspace, window, cx| {
-            workspace.go_back(workspace.active_pane().downgrade(), window, cx)
+            workspace.go_back(workspace.active_pane(cx).downgrade(), window, cx)
         })
         .await
         .unwrap();
@@ -357,7 +357,7 @@ async fn test_basic_following(
 
     workspace_a
         .update_in(cx_a, |workspace, window, cx| {
-            workspace.go_back(workspace.active_pane().downgrade(), window, cx)
+            workspace.go_back(workspace.active_pane(cx).downgrade(), window, cx)
         })
         .await
         .unwrap();
@@ -371,7 +371,7 @@ async fn test_basic_following(
 
     workspace_a
         .update_in(cx_a, |workspace, window, cx| {
-            workspace.go_forward(workspace.active_pane().downgrade(), window, cx)
+            workspace.go_forward(workspace.active_pane(cx).downgrade(), window, cx)
         })
         .await
         .unwrap();
@@ -559,7 +559,7 @@ async fn test_basic_following(
         // so the previously-opened screen-sharing item gets activated.
         let unfollowable_item = cx_b.new(TestItem::new);
         workspace_b.update_in(cx_b, |workspace, window, cx| {
-            workspace.active_pane().update(cx, |pane, cx| {
+            workspace.active_pane(cx).update(cx, |pane, cx| {
                 pane.add_item(Box::new(unfollowable_item), true, true, None, window, cx)
             })
         });
@@ -628,10 +628,10 @@ async fn test_following_tab_order(
         .unwrap();
 
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
-    let pane_a = workspace_a.update(cx_a, |workspace, _| workspace.active_pane().clone());
+    let pane_a = workspace_a.update(cx_a, |workspace, cx| workspace.active_pane(cx));
 
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
-    let pane_b = workspace_b.update(cx_b, |workspace, _| workspace.active_pane().clone());
+    let pane_b = workspace_b.update(cx_b, |workspace, cx| workspace.active_pane(cx));
 
     let client_b_id = project_a.update(cx_a, |project, _| {
         project.collaborators().values().next().unwrap().peer_id
@@ -785,7 +785,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     workspace_a
         .update_in(cx_a, |workspace, window, cx| {
             workspace.split_and_clone(
-                workspace.active_pane().clone(),
+                workspace.active_pane(cx),
                 SplitDirection::Right,
                 window,
                 cx,
@@ -799,7 +799,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     workspace_b
         .update_in(cx_b, |workspace, window, cx| {
             workspace.split_and_clone(
-                workspace.active_pane().clone(),
+                workspace.active_pane(cx),
                 SplitDirection::Right,
                 window,
                 cx,
@@ -1007,7 +1007,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     // Client B focuses a file that they previously followed A to, breaking
     // the follow.
     workspace_b.update_in(cx_b, |workspace, window, cx| {
-        workspace.active_pane().update(cx, |pane, cx| {
+        workspace.active_pane(cx).update(cx, |pane, cx| {
             pane.activate_previous_item(&Default::default(), window, cx);
         });
     });
@@ -1058,7 +1058,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     // Client B closes tabs, some of which were originally opened by client A,
     // and some of which were originally opened by client B.
     workspace_b.update_in(cx_b, |workspace, window, cx| {
-        workspace.active_pane().update(cx, |pane, cx| {
+        workspace.active_pane(cx).update(cx, |pane, cx| {
             pane.close_other_items(&Default::default(), None, window, cx)
                 .detach();
         });
@@ -1110,7 +1110,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     executor.run_until_parked();
     // Client A cycles through some tabs.
     workspace_a.update_in(cx_a, |workspace, window, cx| {
-        workspace.active_pane().update(cx, |pane, cx| {
+        workspace.active_pane(cx).update(cx, |pane, cx| {
             pane.activate_previous_item(&Default::default(), window, cx);
         });
     });
@@ -1154,7 +1154,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     );
 
     workspace_a.update_in(cx_a, |workspace, window, cx| {
-        workspace.active_pane().update(cx, |pane, cx| {
+        workspace.active_pane(cx).update(cx, |pane, cx| {
             pane.activate_previous_item(&Default::default(), window, cx);
         });
     });
@@ -1201,7 +1201,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     );
 
     workspace_a.update_in(cx_a, |workspace, window, cx| {
-        workspace.active_pane().update(cx, |pane, cx| {
+        workspace.active_pane(cx).update(cx, |pane, cx| {
             pane.activate_previous_item(&Default::default(), window, cx);
         });
     });
@@ -1306,7 +1306,7 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         .unwrap();
 
     // Client B starts following client A.
-    let pane_b = workspace_b.update(cx_b, |workspace, _| workspace.active_pane().clone());
+    let pane_b = workspace_b.update(cx_b, |workspace, cx| workspace.active_pane(cx));
     let leader_id = project_b.update(cx_b, |project, _| {
         project.collaborators().values().next().unwrap().peer_id
     });
@@ -1454,15 +1454,15 @@ async fn test_peers_simultaneously_following_each_other(
     });
     executor.run_until_parked();
 
-    workspace_a.update(cx_a, |workspace, _| {
+    workspace_a.update(cx_a, |workspace, cx| {
         assert_eq!(
-            workspace.leader_for_pane(workspace.active_pane()),
+            workspace.leader_for_pane(&workspace.active_pane(cx)),
             Some(client_b_id.into())
         );
     });
-    workspace_b.update(cx_b, |workspace, _| {
+    workspace_b.update(cx_b, |workspace, cx| {
         assert_eq!(
-            workspace.leader_for_pane(workspace.active_pane()),
+            workspace.leader_for_pane(&workspace.active_pane(cx)),
             Some(client_a_id.into())
         );
     });
@@ -1565,7 +1565,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
         assert!(workspace.is_being_followed(client_a.peer_id().unwrap()));
         assert_eq!(
             client_a.peer_id().map(Into::into),
-            workspace.leader_for_pane(workspace.active_pane())
+            workspace.leader_for_pane(&workspace.active_pane(cx))
         );
         let item = workspace.active_item(cx).unwrap();
         assert_eq!(item.tab_content_text(0, cx), SharedString::from("w.rs"));
@@ -1606,9 +1606,9 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
         assert!(workspace.is_being_followed(client_b.peer_id().unwrap()));
         assert_eq!(
             client_b.peer_id().map(Into::into),
-            workspace.leader_for_pane(workspace.active_pane())
+            workspace.leader_for_pane(&workspace.active_pane(cx))
         );
-        let item = workspace.active_pane().read(cx).active_item().unwrap();
+        let item = workspace.active_pane(cx).read(cx).active_item().unwrap();
         assert_eq!(item.tab_content_text(0, cx), "x.rs");
     });
 
@@ -1669,7 +1669,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
         assert!(workspace.is_being_followed(client_b.peer_id().unwrap()));
         assert_eq!(
             client_b.peer_id().map(Into::into),
-            workspace.leader_for_pane(workspace.active_pane())
+            workspace.leader_for_pane(&workspace.active_pane(cx))
         );
         let item = workspace.active_item(cx).unwrap();
         assert_eq!(item.tab_content_text(0, cx), SharedString::from("y.rs"));
@@ -1939,9 +1939,9 @@ fn followers_by_leader(project_id: u64, cx: &TestAppContext) -> Vec<(PeerId, Vec
 
 fn pane_summaries(workspace: &Entity<MultiWorkspace>, cx: &mut VisualTestContext) -> Vec<PaneSummary> {
     workspace.update(cx, |workspace, cx| {
-        let active_pane = workspace.active_pane();
+        let active_pane = workspace.active_pane(cx);
         workspace
-            .panes()
+            .panes(cx)
             .iter()
             .map(|pane| {
                 let leader = match workspace.leader_for_pane(pane) {
@@ -1949,7 +1949,7 @@ fn pane_summaries(workspace: &Entity<MultiWorkspace>, cx: &mut VisualTestContext
                     Some(CollaboratorId::Agent) => unimplemented!(),
                     None => None,
                 };
-                let active = pane == active_pane;
+                let active = pane == &active_pane;
                 let pane = pane.read(cx);
                 let active_ix = pane.active_item_index();
                 PaneSummary {
@@ -2069,7 +2069,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     deterministic.run_until_parked();
     let channel_notes_1_b = workspace_b.update(cx_b, |workspace, cx| {
         assert_eq!(
-            workspace.leader_for_pane(workspace.active_pane()),
+            workspace.leader_for_pane(&workspace.active_pane(cx)),
             Some(client_a.peer_id().unwrap().into())
         );
         workspace
@@ -2104,7 +2104,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     deterministic.run_until_parked();
     let channel_notes_2_b = workspace_b.update(cx_b, |workspace, cx| {
         assert_eq!(
-            workspace.leader_for_pane(workspace.active_pane()),
+            workspace.leader_for_pane(&workspace.active_pane(cx)),
             Some(client_a.peer_id().unwrap().into())
         );
         workspace
