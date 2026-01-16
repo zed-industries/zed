@@ -32,7 +32,8 @@ use tempfile::TempDir;
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
-    shell::ShellKind,
+    shell::{Shell, ShellKind},
+    shell_builder::ShellBuilder,
 };
 
 pub(crate) struct SshRemoteConnection {
@@ -884,7 +885,7 @@ impl SshRemoteConnection {
         delegate.set_status(Some("Extracting remote development server"), cx);
         let server_mode = 0o755;
 
-        let shell_kind = ShellKind::Posix;
+        let shell_kind = ShellKind::Cmd;
         let orig_tmp_path = tmp_path.display(self.path_style());
         let server_mode = format!("{:o}", server_mode);
         let server_mode = shell_kind
@@ -892,23 +893,20 @@ impl SshRemoteConnection {
             .context("shell quoting")?;
         let dst_path = dst_path.display(self.path_style());
         let dst_path = shell_kind.try_quote(&dst_path).context("shell quoting")?;
-        let script = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".gz") {
-            let orig_tmp_path = shell_kind
-                .try_quote(&orig_tmp_path)
-                .context("shell quoting")?;
-            let tmp_path = shell_kind.try_quote(&tmp_path).context("shell quoting")?;
-            format!(
-                "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
-            )
+        let (program, args) = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".gz") {
+            unreachable!()
         } else {
-            let orig_tmp_path = shell_kind
-                .try_quote(&orig_tmp_path)
-                .context("shell quoting")?;
-            format!("chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}",)
+            (
+                // TODO: We need a ShellBuilder API to do this correctly.
+                "cmd.exe",
+                &[
+                    "/c".to_owned(),
+                    format!("move /y {} {}", &orig_tmp_path, &dst_path),
+                ],
+            )
         };
-        let args = shell_kind.args_for_shell(false, script.to_string());
         self.socket
-            .run_command(self.ssh_shell_kind, "sh", &args, true)
+            .run_command(self.ssh_shell_kind, program, args, true)
             .await?;
         Ok(())
     }
@@ -1075,8 +1073,15 @@ impl SshSocket {
             to_run.push(' ');
             to_run.push_str(&shell_kind.try_quote(arg.as_ref()).expect("shell quoting"));
         }
-        let separator = shell_kind.sequential_commands_separator();
-        let to_run = format!("cd{separator} {to_run}");
+        // On Unix, we prefix with `cd` to ensure we start in the user's home directory,
+        // which triggers tools like direnv/asdf/mise. On Windows, `cd` prints the current
+        // directory, so we skip this.
+        let to_run = if cfg!(windows) {
+            to_run
+        } else {
+            let separator = shell_kind.sequential_commands_separator();
+            format!("cd{separator} {to_run}")
+        };
         self.ssh_options(&mut command, true)
             .arg(self.connection_options.ssh_destination());
         if !allow_pseudo_tty {
@@ -1188,7 +1193,7 @@ impl SshSocket {
         let output = self
             .run_command(
                 shell,
-                "cmd",
+                "cmd.exe",
                 &["/c", "echo", "%PROCESSOR_ARCHITECTURE%"],
                 false,
             )
@@ -1215,7 +1220,7 @@ impl SshSocket {
     /// If it succeeds and returns Windows-like output, we assume it's Windows.
     async fn probe_is_windows(&self) -> bool {
         match self
-            .run_command(ShellKind::PowerShell, "cmd", &["/c", "ver"], false)
+            .run_command(ShellKind::Cmd, "cmd.exe", &["/c", "ver"], false)
             .await
         {
             // Windows 'ver' command outputs something like "Microsoft Windows [Version 10.0.19045.5011]"
@@ -1250,7 +1255,7 @@ impl SshSocket {
         // powershell is always the default, and cannot really be removed from the system
         // so we can rely on that fact and reasonably assume that we will be running in a
         // powershell environment
-        "powershell.exe".to_owned()
+        "cmd.exe".to_owned()
     }
 }
 
