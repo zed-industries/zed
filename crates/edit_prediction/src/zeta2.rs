@@ -2,22 +2,20 @@ use crate::prediction::EditPredictionResult;
 use crate::{
     CurrentEditPrediction, DebugEvent, EDIT_PREDICTIONS_MODEL_ID, EditPredictionFinishedDebugEvent,
     EditPredictionId, EditPredictionModel2, EditPredictionModelInput,
-    EditPredictionStartedDebugEvent, EditPredictionStore, UserActionRecord, ZedUpdateRequiredError,
+    EditPredictionStartedDebugEvent, EditPredictionStore, ZedUpdateRequiredError,
 };
 use anyhow::{Result, anyhow};
-use client::{Client, UserStore};
+use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::predict_edits_v3::RawCompletionRequest;
 use cloud_llm_client::{
     AcceptEditPredictionBody, EditPredictionRejectReason, EditPredictionRejection,
 };
 use futures::channel::mpsc;
 use gpui::{App, Entity, SharedString, Task, http_client::Url, prelude::*};
-use language::{Anchor, Buffer, OffsetRangeExt as _, ToOffset as _, ToPoint};
+use language::{OffsetRangeExt as _, ToOffset as _, ToPoint};
 use language_model::LlmApiToken;
-use project::Project;
 use release_channel::AppVersion;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
-use zeta_prompt::{Event, RelatedFile};
 
 use std::env;
 use std::{path::Path, sync::Arc, time::Instant};
@@ -75,33 +73,15 @@ impl EditPredictionModel2 for Zeta2Model {
         true
     }
 
+    fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
+        self.user_store.read(cx).edit_prediction_usage()
+    }
+
     fn request_prediction(
         &self,
-        _project: Entity<Project>,
-        active_buffer: Entity<Buffer>,
-        position: Anchor,
-        context: Arc<[RelatedFile]>,
-        events: Vec<Arc<Event>>,
-        _user_actions: Vec<UserActionRecord>,
-        _can_collect_example: bool,
+        inputs: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
-        let snapshot = active_buffer.read(cx).snapshot();
-
-        let inputs = EditPredictionModelInput {
-            project: _project,
-            buffer: active_buffer,
-            snapshot,
-            position,
-            events,
-            related_files: context.to_vec(),
-            recent_paths: std::collections::VecDeque::new(),
-            trigger: cloud_llm_client::PredictEditsRequestTrigger::Other,
-            diagnostic_search_range: language::Point::new(0, 0)..language::Point::new(0, 0),
-            debug_tx: None,
-            user_actions: vec![],
-        };
-
         request_prediction_with_zeta2_impl(
             inputs,
             self.version,
@@ -294,10 +274,8 @@ pub fn request_prediction_with_zeta2_impl(
             let data = match result {
                 Ok((data, usage)) => {
                     if let Some(usage) = usage {
-                        cx.update(|cx| {
-                            user_store.update(cx, |user_store, cx| {
-                                user_store.update_edit_prediction_usage(usage, cx);
-                            });
+                        user_store.update(cx, |user_store, cx| {
+                            user_store.update_edit_prediction_usage(usage, cx);
                         });
                     }
                     data

@@ -95,6 +95,7 @@ pub async fn run_prediction(
         let model: Box<dyn EditPredictionModel2> = match provider {
             PredictionProvider::Zeta1 => Box::new(Zeta1Model::new(
                 app_state.client.clone(),
+                app_state.user_store.clone(),
                 store.llm_token().clone(),
                 store.custom_predict_edits_url(),
                 store.reject_predictions_tx(),

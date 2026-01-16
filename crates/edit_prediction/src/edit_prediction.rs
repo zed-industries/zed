@@ -171,17 +171,18 @@ pub enum EditPredictionModel {
 }
 
 pub struct EditPredictionModelInput {
-    project: Entity<Project>,
-    buffer: Entity<Buffer>,
-    snapshot: BufferSnapshot,
-    position: Anchor,
-    events: Vec<Arc<zeta_prompt::Event>>,
-    related_files: Vec<RelatedFile>,
-    recent_paths: VecDeque<ProjectPath>,
-    trigger: PredictEditsRequestTrigger,
-    diagnostic_search_range: Range<Point>,
-    debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
+    pub project: Entity<Project>,
+    pub buffer: Entity<Buffer>,
+    pub snapshot: BufferSnapshot,
+    pub position: Anchor,
+    pub events: Vec<Arc<zeta_prompt::Event>>,
+    pub related_files: Vec<RelatedFile>,
+    pub recent_paths: VecDeque<ProjectPath>,
+    pub trigger: PredictEditsRequestTrigger,
+    pub diagnostic_search_range: Range<Point>,
+    pub debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
     pub user_actions: Vec<UserActionRecord>,
+    pub can_collect_example: bool,
 }
 
 #[derive(Debug)]
@@ -277,13 +278,7 @@ pub trait EditPredictionModel2: 'static {
     /// Requests a prediction from the provider
     fn request_prediction(
         &self,
-        project: Entity<Project>,
-        active_buffer: Entity<Buffer>,
-        position: language::Anchor,
-        context: Arc<[RelatedFile]>,
-        events: Vec<Arc<zeta_prompt::Event>>,
-        user_actions: Vec<UserActionRecord>,
-        can_collect_example: bool,
+        inputs: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>>;
 
@@ -1764,6 +1759,11 @@ impl EditPredictionStore {
             Vec::new()
         };
 
+        let can_collect_example = snapshot
+            .file()
+            .is_some_and(|file| self.can_collect_file(&project, file, cx))
+            && self.can_collect_events(&events, cx);
+
         let inputs = EditPredictionModelInput {
             project: project.clone(),
             buffer: active_buffer.clone(),
@@ -1776,14 +1776,10 @@ impl EditPredictionStore {
             diagnostic_search_range: diagnostic_search_range.clone(),
             debug_tx,
             user_actions,
+            can_collect_example,
         };
 
-        let can_collect_example = snapshot
-            .file()
-            .is_some_and(|file| self.can_collect_file(&project, file, cx))
-            && self.can_collect_events(&inputs.events, cx);
-
-        if can_collect_example && should_sample_edit_prediction_example_capture(cx) {
+        if inputs.can_collect_example && should_sample_edit_prediction_example_capture(cx) {
             let events_for_capture =
                 self.edit_history_for_project_with_pause_split_last_event(&project, cx);
             if let Some(example_task) = capture_example::capture_example(
@@ -1806,16 +1802,7 @@ impl EditPredictionStore {
             return Task::ready(Ok(None));
         };
 
-        let task = model.request_prediction(
-            project.clone(),
-            active_buffer.clone(),
-            position,
-            inputs.related_files.into(),
-            inputs.events,
-            inputs.user_actions,
-            can_collect_example,
-            cx,
-        );
+        let task = model.request_prediction(inputs, cx);
 
         cx.spawn(async move |this, cx| {
             let prediction = task.await?;

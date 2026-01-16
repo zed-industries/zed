@@ -2088,6 +2088,7 @@ async fn make_test_ep_store(
             EditPredictionStore::new(client.clone(), project.read(cx).user_store(), cx);
         ep_store.set_edit_prediction_model(Box::new(Zeta1Model::new(
             client,
+            project.read(cx).user_store(),
             ep_store.llm_token().clone(),
             ep_store.custom_predict_edits_url(),
             ep_store.reject_predictions_tx(),
@@ -2193,6 +2194,7 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
     let completion_task = ep_store.update(cx, |ep_store, cx| {
         let model = Box::new(Zeta1Model::new(
             client,
+            project.read(cx).user_store(),
             ep_store.llm_token().clone(),
             ep_store.custom_predict_edits_url(),
             ep_store.reject_predictions_tx(),
@@ -2309,6 +2311,7 @@ async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut Te
         ep_store.set_custom_predict_edits_url(Url::parse("http://test/predict").unwrap());
         let model = Box::new(Zeta1Model::new(
             client,
+            project.read(cx).user_store(),
             ep_store.llm_token().clone(),
             ep_store.custom_predict_edits_url(),
             ep_store.reject_predictions_tx(),

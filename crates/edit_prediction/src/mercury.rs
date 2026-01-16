@@ -1,6 +1,6 @@
 use crate::{
     DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModel2,
-    EditPredictionModelInput, EditPredictionStartedDebugEvent, UserActionRecord,
+    EditPredictionModelInput, EditPredictionStartedDebugEvent,
     open_ai_response::text_from_response, prediction::EditPredictionResult,
 };
 use anyhow::{Context as _, Result};
@@ -11,7 +11,6 @@ use gpui::{
 };
 use language::{Buffer, OffsetRangeExt as _, ToOffset, ToPoint as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
-use project::Project;
 use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
 use zeta_prompt::{RelatedFile, ZetaPromptInput};
 
@@ -60,28 +59,14 @@ impl EditPredictionModel2 for MercuryModel {
 
     fn request_prediction(
         &self,
-        _project: Entity<Project>,
-        active_buffer: Entity<Buffer>,
-        position: language::Anchor,
-        context: Arc<[RelatedFile]>,
-        events: Vec<Arc<zeta_prompt::Event>>,
-        _user_actions: Vec<UserActionRecord>,
-        _can_collect_example: bool,
+        inputs: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
-        self.mercury.request_prediction_impl(
-            active_buffer,
-            position,
-            context.to_vec(),
-            events,
-            None,
-            cx,
-        )
+        self.mercury.request_prediction(inputs, cx)
     }
 }
 
 impl Mercury {
-    #[allow(dead_code)]
     pub(crate) fn request_prediction(
         &self,
         EditPredictionModelInput {

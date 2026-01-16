@@ -236,6 +236,7 @@ fn assign_edit_prediction_provider(
                         } else if user_store.read(cx).current_user().is_some() {
                             Box::new(Zeta1Model::new(
                                 client.clone(),
+                                user_store.clone(),
                                 ep_store.llm_token().clone(),
                                 ep_store.custom_predict_edits_url(),
                                 ep_store.reject_predictions_tx(),

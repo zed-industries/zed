@@ -15,7 +15,6 @@ use gpui::{
 use language::{Anchor, Buffer, BufferSnapshot, Point, ToOffset as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use lsp::DiagnosticSeverity;
-use project::Project;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Write as _},
@@ -24,7 +23,6 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use zeta_prompt::RelatedFile;
 
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 const SWEEP_METRICS_URL: &str = "https://backend.app.sweep.dev/backend/track_autocomplete_metrics";
@@ -77,32 +75,9 @@ impl EditPredictionModel2 for SweepModel {
 
     fn request_prediction(
         &self,
-        project: Entity<Project>,
-        active_buffer: Entity<Buffer>,
-        position: language::Anchor,
-        context: Arc<[RelatedFile]>,
-        events: Vec<Arc<zeta_prompt::Event>>,
-        user_actions: Vec<UserActionRecord>,
-        _can_collect_example: bool,
+        inputs: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
-        let snapshot = active_buffer.read(cx).snapshot();
-        let recent_paths = std::collections::VecDeque::new();
-
-        let inputs = EditPredictionModelInput {
-            project,
-            buffer: active_buffer,
-            snapshot,
-            position,
-            events,
-            related_files: context.to_vec(),
-            recent_paths,
-            trigger: cloud_llm_client::PredictEditsRequestTrigger::Other,
-            diagnostic_search_range: language::Point::new(0, 0)..language::Point::new(0, 0),
-            debug_tx: None,
-            user_actions,
-        };
-
         self.sweep_ai.request_prediction_with_sweep(inputs, cx)
     }
 
