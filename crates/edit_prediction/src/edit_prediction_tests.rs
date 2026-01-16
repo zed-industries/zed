@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     compute_diff_between_snapshots, udiff::apply_diff_to_string, zeta1::MAX_EVENT_TOKENS,
-    zeta1::Zeta1Model,
+    zeta1::Zeta1Model, zeta2::Zeta2Model,
 };
 use client::{UserStore, test::FakeServer};
 use clock::{FakeSystemClock, ReplicaId};
@@ -1409,6 +1409,17 @@ fn init_test_with_fake_client(
 
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let ep_store = EditPredictionStore::global(&client, &user_store, cx);
+
+        ep_store.update(cx, |ep_store, _cx| {
+            ep_store.set_edit_prediction_model(Box::new(Zeta2Model::new(
+                client,
+                ep_store.llm_token().clone(),
+                user_store.clone(),
+                ep_store.custom_predict_edits_url(),
+                ep_store.reject_predictions_tx(),
+                zeta_prompt::ZetaVersion::default(),
+            )));
+        });
 
         (
             ep_store,

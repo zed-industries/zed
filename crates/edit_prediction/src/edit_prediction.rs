@@ -1037,6 +1037,16 @@ impl EditPredictionStore {
         project: &Entity<Project>,
         cx: &mut Context<Self>,
     ) {
+        let (requires_edit_history, requires_user_actions) = self
+            .edit_prediction_model
+            .as_ref()
+            .map(|m| (m.requires_edit_history(), m.requires_user_actions()))
+            .unwrap_or((false, false));
+
+        if !requires_edit_history && !requires_user_actions {
+            return;
+        }
+
         let project_state = self.get_or_init_project(project, cx);
         let registered_buffer = Self::register_buffer_impl(project_state, buffer, project, cx);
 
@@ -1068,7 +1078,7 @@ impl EditPredictionStore {
             last_offset = Some(edit.new.end);
         }
 
-        if num_edits > 0 {
+        if requires_user_actions && num_edits > 0 {
             let action_type = match (total_deleted, total_inserted, num_edits) {
                 (0, ins, n) if ins == n => UserActionType::InsertChar,
                 (0, _, _) => UserActionType::InsertSelection,
@@ -1092,6 +1102,10 @@ impl EditPredictionStore {
                     timestamp_epoch_ms,
                 });
             }
+        }
+
+        if !requires_edit_history {
+            return;
         }
 
         let events = &mut project_state.events;
@@ -1680,8 +1694,14 @@ impl EditPredictionStore {
     ) -> Task<Result<Option<EditPredictionResult>>> {
         const DIAGNOSTIC_LINES_RANGE: u32 = 20;
 
+        let requires_context = self
+            .edit_prediction_model
+            .as_ref()
+            .is_some_and(|m| m.requires_context());
+
         self.get_or_init_project(&project, cx);
         let project_state = self.projects.get(&project.entity_id()).unwrap();
+
         let stored_events = project_state.events(cx);
         let has_events = !stored_events.is_empty();
         let events: Vec<Arc<zeta_prompt::Event>> =
@@ -1717,7 +1737,7 @@ impl EditPredictionStore {
         let diagnostic_search_range =
             Point::new(diagnostic_search_start, 0)..Point::new(diagnostic_search_end, 0);
 
-        let related_files = if self.use_context {
+        let related_files = if self.use_context && requires_context {
             self.context_for_project(&project, cx)
         } else {
             Vec::new()
@@ -1891,7 +1911,11 @@ impl EditPredictionStore {
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
     ) {
-        if self.use_context {
+        let requires_context = self
+            .edit_prediction_model
+            .as_ref()
+            .is_some_and(|m| m.requires_context());
+        if self.use_context && requires_context {
             self.get_or_init_project(project, cx)
                 .context
                 .update(cx, |store, cx| {

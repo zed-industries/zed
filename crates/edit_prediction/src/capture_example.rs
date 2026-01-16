@@ -249,7 +249,7 @@ pub(crate) fn should_sample_edit_prediction_example_capture(cx: &App) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::EditPredictionStore;
+    use crate::{EditPredictionStore, zeta1::Zeta1Model};
     use client::{Client, UserStore};
     use clock::FakeSystemClock;
     use gpui::{AppContext as _, TestAppContext, http_client::FakeHttpClient};
@@ -517,7 +517,16 @@ mod tests {
             let client = Client::new(Arc::new(FakeSystemClock::new()), http_client, cx);
             language_model::init(client.clone(), cx);
             let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-            EditPredictionStore::global(&client, &user_store, cx);
+            let ep_store = EditPredictionStore::global(&client, &user_store, cx);
+            ep_store.update(cx, |ep_store, _cx| {
+                ep_store.set_edit_prediction_model(Box::new(Zeta1Model::new(
+                    client,
+                    user_store.clone(),
+                    ep_store.llm_token().clone(),
+                    ep_store.custom_predict_edits_url(),
+                    ep_store.reject_predictions_tx(),
+                )));
+            });
         })
     }
 }
