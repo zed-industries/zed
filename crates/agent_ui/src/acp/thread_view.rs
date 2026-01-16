@@ -422,6 +422,7 @@ impl AcpThreadView {
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![]));
         let cached_user_commands = Rc::new(RefCell::new(collections::HashMap::default()));
+        let cached_user_command_errors = Rc::new(RefCell::new(Vec::new()));
 
         let agent_server_store = project.read(cx).agent_server_store().clone();
         let agent_display_name = agent_server_store
@@ -441,6 +442,7 @@ impl AcpThreadView {
                 prompt_capabilities.clone(),
                 available_commands.clone(),
                 cached_user_commands.clone(),
+                cached_user_command_errors.clone(),
                 agent.name(),
                 &placeholder,
                 editor::EditorMode::AutoHeight {
@@ -468,6 +470,7 @@ impl AcpThreadView {
                 prompt_capabilities.clone(),
                 available_commands.clone(),
                 cached_user_commands.clone(),
+                cached_user_command_errors.clone(),
                 agent.name(),
             )
         });
@@ -511,20 +514,24 @@ impl AcpThreadView {
 
             // Subscribe to registry changes to update error display and cached commands
             let cached_user_commands_for_subscription = cached_user_commands.clone();
+            let cached_user_command_errors_for_subscription = cached_user_command_errors.clone();
             cx.subscribe(&registry, move |this, registry, event, cx| match event {
                 SlashCommandRegistryEvent::CommandsChanged => {
-                    this.command_load_errors = registry.read(cx).errors().to_vec();
+                    let errors = registry.read(cx).errors().to_vec();
+                    this.command_load_errors = errors.clone();
                     // Reset dismissed state when errors change so new errors are shown
                     this.command_load_errors_dismissed = false;
                     *cached_user_commands_for_subscription.borrow_mut() =
                         registry.read(cx).commands().clone();
+                    *cached_user_command_errors_for_subscription.borrow_mut() = errors;
                     cx.notify();
                 }
             })
             .detach();
 
-            // Initialize cached commands from registry
+            // Initialize cached commands and errors from registry
             *cached_user_commands.borrow_mut() = registry.read(cx).commands().clone();
+            *cached_user_command_errors.borrow_mut() = registry.read(cx).errors().to_vec();
 
             Some(registry)
         } else {
@@ -1494,8 +1501,14 @@ impl AcpThreadView {
         });
 
         let cached_commands = self.cached_slash_commands(cx);
+        let cached_errors = self.cached_slash_command_errors(cx);
         let contents = message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents(full_mention_content, Some(cached_commands), cx)
+            message_editor.contents(
+                full_mention_content,
+                Some(cached_commands),
+                Some(cached_errors),
+                cx,
+            )
         });
 
         self.thread_error.take();
@@ -1657,8 +1670,14 @@ impl AcpThreadView {
         });
 
         let cached_commands = self.cached_slash_commands(cx);
+        let cached_errors = self.cached_slash_command_errors(cx);
         let contents = self.message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents(full_mention_content, Some(cached_commands), cx)
+            message_editor.contents(
+                full_mention_content,
+                Some(cached_commands),
+                Some(cached_errors),
+                cx,
+            )
         });
 
         let message_editor = self.message_editor.clone();
@@ -7521,6 +7540,17 @@ impl AcpThreadView {
         self.slash_command_registry
             .as_ref()
             .map(|registry| registry.read(cx).commands().clone())
+            .unwrap_or_default()
+    }
+
+    /// Returns the cached slash command errors from the registry, if available.
+    pub fn cached_slash_command_errors(
+        &self,
+        cx: &App,
+    ) -> Vec<crate::user_slash_command::CommandLoadError> {
+        self.slash_command_registry
+            .as_ref()
+            .map(|registry| registry.read(cx).errors().to_vec())
             .unwrap_or_default()
     }
 

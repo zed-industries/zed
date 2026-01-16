@@ -13,8 +13,40 @@ use std::time::Duration;
 pub struct CommandLoadError {
     /// The path to the file that failed to load
     pub path: PathBuf,
+    /// The base path of the commands directory (used to derive command name)
+    pub base_path: PathBuf,
     /// A description of the error
     pub message: String,
+}
+
+impl CommandLoadError {
+    /// Derives the command name from the file path, similar to how successful commands are named.
+    /// Returns None if the command name cannot be determined (e.g., for directory errors).
+    pub fn command_name(&self) -> Option<String> {
+        let base_name = self.path.file_stem()?.to_string_lossy().into_owned();
+
+        // Only derive command name for .md files
+        if self.path.extension().is_none_or(|ext| ext != "md") {
+            return None;
+        }
+
+        let namespace = self
+            .path
+            .parent()
+            .and_then(|parent| parent.strip_prefix(&self.base_path).ok())
+            .filter(|rel| !rel.as_os_str().is_empty())
+            .map(|rel| {
+                rel.to_string_lossy()
+                    .replace(std::path::MAIN_SEPARATOR, "/")
+            });
+
+        let name = match &namespace {
+            Some(namespace) => format!("{}:{}", namespace.replace('/', ":"), base_name),
+            None => base_name,
+        };
+
+        Some(name)
+    }
 }
 
 impl std::fmt::Display for CommandLoadError {
@@ -225,6 +257,7 @@ pub async fn load_all_commands_async(
             if let Some(existing_path) = seen_commands.get(&*cmd.name) {
                 result.errors.push(CommandLoadError {
                     path: cmd.path.clone(),
+                    base_path: commands_path.clone(),
                     message: format!(
                         "Command '{}' is ambiguous: also defined at {}",
                         cmd.name,
@@ -247,6 +280,7 @@ pub async fn load_all_commands_async(
         if let Some(existing_path) = seen_commands.get(&*cmd.name) {
             result.errors.push(CommandLoadError {
                 path: cmd.path.clone(),
+                base_path: user_commands_path.clone(),
                 message: format!(
                     "Command '{}' is ambiguous: also defined at {}",
                     cmd.name,
@@ -290,6 +324,7 @@ fn load_commands_from_dir_async<'a>(
             Err(e) => {
                 result.errors.push(CommandLoadError {
                     path: current_path.to_path_buf(),
+                    base_path: base_path.to_path_buf(),
                     message: format!("Failed to read directory: {}", e),
                 });
                 return;
@@ -304,6 +339,7 @@ fn load_commands_from_dir_async<'a>(
                 Err(e) => {
                     result.errors.push(CommandLoadError {
                         path: current_path.to_path_buf(),
+                        base_path: base_path.to_path_buf(),
                         message: format!("Failed to read directory entry: {}", e),
                     });
                     continue;
@@ -319,6 +355,7 @@ fn load_commands_from_dir_async<'a>(
                     Err(e) => {
                         result.errors.push(CommandLoadError {
                             path: path.clone(),
+                            base_path: base_path.to_path_buf(),
                             message: e.to_string(),
                         });
                     }

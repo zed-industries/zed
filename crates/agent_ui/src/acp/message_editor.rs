@@ -9,7 +9,7 @@ use crate::{
     mention_set::{
         Mention, MentionImage, MentionSet, insert_crease_for_mention, paste_images_as_context,
     },
-    user_slash_command::{self, UserSlashCommand},
+    user_slash_command::{self, CommandLoadError, UserSlashCommand},
 };
 use acp_thread::{AgentSessionInfo, MentionUri};
 use agent::ThreadStore;
@@ -41,7 +41,10 @@ use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, PasteRaw};
 
 enum UserSlashCommands {
-    Cached(collections::HashMap<String, user_slash_command::UserSlashCommand>),
+    Cached {
+        commands: collections::HashMap<String, user_slash_command::UserSlashCommand>,
+        errors: Vec<user_slash_command::CommandLoadError>,
+    },
     FromFs {
         fs: Arc<dyn fs::Fs>,
         worktree_roots: Vec<std::path::PathBuf>,
@@ -55,6 +58,7 @@ pub struct MessageEditor {
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     cached_user_commands: Rc<RefCell<collections::HashMap<String, UserSlashCommand>>>,
+    cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
     agent_name: SharedString,
     thread_store: Option<Entity<ThreadStore>>,
     _subscriptions: Vec<Subscription>,
@@ -119,6 +123,15 @@ impl PromptCompletionProviderDelegate for Entity<MessageEditor> {
             Some(commands.clone())
         }
     }
+
+    fn cached_user_command_errors(&self, cx: &App) -> Option<Vec<CommandLoadError>> {
+        let errors = self.read(cx).cached_user_command_errors.borrow();
+        if errors.is_empty() {
+            None
+        } else {
+            Some(errors.clone())
+        }
+    }
 }
 
 impl MessageEditor {
@@ -131,6 +144,7 @@ impl MessageEditor {
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
         cached_user_commands: Rc<RefCell<collections::HashMap<String, UserSlashCommand>>>,
+        cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
         agent_name: SharedString,
         placeholder: &str,
         mode: EditorMode,
@@ -242,6 +256,7 @@ impl MessageEditor {
             prompt_capabilities,
             available_commands,
             cached_user_commands,
+            cached_user_command_errors,
             agent_name,
             thread_store,
             _subscriptions: subscriptions,
@@ -412,6 +427,7 @@ impl MessageEditor {
         cached_user_commands: Option<
             collections::HashMap<String, user_slash_command::UserSlashCommand>,
         >,
+        cached_user_command_errors: Option<Vec<user_slash_command::CommandLoadError>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
         let text = self.editor.read(cx).text(cx);
@@ -419,9 +435,15 @@ impl MessageEditor {
         let agent_name = self.agent_name.clone();
 
         let user_slash_commands = if !cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-            UserSlashCommands::Cached(collections::HashMap::default())
+            UserSlashCommands::Cached {
+                commands: collections::HashMap::default(),
+                errors: Vec::new(),
+            }
         } else if let Some(cached) = cached_user_commands {
-            UserSlashCommands::Cached(cached)
+            UserSlashCommands::Cached {
+                commands: cached,
+                errors: cached_user_command_errors.unwrap_or_default(),
+            }
         } else if let Some(workspace) = self.workspace.upgrade() {
             let fs = workspace.read(cx).project().read(cx).fs().clone();
             let worktree_roots: Vec<std::path::PathBuf> = workspace
@@ -431,7 +453,10 @@ impl MessageEditor {
                 .collect();
             UserSlashCommands::FromFs { fs, worktree_roots }
         } else {
-            UserSlashCommands::Cached(collections::HashMap::default())
+            UserSlashCommands::Cached {
+                commands: collections::HashMap::default(),
+                errors: Vec::new(),
+            }
         };
 
         let contents = self
@@ -441,19 +466,36 @@ impl MessageEditor {
         let supports_embedded_context = self.prompt_capabilities.borrow().embedded_context;
 
         cx.spawn(async move |_, cx| {
-            let user_commands = match user_slash_commands {
-                UserSlashCommands::Cached(cached) => cached,
+            let (user_commands, user_command_errors) = match user_slash_commands {
+                UserSlashCommands::Cached { commands, errors } => (commands, errors),
                 UserSlashCommands::FromFs { fs, worktree_roots } => {
                     let load_result =
                         user_slash_command::load_all_commands_async(&fs, &worktree_roots).await;
 
-                    for error in &load_result.errors {
-                        log::warn!("Failed to load slash command: {}", error);
-                    }
-
-                    user_slash_command::commands_to_map(&load_result.commands)
+                    (
+                        user_slash_command::commands_to_map(&load_result.commands),
+                        load_result.errors,
+                    )
                 }
             };
+
+            // Check if the user is trying to use an errored slash command.
+            // If so, report the error to the user.
+            if let Some(parsed) = user_slash_command::try_parse_user_command(&text) {
+                for error in &user_command_errors {
+                    if let Some(error_cmd_name) = error.command_name() {
+                        if error_cmd_name == parsed.name {
+                            return Err(anyhow::anyhow!(
+                                "Failed to load /{}: {}",
+                                parsed.name,
+                                error.message
+                            ));
+                        }
+                    }
+                }
+            }
+            // Errors for commands that don't match the user's input are silently ignored here,
+            // since the user will see them via the error callout in the thread view.
 
             // Check if this is a user-defined slash command and expand it
             match user_slash_command::try_expand_from_commands(&text, &user_commands) {
@@ -1252,6 +1294,7 @@ mod tests {
                     Default::default(),
                     Default::default(),
                     Default::default(),
+                    Default::default(),
                     "Test Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
@@ -1320,7 +1363,7 @@ mod tests {
 
         let (content, _) = message_editor
             .update(cx, |message_editor, cx| {
-                message_editor.contents(false, None, cx)
+                message_editor.contents(false, None, None, cx)
             })
             .await
             .unwrap();
@@ -1368,6 +1411,7 @@ mod tests {
                     prompt_capabilities.clone(),
                     available_commands.clone(),
                     Default::default(),
+                    Default::default(),
                     "Claude Code".into(),
                     "Test",
                     EditorMode::AutoHeight {
@@ -1388,7 +1432,7 @@ mod tests {
 
         let contents_result = message_editor
             .update(cx, |message_editor, cx| {
-                message_editor.contents(false, None, cx)
+                message_editor.contents(false, None, None, cx)
             })
             .await;
 
@@ -1408,7 +1452,7 @@ mod tests {
 
         let contents_result = message_editor
             .update(cx, |message_editor, cx| {
-                message_editor.contents(false, None, cx)
+                message_editor.contents(false, None, None, cx)
             })
             .await;
 
@@ -1425,7 +1469,7 @@ mod tests {
 
         let contents_result = message_editor
             .update(cx, |message_editor, cx| {
-                message_editor.contents(false, None, cx)
+                message_editor.contents(false, None, None, cx)
             })
             .await;
 
@@ -1439,7 +1483,7 @@ mod tests {
 
         let (content, _) = message_editor
             .update(cx, |message_editor, cx| {
-                message_editor.contents(false, None, cx)
+                message_editor.contents(false, None, None, cx)
             })
             .await
             .unwrap();
@@ -1459,7 +1503,7 @@ mod tests {
         // The @ mention functionality should not be affected
         let (content, _) = message_editor
             .update(cx, |message_editor, cx| {
-                message_editor.contents(false, None, cx)
+                message_editor.contents(false, None, None, cx)
             })
             .await
             .unwrap();
@@ -1541,6 +1585,7 @@ mod tests {
                     None,
                     prompt_capabilities.clone(),
                     available_commands.clone(),
+                    Default::default(),
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -1765,6 +1810,7 @@ mod tests {
                     history.downgrade(),
                     None,
                     prompt_capabilities.clone(),
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     "Test Agent".into(),
@@ -2261,6 +2307,7 @@ mod tests {
                     Default::default(),
                     Default::default(),
                     Default::default(),
+                    Default::default(),
                     "Test Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
@@ -2371,6 +2418,7 @@ mod tests {
                     Default::default(),
                     Default::default(),
                     Default::default(),
+                    Default::default(),
                     "Test Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
@@ -2452,6 +2500,7 @@ mod tests {
                     Default::default(),
                     Default::default(),
                     Default::default(),
+                    Default::default(),
                     "Test Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
@@ -2501,6 +2550,7 @@ mod tests {
                     thread_store.clone(),
                     history.downgrade(),
                     None,
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     Default::default(),
@@ -2556,6 +2606,7 @@ mod tests {
                     thread_store.clone(),
                     history.downgrade(),
                     None,
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     Default::default(),
@@ -2615,6 +2666,7 @@ mod tests {
                     Default::default(),
                     Default::default(),
                     Default::default(),
+                    Default::default(),
                     "Test Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
@@ -2636,7 +2688,7 @@ mod tests {
 
         let (content, _) = message_editor
             .update(cx, |message_editor, cx| {
-                message_editor.contents(false, None, cx)
+                message_editor.contents(false, None, None, cx)
             })
             .await
             .unwrap();
@@ -2683,6 +2735,7 @@ mod tests {
                     Default::default(),
                     Default::default(),
                     Default::default(),
+                    Default::default(),
                     "Test Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
@@ -2717,7 +2770,7 @@ mod tests {
         });
 
         let content = message_editor
-            .update(cx, |editor, cx| editor.contents(false, None, cx))
+            .update(cx, |editor, cx| editor.contents(false, None, None, cx))
             .await
             .unwrap()
             .0;
@@ -2744,7 +2797,7 @@ mod tests {
         });
 
         let content = message_editor
-            .update(cx, |editor, cx| editor.contents(false, None, cx))
+            .update(cx, |editor, cx| editor.contents(false, None, None, cx))
             .await
             .unwrap()
             .0;
@@ -2841,6 +2894,7 @@ mod tests {
                     thread_store.clone(),
                     history.downgrade(),
                     None,
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     Default::default(),

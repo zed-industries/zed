@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use crate::acp::AcpThreadHistory;
-use crate::user_slash_command::UserSlashCommand;
+use crate::user_slash_command::{CommandLoadError, UserSlashCommand};
 use acp_thread::{AgentSessionInfo, MentionUri};
 use anyhow::Result;
 use collections::HashMap;
@@ -26,6 +26,7 @@ use project::{
 use prompt_store::{PromptStore, UserPromptId};
 use rope::Point;
 use text::{Anchor, ToPoint as _};
+use ui::IconName;
 use ui::prelude::*;
 use util::ResultExt as _;
 use util::paths::PathStyle;
@@ -191,8 +192,9 @@ pub enum CommandSource {
     /// Command provided by the ACP server
     Server,
     /// User-defined command from a markdown file
-    /// TODO: Use this to show a different icon/style in the completion menu
     UserDefined { template: Arc<str> },
+    /// User-defined command that failed to load
+    UserDefinedError { error_message: Arc<str> },
 }
 
 pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
@@ -206,8 +208,14 @@ pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
     fn confirm_command(&self, cx: &mut App);
 
     /// Returns cached user-defined slash commands, if available.
-    /// Default implementation returns an empty HashMap, meaning commands will be loaded from disk.
+    /// Default implementation returns None, meaning commands will be loaded from disk.
     fn cached_user_commands(&self, _cx: &App) -> Option<HashMap<String, UserSlashCommand>> {
+        None
+    }
+
+    /// Returns cached errors from loading user-defined slash commands, if available.
+    /// Default implementation returns None.
+    fn cached_user_command_errors(&self, _cx: &App) -> Option<Vec<CommandLoadError>> {
         None
     }
 }
@@ -608,9 +616,15 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<AvailableCommand>> {
         let commands = self.source.available_commands(cx);
 
-        // Try to use cached user commands first
+        // Try to use cached user commands and errors first
         let cached_user_commands = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
             self.source.cached_user_commands(cx)
+        } else {
+            None
+        };
+
+        let cached_user_command_errors = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+            self.source.cached_user_command_errors(cx)
         } else {
             None
         };
@@ -639,21 +653,20 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         cx.spawn(async move |cx| {
             let mut commands = commands;
 
-            // Use cached commands if available, otherwise load from disk
-            let user_commands: Vec<UserSlashCommand> = if let Some(cached) = cached_user_commands {
-                cached.into_values().collect()
+            // Use cached commands/errors if available, otherwise load from disk
+            let (user_commands, user_command_errors): (
+                Vec<UserSlashCommand>,
+                Vec<CommandLoadError>,
+            ) = if let Some(cached) = cached_user_commands {
+                let errors = cached_user_command_errors.unwrap_or_default();
+                (cached.into_values().collect(), errors)
             } else if let Some(fs) = fs {
                 let load_result =
                     crate::user_slash_command::load_all_commands_async(&fs, &worktree_roots).await;
 
-                // Log any errors encountered while loading commands
-                for error in &load_result.errors {
-                    log::warn!("Failed to load slash command: {}", error);
-                }
-
-                load_result.commands
+                (load_result.commands, load_result.errors)
             } else {
-                Vec::new()
+                (Vec::new(), Vec::new())
             };
 
             for cmd in user_commands {
@@ -665,6 +678,22 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                         template: cmd.template.clone(),
                     },
                 });
+            }
+
+            // Add errored commands so they show up in autocomplete with error indication.
+            // Errors for commands that don't match the query will be silently ignored here
+            // since the user will see them via the error callout in the thread view.
+            for error in user_command_errors {
+                if let Some(name) = error.command_name() {
+                    commands.push(AvailableCommand {
+                        name: name.into(),
+                        description: "".into(),
+                        requires_argument: false,
+                        source: CommandSource::UserDefinedError {
+                            error_message: error.message.into(),
+                        },
+                    });
+                }
             }
 
             if commands.is_empty() {
@@ -1008,7 +1037,20 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                         .await
                         .into_iter()
                         .map(|command| {
-                            let new_text = if let Some(argument) = argument.as_ref() {
+                            let is_error =
+                                matches!(command.source, CommandSource::UserDefinedError { .. });
+
+                            // For errored commands, show the name with "(load error)" suffix
+                            let label_text = if is_error {
+                                format!("{} (load error)", command.name)
+                            } else {
+                                command.name.to_string()
+                            };
+
+                            // For errored commands, we don't want to insert anything useful
+                            let new_text = if is_error {
+                                format!("/{}", command.name)
+                            } else if let Some(argument) = argument.as_ref() {
                                 format!("/{} {}", command.name, argument)
                             } else {
                                 format!("/{} ", command.name)
@@ -1016,21 +1058,74 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
 
                             let is_missing_argument =
                                 command.requires_argument && argument.is_none();
+
+                            // For errored commands, use a deprecated-style label to indicate the error
+                            let label = if is_error {
+                                // Create a label where the command name portion has a highlight
+                                // that will be rendered with strikethrough by the completion menu
+                                // (similar to deprecated LSP completions)
+                                CodeLabel::plain(label_text, None)
+                            } else {
+                                CodeLabel::plain(label_text, None)
+                            };
+
+                            // For errored commands, show the error message in documentation
+                            let documentation =
+                                if let CommandSource::UserDefinedError { error_message } =
+                                    &command.source
+                                {
+                                    Some(CompletionDocumentation::MultiLinePlainText(
+                                        error_message.to_string().into(),
+                                    ))
+                                } else if !command.description.is_empty() {
+                                    Some(CompletionDocumentation::MultiLinePlainText(
+                                        command.description.to_string().into(),
+                                    ))
+                                } else {
+                                    None
+                                };
+
+                            // For errored commands, use a red X icon
+                            let icon_path = if is_error {
+                                Some(IconName::XCircle.path().into())
+                            } else {
+                                None
+                            };
+
                             Completion {
                                 replace_range: source_range.clone(),
                                 new_text,
-                                label: CodeLabel::plain(command.name.to_string(), None),
-                                documentation: Some(CompletionDocumentation::MultiLinePlainText(
-                                    command.description.into(),
-                                )),
-                                source: project::CompletionSource::Custom,
-                                icon_path: None,
+                                label,
+                                documentation,
+                                source: if is_error {
+                                    // Use a custom source that marks this as deprecated/errored
+                                    // so the completion menu renders it with strikethrough
+                                    project::CompletionSource::Lsp {
+                                        insert_range: None,
+                                        server_id: language::LanguageServerId(0),
+                                        lsp_completion: Box::new(lsp::CompletionItem {
+                                            label: command.name.to_string(),
+                                            deprecated: Some(true),
+                                            ..Default::default()
+                                        }),
+                                        lsp_defaults: None,
+                                        resolved: true,
+                                    }
+                                } else {
+                                    project::CompletionSource::Custom
+                                },
+                                icon_path,
                                 match_start: None,
                                 snippet_deduplication_key: None,
                                 insert_text_mode: None,
                                 confirm: Some(Arc::new({
                                     let source = source.clone();
+                                    let is_error = is_error;
                                     move |intent, _window, cx| {
+                                        // Don't confirm errored commands
+                                        if is_error {
+                                            return false;
+                                        }
                                         if !is_missing_argument {
                                             cx.defer({
                                                 let source = source.clone();
