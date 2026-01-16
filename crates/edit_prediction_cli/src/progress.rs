@@ -102,8 +102,9 @@ impl Progress {
                     inner: Mutex::new(ProgressInner {
                         completed: Vec::new(),
                         in_progress: HashMap::new(),
-                        is_tty: std::env::var("NO_COLOR").is_err()
-                            && std::io::stderr().is_terminal(),
+                        is_tty: std::env::var("COLOR").is_ok()
+                            || (std::env::var("NO_COLOR").is_err()
+                                && std::io::stderr().is_terminal()),
                         terminal_width: get_terminal_width(),
                         max_example_name_len: 0,
                         status_lines_displayed: 0,
@@ -261,7 +262,6 @@ impl Progress {
             for _ in 0..inner.status_lines_displayed {
                 eprint!("\x1b[A\x1b[K");
             }
-            let _ = std::io::stderr().flush();
             inner.status_lines_displayed = 0;
         }
     }
