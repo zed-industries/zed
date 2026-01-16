@@ -3,9 +3,12 @@ use gpui::Entity;
 use gpui::Task;
 use picker::Picker;
 use picker::PickerDelegate;
+use settings::RegisterSetting;
+use settings::Settings;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Debug;
+use std::fmt::Display;
 use std::sync::Arc;
 use ui::ActiveTheme;
 use ui::Button;
@@ -18,6 +21,7 @@ use ui::ToggleState;
 use ui::Tooltip;
 use ui::h_flex;
 use ui::rems_from_px;
+use ui::v_flex;
 
 use gpui::{Action, DismissEvent, EventEmitter, FocusHandle, Focusable, RenderOnce, WeakEntity};
 use serde::Deserialize;
@@ -38,9 +42,23 @@ mod devcontainer_api;
 
 use devcontainer_api::read_devcontainer_configuration_for_project;
 
+use crate::devcontainer_api::DevContainerError;
 use crate::devcontainer_api::apply_dev_container_template;
 
 pub use devcontainer_api::start_dev_container;
+
+#[derive(RegisterSetting)]
+struct DevContainerSettings {
+    use_podman: bool,
+}
+
+impl Settings for DevContainerSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        Self {
+            use_podman: content.remote.use_podman.unwrap_or(false),
+        }
+    }
+}
 
 #[derive(PartialEq, Clone, Deserialize, Default, Action)]
 #[action(namespace = projects)]
@@ -80,11 +98,10 @@ struct TemplateOptionSelection {
     navigable_options: Vec<(String, NavigableEntry)>,
 }
 
-// TODO this could be better
 impl Eq for TemplateEntry {}
 impl PartialEq for TemplateEntry {
     fn eq(&self, other: &Self) -> bool {
-        self.template.id == other.template.id
+        self.template == other.template
     }
 }
 impl Debug for TemplateEntry {
@@ -98,7 +115,7 @@ impl Debug for TemplateEntry {
 impl Eq for FeatureEntry {}
 impl PartialEq for FeatureEntry {
     fn eq(&self, other: &Self) -> bool {
-        self.feature.id == other.feature.id
+        self.feature == other.feature
     }
 }
 
@@ -114,17 +131,19 @@ impl Debug for FeatureEntry {
 enum DevContainerState {
     Initial,
     QueryingTemplates,
-    TemplateQueryReturned(Result<Vec<TemplateEntry>, String>), // TODO, it's either a successful query manifest or an error
+    TemplateQueryReturned(Result<Vec<TemplateEntry>, String>),
     QueryingFeatures(TemplateEntry),
     FeaturesQueryReturned(TemplateEntry),
     UserOptionsSpecifying(TemplateEntry),
     ConfirmingWriteDevContainer(TemplateEntry),
+    TemplateWriteFailed(DevContainerError),
 }
 
 #[derive(Debug, Clone)]
 enum DevContainerMessage {
     SearchTemplates,
     TemplatesRetrieved(Vec<DevContainerTemplate>),
+    ErrorRetrievingTemplates(String),
     TemplateSelected(TemplateEntry),
     TemplateOptionsSpecified(TemplateEntry),
     TemplateOptionsCompleted(TemplateEntry),
@@ -132,6 +151,7 @@ enum DevContainerMessage {
     FeaturesSelected(TemplateEntry),
     NeedConfirmWriteDevContainer(TemplateEntry),
     ConfirmWriteDevContainer(TemplateEntry),
+    FailedToWriteTemplate(DevContainerError),
     GoBack,
 }
 
@@ -273,7 +293,7 @@ impl PickerDelegate for TemplatePickerDelegate {
             return None;
         };
         Some(
-            ListItem::new("li-todo")
+            ListItem::new("li-template-match")
                 .inset(true)
                 .spacing(ui::ListItemSpacing::Sparse)
                 .start_slot(Icon::new(IconName::Box))
@@ -537,6 +557,14 @@ impl DevContainerModal {
                                 .toggle_state(
                                     self.confirm_entry.focus_handle.contains_focused(window, cx),
                                 )
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.accept_message(
+                                        DevContainerMessage::SearchTemplates,
+                                        window,
+                                        cx,
+                                    );
+                                    cx.notify();
+                                }))
                                 .child(Label::new("Search for Dev Container Templates")),
                         ),
                 )
@@ -544,6 +572,27 @@ impl DevContainerModal {
         );
         view = view.entry(self.confirm_entry.clone());
         view.render(window, cx).into_any_element()
+    }
+
+    fn render_error(
+        &self,
+        error_title: String,
+        error: impl Display,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> AnyElement {
+        v_flex()
+            .p_1()
+            .child(div().track_focus(&self.focus_handle).child(
+                ModalHeader::new().child(Headline::new(error_title).size(HeadlineSize::XSmall)),
+            ))
+            .child(ListSeparator)
+            .child(
+                v_flex()
+                    .child(Label::new(format!("{}", error)))
+                    .whitespace_normal(),
+            )
+            .into_any_element()
     }
 
     fn render_retrieved_templates(
@@ -572,30 +621,32 @@ impl DevContainerModal {
         let Some(next_option_entries) = &template_entry.current_option else {
             return div().into_any_element();
         };
-        let mut view =
-            Navigable::new(
-                div()
-                    .child(
-                        div()
-                            .id("title")
-                            .tooltip(Tooltip::text(next_option_entries.description.clone()))
-                            .track_focus(&self.focus_handle)
-                            .child(
-                                ModalHeader::new()
-                                    .child(
-                                        Headline::new("Template Option: ")
-                                            .size(HeadlineSize::XSmall),
-                                    )
-                                    .child(
-                                        Headline::new(&next_option_entries.option_name)
-                                            .size(HeadlineSize::XSmall),
-                                    ),
-                            ),
-                    )
-                    .child(ListSeparator)
-                    .children(next_option_entries.navigable_options.iter().map(
-                        |(option, entry)| {
+        let mut view = Navigable::new(
+            div()
+                .child(
+                    div()
+                        .id("title")
+                        .tooltip(Tooltip::text(next_option_entries.description.clone()))
+                        .track_focus(&self.focus_handle)
+                        .child(
+                            ModalHeader::new()
+                                .child(
+                                    Headline::new("Template Option: ").size(HeadlineSize::XSmall),
+                                )
+                                .child(
+                                    Headline::new(&next_option_entries.option_name)
+                                        .size(HeadlineSize::XSmall),
+                                ),
+                        ),
+                )
+                .child(ListSeparator)
+                .children(
+                    next_option_entries
+                        .navigable_options
+                        .iter()
+                        .map(|(option, entry)| {
                             div()
+                                .id(format!("li-parent-{}", option))
                                 .track_focus(&entry.focus_handle)
                                 .on_action({
                                     let mut template = template_entry.clone();
@@ -614,36 +665,57 @@ impl DevContainerModal {
                                     })
                                 })
                                 .child(
-                                    ListItem::new("li-todo")
+                                    ListItem::new(format!("li-option-{}", option))
                                         .inset(true)
                                         .spacing(ui::ListItemSpacing::Sparse)
                                         .toggle_state(
                                             entry.focus_handle.contains_focused(window, cx),
                                         )
+                                        .on_click({
+                                            let mut template = template_entry.clone();
+                                            template.options_selected.insert(
+                                                next_option_entries.option_name.clone(),
+                                                option.clone(),
+                                            );
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.accept_message(
+                                                    DevContainerMessage::TemplateOptionsSpecified(
+                                                        template.clone(),
+                                                    ),
+                                                    window,
+                                                    cx,
+                                                );
+                                                cx.notify();
+                                            })
+                                        })
                                         .child(Label::new(option)),
                                 )
-                        },
-                    ))
-                    .child(ListSeparator)
-                    .child(
-                        div()
-                            .track_focus(&self.back_entry.focus_handle)
-                            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                                this.accept_message(DevContainerMessage::GoBack, window, cx);
-                            }))
-                            .child(
-                                ListItem::new("li-goback")
-                                    .inset(true)
-                                    .spacing(ui::ListItemSpacing::Sparse)
-                                    .start_slot(Icon::new(IconName::Return).color(Color::Muted))
-                                    .toggle_state(
-                                        self.back_entry.focus_handle.contains_focused(window, cx),
-                                    )
-                                    .child(Label::new("Go Back")),
-                            ),
-                    )
-                    .into_any_element(),
-            );
+                        }),
+                )
+                .child(ListSeparator)
+                .child(
+                    div()
+                        .track_focus(&self.back_entry.focus_handle)
+                        .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                            this.accept_message(DevContainerMessage::GoBack, window, cx);
+                        }))
+                        .child(
+                            ListItem::new("li-goback")
+                                .inset(true)
+                                .spacing(ui::ListItemSpacing::Sparse)
+                                .start_slot(Icon::new(IconName::Return).color(Color::Muted))
+                                .toggle_state(
+                                    self.back_entry.focus_handle.contains_focused(window, cx),
+                                )
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.accept_message(DevContainerMessage::GoBack, window, cx);
+                                    cx.notify();
+                                }))
+                                .child(Label::new("Go Back")),
+                        ),
+                )
+                .into_any_element(),
+        );
         for (_, entry) in &next_option_entries.navigable_options {
             view = view.entry(entry.clone());
         }
@@ -689,42 +761,56 @@ impl DevContainerModal {
                 .child(
                     div()
                         .track_focus(&self.confirm_entry.focus_handle)
-                        .on_action(cx.listener(move |this, _: &menu::Confirm, window, cx| {
-                            this.accept_message(
-                                DevContainerMessage::ConfirmWriteDevContainer(
-                                    template_entry.clone(),
-                                ),
-                                window,
-                                cx,
-                            );
-                        }))
+                        .on_action({
+                            let template = template_entry.clone();
+                            cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                                this.accept_message(
+                                    DevContainerMessage::ConfirmWriteDevContainer(template.clone()),
+                                    window,
+                                    cx,
+                                );
+                            })
+                        })
                         .child(
                             ListItem::new("li-search-containers")
                                 .inset(true)
                                 .spacing(ui::ListItemSpacing::Sparse)
-                                .start_slot(Icon::new(IconName::Warning).color(Color::Warning))
+                                .start_slot(Icon::new(IconName::Check).color(Color::Muted))
                                 .toggle_state(
                                     self.confirm_entry.focus_handle.contains_focused(window, cx),
                                 )
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.accept_message(
+                                        DevContainerMessage::ConfirmWriteDevContainer(
+                                            template_entry.clone(),
+                                        ),
+                                        window,
+                                        cx,
+                                    );
+                                    cx.notify();
+                                }))
                                 .child(Label::new("Overwrite")),
                         ),
                 )
-                .child(ListSeparator)
                 .child(
                     div()
                         .track_focus(&self.back_entry.focus_handle)
                         .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                            this.accept_message(DevContainerMessage::GoBack, window, cx);
+                            this.dismiss(&menu::Cancel, window, cx);
                         }))
                         .child(
                             ListItem::new("li-goback")
                                 .inset(true)
                                 .spacing(ui::ListItemSpacing::Sparse)
-                                .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                .start_slot(Icon::new(IconName::XCircle).color(Color::Muted))
                                 .toggle_state(
                                     self.back_entry.focus_handle.contains_focused(window, cx),
                                 )
-                                .child(Label::new("Go Back")),
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.dismiss(&menu::Cancel, window, cx);
+                                    cx.notify();
+                                }))
+                                .child(Label::new("Cancel")),
                         ),
                 )
                 .into_any_element(),
@@ -774,6 +860,10 @@ impl DevContainerModal {
                                 .toggle_state(
                                     self.back_entry.focus_handle.contains_focused(window, cx),
                                 )
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.accept_message(DevContainerMessage::GoBack, window, cx);
+                                    cx.notify();
+                                }))
                                 .child(Label::new("Go Back")),
                         ),
                 )
@@ -822,6 +912,10 @@ impl DevContainerModal {
                                 .toggle_state(
                                     self.back_entry.focus_handle.contains_focused(window, cx),
                                 )
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.accept_message(DevContainerMessage::GoBack, window, cx);
+                                    cx.notify();
+                                }))
                                 .child(Label::new("Go Back")),
                         ),
                 )
@@ -863,7 +957,15 @@ impl StatefulModal for DevContainerModal {
             DevContainerState::ConfirmingWriteDevContainer(template_entry) => {
                 self.render_confirming_write_dev_container(template_entry, window, cx)
             }
-            _ => div().into_any_element(),
+            DevContainerState::TemplateWriteFailed(dev_container_error) => self.render_error(
+                "Error Creating Dev Container Definition".to_string(),
+                dev_container_error,
+                window,
+                cx,
+            ),
+            DevContainerState::TemplateQueryReturned(Err(e)) => {
+                self.render_error("Error Retrieving Templates".to_string(), e, window, cx)
+            }
         }
     }
 
@@ -877,17 +979,29 @@ impl StatefulModal for DevContainerModal {
             DevContainerMessage::SearchTemplates => {
                 cx.spawn_in(window, async move |this, cx| {
                     let client = cx.update(|_, cx| cx.http_client()).unwrap();
-                    let Some(templates) = get_templates(client).await.log_err() else {
-                        return;
-                    };
-                    let message = DevContainerMessage::TemplatesRetrieved(templates.templates);
-                    this.update_in(cx, |this, window, cx| {
-                        this.accept_message(message, window, cx);
-                    })
-                    .log_err();
+                    match get_templates(client).await {
+                        Ok(templates) => {
+                            let message =
+                                DevContainerMessage::TemplatesRetrieved(templates.templates);
+                            this.update_in(cx, |this, window, cx| {
+                                this.accept_message(message, window, cx);
+                            })
+                            .log_err();
+                        }
+                        Err(e) => {
+                            let message = DevContainerMessage::ErrorRetrievingTemplates(e);
+                            this.update_in(cx, |this, window, cx| {
+                                this.accept_message(message, window, cx);
+                            })
+                            .log_err();
+                        }
+                    }
                 })
                 .detach();
                 Some(DevContainerState::QueryingTemplates)
+            }
+            DevContainerMessage::ErrorRetrievingTemplates(message) => {
+                Some(DevContainerState::TemplateQueryReturned(Err(message)))
             }
             DevContainerMessage::GoBack => match &self.state {
                 DevContainerState::Initial => Some(DevContainerState::Initial),
@@ -1073,73 +1187,9 @@ impl StatefulModal for DevContainerModal {
                 }
             }
             DevContainerMessage::FeaturesSelected(template_entry) => {
-                let workspace = self.workspace.upgrade().expect("TODO");
-
-                cx.spawn_in(window, async move |this, cx| {
-                    if let Some(tree_id) = workspace.update(cx, |workspace, cx| {
-                        let project = workspace.project().clone();
-                        let worktree = project.read(cx).visible_worktrees(cx).find_map(|tree| {
-                            tree.read(cx)
-                                .root_entry()?
-                                .is_dir()
-                                .then_some(tree.read(cx))
-                        });
-                        worktree.and_then(|w| Some(w.id()))
-                    }) {
-                        let node_runtime = workspace.read_with(cx, |workspace, _| {
-                            workspace.app_state().node_runtime.clone()
-                        });
-
-                        if read_devcontainer_configuration_for_project(cx, &node_runtime)
-                            .await
-                            .is_ok()
-                        {
-                            this.update_in(cx, |this, window, cx| {
-                                this.accept_message(
-                                    DevContainerMessage::NeedConfirmWriteDevContainer(
-                                        template_entry,
-                                    ),
-                                    window,
-                                    cx,
-                                );
-                            })
-                            .unwrap();
-                            return;
-                        }
-
-                        let files = apply_dev_container_template(
-                            &template_entry.template,
-                            &template_entry.options_selected,
-                            &template_entry.features_selected,
-                            cx,
-                            &node_runtime,
-                        )
-                        .await
-                        .unwrap(); // TODO this must be handled. Can't work on remote right now
-                        if files
-                            .files
-                            .contains(&"./.devcontainer/devcontainer.json".to_string())
-                        {
-                            workspace
-                                .update_in(cx, |workspace, window, cx| {
-                                    let path =
-                                        RelPath::unix(".devcontainer/devcontainer.json").unwrap();
-                                    workspace.open_path((tree_id, path), None, true, window, cx)
-                                })
-                                // TODO handle this better
-                                .unwrap()
-                                .await
-                                .unwrap();
-                        }
-                        this.update_in(cx, |this, window, cx| {
-                            this.dismiss(&menu::Cancel, window, cx);
-                        })
-                        .unwrap();
-                    } else {
-                        return;
-                    }
-                })
-                .detach();
+                if let Some(workspace) = self.workspace.upgrade() {
+                    dispatch_apply_templates(template_entry, workspace, window, true, cx);
+                }
 
                 None
             }
@@ -1147,59 +1197,13 @@ impl StatefulModal for DevContainerModal {
                 DevContainerState::ConfirmingWriteDevContainer(template_entry),
             ),
             DevContainerMessage::ConfirmWriteDevContainer(template_entry) => {
-                let workspace = self.workspace.upgrade().expect("TODO");
-
-                cx.spawn_in(window, async move |this, cx| {
-                    if let Some(tree_id) = workspace.update(cx, |workspace, cx| {
-                        let project = workspace.project().clone();
-                        let worktree = project.read(cx).visible_worktrees(cx).find_map(|tree| {
-                            tree.read(cx)
-                                .root_entry()?
-                                .is_dir()
-                                .then_some(tree.read(cx))
-                        });
-                        worktree.and_then(|w| Some(w.id()))
-                    }) {
-                        let node_runtime = workspace.read_with(cx, |workspace, _| {
-                            workspace.app_state().node_runtime.clone()
-                        });
-
-                        let files = apply_dev_container_template(
-                            &template_entry.template,
-                            &template_entry.options_selected,
-                            &template_entry.features_selected,
-                            cx,
-                            &node_runtime,
-                        )
-                        .await
-                        .unwrap();
-                        if files
-                            .files
-                            .contains(&"./.devcontainer/devcontainer.json".to_string())
-                        {
-                            workspace
-                                .update_in(cx, |workspace, window, cx| {
-                                    let path =
-                                        RelPath::unix(".devcontainer/devcontainer.json").unwrap();
-                                    workspace.open_path((tree_id, path), None, true, window, cx)
-                                })
-                                // TODO handle this better
-                                .unwrap()
-                                .await
-                                .unwrap();
-                        }
-                        this.update_in(cx, |this, window, cx| {
-                            this.dismiss(&menu::Cancel, window, cx);
-                        })
-                        .unwrap();
-                    } else {
-                        return;
-                    }
-                })
-                .detach();
-
-                // self.dismiss(&menu::Cancel, window, cx);
+                if let Some(workspace) = self.workspace.upgrade() {
+                    dispatch_apply_templates(template_entry, workspace, window, false, cx);
+                }
                 None
+            }
+            DevContainerMessage::FailedToWriteTemplate(error) => {
+                Some(DevContainerState::TemplateWriteFailed(error))
             }
         };
         if let Some(state) = new_state {
@@ -1320,7 +1324,6 @@ where
 }
 
 impl TemplateOptions {
-    // TODO put this under test
     fn possible_values(&self) -> Vec<String> {
         match self.option_type.as_str() {
             "string" => self
@@ -1340,7 +1343,6 @@ impl TemplateOptions {
     }
 }
 
-// https://distribution.github.io/distribution/spec/api/#pulling-an-image-manifest
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DockerManifestsResponse {
@@ -1365,7 +1367,7 @@ impl DevContainerFeature {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct DevContainerTemplate {
     id: String,
@@ -1380,11 +1382,98 @@ struct DevContainerFeaturesResponse {
     features: Vec<DevContainerFeature>,
 }
 
-// https://ghcr.io/v2/devcontainers/templates/blobs/sha256:035e9c9fd9bd61f6d3965fa4bf11f3ddfd2490a8cf324f152c13cc3724d67d09
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DevContainerTemplatesResponse {
     templates: Vec<DevContainerTemplate>,
+}
+
+fn dispatch_apply_templates(
+    template_entry: TemplateEntry,
+    workspace: Entity<Workspace>,
+    window: &mut Window,
+    check_for_existing: bool,
+    cx: &mut Context<DevContainerModal>,
+) {
+    cx.spawn_in(window, async move |this, cx| {
+        if let Some(tree_id) = workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().clone();
+            let worktree = project.read(cx).visible_worktrees(cx).find_map(|tree| {
+                tree.read(cx)
+                    .root_entry()?
+                    .is_dir()
+                    .then_some(tree.read(cx))
+            });
+            worktree.and_then(|w| Some(w.id()))
+        }) {
+            let node_runtime = workspace.read_with(cx, |workspace, _| {
+                workspace.app_state().node_runtime.clone()
+            });
+
+            if check_for_existing
+                && read_devcontainer_configuration_for_project(cx, &node_runtime)
+                    .await
+                    .is_ok()
+            {
+                this.update_in(cx, |this, window, cx| {
+                    this.accept_message(
+                        DevContainerMessage::NeedConfirmWriteDevContainer(template_entry),
+                        window,
+                        cx,
+                    );
+                })
+                .log_err();
+                return;
+            }
+
+            let files = match apply_dev_container_template(
+                &template_entry.template,
+                &template_entry.options_selected,
+                &template_entry.features_selected,
+                cx,
+                &node_runtime,
+            )
+            .await
+            {
+                Ok(files) => files,
+                Err(e) => {
+                    this.update_in(cx, |this, window, cx| {
+                        this.accept_message(
+                            DevContainerMessage::FailedToWriteTemplate(e),
+                            window,
+                            cx,
+                        );
+                    })
+                    .log_err();
+                    return;
+                }
+            };
+
+            if files
+                .files
+                .contains(&"./.devcontainer/devcontainer.json".to_string())
+            {
+                let Some(workspace_task) = workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        let path = RelPath::unix(".devcontainer/devcontainer.json").unwrap();
+                        workspace.open_path((tree_id, path), None, true, window, cx)
+                    })
+                    .log_err()
+                else {
+                    return;
+                };
+
+                workspace_task.await.log_err();
+            }
+            this.update_in(cx, |this, window, cx| {
+                this.dismiss(&menu::Cancel, window, cx);
+            })
+            .unwrap();
+        } else {
+            return;
+        }
+    })
+    .detach();
 }
 
 async fn get_templates(
@@ -1422,12 +1511,6 @@ async fn get_features(client: Arc<dyn HttpClient>) -> Result<DevContainerFeature
     }
     Ok(features_response)
 }
-
-// Once we get the list of templates, and select the ID, we need to
-// Get the manifest of that specific template, e.g. https://ghcr.io/v2/devcontainers/templates/alpine/manifests/latest
-// /// Layer mediatype:   "mediaType": "application/vnd.devcontainers.layer.v1+tar",
-// As opposed to "application/vnd.devcontainers.collection.layer.v1+json" for the list of templates
-// Get the content (sent as a tarball) for the layer, e.g. https://ghcr.io/v2/devcontainers/templates/alpine/blobs/sha256:723fb0b5fc6eedd76957710cd45b287ef31362f900ea61190c1472910317bcb1
 
 async fn get_ghcr_token(client: &Arc<dyn HttpClient>) -> Result<GithubTokenResponse, String> {
     let url = format!(
@@ -1503,19 +1586,23 @@ where
         .header("Accept", "application/vnd.oci.image.manifest.v1+json")
         .body(AsyncBody::default())
         .unwrap();
-    // client.send(request).await.unwrap();
-    let Ok(response) = client.send(request).await else {
-        return Err("Failed get reponse - TODO fix error handling".to_string());
+    let response = match client.send(request).await {
+        Ok(response) => response,
+        Err(e) => {
+            return Err(format!("Failed to send request: {}", e));
+        }
     };
 
     let mut output = String::new();
 
-    let Ok(_) = response.into_body().read_to_string(&mut output).await else {
-        return Err("Failed to read response body - TODO fix error handling".to_string());
+    if let Err(e) = response.into_body().read_to_string(&mut output).await {
+        return Err(format!("Failed to read response body: {}", e));
     };
 
-    let structured_response: T = serde_json::from_str(&output).unwrap(); // TODO
-    Ok(structured_response)
+    match serde_json::from_str(&output) {
+        Ok(response) => Ok(response),
+        Err(e) => Err(format!("Failed to deserialize response: {}", e)),
+    }
 }
 
 #[cfg(test)]

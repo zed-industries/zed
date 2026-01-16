@@ -976,6 +976,7 @@ pub struct RemoteSettingsContent {
     pub wsl_connections: Option<Vec<WslConnection>>,
     pub dev_container_connections: Option<Vec<DevContainerConnection>>,
     pub read_ssh_config: Option<bool>,
+    pub use_podman: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -985,6 +986,7 @@ pub struct RemoteSettingsContent {
 pub struct DevContainerConnection {
     pub name: String,
     pub container_id: String,
+    pub use_podman: bool,
 }
 
 #[with_fallible_options]

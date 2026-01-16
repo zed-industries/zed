@@ -8,11 +8,11 @@ use std::{
 use gpui::AsyncWindowContext;
 use node_runtime::NodeRuntime;
 use serde::Deserialize;
-use settings::DevContainerConnection;
+use settings::{DevContainerConnection, Settings as _};
 use smol::{fs, process::Command};
 use workspace::Workspace;
 
-use crate::{DevContainerFeature, DevContainerTemplate};
+use crate::{DevContainerFeature, DevContainerSettings, DevContainerTemplate};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,7 +40,7 @@ pub(crate) struct DevContainerConfigurationOutput {
     configuration: DevContainerConfiguration,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DevContainerError {
     DockerNotAvailable,
     DevContainerCliNotAvailable,
@@ -94,6 +94,7 @@ pub(crate) async fn read_devcontainer_configuration_for_project(
         found_in_path,
         node_runtime,
         &directory,
+        use_podman(cx),
     )
     .await
 }
@@ -119,15 +120,22 @@ pub(crate) async fn apply_dev_container_template(
         found_in_path,
         node_runtime,
         &directory,
+        false, // devcontainer template apply does not use --docker-path option
     )
     .await
+}
+
+fn use_podman(cx: &mut AsyncWindowContext) -> bool {
+    cx.update(|_, cx| DevContainerSettings::get_global(cx).use_podman)
+        .unwrap_or(false)
 }
 
 pub async fn start_dev_container(
     cx: &mut AsyncWindowContext,
     node_runtime: NodeRuntime,
 ) -> Result<(DevContainerConnection, String), DevContainerError> {
-    check_for_docker().await?;
+    let use_podman = use_podman(cx);
+    check_for_docker(use_podman).await?;
 
     let (path_to_devcontainer_cli, found_in_path) = ensure_devcontainer_cli(&node_runtime).await?;
 
@@ -140,6 +148,7 @@ pub async fn start_dev_container(
         found_in_path,
         &node_runtime,
         directory.clone(),
+        use_podman,
     )
     .await
     {
@@ -153,6 +162,7 @@ pub async fn start_dev_container(
                 found_in_path,
                 &node_runtime,
                 &directory,
+                use_podman,
             )
             .await
             {
@@ -168,6 +178,7 @@ pub async fn start_dev_container(
             let connection = DevContainerConnection {
                 name: project_name.into(),
                 container_id: container_id.into(),
+                use_podman,
             };
 
             Ok((connection, remote_workspace_folder))
@@ -189,8 +200,12 @@ fn dev_container_cli() -> String {
     "devcontainer.cmd".to_string()
 }
 
-async fn check_for_docker() -> Result<(), DevContainerError> {
-    let mut command = util::command::new_smol_command("docker");
+async fn check_for_docker(use_podman: bool) -> Result<(), DevContainerError> {
+    let mut command = if use_podman {
+        util::command::new_smol_command("podman")
+    } else {
+        util::command::new_smol_command("docker")
+    };
     command.arg("--version");
 
     match command.output().await {
@@ -295,13 +310,15 @@ async fn devcontainer_up(
     found_in_path: bool,
     node_runtime: &NodeRuntime,
     path: Arc<Path>,
+    use_podman: bool,
 ) -> Result<DevContainerUp, DevContainerError> {
     let Ok(node_runtime_path) = node_runtime.binary_path().await else {
         log::error!("Unable to find node runtime path");
         return Err(DevContainerError::NodeRuntimeNotAvailable);
     };
 
-    let mut command = devcontainer_cli_command(path_to_cli, found_in_path, &node_runtime_path);
+    let mut command =
+        devcontainer_cli_command(path_to_cli, found_in_path, &node_runtime_path, use_podman);
     command.arg("up");
     command.arg("--workspace-folder");
     command.arg(path.display().to_string());
@@ -342,13 +359,15 @@ async fn devcontainer_read_configuration(
     found_in_path: bool,
     node_runtime: &NodeRuntime,
     path: &Arc<Path>,
+    use_podman: bool,
 ) -> Result<DevContainerConfigurationOutput, DevContainerError> {
     let Ok(node_runtime_path) = node_runtime.binary_path().await else {
         log::error!("Unable to find node runtime path");
         return Err(DevContainerError::NodeRuntimeNotAvailable);
     };
 
-    let mut command = devcontainer_cli_command(path_to_cli, found_in_path, &node_runtime_path);
+    let mut command =
+        devcontainer_cli_command(path_to_cli, found_in_path, &node_runtime_path, use_podman);
     command.arg("read-configuration");
     command.arg("--workspace-folder");
     command.arg(path.display().to_string());
@@ -390,13 +409,15 @@ async fn devcontainer_template_apply(
     found_in_path: bool,
     node_runtime: &NodeRuntime,
     path: &Arc<Path>,
+    use_podman: bool,
 ) -> Result<DevContainerApply, DevContainerError> {
     let Ok(node_runtime_path) = node_runtime.binary_path().await else {
         log::error!("Unable to find node runtime path");
         return Err(DevContainerError::NodeRuntimeNotAvailable);
     };
 
-    let mut command = devcontainer_cli_command(path_to_cli, found_in_path, &node_runtime_path);
+    let mut command =
+        devcontainer_cli_command(path_to_cli, found_in_path, &node_runtime_path, use_podman);
 
     let Ok(serialized_options) = serde_json::to_string(template_options) else {
         log::error!("Unable to serialize options for {:?}", template_options);
@@ -457,15 +478,22 @@ fn devcontainer_cli_command(
     path_to_cli: &PathBuf,
     found_in_path: bool,
     node_runtime_path: &PathBuf,
+    use_podman: bool,
 ) -> Command {
-    if found_in_path {
+    let mut command = if found_in_path {
         util::command::new_smol_command(path_to_cli.display().to_string())
     } else {
         let mut command =
             util::command::new_smol_command(node_runtime_path.as_os_str().display().to_string());
         command.arg(path_to_cli.display().to_string());
         command
+    };
+
+    if use_podman {
+        command.arg("--docker-path");
+        command.arg("podman");
     }
+    command
 }
 
 fn get_backup_project_name(remote_workspace_folder: &str, container_id: &str) -> String {

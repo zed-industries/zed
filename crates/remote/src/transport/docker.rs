@@ -34,6 +34,7 @@ pub struct DockerConnectionOptions {
     pub name: String,
     pub container_id: String,
     pub upload_binary_over_docker_exec: bool,
+    pub use_podman: bool,
 }
 
 pub(crate) struct DockerExecConnection {
@@ -96,6 +97,14 @@ impl DockerExecConnection {
         );
 
         Ok(this)
+    }
+
+    fn docker_cli(&self) -> &str {
+        if self.connection_options.use_podman {
+            "podman"
+        } else {
+            "docker"
+        }
     }
 
     async fn discover_shell(&self) -> String {
@@ -369,7 +378,7 @@ impl DockerExecConnection {
         let src_path_display = src_path.display().to_string();
         let dest_path_str = dest_path.display(self.path_style());
 
-        let mut command = util::command::new_smol_command("docker");
+        let mut command = util::command::new_smol_command(self.docker_cli());
         command.arg("cp");
         command.arg("-a");
         command.arg(&src_path_display);
@@ -401,7 +410,7 @@ impl DockerExecConnection {
         subcommand: &str,
         args: &[impl AsRef<str>],
     ) -> Result<String> {
-        let mut command = util::command::new_smol_command("docker");
+        let mut command = util::command::new_smol_command(self.docker_cli());
         command.arg(subcommand);
         for arg in args {
             command.arg(arg.as_ref());
@@ -585,7 +594,7 @@ impl RemoteConnection for DockerExecConnection {
         if reconnect {
             docker_args.push("--reconnect".to_string());
         }
-        let mut command = util::command::new_smol_command("docker");
+        let mut command = util::command::new_smol_command(self.docker_cli());
         command
             .kill_on_drop(true)
             .stdin(Stdio::piped())
@@ -620,7 +629,7 @@ impl RemoteConnection for DockerExecConnection {
         let dest_path_str = dest_path.to_string();
         let src_path_display = src_path.display().to_string();
 
-        let mut command = util::command::new_smol_command("docker");
+        let mut command = util::command::new_smol_command(self.docker_cli());
         command.arg("cp");
         command.arg("-a"); // Archive mode is required to assign the file ownership to the default docker exec user
         command.arg(src_path_display);
@@ -706,7 +715,7 @@ impl RemoteConnection for DockerExecConnection {
         docker_args.append(&mut inner_program);
 
         Ok(CommandTemplate {
-            program: "docker".to_string(),
+            program: self.docker_cli().to_string(),
             args: docker_args,
             // Docker-exec pipes in environment via the "-e" argument
             env: Default::default(),
