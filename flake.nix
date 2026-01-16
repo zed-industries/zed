@@ -2,23 +2,18 @@
   description = "High-performance, multiplayer code editor from the creators of Atom and Tree-sitter";
 
   inputs = {
-    nixpkgs.url = "https://channels.nixos.org/nixpkgs-unstable/nixexprs.tar.xz";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    flake-parts.url = "github:hercules-ci/flake-parts";
+    crane.url = "github:ipetkov/crane";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    crane.url = "github:ipetkov/crane";
-    flake-compat.url = "github:edolstra/flake-compat";
   };
 
   outputs =
-    {
-      nixpkgs,
-      rust-overlay,
-      crane,
-      ...
-    }:
-    let
+    inputs@{ flake-parts, ... }:
+    flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [
         "x86_64-linux"
         "x86_64-darwin"
@@ -26,31 +21,11 @@
         "aarch64-darwin"
       ];
 
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
-      mkZed =
-        pkgs:
-        let
-          rustBin = rust-overlay.lib.mkRustBin { } pkgs;
-        in
-        pkgs.callPackage ./nix/build.nix {
-          crane = crane.mkLib pkgs;
-          rustToolchain = rustBin.fromRustupToolchainFile ./rust-toolchain.toml;
-        };
-    in
-    {
-      packages = forAllSystems (pkgs: rec {
-        default = mkZed pkgs;
-        debug = default.override { profile = "dev"; };
-      });
-      devShells = forAllSystems (pkgs: {
-        default = pkgs.callPackage ./nix/shell.nix {
-          zed-editor = mkZed pkgs;
-        };
-      });
-      formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
-      overlays.default = final: _: {
-        zed-editor = mkZed final;
-      };
+      imports = [
+        ./nix/modules/overlays.nix
+        ./nix/modules/packages.nix
+        ./nix/modules/partitions.nix
+      ];
     };
 
   nixConfig = {
