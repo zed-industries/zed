@@ -30,17 +30,17 @@ use util::{
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
-use crate::{
-    ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, LspSettings, LspSettingsMap, ThemeName, VsCodeSettings, WorktreeId,
-    fallible_options,
-    merge_from::MergeFrom,
-    settings_content::{
-        ExtensionsSettingsContent, ProjectSettingsContent, SettingsContent, UserSettingsContent,
-    },
+use crate::settings_content::{
+    ExtensionsSettingsContent, FontFamilyName, IconThemeName, LanguageSettingsContent,
+    LanguageToSettingsMap, LspSettings, LspSettingsMap, ProjectSettingsContent, SettingsContent,
+    ThemeName, UserSettingsContent,
 };
+use crate::{
+    ActiveSettingsProfileName, ParseStatus, UserSettingsContentExt, VsCodeSettings, WorktreeId,
+};
+use settings_content::{RootUserSettings, merge_from::MergeFrom};
 
-use settings_json::{infer_json_indent_size, parse_json_with_comments, update_value_in_json_text};
+use settings_json::{infer_json_indent_size, update_value_in_json_text};
 
 pub const LSP_SETTINGS_SCHEMA_URL_PREFIX: &str = "zed://schemas/settings/lsp/";
 
@@ -266,7 +266,9 @@ impl SettingsStore {
     pub fn new(cx: &App, default_settings: &str) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
         let default_settings: Rc<SettingsContent> =
-            parse_json_with_comments(default_settings).unwrap();
+            SettingsContent::parse_json_with_comments(default_settings)
+                .unwrap()
+                .into();
         let mut this = Self {
             setting_values: Default::default(),
             default_settings: default_settings.clone(),
@@ -665,14 +667,14 @@ impl SettingsStore {
     }
 
     #[inline(always)]
-    fn parse_and_migrate_zed_settings<SettingsContentType: serde::de::DeserializeOwned>(
+    fn parse_and_migrate_zed_settings<SettingsContentType: RootUserSettings>(
         &mut self,
         user_settings_content: &str,
         file: SettingsFile,
     ) -> (Option<SettingsContentType>, SettingsParseResult) {
         let mut migration_status = MigrationStatus::NotNeeded;
         let (settings, parse_status) = if user_settings_content.is_empty() {
-            fallible_options::parse_json("{}")
+            SettingsContentType::parse_json("{}")
         } else {
             let migration_res = migrator::migrate_settings(user_settings_content);
             migration_status = match &migration_res {
@@ -687,7 +689,7 @@ impl SettingsStore {
                 Ok(None) => user_settings_content,
                 Err(_) => user_settings_content,
             };
-            fallible_options::parse_json(content)
+            SettingsContentType::parse_json(content)
         };
 
         let result = SettingsParseResult {
@@ -735,8 +737,9 @@ impl SettingsStore {
         text: &str,
         update: impl FnOnce(&mut SettingsContent),
     ) -> Vec<(Range<usize>, String)> {
-        let old_content: UserSettingsContent =
-            parse_json_with_comments(text).log_err().unwrap_or_default();
+        let old_content = UserSettingsContent::parse_json_with_comments(text)
+            .log_err()
+            .unwrap_or_default();
         let mut new_content = old_content.clone();
         update(&mut new_content.content);
 
@@ -766,7 +769,8 @@ impl SettingsStore {
         default_settings_content: &str,
         cx: &mut App,
     ) -> Result<()> {
-        self.default_settings = parse_json_with_comments(default_settings_content)?;
+        self.default_settings =
+            SettingsContent::parse_json_with_comments(default_settings_content)?.into();
         self.recompute_values(None, cx);
         Ok(())
     }
@@ -814,10 +818,10 @@ impl SettingsStore {
         server_settings_content: &str,
         cx: &mut App,
     ) -> Result<()> {
-        let settings: Option<SettingsContent> = if server_settings_content.is_empty() {
+        let settings = if server_settings_content.is_empty() {
             None
         } else {
-            parse_json_with_comments(server_settings_content)?
+            Option::<SettingsContent>::parse_json_with_comments(server_settings_content)?
         };
 
         // Rewrite the server settings into a content type
@@ -1215,14 +1219,6 @@ pub struct SettingsParseResult {
     pub parse_status: ParseStatus,
     /// The result of attempting to migrate the settings file
     pub migration_status: MigrationStatus,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ParseStatus {
-    /// Settings were parsed successfully
-    Success,
-    /// Settings failed to parse
-    Failed { error: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

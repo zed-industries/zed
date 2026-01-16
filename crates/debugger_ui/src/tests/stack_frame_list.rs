@@ -179,6 +179,7 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
 
 #[gpui::test]
 async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
     init_test(cx);
 
     let fs = FakeFs::new(executor.clone());

@@ -8,7 +8,7 @@ thread_local! {
     static ERRORS: RefCell<Option<Vec<anyhow::Error>>> = const { RefCell::new(None) };
 }
 
-pub(crate) fn parse_json<'de, T>(json: &'de str) -> (Option<T>, ParseStatus)
+pub fn parse_json<'de, T>(json: &'de str) -> (Option<T>, ParseStatus)
 where
     T: Deserialize<'de>,
 {
@@ -98,7 +98,7 @@ mod tests {
             }
         );
 
-        assert!(crate::parse_json_with_comments::<Foo>(&input).is_err());
+        assert!(settings_json::parse_json_with_comments::<Foo>(&input).is_err());
 
         let ParseStatus::Failed { error } = result else {
             panic!("Expected parse to fail")

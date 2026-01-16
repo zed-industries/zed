@@ -63,9 +63,6 @@ use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
 
-#[cfg(any(test, feature = "test-support"))]
-pub use fake_git_repo::{LOAD_HEAD_TEXT_TASK, LOAD_INDEX_TEXT_TASK};
-
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
     fn remove(&self, path: &Path) -> Result<()>;
@@ -548,7 +545,10 @@ impl Fs for RealFs {
         } else if !options.ignore_if_exists {
             open_options.create_new(true);
         }
-        open_options.open(path).await?;
+        open_options
+            .open(path)
+            .await
+            .with_context(|| format!("Failed to create file at {:?}", path))?;
         Ok(())
     }
 
@@ -557,7 +557,9 @@ impl Fs for RealFs {
         path: &Path,
         content: Pin<&mut (dyn AsyncRead + Send)>,
     ) -> Result<()> {
-        let mut file = smol::fs::File::create(&path).await?;
+        let mut file = smol::fs::File::create(&path)
+            .await
+            .with_context(|| format!("Failed to create file at {:?}", path))?;
         futures::io::copy(content, &mut file).await?;
         Ok(())
     }
@@ -751,7 +753,10 @@ impl Fs for RealFs {
     async fn load(&self, path: &Path) -> Result<String> {
         let path = path.to_path_buf();
         self.executor
-            .spawn(async move { Ok(std::fs::read_to_string(path)?) })
+            .spawn(async move {
+                std::fs::read_to_string(&path)
+                    .with_context(|| format!("Failed to read file {}", path.display()))
+            })
             .await
     }
 
@@ -813,9 +818,13 @@ impl Fs for RealFs {
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         let buffer_size = text.summary().len.min(10 * 1024);
         if let Some(path) = path.parent() {
-            self.create_dir(path).await?;
+            self.create_dir(path)
+                .await
+                .with_context(|| format!("Failed to create directory at {:?}", path))?;
         }
-        let file = smol::fs::File::create(path).await?;
+        let file = smol::fs::File::create(path)
+            .await
+            .with_context(|| format!("Failed to create file at {:?}", path))?;
         let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
         for chunk in text::chunks_with_line_ending(text, line_ending) {
             writer.write_all(chunk.as_bytes()).await?;
@@ -826,7 +835,9 @@ impl Fs for RealFs {
 
     async fn write(&self, path: &Path, content: &[u8]) -> Result<()> {
         if let Some(path) = path.parent() {
-            self.create_dir(path).await?;
+            self.create_dir(path)
+                .await
+                .with_context(|| format!("Failed to create directory at {:?}", path))?;
         }
         let path = path.to_owned();
         let contents = content.to_owned();
@@ -1030,6 +1041,7 @@ impl Fs for RealFs {
         Arc<dyn Watcher>,
     ) {
         use util::{ResultExt as _, paths::SanitizedPath};
+        let executor = self.executor.clone();
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
@@ -1068,11 +1080,13 @@ impl Fs for RealFs {
         (
             Box::pin(rx.filter_map({
                 let watcher = watcher.clone();
+                let executor = executor.clone();
                 move |_| {
                     let _ = watcher.clone();
                     let pending_paths = pending_paths.clone();
+                    let executor = executor.clone();
                     async move {
-                        smol::Timer::after(latency).await;
+                        executor.timer(latency).await;
                         let paths = std::mem::take(&mut *pending_paths.lock());
                         (!paths.is_empty()).then_some(paths)
                     }

@@ -1,4 +1,7 @@
-use acp_thread::AgentConnection;
+use acp_thread::{
+    AgentConnection, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
+    AgentSessionListResponse,
+};
 use acp_tools::AcpConnectionRegistry;
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
@@ -44,6 +47,7 @@ pub struct AcpConnection {
     default_config_options: HashMap<String, String>,
     root_dir: PathBuf,
     child: Child,
+    session_list: Option<Rc<AcpSessionList>>,
     _io_task: Task<Result<(), acp::Error>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
@@ -72,6 +76,70 @@ pub struct AcpSession {
     models: Option<Rc<RefCell<acp::SessionModelState>>>,
     session_modes: Option<Rc<RefCell<acp::SessionModeState>>>,
     config_options: Option<ConfigOptions>,
+}
+
+pub struct AcpSessionList {
+    connection: Rc<acp::ClientSideConnection>,
+    updates_tx: Rc<RefCell<watch::Sender<()>>>,
+    updates_rx: watch::Receiver<()>,
+}
+
+impl AcpSessionList {
+    fn new(connection: Rc<acp::ClientSideConnection>) -> Self {
+        let (tx, rx) = watch::channel(());
+        Self {
+            connection,
+            updates_tx: Rc::new(RefCell::new(tx)),
+            updates_rx: rx,
+        }
+    }
+
+    fn notify_update(&self) {
+        self.updates_tx.borrow_mut().send(()).ok();
+    }
+}
+
+impl AgentSessionList for AcpSessionList {
+    fn list_sessions(
+        &self,
+        request: AgentSessionListRequest,
+        cx: &mut App,
+    ) -> Task<Result<AgentSessionListResponse>> {
+        let conn = self.connection.clone();
+        cx.foreground_executor().spawn(async move {
+            let acp_request = acp::ListSessionsRequest::new()
+                .cwd(request.cwd)
+                .cursor(request.cursor);
+            let response = conn.list_sessions(acp_request).await?;
+            Ok(AgentSessionListResponse {
+                sessions: response
+                    .sessions
+                    .into_iter()
+                    .map(|s| AgentSessionInfo {
+                        session_id: s.session_id,
+                        cwd: Some(s.cwd),
+                        title: s.title.map(Into::into),
+                        updated_at: s.updated_at.and_then(|date_str| {
+                            chrono::DateTime::parse_from_rfc3339(&date_str)
+                                .ok()
+                                .map(|dt| dt.with_timezone(&chrono::Utc))
+                        }),
+                        meta: s.meta,
+                    })
+                    .collect(),
+                next_cursor: response.next_cursor,
+                meta: response.meta,
+            })
+        })
+    }
+
+    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+        Some(self.updates_rx.clone())
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
+    }
 }
 
 pub async fn connect(
@@ -226,6 +294,17 @@ impl AcpConnection {
             // Otherwise, just use the name
             .unwrap_or_else(|| server_name.clone());
 
+        let session_list = if response
+            .agent_capabilities
+            .session_capabilities
+            .list
+            .is_some()
+        {
+            Some(Rc::new(AcpSessionList::new(connection.clone())))
+        } else {
+            None
+        };
+
         Ok(Self {
             auth_methods: response.auth_methods,
             root_dir: root_dir.to_owned(),
@@ -237,6 +316,7 @@ impl AcpConnection {
             default_mode,
             default_model,
             default_config_options,
+            session_list,
             _io_task: io_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,
@@ -278,52 +358,49 @@ impl AgentConnection for AcpConnection {
         let default_config_options = self.default_config_options.clone();
         let cwd = cwd.to_path_buf();
         let context_server_store = project.read(cx).context_server_store().read(cx);
-        let mcp_servers = if project.read(cx).is_local() {
-            context_server_store
-                .configured_server_ids()
-                .iter()
-                .filter_map(|id| {
-                    let configuration = context_server_store.configuration_for_server(id)?;
-                    match &*configuration {
-                        project::context_server_store::ContextServerConfiguration::Custom {
-                            command,
-                            ..
-                        }
-                        | project::context_server_store::ContextServerConfiguration::Extension {
-                            command,
-                            ..
-                        } => Some(acp::McpServer::Stdio(
-                            acp::McpServerStdio::new(id.0.to_string(), &command.path)
-                                .args(command.args.clone())
-                                .env(if let Some(env) = command.env.as_ref() {
-                                    env.iter()
-                                        .map(|(name, value)| acp::EnvVariable::new(name, value))
-                                        .collect()
-                                } else {
-                                    vec![]
-                                }),
-                        )),
-                        project::context_server_store::ContextServerConfiguration::Http {
-                            url,
-                            headers,
-                            timeout: _,
-                        } => Some(acp::McpServer::Http(
-                            acp::McpServerHttp::new(id.0.to_string(), url.to_string()).headers(
-                                headers
-                                    .iter()
-                                    .map(|(name, value)| acp::HttpHeader::new(name, value))
-                                    .collect(),
-                            ),
-                        )),
+        let is_local = project.read(cx).is_local();
+        let mcp_servers = context_server_store
+            .configured_server_ids()
+            .iter()
+            .filter_map(|id| {
+                let configuration = context_server_store.configuration_for_server(id)?;
+                match &*configuration {
+                    project::context_server_store::ContextServerConfiguration::Custom {
+                        command,
+                        remote,
+                        ..
                     }
-                })
-                .collect()
-        } else {
-            // In SSH projects, the external agent is running on the remote
-            // machine, and currently we only run MCP servers on the local
-            // machine. So don't pass any MCP servers to the agent in that case.
-            Vec::new()
-        };
+                    | project::context_server_store::ContextServerConfiguration::Extension {
+                        command,
+                        remote,
+                        ..
+                    } if is_local || *remote => Some(acp::McpServer::Stdio(
+                        acp::McpServerStdio::new(id.0.to_string(), &command.path)
+                            .args(command.args.clone())
+                            .env(if let Some(env) = command.env.as_ref() {
+                                env.iter()
+                                    .map(|(name, value)| acp::EnvVariable::new(name, value))
+                                    .collect()
+                            } else {
+                                vec![]
+                            }),
+                    )),
+                    project::context_server_store::ContextServerConfiguration::Http {
+                        url,
+                        headers,
+                        timeout: _,
+                    } => Some(acp::McpServer::Http(
+                        acp::McpServerHttp::new(id.0.to_string(), url.to_string()).headers(
+                            headers
+                                .iter()
+                                .map(|(name, value)| acp::HttpHeader::new(name, value))
+                                .collect(),
+                        ),
+                    )),
+                    _ => None,
+                }
+            })
+            .collect();
 
         cx.spawn(async move |cx| {
             let response = conn
@@ -556,6 +633,10 @@ impl AgentConnection for AcpConnection {
             };
             sessions.borrow_mut().insert(session_id, session);
 
+            if let Some(session_list) = &self.session_list {
+                session_list.notify_update();
+            }
+
             Ok(thread)
         })
     }
@@ -705,6 +786,14 @@ impl AgentConnection for AcpConnection {
             watch_tx: config_opts.tx.clone(),
             watch_rx: config_opts.rx.clone(),
         }) as _)
+    }
+
+    fn session_list(&self, cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
+        if cx.has_flag::<AcpBetaFeatureFlag>() {
+            self.session_list.clone().map(|s| s as _)
+        } else {
+            None
+        }
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

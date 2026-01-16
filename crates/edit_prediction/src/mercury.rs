@@ -15,8 +15,8 @@ use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
 use zeta_prompt::ZetaPromptInput;
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
-const MAX_CONTEXT_TOKENS: usize = 150;
-const MAX_REWRITE_TOKENS: usize = 350;
+const MAX_REWRITE_TOKENS: usize = 150;
+const MAX_CONTEXT_TOKENS: usize = 350;
 
 pub struct Mercury {
     pub api_token: Entity<ApiKeyState>,
@@ -67,6 +67,12 @@ impl Mercury {
                     MAX_CONTEXT_TOKENS,
                     MAX_REWRITE_TOKENS,
                 );
+
+            let related_files = crate::filter_redundant_excerpts(
+                related_files,
+                full_path.as_ref(),
+                context_range.start.row..context_range.end.row,
+            );
 
             let context_offset_range = context_range.to_offset(&snapshot);
 
@@ -245,7 +251,7 @@ fn build_prompt(inputs: &ZetaPromptInput) -> String {
                             prompt.push_str(CODE_SNIPPET_FILE_PATH_PREFIX);
                             prompt.push_str(related_file.path.to_string_lossy().as_ref());
                             prompt.push('\n');
-                            prompt.push_str(&related_excerpt.text.to_string());
+                            prompt.push_str(related_excerpt.text.as_ref());
                         },
                     );
                 }

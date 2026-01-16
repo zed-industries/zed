@@ -181,6 +181,18 @@ async fn build_remote_server_from_source(
     use std::path::Path;
     use util::command::new_smol_command;
 
+    if let Ok(path) = std::env::var("ZED_COPY_REMOTE_SERVER") {
+        let path = std::path::PathBuf::from(path);
+        if path.exists() {
+            return Ok(Some(path));
+        } else {
+            log::warn!(
+                "ZED_COPY_REMOTE_SERVER path does not exist, falling back to ZED_BUILD_REMOTE_SERVER: {}",
+                path.display()
+            );
+        }
+    }
+
     // By default, we make building remote server from source opt-out and we do not force artifact compression
     // for quicker builds.
     let build_remote_server =
@@ -193,7 +205,7 @@ async fn build_remote_server_from_source(
     async fn run_cmd(command: &mut Command) -> Result<()> {
         let output = command
             .kill_on_drop(true)
-            .stderr(Stdio::inherit())
+            .stdout(Stdio::inherit())
             .output()
             .await?;
         anyhow::ensure!(

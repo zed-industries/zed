@@ -1,6 +1,7 @@
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, ToolCallUpdateFields};
 use anyhow::{Context as _, Result, anyhow};
+use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task, WeakEntity};
 use indoc::formatdoc;
 use language::Point;
@@ -192,13 +193,18 @@ impl AgentTool for ReadFileTool {
         let action_log = self.action_log.clone();
 
         cx.spawn(async move |cx| {
-            let buffer = cx
-                .update(|cx| {
-                    project.update(cx, |project, cx| {
-                        project.open_buffer(project_path.clone(), cx)
-                    })
+            let open_buffer_task = cx.update(|cx| {
+                project.update(cx, |project, cx| {
+                    project.open_buffer(project_path.clone(), cx)
                 })
-                .await?;
+            });
+
+            let buffer = futures::select! {
+                result = open_buffer_task.fuse() => result?,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("File read cancelled by user");
+                }
+            };
             if buffer.read_with(cx, |buffer, _| {
                 buffer
                     .file()

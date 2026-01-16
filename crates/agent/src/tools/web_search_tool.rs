@@ -1,16 +1,22 @@
 use std::sync::Arc;
 
-use crate::{AgentTool, ToolCallEventStream};
+use crate::{
+    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
+};
 use agent_client_protocol as acp;
+use agent_settings::AgentSettings;
 use anyhow::{Result, anyhow};
 use cloud_llm_client::WebSearchResponse;
+use futures::FutureExt as _;
 use gpui::{App, AppContext, Task};
 use language_model::{
     LanguageModelProviderId, LanguageModelToolResultContent, ZED_CLOUD_PROVIDER_ID,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use ui::prelude::*;
+use util::markdown::MarkdownInlineCode;
 use web_search::WebSearchRegistry;
 
 /// Search the web for information using your query.
@@ -67,18 +73,50 @@ impl AgentTool for WebSearchTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
+        let settings = AgentSettings::get_global(cx);
+        let decision = decide_permission_from_settings(Self::name(), &input.query, settings);
+
+        let authorize = match decision {
+            ToolPermissionDecision::Allow => None,
+            ToolPermissionDecision::Deny(reason) => {
+                return Task::ready(Err(anyhow!("{}", reason)));
+            }
+            ToolPermissionDecision::Confirm => {
+                let context = crate::ToolPermissionContext {
+                    tool_name: "web_search".to_string(),
+                    input_value: input.query.clone(),
+                };
+                Some(event_stream.authorize(
+                    format!("Search the web for {}", MarkdownInlineCode(&input.query)),
+                    context,
+                    cx,
+                ))
+            }
+        };
+
         let Some(provider) = WebSearchRegistry::read_global(cx).active_provider() else {
             return Task::ready(Err(anyhow!("Web search is not available.")));
         };
 
         let search_task = provider.search(input.query, cx);
         cx.background_spawn(async move {
-            let response = match search_task.await {
-                Ok(response) => response,
-                Err(err) => {
-                    event_stream
-                        .update_fields(acp::ToolCallUpdateFields::new().title("Web Search Failed"));
-                    return Err(err);
+            if let Some(authorize) = authorize {
+                authorize.await?;
+            }
+
+            let response = futures::select! {
+                result = search_task.fuse() => {
+                    match result {
+                        Ok(response) => response,
+                        Err(err) => {
+                            event_stream
+                                .update_fields(acp::ToolCallUpdateFields::new().title("Web Search Failed"));
+                            return Err(err);
+                        }
+                    }
+                }
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Web search cancelled by user");
                 }
             };
 

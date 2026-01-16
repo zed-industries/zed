@@ -9,45 +9,55 @@ use rodio::DeviceTrait as _;
 mod record;
 pub use record::CaptureInput;
 
-#[cfg(not(any(
-    test,
-    feature = "test-support",
-    all(target_os = "windows", target_env = "gnu"),
-    target_os = "freebsd"
-)))]
+#[cfg(any(
+    rust_analyzer,
+    not(any(
+        test,
+        feature = "test-support",
+        all(target_os = "windows", target_env = "gnu"),
+        target_os = "freebsd"
+    ))
+))]
 mod livekit_client;
-#[cfg(not(any(
-    test,
-    feature = "test-support",
-    all(target_os = "windows", target_env = "gnu"),
-    target_os = "freebsd"
-)))]
+#[cfg(any(
+    rust_analyzer,
+    not(any(
+        test,
+        feature = "test-support",
+        all(target_os = "windows", target_env = "gnu"),
+        target_os = "freebsd"
+    ))
+))]
 pub use livekit_client::*;
 
-// If you need proper LSP in livekit_client you've got to comment
-// - the cfg blocks above
-// - the mods: mock_client & test and their conditional blocks
-// - the pub use mock_client::* and their conditional blocks
-
-#[cfg(any(
-    test,
-    feature = "test-support",
-    all(target_os = "windows", target_env = "gnu"),
-    target_os = "freebsd"
+#[cfg(all(
+    not(rust_analyzer),
+    any(
+        test,
+        feature = "test-support",
+        all(target_os = "windows", target_env = "gnu"),
+        target_os = "freebsd"
+    )
 ))]
 mod mock_client;
-#[cfg(any(
-    test,
-    feature = "test-support",
-    all(target_os = "windows", target_env = "gnu"),
-    target_os = "freebsd"
+#[cfg(all(
+    not(rust_analyzer),
+    any(
+        test,
+        feature = "test-support",
+        all(target_os = "windows", target_env = "gnu"),
+        target_os = "freebsd"
+    )
 ))]
 pub mod test;
-#[cfg(any(
-    test,
-    feature = "test-support",
-    all(target_os = "windows", target_env = "gnu"),
-    target_os = "freebsd"
+#[cfg(all(
+    not(rust_analyzer),
+    any(
+        test,
+        feature = "test-support",
+        all(target_os = "windows", target_env = "gnu"),
+        target_os = "freebsd"
+    )
 ))]
 pub use mock_client::*;
 

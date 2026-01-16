@@ -1,13 +1,35 @@
 use std::{num::NonZeroU32, path::Path};
 
 use collections::{HashMap, HashSet};
-use gpui::{Modifiers, SharedString};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::Error as _};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
 use crate::{ExtendingVec, merge_from};
+
+/// The state of the modifier keys at some point in time
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ModifiersContent {
+    /// The control key
+    #[serde(default)]
+    pub control: bool,
+    /// The alt key
+    /// Sometimes also known as the 'meta' key
+    #[serde(default)]
+    pub alt: bool,
+    /// The shift key
+    #[serde(default)]
+    pub shift: bool,
+    /// The command key, on macos
+    /// the windows key, on windows
+    /// the super key, on linux
+    #[serde(default)]
+    pub platform: bool,
+    /// The function key
+    #[serde(default)]
+    pub function: bool,
+}
 
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -571,7 +593,7 @@ pub struct InlayHintSettingsContent {
     /// If no modifiers are specified, this is equivalent to `null`.
     ///
     /// Default: null
-    pub toggle_on_modifiers_press: Option<Modifiers>,
+    pub toggle_on_modifiers_press: Option<ModifiersContent>,
 }
 
 /// The kind of an inlay hint.
@@ -769,9 +791,9 @@ pub enum Formatter {
     /// Format code using an external command.
     External {
         /// The external program to run.
-        command: Arc<str>,
+        command: String,
         /// The arguments to pass to the program.
-        arguments: Option<Arc<[String]>>,
+        arguments: Option<Vec<String>>,
     },
     /// Files should be formatted using a code action executed by language servers.
     CodeAction(String),
@@ -890,7 +912,7 @@ pub struct LanguageTaskSettingsContent {
 /// Map from language name to settings.
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct LanguageToSettingsMap(pub HashMap<SharedString, LanguageSettingsContent>);
+pub struct LanguageToSettingsMap(pub HashMap<String, LanguageSettingsContent>);
 
 /// Determines how indent guides are colored.
 #[derive(

@@ -1,6 +1,5 @@
 use gpui::Context;
 use settings::SettingsStore;
-use smol::Timer;
 use std::time::Duration;
 use ui::App;
 
@@ -48,9 +47,9 @@ impl BlinkManager {
         self.show_cursor(cx);
 
         let epoch = self.next_blink_epoch();
-        let interval = self.blink_interval;
+        let interval = Duration::from_millis(500);
         cx.spawn(async move |this, cx| {
-            Timer::after(interval).await;
+            cx.background_executor().timer(interval).await;
             this.update(cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
         })
         .detach();
@@ -72,7 +71,7 @@ impl BlinkManager {
                 let epoch = self.next_blink_epoch();
                 let interval = self.blink_interval;
                 cx.spawn(async move |this, cx| {
-                    Timer::after(interval).await;
+                    cx.background_executor().timer(interval).await;
                     if let Some(this) = this.upgrade() {
                         this.update(cx, |this, cx| this.blink_cursors(epoch, cx));
                     }

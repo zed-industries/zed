@@ -316,7 +316,7 @@ impl LanguageServerState {
                                 let Some(create_buffer) = workspace_for_message
                                     .update(cx, |workspace, cx| {
                                         workspace.project().update(cx, |project, cx| {
-                                            project.create_buffer(false, cx)
+                                            project.create_buffer(None, false, cx)
                                         })
                                     })
                                     .ok()

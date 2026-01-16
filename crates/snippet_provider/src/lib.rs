@@ -15,7 +15,6 @@ use fs::Fs;
 use futures::stream::StreamExt;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
 pub use registry::*;
-use util::ResultExt;
 
 pub fn init(cx: &mut App) {
     SnippetRegistry::init_global(cx);
@@ -32,7 +31,7 @@ fn file_stem_to_key(stem: &str) -> SnippetKind {
     }
 }
 
-fn file_to_snippets(file_contents: VsSnippetsFile) -> Vec<Arc<Snippet>> {
+fn file_to_snippets(file_contents: VsSnippetsFile, source: &Path) -> Vec<Arc<Snippet>> {
     let mut snippets = vec![];
     for (name, snippet) in file_contents.snippets {
         let snippet_name = name.clone();
@@ -43,9 +42,10 @@ fn file_to_snippets(file_contents: VsSnippetsFile) -> Vec<Arc<Snippet>> {
             .description
             .map(|description| description.to_string());
         let body = snippet.body.to_string();
-        if snippet::Snippet::parse(&body).log_err().is_none() {
+        if let Err(e) = snippet::Snippet::parse(&body) {
+            log::error!("Invalid snippet name '{name}' in {source:?}: {e:#}");
             continue;
-        };
+        }
         snippets.push(Arc::new(Snippet {
             body,
             prefix: prefixes,
@@ -105,7 +105,7 @@ async fn process_updates(
                 else {
                     return;
                 };
-                let snippets = file_to_snippets(as_json);
+                let snippets = file_to_snippets(as_json, entry_path.as_path());
                 *snippets_of_kind.entry(entry_path).or_default() = snippets;
             } else {
                 snippets_of_kind.remove(&entry_path);

@@ -35,7 +35,7 @@ impl AgentServer for CustomAgentServer {
             settings
                 .get::<AllAgentServersSettings>(None)
                 .custom
-                .get(&self.name())
+                .get(self.name().as_ref())
                 .cloned()
         });
 
@@ -53,7 +53,7 @@ impl AgentServer for CustomAgentServer {
             settings
                 .get::<AllAgentServersSettings>(None)
                 .custom
-                .get(&self.name())
+                .get(self.name().as_ref())
                 .cloned()
         });
 
@@ -87,7 +87,7 @@ impl AgentServer for CustomAgentServer {
                 .agent_servers
                 .get_or_insert_default()
                 .custom
-                .entry(name.clone())
+                .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
@@ -131,7 +131,7 @@ impl AgentServer for CustomAgentServer {
                 .agent_servers
                 .get_or_insert_default()
                 .custom
-                .entry(name.clone())
+                .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
@@ -154,7 +154,7 @@ impl AgentServer for CustomAgentServer {
             settings
                 .get::<AllAgentServersSettings>(None)
                 .custom
-                .get(&self.name())
+                .get(self.name().as_ref())
                 .cloned()
         });
 
@@ -170,7 +170,7 @@ impl AgentServer for CustomAgentServer {
                 .agent_servers
                 .get_or_insert_default()
                 .custom
-                .entry(name.clone())
+                .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
@@ -193,7 +193,7 @@ impl AgentServer for CustomAgentServer {
             settings
                 .get::<AllAgentServersSettings>(None)
                 .custom
-                .get(&self.name())
+                .get(self.name().as_ref())
                 .cloned()
         });
 
@@ -221,7 +221,7 @@ impl AgentServer for CustomAgentServer {
                 .agent_servers
                 .get_or_insert_default()
                 .custom
-                .entry(name.clone())
+                .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
@@ -255,7 +255,7 @@ impl AgentServer for CustomAgentServer {
             settings
                 .get::<AllAgentServersSettings>(None)
                 .custom
-                .get(&self.name())
+                .get(self.name().as_ref())
                 .cloned()
         });
 
@@ -279,7 +279,7 @@ impl AgentServer for CustomAgentServer {
                 .agent_servers
                 .get_or_insert_default()
                 .custom
-                .entry(name.clone())
+                .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
@@ -322,7 +322,7 @@ impl AgentServer for CustomAgentServer {
             settings
                 .get::<AllAgentServersSettings>(None)
                 .custom
-                .get(&self.name())
+                .get(self.name().as_ref())
                 .map(|s| match s {
                     project::agent_server_store::CustomAgentServerSettings::Custom {
                         default_config_options,

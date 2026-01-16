@@ -331,6 +331,7 @@ impl RemoteBufferStore {
 
     fn create_buffer(
         &self,
+        language: Option<Arc<Language>>,
         project_searchable: bool,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
@@ -341,13 +342,20 @@ impl RemoteBufferStore {
             let response = create.await?;
             let buffer_id = BufferId::new(response.buffer_id)?;
 
-            this.update(cx, |this, cx| {
-                if !project_searchable {
-                    this.non_searchable_buffers.insert(buffer_id);
-                }
-                this.wait_for_remote_buffer(buffer_id, cx)
-            })?
-            .await
+            let buffer = this
+                .update(cx, |this, cx| {
+                    if !project_searchable {
+                        this.non_searchable_buffers.insert(buffer_id);
+                    }
+                    this.wait_for_remote_buffer(buffer_id, cx)
+                })?
+                .await?;
+            if let Some(language) = language {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_language(Some(language), cx);
+                });
+            }
+            Ok(buffer)
         })
     }
 
@@ -710,12 +718,15 @@ impl LocalBufferStore {
 
     fn create_buffer(
         &self,
+        language: Option<Arc<Language>>,
         project_searchable: bool,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
         cx.spawn(async move |buffer_store, cx| {
-            let buffer =
-                cx.new(|cx| Buffer::local("", cx).with_language(language::PLAIN_TEXT.clone(), cx));
+            let buffer = cx.new(|cx| {
+                Buffer::local("", cx)
+                    .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
+            });
             buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.add_buffer(buffer.clone(), cx).log_err();
                 if !project_searchable {
@@ -900,12 +911,13 @@ impl BufferStore {
 
     pub fn create_buffer(
         &mut self,
+        language: Option<Arc<Language>>,
         project_searchable: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         match &self.state {
-            BufferStoreState::Local(this) => this.create_buffer(project_searchable, cx),
-            BufferStoreState::Remote(this) => this.create_buffer(project_searchable, cx),
+            BufferStoreState::Local(this) => this.create_buffer(language, project_searchable, cx),
+            BufferStoreState::Remote(this) => this.create_buffer(language, project_searchable, cx),
         }
     }
 

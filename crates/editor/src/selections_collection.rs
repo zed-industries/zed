@@ -461,6 +461,72 @@ impl SelectionsCollection {
         })
     }
 
+    /// Finds the next columnar selection by walking display rows one at a time
+    /// so that soft-wrapped lines are considered and not skipped.
+    pub fn find_next_columnar_selection_by_display_row(
+        &mut self,
+        display_map: &DisplaySnapshot,
+        start_row: DisplayRow,
+        end_row: DisplayRow,
+        above: bool,
+        positions: &Range<Pixels>,
+        reversed: bool,
+        text_layout_details: &TextLayoutDetails,
+    ) -> Option<Selection<Point>> {
+        let mut row = start_row;
+        while row != end_row {
+            if above {
+                row.0 -= 1;
+            } else {
+                row.0 += 1;
+            }
+
+            if let Some(selection) = self.build_columnar_selection(
+                display_map,
+                row,
+                positions,
+                reversed,
+                text_layout_details,
+            ) {
+                return Some(selection);
+            }
+        }
+        None
+    }
+
+    /// Finds the next columnar selection by skipping to the next buffer row,
+    /// ignoring soft-wrapped lines.
+    pub fn find_next_columnar_selection_by_buffer_row(
+        &mut self,
+        display_map: &DisplaySnapshot,
+        start_row: DisplayRow,
+        end_row: DisplayRow,
+        above: bool,
+        goal_columns: &Range<u32>,
+        reversed: bool,
+        text_layout_details: &TextLayoutDetails,
+    ) -> Option<Selection<Point>> {
+        let mut row = start_row;
+        let direction = if above { -1 } else { 1 };
+        while row != end_row {
+            let new_row =
+                display_map.start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction);
+            row = new_row.row();
+            let buffer_row = new_row.to_point(display_map).row;
+
+            if let Some(selection) = self.build_columnar_selection_from_buffer_columns(
+                display_map,
+                buffer_row,
+                goal_columns,
+                reversed,
+                text_layout_details,
+            ) {
+                return Some(selection);
+            }
+        }
+        None
+    }
+
     pub fn change_with<R>(
         &mut self,
         snapshot: &DisplaySnapshot,

@@ -474,9 +474,7 @@ pub async fn run_until_first_tool_call(
     });
 
     select! {
-        // We have to use a smol timer here because
-        // cx.background_executor().timer isn't real in the test context
-        _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(20))) => {
+        _ = futures::FutureExt::fuse(cx.background_executor.timer(Duration::from_secs(20))) => {
             panic!("Timeout waiting for tool call")
         }
         ix = rx.next().fuse() => {

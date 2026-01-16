@@ -1,5 +1,4 @@
 use collections::{HashMap, IndexMap};
-use gpui::SharedString;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
@@ -98,10 +97,6 @@ pub struct AgentSettingsContent {
     /// Default: []
     #[serde(default)]
     pub model_parameters: Vec<LanguageModelParameters>,
-    /// What completion mode to enable for new threads
-    ///
-    /// Default: normal
-    pub preferred_completion_mode: Option<CompletionMode>,
     /// Whether to show thumb buttons for feedback in the agent panel.
     ///
     /// Default: true
@@ -201,6 +196,45 @@ impl AgentSettingsContent {
     pub fn remove_favorite_model(&mut self, model: &LanguageModelSelection) {
         self.favorite_models.retain(|m| m != model);
     }
+
+    pub fn set_tool_default_mode(&mut self, tool_id: &str, mode: ToolPermissionMode) {
+        let tool_permissions = self.tool_permissions.get_or_insert_default();
+        let tool_rules = tool_permissions
+            .tools
+            .entry(Arc::from(tool_id))
+            .or_default();
+        tool_rules.default_mode = Some(mode);
+    }
+
+    pub fn add_tool_allow_pattern(&mut self, tool_name: &str, pattern: String) {
+        let tool_permissions = self.tool_permissions.get_or_insert_default();
+        let tool_rules = tool_permissions
+            .tools
+            .entry(Arc::from(tool_name))
+            .or_default();
+        let always_allow = tool_rules.always_allow.get_or_insert_default();
+        if !always_allow.0.iter().any(|r| r.pattern == pattern) {
+            always_allow.0.push(ToolRegexRule {
+                pattern,
+                case_sensitive: None,
+            });
+        }
+    }
+
+    pub fn add_tool_deny_pattern(&mut self, tool_name: &str, pattern: String) {
+        let tool_permissions = self.tool_permissions.get_or_insert_default();
+        let tool_rules = tool_permissions
+            .tools
+            .entry(Arc::from(tool_name))
+            .or_default();
+        let always_deny = tool_rules.always_deny.get_or_insert_default();
+        if !always_deny.0.iter().any(|r| r.pattern == pattern) {
+            always_deny.0.push(ToolRegexRule {
+                pattern,
+                case_sensitive: None,
+            });
+        }
+    }
 }
 
 #[with_fallible_options]
@@ -259,20 +293,11 @@ pub struct LanguageModelSelection {
     pub model: String,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum CompletionMode {
-    #[default]
-    Normal,
-    #[serde(alias = "max")]
-    Burn,
-}
-
 #[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct LanguageModelParameters {
     pub provider: Option<LanguageModelProviderSetting>,
-    pub model: Option<SharedString>,
+    pub model: Option<String>,
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub temperature: Option<f32>,
 }
@@ -336,7 +361,7 @@ pub struct AllAgentServersSettings {
 
     /// Custom agent servers configured by the user
     #[serde(flatten)]
-    pub custom: HashMap<SharedString, CustomAgentServerSettings>,
+    pub custom: HashMap<String, CustomAgentServerSettings>,
 }
 
 #[with_fallible_options]
@@ -513,9 +538,10 @@ pub struct ToolRulesContent {
 }
 
 #[with_fallible_options]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ToolRegexRule {
     /// The regex pattern to match.
+    #[serde(default)]
     pub pattern: String,
 
     /// Whether the regex is case-sensitive.
@@ -535,4 +561,182 @@ pub enum ToolPermissionMode {
     /// Always prompt for confirmation (default behavior).
     #[default]
     Confirm,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_set_tool_default_mode_creates_structure() {
+        let mut settings = AgentSettingsContent::default();
+        assert!(settings.tool_permissions.is_none());
+
+        settings.set_tool_default_mode("terminal", ToolPermissionMode::Allow);
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+        let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
+        assert_eq!(terminal_rules.default_mode, Some(ToolPermissionMode::Allow));
+    }
+
+    #[test]
+    fn test_set_tool_default_mode_updates_existing() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.set_tool_default_mode("terminal", ToolPermissionMode::Confirm);
+        settings.set_tool_default_mode("terminal", ToolPermissionMode::Allow);
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+        let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
+        assert_eq!(terminal_rules.default_mode, Some(ToolPermissionMode::Allow));
+    }
+
+    #[test]
+    fn test_set_tool_default_mode_for_mcp_tool() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.set_tool_default_mode("mcp:github:create_issue", ToolPermissionMode::Allow);
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+        let mcp_rules = tool_permissions
+            .tools
+            .get("mcp:github:create_issue")
+            .unwrap();
+        assert_eq!(mcp_rules.default_mode, Some(ToolPermissionMode::Allow));
+    }
+
+    #[test]
+    fn test_add_tool_allow_pattern_creates_structure() {
+        let mut settings = AgentSettingsContent::default();
+        assert!(settings.tool_permissions.is_none());
+
+        settings.add_tool_allow_pattern("terminal", "^cargo\\s".to_string());
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+        let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
+        let always_allow = terminal_rules.always_allow.as_ref().unwrap();
+        assert_eq!(always_allow.0.len(), 1);
+        assert_eq!(always_allow.0[0].pattern, "^cargo\\s");
+    }
+
+    #[test]
+    fn test_add_tool_allow_pattern_appends_to_existing() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.add_tool_allow_pattern("terminal", "^cargo\\s".to_string());
+        settings.add_tool_allow_pattern("terminal", "^npm\\s".to_string());
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+        let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
+        let always_allow = terminal_rules.always_allow.as_ref().unwrap();
+        assert_eq!(always_allow.0.len(), 2);
+        assert_eq!(always_allow.0[0].pattern, "^cargo\\s");
+        assert_eq!(always_allow.0[1].pattern, "^npm\\s");
+    }
+
+    #[test]
+    fn test_add_tool_allow_pattern_does_not_duplicate() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.add_tool_allow_pattern("terminal", "^cargo\\s".to_string());
+        settings.add_tool_allow_pattern("terminal", "^cargo\\s".to_string());
+        settings.add_tool_allow_pattern("terminal", "^cargo\\s".to_string());
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+        let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
+        let always_allow = terminal_rules.always_allow.as_ref().unwrap();
+        assert_eq!(
+            always_allow.0.len(),
+            1,
+            "Duplicate patterns should not be added"
+        );
+    }
+
+    #[test]
+    fn test_add_tool_allow_pattern_for_different_tools() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.add_tool_allow_pattern("terminal", "^cargo\\s".to_string());
+        settings.add_tool_allow_pattern("fetch", "^https?://github\\.com".to_string());
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+
+        let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
+        assert_eq!(
+            terminal_rules.always_allow.as_ref().unwrap().0[0].pattern,
+            "^cargo\\s"
+        );
+
+        let fetch_rules = tool_permissions.tools.get("fetch").unwrap();
+        assert_eq!(
+            fetch_rules.always_allow.as_ref().unwrap().0[0].pattern,
+            "^https?://github\\.com"
+        );
+    }
+
+    #[test]
+    fn test_add_tool_deny_pattern_creates_structure() {
+        let mut settings = AgentSettingsContent::default();
+        assert!(settings.tool_permissions.is_none());
+
+        settings.add_tool_deny_pattern("terminal", "^rm\\s".to_string());
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+        let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
+        let always_deny = terminal_rules.always_deny.as_ref().unwrap();
+        assert_eq!(always_deny.0.len(), 1);
+        assert_eq!(always_deny.0[0].pattern, "^rm\\s");
+    }
+
+    #[test]
+    fn test_add_tool_deny_pattern_appends_to_existing() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.add_tool_deny_pattern("terminal", "^rm\\s".to_string());
+        settings.add_tool_deny_pattern("terminal", "^sudo\\s".to_string());
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+        let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
+        let always_deny = terminal_rules.always_deny.as_ref().unwrap();
+        assert_eq!(always_deny.0.len(), 2);
+        assert_eq!(always_deny.0[0].pattern, "^rm\\s");
+        assert_eq!(always_deny.0[1].pattern, "^sudo\\s");
+    }
+
+    #[test]
+    fn test_add_tool_deny_pattern_does_not_duplicate() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.add_tool_deny_pattern("terminal", "^rm\\s".to_string());
+        settings.add_tool_deny_pattern("terminal", "^rm\\s".to_string());
+        settings.add_tool_deny_pattern("terminal", "^rm\\s".to_string());
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+        let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
+        let always_deny = terminal_rules.always_deny.as_ref().unwrap();
+        assert_eq!(
+            always_deny.0.len(),
+            1,
+            "Duplicate patterns should not be added"
+        );
+    }
+
+    #[test]
+    fn test_add_tool_deny_and_allow_patterns_separate() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.add_tool_allow_pattern("terminal", "^cargo\\s".to_string());
+        settings.add_tool_deny_pattern("terminal", "^rm\\s".to_string());
+
+        let tool_permissions = settings.tool_permissions.as_ref().unwrap();
+        let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
+
+        let always_allow = terminal_rules.always_allow.as_ref().unwrap();
+        assert_eq!(always_allow.0.len(), 1);
+        assert_eq!(always_allow.0[0].pattern, "^cargo\\s");
+
+        let always_deny = terminal_rules.always_deny.as_ref().unwrap();
+        assert_eq!(always_deny.0.len(), 1);
+        assert_eq!(always_deny.0[0].pattern, "^rm\\s");
+    }
 }

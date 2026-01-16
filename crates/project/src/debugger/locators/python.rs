@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
-use gpui::SharedString;
+use gpui::{BackgroundExecutor, SharedString};
 
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate, VariableName};
 
@@ -90,7 +90,7 @@ impl DapLocator for PythonLocator {
         })
     }
 
-    async fn run(&self, _: SpawnInTerminal) -> Result<DebugRequest> {
+    async fn run(&self, _: SpawnInTerminal, _executor: BackgroundExecutor) -> Result<DebugRequest> {
         bail!("Python locator should not require DapLocator::run to be ran");
     }
 }

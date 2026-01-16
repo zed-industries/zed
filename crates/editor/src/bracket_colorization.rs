@@ -186,7 +186,7 @@ mod tests {
     use settings::{AccentContent, SettingsStore};
     use text::{Bias, OffsetRangeExt, ToOffset};
     use theme::ThemeStyleContent;
-    use ui::SharedString;
+
     use util::{path, post_inc};
 
     #[gpui::test]
@@ -1304,8 +1304,8 @@ mod foo «1{
                         theme.to_string(),
                         ThemeStyleContent {
                             accents: vec![
-                                AccentContent(Some(SharedString::new("#ff0000"))),
-                                AccentContent(Some(SharedString::new("#0000ff"))),
+                                AccentContent(Some("#ff0000".to_string())),
+                                AccentContent(Some("#0000ff".to_string())),
                             ],
                             ..ThemeStyleContent::default()
                         },

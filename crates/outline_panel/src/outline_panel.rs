@@ -2036,7 +2036,11 @@ impl OutlinePanel {
 
         if let Some(working_directory) = working_directory {
             window.dispatch_action(
-                workspace::OpenTerminal { working_directory }.boxed_clone(),
+                workspace::OpenTerminal {
+                    working_directory,
+                    local: false,
+                }
+                .boxed_clone(),
                 cx,
             )
         }

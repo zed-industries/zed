@@ -12,6 +12,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "buffer_diff",
+ "chrono",
  "collections",
  "editor",
  "env_logger 0.11.8",
@@ -216,6 +217,7 @@ dependencies = [
  "tree-sitter-rust",
  "ui",
  "unindent",
+ "url",
  "util",
  "uuid",
  "watch",
@@ -267,6 +269,7 @@ dependencies = [
  "agent-client-protocol",
  "anyhow",
  "async-trait",
+ "chrono",
  "client",
  "collections",
  "env_logger 0.11.8",
@@ -289,7 +292,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "task",
  "tempfile",
  "terminal",
@@ -306,7 +308,6 @@ version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
- "cloud_llm_client",
  "collections",
  "convert_case 0.8.0",
  "fs",
@@ -362,6 +363,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "fuzzy",
+ "git_ui",
  "gpui",
  "gpui_tokio",
  "html_to_markdown",
@@ -390,6 +392,7 @@ dependencies = [
  "prompt_store",
  "proto",
  "rand 0.9.2",
+ "recent_projects",
  "release_channel",
  "reqwest_client",
  "rope",
@@ -411,6 +414,7 @@ dependencies = [
  "theme",
  "time",
  "time_format",
+ "title_bar",
  "tree-sitter-md",
  "ui",
  "ui_input",
@@ -427,28 +431,23 @@ dependencies = [
 name = "agent_ui_v2"
 version = "0.1.0"
 dependencies = [
+ "acp_thread",
  "agent",
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
  "agent_ui",
  "anyhow",
- "chrono",
  "db",
- "editor",
  "feature_flags",
  "fs",
- "fuzzy",
  "gpui",
- "menu",
+ "log",
  "project",
  "prompt_store",
  "serde",
  "serde_json",
  "settings",
- "text",
- "time",
- "time_format",
  "ui",
  "util",
  "workspace",
@@ -784,9 +783,9 @@ dependencies = [
 
 [[package]]
 name = "ashpd"
-version = "0.11.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cbdf310d77fd3aaee6ea2093db7011dc2d35d2eb3481e5607f1f8d942ed99df"
+checksum = "618a409b91d5265798a99e3d1d0b226911605e581c4e7255e83c1e397b172bce"
 dependencies = [
  "async-fs",
  "async-net",
@@ -800,24 +799,6 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
- "zbus",
-]
-
-[[package]]
-name = "ashpd"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da0986d5b4f0802160191ad75f8d33ada000558757db3defb70299ca95d9fcbd"
-dependencies = [
- "async-fs",
- "async-net",
- "enumflags2",
- "futures-channel",
- "futures-util",
- "rand 0.9.2",
- "serde",
- "serde_repr",
- "url",
  "zbus",
 ]
 
@@ -3152,13 +3133,13 @@ name = "cloud_llm_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
  "indoc",
  "pretty_assertions",
  "serde",
  "serde_json",
  "strum 0.27.2",
  "uuid",
+ "zeta_prompt",
 ]
 
 [[package]]
@@ -3266,7 +3247,7 @@ name = "codestral"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "edit_prediction_context",
+ "edit_prediction",
  "edit_prediction_types",
  "futures 0.3.31",
  "gpui",
@@ -3277,7 +3258,6 @@ dependencies = [
  "mistral",
  "serde",
  "serde_json",
- "smol",
  "text",
 ]
 
@@ -3691,13 +3671,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-std",
- "chrono",
  "client",
  "clock",
  "collections",
  "command_palette_hooks",
+ "copilot_chat",
  "ctor",
- "dirs 4.0.0",
  "edit_prediction_types",
  "editor",
  "fs",
@@ -3705,11 +3684,9 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
- "itertools 0.14.0",
  "language",
  "log",
  "lsp",
- "menu",
  "node_runtime",
  "parking_lot",
  "paths",
@@ -3720,13 +3697,45 @@ dependencies = [
  "serde_json",
  "settings",
  "sum_tree",
- "task",
  "theme",
+ "util",
+ "zlog",
+]
+
+[[package]]
+name = "copilot_chat"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "collections",
+ "dirs 4.0.0",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "itertools 0.14.0",
+ "log",
+ "paths",
+ "serde",
+ "serde_json",
+ "settings",
+]
+
+[[package]]
+name = "copilot_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "copilot",
+ "gpui",
+ "log",
+ "lsp",
+ "menu",
+ "serde_json",
  "ui",
- "url",
  "util",
  "workspace",
- "zlog",
 ]
 
 [[package]]
@@ -5221,6 +5230,7 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "copilot",
+ "copilot_ui",
  "ctor",
  "db",
  "edit_prediction_context",
@@ -5281,6 +5291,7 @@ dependencies = [
  "dirs 4.0.0",
  "edit_prediction",
  "extension",
+ "flate2",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -5324,7 +5335,7 @@ name = "edit_prediction_context"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cloud_llm_client",
+ "clock",
  "collections",
  "env_logger 0.11.8",
  "futures 0.3.31",
@@ -5370,6 +5381,8 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "copilot",
+ "copilot_chat",
+ "copilot_ui",
  "edit_prediction",
  "edit_prediction_types",
  "editor",
@@ -6136,7 +6149,6 @@ version = "0.1.0"
 dependencies = [
  "futures 0.3.31",
  "gpui",
- "smol",
 ]
 
 [[package]]
@@ -6239,9 +6251,9 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 
 [[package]]
 name = "flate2"
-version = "1.1.4"
+version = "1.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc5a4e564e38c699f2880d3fda590bedc2e69f3f84cd48b457bd892ce61d0aa9"
+checksum = "b375d6465b98090a5f25b1c7703f3859783755aa9a80433b36e0379a3ec2f369"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
@@ -6457,7 +6469,7 @@ name = "fs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ashpd 0.11.0",
+ "ashpd",
  "async-tar",
  "async-trait",
  "cocoa 0.26.0",
@@ -7116,6 +7128,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
+ "ztracing",
 ]
 
 [[package]]
@@ -7342,7 +7355,7 @@ version = "0.2.2"
 dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
- "ashpd 0.11.0",
+ "ashpd",
  "async-task",
  "backtrace",
  "bindgen 0.71.1",
@@ -7355,6 +7368,7 @@ dependencies = [
  "calloop",
  "calloop-wayland-source",
  "cbindgen",
+ "chrono",
  "circular-buffer",
  "cocoa 0.26.0",
  "cocoa-foundation 0.2.0",
@@ -7371,7 +7385,6 @@ dependencies = [
  "env_logger 0.11.8",
  "etagere",
  "filedescriptor",
- "flume",
  "foreign-types 0.5.0",
  "futures 0.3.31",
  "gpui_macros",
@@ -7404,6 +7417,7 @@ dependencies = [
  "refineable",
  "reqwest_client",
  "resvg",
+ "scheduler",
  "schemars",
  "seahash",
  "semver",
@@ -8675,10 +8689,12 @@ name = "json_schema_store"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "dap",
  "extension",
  "gpui",
  "language",
+ "parking_lot",
  "paths",
  "project",
  "schemars",
@@ -8987,6 +9003,8 @@ dependencies = [
  "component",
  "convert_case 0.8.0",
  "copilot",
+ "copilot_chat",
+ "copilot_ui",
  "credentials_provider",
  "deepseek",
  "editor",
@@ -9068,7 +9086,7 @@ dependencies = [
  "client",
  "collections",
  "command_palette_hooks",
- "copilot",
+ "edit_prediction",
  "editor",
  "futures 0.3.31",
  "gpui",
@@ -10999,7 +11017,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3299dd401feaf1d45afd8fd1c0586f10fcfb22f244bb9afa942cec73503b89d"
 dependencies = [
  "aes",
- "ashpd 0.12.0",
+ "ashpd",
  "async-fs",
  "async-io",
  "async-lock 3.4.1",
@@ -13604,6 +13622,7 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "async-dispatcher",
+ "async-task",
  "async-tungstenite",
  "base64 0.22.1",
  "client",
@@ -14386,6 +14405,7 @@ dependencies = [
  "async-task",
  "backtrace",
  "chrono",
+ "flume",
  "futures 0.3.31",
  "parking_lot",
  "rand 0.9.2",
@@ -14884,7 +14904,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more 0.99.20",
  "ec4rs",
  "fs",
  "futures 0.3.31",
@@ -14901,14 +14920,31 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_json_lenient",
- "serde_repr",
+ "settings_content",
  "settings_json",
  "settings_macros",
  "smallvec",
- "strum 0.27.2",
  "unindent",
  "util",
  "zlog",
+]
+
+[[package]]
+name = "settings_content"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "derive_more 0.99.20",
+ "log",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "settings_json",
+ "settings_macros",
+ "strum 0.27.2",
+ "util",
 ]
 
 [[package]]
@@ -14964,7 +15000,7 @@ dependencies = [
  "assets",
  "bm25",
  "client",
- "copilot",
+ "copilot_ui",
  "edit_prediction",
  "editor",
  "feature_flags",
@@ -15275,6 +15311,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "indoc",
+ "log",
  "parking_lot",
  "paths",
  "schemars",
@@ -16566,6 +16603,7 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
+ "parking_lot",
  "rand 0.9.2",
  "regex",
  "release_channel",
@@ -16948,6 +16986,7 @@ dependencies = [
  "git_ui",
  "gpui",
  "http_client",
+ "menu",
  "notifications",
  "pretty_assertions",
  "project",
@@ -20720,7 +20759,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.220.0"
+version = "0.221.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -20733,7 +20772,7 @@ dependencies = [
  "agent_ui",
  "agent_ui_v2",
  "anyhow",
- "ashpd 0.11.0",
+ "ashpd",
  "askpass",
  "assets",
  "audio",
@@ -20755,6 +20794,8 @@ dependencies = [
  "component",
  "component_preview",
  "copilot",
+ "copilot_chat",
+ "copilot_ui",
  "crashes",
  "dap",
  "dap_adapters",
@@ -21197,7 +21238,9 @@ dependencies = [
 name = "zeta_prompt"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "serde",
+ "strum 0.27.2",
 ]
 
 [[package]]

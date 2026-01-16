@@ -1,7 +1,7 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::UserMessageId;
 use agent_client_protocol as acp;
-use agent_settings::{AgentProfileId, CompletionMode};
+use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::{HashMap, IndexMap};
@@ -47,8 +47,6 @@ pub struct DbThread {
     #[serde(default)]
     pub model: Option<DbLanguageModel>,
     #[serde(default)]
-    pub completion_mode: Option<CompletionMode>,
-    #[serde(default)]
     pub profile: Option<AgentProfileId>,
     #[serde(default)]
     pub imported: bool,
@@ -61,8 +59,6 @@ pub struct SharedThread {
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub model: Option<DbLanguageModel>,
-    #[serde(default)]
-    pub completion_mode: Option<CompletionMode>,
     pub version: String,
 }
 
@@ -75,7 +71,6 @@ impl SharedThread {
             messages: thread.messages.clone(),
             updated_at: thread.updated_at,
             model: thread.model.clone(),
-            completion_mode: thread.completion_mode,
             version: Self::VERSION.to_string(),
         }
     }
@@ -90,7 +85,6 @@ impl SharedThread {
             cumulative_token_usage: Default::default(),
             request_token_usage: Default::default(),
             model: self.model,
-            completion_mode: self.completion_mode,
             profile: None,
             imported: true,
         }
@@ -264,7 +258,6 @@ impl DbThread {
             cumulative_token_usage: thread.cumulative_token_usage,
             request_token_usage,
             model: thread.model,
-            completion_mode: thread.completion_mode,
             profile: thread.profile,
             imported: false,
         })
@@ -515,7 +508,6 @@ mod tests {
             messages: vec![],
             updated_at: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             model: None,
-            completion_mode: None,
             version: SharedThread::VERSION.to_string(),
         };
 
@@ -558,7 +550,6 @@ mod tests {
             cumulative_token_usage: Default::default(),
             request_token_usage: HashMap::default(),
             model: None,
-            completion_mode: None,
             profile: None,
             imported: false,
         }

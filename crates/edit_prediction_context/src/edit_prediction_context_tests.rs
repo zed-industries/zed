@@ -1,4 +1,5 @@
 use super::*;
+use crate::assemble_excerpts::assemble_excerpt_ranges;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::TestAppContext;
 use indoc::indoc;
@@ -42,8 +43,8 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
     });
 
     cx.executor().advance_clock(DEBOUNCE_DURATION);
-    related_excerpt_store.update(cx, |store, _| {
-        let excerpts = store.related_files();
+    related_excerpt_store.update(cx, |store, cx| {
+        let excerpts = store.related_files(cx);
         assert_related_files(
             &excerpts,
             &[
@@ -53,6 +54,65 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
                         pub struct Company {
                             owner: Arc<Person>,
                             address: Address,
+                        }"}],
+                ),
+                (
+                    "root/src/main.rs",
+                    &[
+                        indoc! {"
+                        pub struct Session {
+                            company: Arc<Company>,
+                        }
+
+                        impl Session {
+                            pub fn set_company(&mut self, company: Arc<Company>) {"},
+                        indoc! {"
+                            }
+                        }"},
+                    ],
+                ),
+                (
+                    "root/src/person.rs",
+                    &[
+                        indoc! {"
+                        impl Person {
+                            pub fn get_first_name(&self) -> &str {
+                                &self.first_name
+                            }"},
+                        "}",
+                    ],
+                ),
+            ],
+        );
+    });
+
+    let company_buffer = related_excerpt_store.update(cx, |store, cx| {
+        store
+            .related_files_with_buffers(cx)
+            .into_iter()
+            .find(|(file, _)| file.path.to_str() == Some("root/src/company.rs"))
+            .map(|(_, buffer)| buffer)
+            .expect("company.rs buffer not found")
+    });
+
+    company_buffer.update(cx, |buffer, cx| {
+        let text = buffer.text();
+        let insert_pos = text.find("address: Address,").unwrap() + "address: Address,".len();
+        buffer.edit([(insert_pos..insert_pos, "\n    name: String,")], None, cx);
+    });
+
+    related_excerpt_store.update(cx, |store, cx| {
+        let excerpts = store.related_files(cx);
+        assert_related_files(
+            &excerpts,
+            &[
+                (
+                    "root/src/company.rs",
+                    &[indoc! {"
+                        pub struct Company {
+                            owner: Arc<Person>,
+                            address: Address,
+                            name: String,
                         }"}],
                 ),
                 (
@@ -222,7 +282,18 @@ fn test_assemble_excerpts(cx: &mut TestAppContext) {
                 .map(|range| range.to_point(&buffer))
                 .collect();
 
-            let excerpts = assemble_excerpts(&buffer.snapshot(), ranges);
+            let row_ranges = assemble_excerpt_ranges(&buffer.snapshot(), ranges);
+            let excerpts: Vec<RelatedExcerpt> = row_ranges
+                .into_iter()
+                .map(|row_range| {
+                    let start = Point::new(row_range.start, 0);
+                    let end = Point::new(row_range.end, buffer.line_len(row_range.end));
+                    RelatedExcerpt {
+                        row_range,
+                        text: buffer.text_for_range(start..end).collect::<String>().into(),
+                    }
+                })
+                .collect();
 
             let output = format_excerpts(buffer, &excerpts);
             assert_eq!(output, expected_output);

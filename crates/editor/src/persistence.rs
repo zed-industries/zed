@@ -120,6 +120,8 @@ impl Domain for EditorDb {
     //   workspace_id: usize,
     //   start: usize,
     //   end: usize,
+    //   start_fingerprint: Option<String>,
+    //   end_fingerprint: Option<String>,
     // )
 
     const MIGRATIONS: &[&str] = &[
@@ -196,6 +198,10 @@ impl Domain for EditorDb {
                 FOREIGN KEY(editor_id, workspace_id) REFERENCES editors(item_id, workspace_id)
                 ON DELETE CASCADE
             ) STRICT;
+        ),
+        sql! (
+            ALTER TABLE editor_folds ADD COLUMN start_fingerprint TEXT;
+            ALTER TABLE editor_folds ADD COLUMN end_fingerprint TEXT;
         ),
     ];
 }
@@ -274,11 +280,40 @@ impl EditorDb {
         pub fn get_editor_folds(
             editor_id: ItemId,
             workspace_id: WorkspaceId
-        ) -> Result<Vec<(usize, usize)>> {
-            SELECT start, end
+        ) -> Result<Vec<(usize, usize, Option<String>, Option<String>)>> {
+            SELECT start, end, start_fingerprint, end_fingerprint
             FROM editor_folds
             WHERE editor_id = ?1 AND workspace_id = ?2
         }
+    }
+
+    // Migrate folds from an old editor_id to a new one.
+    // This is needed because entity IDs change between sessions, but workspace
+    // cleanup deletes old editor rows (cascading to folds) before the new
+    // editor has a chance to re-save its folds.
+    //
+    // We temporarily disable FK checks because the new editor row doesn't exist
+    // yet (it gets created during workspace serialization, which runs later).
+    pub async fn migrate_editor_folds(
+        &self,
+        old_editor_id: ItemId,
+        new_editor_id: ItemId,
+        workspace_id: WorkspaceId,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            let _ = conn.exec("PRAGMA foreign_keys = OFF");
+            let mut statement = Statement::prepare(
+                conn,
+                "UPDATE editor_folds SET editor_id = ?2 WHERE editor_id = ?1 AND workspace_id = ?3",
+            )?;
+            statement.bind(&old_editor_id, 1)?;
+            statement.bind(&new_editor_id, 2)?;
+            statement.bind(&workspace_id, 3)?;
+            let result = statement.exec();
+            let _ = conn.exec("PRAGMA foreign_keys = ON");
+            result
+        })
+        .await
     }
 
     pub async fn save_editor_selections(
@@ -337,15 +372,15 @@ VALUES {placeholders};
         &self,
         editor_id: ItemId,
         workspace_id: WorkspaceId,
-        folds: Vec<(usize, usize)>,
+        folds: Vec<(usize, usize, String, String)>,
     ) -> Result<()> {
         log::debug!("Saving folds for editor {editor_id} in workspace {workspace_id:?}");
         let mut first_fold;
         let mut last_fold = 0_usize;
-        for (count, placeholders) in std::iter::once("(?1, ?2, ?, ?)")
+        for (count, placeholders) in std::iter::once("(?1, ?2, ?, ?, ?, ?)")
             .cycle()
             .take(folds.len())
-            .chunks(MAX_QUERY_PLACEHOLDERS / 4)
+            .chunks(MAX_QUERY_PLACEHOLDERS / 6)
             .into_iter()
             .map(|chunk| {
                 let mut count = 0;
@@ -364,7 +399,7 @@ VALUES {placeholders};
                 r#"
 DELETE FROM editor_folds WHERE editor_id = ?1 AND workspace_id = ?2;
 
-INSERT OR IGNORE INTO editor_folds (editor_id, workspace_id, start, end)
+INSERT OR IGNORE INTO editor_folds (editor_id, workspace_id, start, end, start_fingerprint, end_fingerprint)
 VALUES {placeholders};
 "#
             );
@@ -374,9 +409,11 @@ VALUES {placeholders};
                 let mut statement = Statement::prepare(conn, query)?;
                 statement.bind(&editor_id, 1)?;
                 let mut next_index = statement.bind(&workspace_id, 2)?;
-                for (start, end) in folds {
+                for (start, end, start_fp, end_fp) in folds {
                     next_index = statement.bind(&start, next_index)?;
                     next_index = statement.bind(&end, next_index)?;
+                    next_index = statement.bind(&start_fp, next_index)?;
+                    next_index = statement.bind(&end_fp, next_index)?;
                 }
                 statement.exec()
             })
@@ -465,4 +502,92 @@ mod tests {
             .unwrap();
         assert_eq!(have, serialized_editor);
     }
+
+    #[gpui::test]
+    async fn test_save_and_get_editor_folds_with_fingerprints() {
+        let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+
+        // First create an editor entry (folds have FK to editors)
+        let serialized_editor = SerializedEditor {
+            abs_path: Some(PathBuf::from("test_folds.txt")),
+            contents: None,
+            language: None,
+            mtime: None,
+        };
+        DB.save_serialized_editor(5678, workspace_id, serialized_editor)
+            .await
+            .unwrap();
+
+        // Save folds with fingerprints (32-byte content samples at fold boundaries)
+        let folds = vec![
+            (
+                100,
+                200,
+                "fn main() {".to_string(),
+                "} // end main".to_string(),
+            ),
+            (
+                300,
+                400,
+                "struct Foo {".to_string(),
+                "} // end Foo".to_string(),
+            ),
+        ];
+        DB.save_editor_folds(5678, workspace_id, folds.clone())
+            .await
+            .unwrap();
+
+        // Retrieve and verify fingerprints are preserved
+        let retrieved = DB.get_editor_folds(5678, workspace_id).unwrap();
+        assert_eq!(retrieved.len(), 2);
+        assert_eq!(
+            retrieved[0],
+            (
+                100,
+                200,
+                Some("fn main() {".to_string()),
+                Some("} // end main".to_string())
+            )
+        );
+        assert_eq!(
+            retrieved[1],
+            (
+                300,
+                400,
+                Some("struct Foo {".to_string()),
+                Some("} // end Foo".to_string())
+            )
+        );
+
+        // Test overwrite: saving new folds replaces old ones
+        let new_folds = vec![(
+            500,
+            600,
+            "impl Bar {".to_string(),
+            "} // end impl".to_string(),
+        )];
+        DB.save_editor_folds(5678, workspace_id, new_folds)
+            .await
+            .unwrap();
+
+        let retrieved = DB.get_editor_folds(5678, workspace_id).unwrap();
+        assert_eq!(retrieved.len(), 1);
+        assert_eq!(
+            retrieved[0],
+            (
+                500,
+                600,
+                Some("impl Bar {".to_string()),
+                Some("} // end impl".to_string())
+            )
+        );
+    }
+
+    // NOTE: The fingerprint search logic (finding content at new offsets when file
+    // is modified externally) is in editor.rs:restore_from_db and requires a full
+    // Editor context to test. Manual testing procedure:
+    // 1. Open a file, fold some sections, close Zed
+    // 2. Add text at the START of the file externally (shifts all offsets)
+    // 3. Reopen Zed - folds should be restored at their NEW correct positions
+    // The search uses contains_str_at() to find fingerprints in the buffer.
 }

@@ -37,6 +37,7 @@ languages = { workspace = true, features = ["load-grammars"] }
 libc.workspace = true
 log.workspace = true
 node_runtime.workspace = true
+
 paths.workspace = true
 project.workspace = true
 prompt_store.workspace = true
@@ -57,6 +58,7 @@ wasmtime.workspace = true
 zeta_prompt.workspace = true
 rand.workspace = true
 similar = "2.7.0"
+flate2 = "1.1.8"
 
 # Wasmtime is included as a dependency in order to enable the same
 # features that are enabled in Zed.

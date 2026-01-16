@@ -1,7 +1,7 @@
 use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
-use acp_thread::AcpThread;
-use agent::{ContextServerRegistry, DbThreadMetadata, ThreadStore};
+use acp_thread::{AcpThread, AgentSessionInfo};
+use agent::{ContextServerRegistry, ThreadStore};
 use agent_servers::AgentServer;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
@@ -38,8 +38,8 @@ use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_text_thread::{TextThread, TextThreadEvent, TextThreadSummary};
-use client::{UserStore, zed_urls};
-use cloud_llm_client::{Plan, PlanV1, PlanV2, UsageLimit};
+use client::UserStore;
+use cloud_llm_client::{Plan, PlanV2};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
@@ -58,8 +58,8 @@ use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    Callout, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu, PopoverMenuHandle,
-    ProgressBar, Tab, Tooltip, prelude::*, utils::WithRemSize,
+    Callout, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab,
+    Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -305,6 +305,7 @@ impl ActiveView {
         thread_store: Entity<ThreadStore>,
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
+        history: Entity<AcpThreadHistory>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
@@ -315,8 +316,9 @@ impl ActiveView {
                 None,
                 workspace,
                 project,
-                thread_store,
+                Some(thread_store),
                 prompt_store,
+                history,
                 false,
                 window,
                 cx,
@@ -543,7 +545,7 @@ impl AgentPanel {
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let acp_history = cx.new(|cx| AcpThreadHistory::new(thread_store.clone(), window, cx));
+        let acp_history = cx.new(|cx| AcpThreadHistory::new(None, window, cx));
         let text_thread_history =
             cx.new(|cx| TextThreadHistory::new(text_thread_store.clone(), window, cx));
         cx.subscribe_in(
@@ -582,6 +584,7 @@ impl AgentPanel {
                 thread_store.clone(),
                 project.clone(),
                 workspace.clone(),
+                acp_history.clone(),
                 window,
                 cx,
             ),
@@ -612,7 +615,7 @@ impl AgentPanel {
             let agent_navigation_menu =
                 ContextMenu::build_persistent(window, cx, move |mut menu, _window, cx| {
                     if let Some(panel) = panel.upgrade() {
-                        if let Some(kind) = panel.read(cx).history_kind_for_selected_agent() {
+                        if let Some(kind) = panel.read(cx).history_kind_for_selected_agent(cx) {
                             menu =
                                 Self::populate_recently_updated_menu_section(menu, panel, kind, cx);
                             menu = menu.action("View All", Box::new(OpenHistory));
@@ -730,9 +733,13 @@ impl AgentPanel {
         &self.thread_store
     }
 
+    pub fn history(&self) -> &Entity<AcpThreadHistory> {
+        &self.acp_history
+    }
+
     pub fn open_thread(
         &mut self,
-        thread: DbThreadMetadata,
+        thread: AgentSessionInfo,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -768,7 +775,7 @@ impl AgentPanel {
             .unwrap_or(true)
     }
 
-    fn active_thread_view(&self) -> Option<&Entity<AcpThreadView>> {
+    pub(crate) fn active_thread_view(&self) -> Option<&Entity<AcpThreadView>> {
         match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view, .. } => Some(thread_view),
             ActiveView::TextThread { .. }
@@ -788,9 +795,9 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         let Some(thread) = self
-            .thread_store
+            .acp_history
             .read(cx)
-            .thread_from_session_id(&action.from_session_id)
+            .session_for_id(&action.from_session_id)
         else {
             return;
         };
@@ -798,7 +805,7 @@ impl AgentPanel {
         self.external_thread(
             Some(ExternalAgent::NativeAgent),
             None,
-            Some(thread.clone()),
+            Some(thread),
             window,
             cx,
         );
@@ -850,8 +857,8 @@ impl AgentPanel {
     fn external_thread(
         &mut self,
         agent_choice: Option<crate::ExternalAgent>,
-        resume_thread: Option<DbThreadMetadata>,
-        summarize_thread: Option<DbThreadMetadata>,
+        resume_thread: Option<AgentSessionInfo>,
+        summarize_thread: Option<AgentSessionInfo>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -962,19 +969,25 @@ impl AgentPanel {
         }
     }
 
-    fn history_kind_for_selected_agent(&self) -> Option<HistoryKind> {
+    fn history_kind_for_selected_agent(&self, cx: &App) -> Option<HistoryKind> {
         match self.selected_agent {
             AgentType::NativeAgent => Some(HistoryKind::AgentThreads),
             AgentType::TextThread => Some(HistoryKind::TextThreads),
             AgentType::Gemini
             | AgentType::ClaudeCode
             | AgentType::Codex
-            | AgentType::Custom { .. } => None,
+            | AgentType::Custom { .. } => {
+                if self.acp_history.read(cx).has_session_list() {
+                    Some(HistoryKind::AgentThreads)
+                } else {
+                    None
+                }
+            }
         }
     }
 
     fn open_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(kind) = self.history_kind_for_selected_agent() else {
+        let Some(kind) = self.history_kind_for_selected_agent(cx) else {
             return;
         };
 
@@ -1072,7 +1085,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.history_kind_for_selected_agent().is_none() {
+        if self.history_kind_for_selected_agent(cx).is_none() {
             return;
         }
         self.agent_navigation_menu_handle.toggle(window, cx);
@@ -1127,11 +1140,10 @@ impl AgentPanel {
                         let _ = settings
                             .theme
                             .agent_ui_font_size
-                            .insert(theme::clamp_font_size(agent_ui_font_size).into());
-                        let _ = settings
-                            .theme
-                            .agent_buffer_font_size
-                            .insert(theme::clamp_font_size(agent_buffer_font_size).into());
+                            .insert(f32::from(theme::clamp_font_size(agent_ui_font_size)).into());
+                        let _ = settings.theme.agent_buffer_font_size.insert(
+                            f32::from(theme::clamp_font_size(agent_buffer_font_size)).into(),
+                        );
                     });
                 } else {
                     theme::adjust_agent_ui_font_size(cx, |size| size + delta);
@@ -1349,10 +1361,12 @@ impl AgentPanel {
             HistoryKind::AgentThreads => {
                 let entries = panel
                     .read(cx)
-                    .thread_store
+                    .acp_history
                     .read(cx)
-                    .entries()
+                    .sessions()
+                    .iter()
                     .take(RECENTLY_UPDATED_MENU_LIMIT)
+                    .cloned()
                     .collect::<Vec<_>>();
 
                 if entries.is_empty() {
@@ -1362,11 +1376,12 @@ impl AgentPanel {
                 menu = menu.header("Recently Updated");
 
                 for entry in entries {
-                    let title = if entry.title.is_empty() {
-                        SharedString::new_static(DEFAULT_THREAD_TITLE)
-                    } else {
-                        entry.title.clone()
-                    };
+                    let title = entry
+                        .title
+                        .as_ref()
+                        .filter(|title| !title.is_empty())
+                        .cloned()
+                        .unwrap_or_else(|| SharedString::new_static(DEFAULT_THREAD_TITLE));
 
                     menu = menu.entry(title, None, {
                         let panel = panel.downgrade();
@@ -1508,7 +1523,7 @@ impl AgentPanel {
 
     pub fn load_agent_thread(
         &mut self,
-        thread: DbThreadMetadata,
+        thread: AgentSessionInfo,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1524,8 +1539,8 @@ impl AgentPanel {
     fn _external_thread(
         &mut self,
         server: Rc<dyn AgentServer>,
-        resume_thread: Option<DbThreadMetadata>,
-        summarize_thread: Option<DbThreadMetadata>,
+        resume_thread: Option<AgentSessionInfo>,
+        summarize_thread: Option<AgentSessionInfo>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         loading: bool,
@@ -1538,6 +1553,11 @@ impl AgentPanel {
             self.selected_agent = selected_agent;
             self.serialize(cx);
         }
+        let thread_store = server
+            .clone()
+            .downcast::<agent::NativeAgentServer>()
+            .is_some()
+            .then(|| self.thread_store.clone());
 
         let thread_view = cx.new(|cx| {
             crate::acp::AcpThreadView::new(
@@ -1546,8 +1566,9 @@ impl AgentPanel {
                 summarize_thread,
                 workspace.clone(),
                 project,
-                self.thread_store.clone(),
+                thread_store,
                 self.prompt_store.clone(),
+                self.acp_history.clone(),
                 !loading,
                 window,
                 cx,
@@ -1826,10 +1847,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let user_store = self.user_store.read(cx);
-        let usage = user_store.model_request_usage();
-        let account_url = zed_urls::account_url(cx);
-
         let focus_handle = self.focus_handle(cx);
 
         let full_screen_label = if self.is_zoomed(window, cx) {
@@ -1891,43 +1908,6 @@ impl AgentPanel {
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
                         menu = menu.context(focus_handle.clone());
-
-                        if let Some(usage) = usage {
-                            menu = menu
-                                .header_with_link("Prompt Usage", "Manage", account_url.clone())
-                                .custom_entry(
-                                    move |_window, cx| {
-                                        let used_percentage = match usage.limit {
-                                            UsageLimit::Limited(limit) => {
-                                                Some((usage.amount as f32 / limit as f32) * 100.)
-                                            }
-                                            UsageLimit::Unlimited => None,
-                                        };
-
-                                        h_flex()
-                                            .flex_1()
-                                            .gap_1p5()
-                                            .children(used_percentage.map(|percent| {
-                                                ProgressBar::new("usage", percent, 100., cx)
-                                            }))
-                                            .child(
-                                                Label::new(match usage.limit {
-                                                    UsageLimit::Limited(limit) => {
-                                                        format!("{} / {limit}", usage.amount)
-                                                    }
-                                                    UsageLimit::Unlimited => {
-                                                        format!("{} / ∞", usage.amount)
-                                                    }
-                                                })
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                            )
-                                            .into_any_element()
-                                    },
-                                    move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
-                                )
-                                .separator()
-                        }
 
                         if thread_with_messages | text_thread_with_messages {
                             menu = menu.header("Current Thread");
@@ -2394,7 +2374,7 @@ impl AgentPanel {
             selected_agent.into_any_element()
         };
 
-        let show_history_menu = self.history_kind_for_selected_agent().is_some();
+        let show_history_menu = self.history_kind_for_selected_agent(cx).is_some();
 
         h_flex()
             .id("agent-panel-toolbar")
@@ -2462,10 +2442,7 @@ impl AgentPanel {
         let plan = self.user_store.read(cx).plan();
         let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
 
-        matches!(
-            plan,
-            Some(Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree))
-        ) && has_previous_trial
+        plan.is_some_and(|plan| plan == Plan::V2(PlanV2::ZedFree)) && has_previous_trial
     }
 
     fn should_render_onboarding(&self, cx: &mut Context<Self>) -> bool {
@@ -2477,7 +2454,7 @@ impl AgentPanel {
 
         if user_store
             .plan()
-            .is_some_and(|plan| matches!(plan, Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro)))
+            .is_some_and(|plan| plan == Plan::V2(PlanV2::ZedPro))
             && user_store
                 .subscription_period()
                 .and_then(|period| period.0.checked_add_days(chrono::Days::new(1)))
@@ -2495,7 +2472,7 @@ impl AgentPanel {
                 false
             }
             _ => {
-                let history_is_empty = self.thread_store.read(cx).is_empty();
+                let history_is_empty = self.acp_history.read(cx).is_empty();
 
                 let has_configured_non_zed_providers = LanguageModelRegistry::read_global(cx)
                     .visible_providers()
@@ -2539,8 +2516,6 @@ impl AgentPanel {
             return None;
         }
 
-        let plan = self.user_store.read(cx).plan()?;
-
         Some(
             v_flex()
                 .absolute()
@@ -2549,18 +2524,15 @@ impl AgentPanel {
                 .bg(cx.theme().colors().panel_background)
                 .opacity(0.85)
                 .block_mouse_except_scroll()
-                .child(EndTrialUpsell::new(
-                    plan,
-                    Arc::new({
-                        let this = cx.entity();
-                        move |_, cx| {
-                            this.update(cx, |_this, cx| {
-                                TrialEndUpsell::set_dismissed(true, cx);
-                                cx.notify();
-                            });
-                        }
-                    }),
-                )),
+                .child(EndTrialUpsell::new(Arc::new({
+                    let this = cx.entity();
+                    move |_, cx| {
+                        this.update(cx, |_this, cx| {
+                            TrialEndUpsell::set_dismissed(true, cx);
+                            cx.notify();
+                        });
+                    }
+                }))),
         )
     }
 
@@ -2928,13 +2900,16 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
                 return;
             };
             let project = workspace.read(cx).project().downgrade();
-            let thread_store = panel.read(cx).thread_store().clone();
+            let panel = panel.read(cx);
+            let thread_store = panel.thread_store().clone();
+            let history = panel.history().downgrade();
             assistant.assist(
                 prompt_editor,
                 self.workspace.clone(),
                 project,
                 thread_store,
                 None,
+                history,
                 initial_prompt,
                 window,
                 cx,

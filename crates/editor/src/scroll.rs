@@ -152,6 +152,8 @@ pub struct ScrollManager {
     pub(crate) vertical_scroll_margin: ScrollOffset,
     anchor: ScrollAnchor,
     ongoing: OngoingScroll,
+    /// Number of sticky header lines currently being rendered for the current scroll position.
+    sticky_header_line_count: usize,
     /// The second element indicates whether the autoscroll request is local
     /// (true) or remote (false). Local requests are initiated by user actions,
     /// while remote requests come from external sources.
@@ -177,6 +179,7 @@ impl ScrollManager {
             vertical_scroll_margin: EditorSettings::get_global(cx).vertical_scroll_margin,
             anchor: ScrollAnchor::new(),
             ongoing: OngoingScroll::new(),
+            sticky_header_line_count: 0,
             autoscroll_request: None,
             show_scrollbars: true,
             hide_scrollbar_task: None,
@@ -192,6 +195,7 @@ impl ScrollManager {
     pub fn clone_state(&mut self, other: &Self) {
         self.anchor = other.anchor;
         self.ongoing = other.ongoing;
+        self.sticky_header_line_count = other.sticky_header_line_count;
     }
 
     pub fn anchor(&self) -> ScrollAnchor {
@@ -209,6 +213,14 @@ impl ScrollManager {
 
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<ScrollOffset> {
         self.anchor.scroll_position(snapshot)
+    }
+
+    pub fn sticky_header_line_count(&self) -> usize {
+        self.sticky_header_line_count
+    }
+
+    pub fn set_sticky_header_line_count(&mut self, count: usize) {
+        self.sticky_header_line_count = count;
     }
 
     fn set_scroll_position(
