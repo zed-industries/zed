@@ -2,7 +2,7 @@ use crate::prediction::EditPredictionResult;
 use crate::{
     CurrentEditPrediction, DebugEvent, EDIT_PREDICTIONS_MODEL_ID, EditPredictionFinishedDebugEvent,
     EditPredictionId, EditPredictionModel2, EditPredictionModelInput,
-    EditPredictionStartedDebugEvent, EditPredictionStore, ZedUpdateRequiredError,
+    EditPredictionStartedDebugEvent, ZedUpdateRequiredError, zeta_api,
 };
 use anyhow::{Result, anyhow};
 use client::{Client, EditPredictionUsage, UserStore};
@@ -144,7 +144,7 @@ impl EditPredictionModel2 for Zeta2Model {
                         max_tokens: Some(2048),
                     };
 
-                    let (mut response, usage) = EditPredictionStore::send_raw_llm_request(
+                    let (mut response, usage) = zeta_api::send_raw_llm_request(
                         request,
                         client,
                         Some(custom_url),
@@ -157,7 +157,7 @@ impl EditPredictionModel2 for Zeta2Model {
                     let output_text = response.choices.pop().map(|choice| choice.text);
                     (request_id, output_text, usage)
                 } else {
-                    let (response, usage) = EditPredictionStore::send_v3_request(
+                    let (response, usage) = zeta_api::send_v3_request(
                         prompt_input.clone(),
                         zeta_version,
                         client,
@@ -335,7 +335,7 @@ impl EditPredictionModel2 for Zeta2Model {
                     .build_zed_llm_url("/predict_edits/accept", &[])?
             };
 
-            let response = EditPredictionStore::send_api_request::<()>(
+            let response = zeta_api::send_api_request::<()>(
                 move |builder| {
                     let req = builder.uri(url.as_ref()).body(
                         serde_json::to_string(&AcceptEditPredictionBody {
@@ -401,69 +401,4 @@ pub fn zeta2_prompt_input(
         related_files,
     };
     (editable_offset_range, prompt_input)
-}
-
-#[allow(dead_code)]
-pub(crate) fn edit_prediction_accepted(
-    store: &EditPredictionStore,
-    current_prediction: CurrentEditPrediction,
-    cx: &App,
-) {
-    edit_prediction_accepted_impl(
-        &store.client,
-        &store.llm_token,
-        store.custom_predict_edits_url.as_ref(),
-        current_prediction,
-        cx,
-    );
-}
-
-fn edit_prediction_accepted_impl(
-    client: &Arc<Client>,
-    llm_token: &LlmApiToken,
-    custom_predict_edits_url: Option<&Arc<Url>>,
-    current_prediction: CurrentEditPrediction,
-    cx: &App,
-) {
-    let custom_accept_url = env::var("ZED_ACCEPT_PREDICTION_URL").ok();
-    if custom_predict_edits_url.is_some() && custom_accept_url.is_none() {
-        return;
-    }
-
-    let request_id = current_prediction.prediction.id.to_string();
-    let require_auth = custom_accept_url.is_none();
-    let client = client.clone();
-    let llm_token = llm_token.clone();
-    let app_version = AppVersion::global(cx);
-
-    cx.background_spawn(async move {
-        let url = if let Some(accept_edits_url) = custom_accept_url {
-            Url::parse(&accept_edits_url)?
-        } else {
-            client
-                .http_client()
-                .build_zed_llm_url("/predict_edits/accept", &[])?
-        };
-
-        let response = EditPredictionStore::send_api_request::<()>(
-            move |builder| {
-                let req = builder.uri(url.as_ref()).body(
-                    serde_json::to_string(&AcceptEditPredictionBody {
-                        request_id: request_id.clone(),
-                    })?
-                    .into(),
-                );
-                Ok(req?)
-            },
-            client,
-            llm_token,
-            app_version,
-            require_auth,
-        )
-        .await;
-
-        response?;
-        anyhow::Ok(())
-    })
-    .detach_and_log_err(cx);
 }

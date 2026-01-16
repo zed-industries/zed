@@ -3,9 +3,10 @@ use std::{fmt::Write, ops::Range, path::Path, sync::Arc, time::Instant};
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
     EditPredictionModel2, EditPredictionModelInput, EditPredictionStartedDebugEvent,
-    EditPredictionStore, ZedUpdateRequiredError,
+    ZedUpdateRequiredError,
     cursor_excerpt::{editable_and_context_ranges_for_cursor_position, guess_token_count},
     prediction::EditPredictionResult,
+    zeta_api,
 };
 use anyhow::{Context as _, Result};
 use client::{Client, EditPredictionUsage, UserStore};
@@ -159,7 +160,7 @@ impl EditPredictionModel2 for Zeta1Model {
                 body.input_excerpt
             );
 
-            let response = EditPredictionStore::send_api_request::<PredictEditsResponse>(
+            let response = zeta_api::send_api_request::<PredictEditsResponse>(
                 |request| {
                     Ok(request
                         .uri(uri.as_str())
@@ -321,7 +322,7 @@ pub(crate) fn edit_prediction_accepted(
                 .build_zed_llm_url("/predict_edits/accept", &[])?
         };
 
-        let response = EditPredictionStore::send_api_request::<()>(
+        let response = zeta_api::send_api_request::<()>(
             move |builder| {
                 let req = builder.uri(url.as_ref()).body(
                     serde_json::to_string(&cloud_llm_client::AcceptEditPredictionBody {

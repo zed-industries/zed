@@ -1,8 +1,7 @@
 use crate::{
-    CurrentEditPrediction, DebugEvent, EditPrediction, EditPredictionFinishedDebugEvent,
-    EditPredictionId, EditPredictionModel2, EditPredictionModelInput,
-    EditPredictionStartedDebugEvent, UserActionRecord, UserActionType,
-    prediction::EditPredictionResult,
+    CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
+    EditPredictionModel2, EditPredictionModelInput, EditPredictionStartedDebugEvent,
+    UserActionRecord, UserActionType, prediction::EditPredictionResult,
 };
 use anyhow::{Result, bail};
 use client::Client;

@@ -17,7 +17,7 @@ use futures::{
 };
 use gpui::{
     Entity, TestAppContext,
-    http_client::{FakeHttpClient, Response},
+    http_client::{self, FakeHttpClient, Method, Response},
 };
 use indoc::indoc;
 use language::Point;

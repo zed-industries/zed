@@ -1,13 +1,10 @@
 use anyhow::Result;
 use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
-use cloud_llm_client::predict_edits_v3::{
-    PredictEditsV3Request, PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
-};
 use cloud_llm_client::{
-    EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason, EditPredictionRejection,
-    MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
-    PredictEditsRequestTrigger, RejectEditPredictionsBodyRef, ZED_VERSION_HEADER_NAME,
+    EditPredictionRejectReason, EditPredictionRejection,
+    MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST, PredictEditsRequestTrigger,
+    RejectEditPredictionsBodyRef,
 };
 use collections::{HashMap, HashSet};
 use copilot::Copilot;
@@ -15,7 +12,7 @@ use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use futures::{
-    AsyncReadExt as _, FutureExt as _, StreamExt as _,
+    FutureExt as _, StreamExt as _,
     channel::mpsc::{self, UnboundedReceiver},
     select_biased,
 };
@@ -23,7 +20,6 @@ use gpui::BackgroundExecutor;
 use gpui::http_client::Url;
 use gpui::{
     App, AsyncApp, Entity, EntityId, Global, SharedString, Subscription, Task, WeakEntity, actions,
-    http_client::{self, AsyncBody, Method},
     prelude::*,
 };
 use language::language_settings::all_language_settings;
@@ -33,24 +29,18 @@ use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use project::{Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
-use serde::de::DeserializeOwned;
 use settings::{EditPredictionProvider, SettingsStore, update_settings_file};
 use std::collections::{VecDeque, hash_map};
 use text::Edit;
 use workspace::Workspace;
-use zeta_prompt::ZetaPromptInput;
-use zeta_prompt::ZetaVersion;
 
 use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
-use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{env, mem};
-use thiserror::Error;
 use util::{RangeExt as _, ResultExt as _};
-use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
 pub mod cursor_excerpt;
 pub mod example_spec;
@@ -67,6 +57,7 @@ mod capture_example;
 mod zed_edit_prediction_delegate;
 pub mod zeta1;
 pub mod zeta2;
+pub mod zeta_api;
 
 #[cfg(test)]
 mod edit_prediction_tests;
@@ -111,7 +102,7 @@ impl FeatureFlag for MercuryFeatureFlag {
     const NAME: &str = "mercury";
 }
 
-static EDIT_PREDICTIONS_MODEL_ID: LazyLock<Option<String>> =
+pub(crate) static EDIT_PREDICTIONS_MODEL_ID: LazyLock<Option<String>> =
     LazyLock::new(|| env::var("ZED_ZETA_MODEL").ok());
 
 pub struct Zeta2FeatureFlag;
@@ -146,7 +137,6 @@ pub struct EditPredictionStore {
     _llm_token_subscription: Subscription,
     projects: HashMap<EntityId, ProjectState>,
     use_context: bool,
-    update_required: bool,
     edit_prediction_model: Option<Box<dyn EditPredictionModel2>>,
     data_collection_choice: DataCollectionChoice,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
@@ -656,7 +646,6 @@ impl EditPredictionStore {
                     .detach_and_log_err(cx);
                 },
             ),
-            update_required: false,
             edit_prediction_model: None,
             data_collection_choice,
             reject_predictions_tx: reject_tx,
@@ -1266,7 +1255,7 @@ impl EditPredictionStore {
                 rejections: &batched[start..],
             };
 
-            let result = Self::send_api_request::<()>(
+            let result = crate::zeta_api::send_api_request::<()>(
                 |builder| {
                     let req = builder
                         .uri(url.as_ref())
@@ -1898,189 +1887,6 @@ impl EditPredictionStore {
         anyhow::Ok(jump_location)
     }
 
-    pub async fn send_raw_llm_request(
-        request: RawCompletionRequest,
-        client: Arc<Client>,
-        custom_url: Option<Arc<Url>>,
-        llm_token: LlmApiToken,
-        app_version: Version,
-    ) -> Result<(RawCompletionResponse, Option<EditPredictionUsage>)> {
-        let url = if let Some(custom_url) = custom_url {
-            custom_url.as_ref().clone()
-        } else {
-            client
-                .http_client()
-                .build_zed_llm_url("/predict_edits/raw", &[])?
-        };
-
-        Self::send_api_request(
-            |builder| {
-                let req = builder
-                    .uri(url.as_ref())
-                    .body(serde_json::to_string(&request)?.into());
-                Ok(req?)
-            },
-            client,
-            llm_token,
-            app_version,
-            true,
-        )
-        .await
-    }
-
-    pub async fn send_v3_request(
-        input: ZetaPromptInput,
-        prompt_version: ZetaVersion,
-        client: Arc<Client>,
-        llm_token: LlmApiToken,
-        app_version: Version,
-    ) -> Result<(PredictEditsV3Response, Option<EditPredictionUsage>)> {
-        let url = client
-            .http_client()
-            .build_zed_llm_url("/predict_edits/v3", &[])?;
-
-        let request = PredictEditsV3Request {
-            input,
-            model: EDIT_PREDICTIONS_MODEL_ID.clone(),
-            prompt_version,
-        };
-
-        Self::send_api_request(
-            |builder| {
-                let req = builder
-                    .uri(url.as_ref())
-                    .body(serde_json::to_string(&request)?.into());
-                Ok(req?)
-            },
-            client,
-            llm_token,
-            app_version,
-            true,
-        )
-        .await
-    }
-
-    fn handle_api_response<T>(
-        this: &WeakEntity<Self>,
-        response: Result<(T, Option<EditPredictionUsage>)>,
-        cx: &mut gpui::AsyncApp,
-    ) -> Result<T> {
-        match response {
-            Ok((data, usage)) => {
-                if let Some(usage) = usage {
-                    this.update(cx, |this, cx| {
-                        this.user_store.update(cx, |user_store, cx| {
-                            user_store.update_edit_prediction_usage(usage, cx);
-                        });
-                    })
-                    .ok();
-                }
-                Ok(data)
-            }
-            Err(err) => {
-                if err.is::<ZedUpdateRequiredError>() {
-                    cx.update(|cx| {
-                        this.update(cx, |this, _cx| {
-                            this.update_required = true;
-                        })
-                        .ok();
-
-                        let error_message: SharedString = err.to_string().into();
-                        show_app_notification(
-                            NotificationId::unique::<ZedUpdateRequiredError>(),
-                            cx,
-                            move |cx| {
-                                cx.new(|cx| {
-                                    ErrorMessagePrompt::new(error_message.clone(), cx)
-                                        .with_link_button("Update Zed", "https://zed.dev/releases")
-                                })
-                            },
-                        );
-                    });
-                }
-                Err(err)
-            }
-        }
-    }
-
-    pub async fn send_api_request<Res>(
-        build: impl Fn(http_client::http::request::Builder) -> Result<http_client::Request<AsyncBody>>,
-        client: Arc<Client>,
-        llm_token: LlmApiToken,
-        app_version: Version,
-        require_auth: bool,
-    ) -> Result<(Res, Option<EditPredictionUsage>)>
-    where
-        Res: DeserializeOwned,
-    {
-        let http_client = client.http_client();
-
-        let mut token = if let Ok(custom_token) = std::env::var("ZED_PREDICT_EDITS_TOKEN") {
-            Some(custom_token)
-        } else if require_auth {
-            Some(llm_token.acquire(&client).await?)
-        } else {
-            llm_token.acquire(&client).await.ok()
-        };
-        let mut did_retry = false;
-
-        loop {
-            let request_builder = http_client::Request::builder().method(Method::POST);
-
-            let mut request_builder = request_builder
-                .header("Content-Type", "application/json")
-                .header(ZED_VERSION_HEADER_NAME, app_version.to_string());
-
-            // Only add Authorization header if we have a token
-            if let Some(ref token_value) = token {
-                request_builder =
-                    request_builder.header("Authorization", format!("Bearer {}", token_value));
-            }
-
-            let request = build(request_builder)?;
-
-            let mut response = http_client.send(request).await?;
-
-            if let Some(minimum_required_version) = response
-                .headers()
-                .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
-                .and_then(|version| Version::from_str(version.to_str().ok()?).ok())
-            {
-                anyhow::ensure!(
-                    app_version >= minimum_required_version,
-                    ZedUpdateRequiredError {
-                        minimum_version: minimum_required_version
-                    }
-                );
-            }
-
-            if response.status().is_success() {
-                let usage = EditPredictionUsage::from_headers(response.headers()).ok();
-
-                let mut body = Vec::new();
-                response.body_mut().read_to_end(&mut body).await?;
-                return Ok((serde_json::from_slice(&body)?, usage));
-            } else if !did_retry
-                && token.is_some()
-                && response
-                    .headers()
-                    .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
-                    .is_some()
-            {
-                did_retry = true;
-                token = Some(llm_token.refresh(&client).await?);
-            } else {
-                let mut body = String::new();
-                response.body_mut().read_to_string(&mut body).await?;
-                anyhow::bail!(
-                    "Request failed with status: {:?}\nBody: {}",
-                    response.status(),
-                    body
-                );
-            }
-        }
-    }
-
     pub fn refresh_context(
         &mut self,
         project: &Entity<Project>,
@@ -2234,13 +2040,7 @@ pub(crate) fn filter_redundant_excerpts(
     related_files
 }
 
-#[derive(Error, Debug)]
-#[error(
-    "You must update to Zed version {minimum_version} or higher to continue using edit predictions."
-)]
-pub struct ZedUpdateRequiredError {
-    minimum_version: Version,
-}
+pub use zeta_api::ZedUpdateRequiredError;
 
 #[derive(Debug, Clone, Copy)]
 pub enum DataCollectionChoice {
