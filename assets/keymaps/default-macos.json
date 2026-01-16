@@ -1291,6 +1291,7 @@
       "down": "markdown::ScrollDown",
       "alt-up": "markdown::ScrollUpByItem",
       "alt-down": "markdown::ScrollDownByItem",
+      "cmd-shift-o": "outline::Toggle",
     },
   },
   {
