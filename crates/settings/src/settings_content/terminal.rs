@@ -407,11 +407,12 @@ pub enum VenvSettings {
     #[default]
     Off,
     On {
+        /// Can also be `csh`, `fish`, `nushell` and `power_shell`
+        activate_script: Option<ActivateScript>,
+        venv_name: Option<String>,
         /// Default directories to search for virtual environments, relative
         /// to the current working directory. We recommend overriding this
         /// in your project's settings, rather than globally.
-        activate_script: Option<ActivateScript>,
-        venv_name: Option<String>,
         directories: Option<Vec<PathBuf>>,
         /// Preferred Conda manager to use when activating Conda environments.
         ///
