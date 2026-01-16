@@ -23,6 +23,9 @@ mod test;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 mod visual_test;
 
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+mod headless_metal;
+
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -39,19 +42,19 @@ mod windows;
 pub(crate) mod scap_screen_capture;
 
 use crate::{
-    hash, point, px, size, Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor,
-    Bounds, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
+    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
     ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, TaskTiming,
-    ThreadTaskTimings, Window, WindowControlArea, DEFAULT_WINDOW_SIZE,
+    ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
 use futures::channel::oneshot;
-use image::codecs::gif::GifDecoder;
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
+use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 pub use scheduler::RunnableMeta;
@@ -99,6 +102,9 @@ pub use mac::MacTextSystem;
 
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test::VisualTestPlatform;
+
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+pub use headless_metal::{HeadlessMetalAppContext, HeadlessMetalPlatform, HeadlessMetalWindow};
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -203,7 +209,7 @@ pub(crate) trait Platform: 'static {
     }
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(&self)
-        -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>>;
+    -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>>;
     #[cfg(not(feature = "screen-capture"))]
     fn screen_capture_sources(
         &self,
@@ -650,7 +656,7 @@ pub trait PlatformTextSystem: Send + Sync {
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
     /// Returns the recommended text rendering mode for the given font and size.
     fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
-        -> TextRenderingMode;
+    -> TextRenderingMode;
 }
 
 pub(crate) struct NoopTextSystem;

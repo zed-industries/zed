@@ -65,6 +65,14 @@ impl TestDispatcher {
     pub fn run_until_parked(&self) {
         while self.tick(false) {}
     }
+
+    pub fn allow_parking(&self) {
+        self.scheduler.allow_parking();
+    }
+
+    pub fn forbid_parking(&self) {
+        self.scheduler.forbid_parking();
+    }
 }
 
 impl Clone for TestDispatcher {

@@ -1909,6 +1909,15 @@ impl Window {
             .render_to_image(&self.rendered_frame.scene)
     }
 
+    /// Returns a snapshot of the rendered scene for test inspection.
+    ///
+    /// This provides access to diagnostic quads recorded during paint for assertions
+    /// on painted positions (not just metadata).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn scene_snapshot(&self) -> crate::scene::test_scene::SceneSnapshot {
+        self.rendered_frame.scene.snapshot()
+    }
+
     /// Set the content size of the window.
     pub fn resize(&mut self, size: Size<Pixels>) {
         self.platform_window.resize(size);
@@ -3137,12 +3146,15 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        self.next_frame.scene.diagnostics.push(crate::test_scene::Diagnostic {
-            name: name.into(),
-            bounds,
-            color,
-            payload: (),
-        });
+        self.next_frame
+            .scene
+            .diagnostics
+            .push(crate::test_scene::Diagnostic {
+                name: name.into(),
+                bounds,
+                color,
+                payload: (),
+            });
     }
 
     #[cfg(not(any(test, feature = "test-support")))]
@@ -3171,15 +3183,9 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        self.next_frame
-            .scene
-            .typed_diagnostics
-            .push(crate::test_scene::ErasedTypedDiagnostic::new(
-                name.into(),
-                bounds,
-                color,
-                payload,
-            ));
+        self.next_frame.scene.typed_diagnostics.push(
+            crate::test_scene::ErasedTypedDiagnostic::new(name.into(), bounds, color, payload),
+        );
     }
 
     /// Record a named diagnostic with a typed payload for test/debug snapshots.

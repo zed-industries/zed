@@ -2054,11 +2054,13 @@ fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
     let scale_factor = lock.scale_factor();
     let size = lock.content_size();
     let drawable_size = size.to_device_pixels(scale_factor);
-    unsafe {
-        let _: () = msg_send![
-            lock.renderer.layer(),
-            setContentsScale: scale_factor as f64
-        ];
+    if let Some(layer) = lock.renderer.layer() {
+        unsafe {
+            let _: () = msg_send![
+                layer,
+                setContentsScale: scale_factor as f64
+            ];
+        }
     }
 
     lock.renderer.update_drawable_size(drawable_size);

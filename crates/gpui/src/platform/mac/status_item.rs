@@ -1,18 +1,17 @@
 use crate::{
+    Scene,
     geometry::{
         rect::RectF,
-        vector::{vec2f, Vector2F},
+        vector::{Vector2F, vec2f},
     },
     platform::{
-        self,
+        self, Event, FontSystem, WindowBounds,
         mac::{platform::NSViewLayerContentsRedrawDuringViewResize, renderer::Renderer},
-        Event, FontSystem, WindowBounds,
     },
-    Scene,
 };
 use cocoa::{
     appkit::{NSScreen, NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSView, NSWindow},
-    base::{id, nil, YES},
+    base::{YES, id, nil},
     foundation::{NSPoint, NSRect, NSSize},
 };
 use ctor::ctor;
@@ -157,11 +156,12 @@ impl StatusItem {
 
             {
                 let state = state.borrow();
-                let layer = state.renderer.layer();
-                let scale_factor = state.scale_factor();
-                let size = state.content_size() * scale_factor;
-                layer.set_contents_scale(scale_factor.into());
-                layer.set_drawable_size(metal::CGSize::new(size.x().into(), size.y().into()));
+                if let Some(layer) = state.renderer.layer() {
+                    let scale_factor = state.scale_factor();
+                    let size = state.content_size() * scale_factor;
+                    layer.set_contents_scale(scale_factor.into());
+                    layer.set_drawable_size(metal::CGSize::new(size.x().into(), size.y().into()));
+                }
             }
 
             Self(state)
@@ -344,7 +344,11 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
     if let Some(state) = unsafe { get_state(this).upgrade() } {
         let state = state.borrow();
-        state.renderer.layer().as_ptr() as id
+        state
+            .renderer
+            .layer()
+            .map(|l| l.as_ptr() as id)
+            .unwrap_or(nil)
     } else {
         nil
     }
