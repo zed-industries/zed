@@ -3643,7 +3643,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
         );
     }
 
-    // Test 3: Confirm rule forces confirmation even with always_allow_tool_actions=true
+    // Test 3: always_allow_tool_actions=true overrides always_confirm patterns
     {
         let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
         let environment = Rc::new(FakeThreadEnvironment {
@@ -3670,9 +3670,9 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
         #[allow(clippy::arc_with_non_send_sync)]
         let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
-        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
-        let _task = cx.update(|cx| {
+        let task = cx.update(|cx| {
             tool.run(
                 crate::TerminalToolInput {
                     command: "sudo rm file".to_string(),
@@ -3684,16 +3684,14 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             )
         });
 
-        let auth = rx.expect_authorization().await;
-        assert!(
-            auth.tool_call.fields.title.is_some(),
-            "expected authorization request for sudo command despite always_allow_tool_actions=true"
-        );
+        // With always_allow_tool_actions=true, confirm patterns are overridden
+        task.await
+            .expect("command should be allowed with always_allow_tool_actions=true");
     }
 
-    // Test 4: default_mode: Deny blocks commands when no pattern matches
+    // Test 4: always_allow_tool_actions=true overrides default_mode: Deny
     {
-        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
         let environment = Rc::new(FakeThreadEnvironment {
             handle: handle.clone(),
         });
@@ -3730,15 +3728,9 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             )
         });
 
-        let result = task.await;
-        assert!(
-            result.is_err(),
-            "expected command to be blocked by default_mode: Deny"
-        );
-        assert!(
-            result.unwrap_err().to_string().contains("disabled"),
-            "error should mention the tool is disabled"
-        );
+        // With always_allow_tool_actions=true, even default_mode: Deny is overridden
+        task.await
+            .expect("command should be allowed with always_allow_tool_actions=true");
     }
 }
 
