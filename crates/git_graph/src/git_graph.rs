@@ -12,8 +12,8 @@ use git_ui::commit_tooltip::CommitAvatar;
 use gpui::{
     AnyElement, App, ClipboardItem, Context, Corner, DefiniteLength, ElementId, Entity,
     EventEmitter, FocusHandle, Focusable, FontWeight, InteractiveElement, ParentElement, Pixels,
-    Point, Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled, Subscription, Task,
-    WeakEntity, Window, actions, anchored, deferred, px,
+    Point, Render, ScrollWheelEvent, SharedString, Styled, Subscription, Task, WeakEntity, Window,
+    actions, anchored, deferred, px,
 };
 use graph_rendering::accent_colors_count;
 use project::{
@@ -24,9 +24,7 @@ use settings::Settings;
 use std::ops::Range;
 use theme::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
-use ui::{
-    ContextMenu, ScrollableHandle, Table, TableInteractionState, Tooltip, WithScrollbar, prelude::*,
-};
+use ui::{ContextMenu, ScrollableHandle, Table, TableInteractionState, Tooltip, prelude::*};
 use workspace::{
     Workspace,
     item::{Item, ItemEvent, SerializableItem},
@@ -67,7 +65,8 @@ pub struct GitGraph {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     row_height: Pixels,
     table_interaction_state: Entity<TableInteractionState>,
-    horizontal_scroll_handle: ScrollHandle,
+    horizontal_scroll_offset: Pixels,
+    graph_viewport_width: Pixels,
     selected_entry_idx: Option<usize>,
     log_source: LogSource,
     log_order: LogOrder,
@@ -141,7 +140,8 @@ impl GitGraph {
             context_menu: None,
             row_height,
             table_interaction_state,
-            horizontal_scroll_handle: ScrollHandle::new(),
+            horizontal_scroll_offset: px(0.),
+            graph_viewport_width: px(88.),
             selected_entry_idx: None,
             selected_commit_diff: None,
             log_source,
@@ -693,13 +693,32 @@ impl GitGraph {
             AllCommitCount::NotLoaded => self.graph.commits.len(),
         };
         let content_height = self.row_height * commit_count;
-        let max_scroll = (viewport_height - content_height).min(px(0.));
+        let max_vertical_scroll = (viewport_height - content_height).min(px(0.));
 
-        let new_y = (current_offset.y + delta.y).clamp(max_scroll, px(0.));
+        let new_y = (current_offset.y + delta.y).clamp(max_vertical_scroll, px(0.));
         let new_offset = Point::new(current_offset.x, new_y);
 
-        if new_offset != current_offset {
+        let left_padding = px(12.0);
+        let lane_width = px(16.0);
+        let max_lanes = self.graph.max_lanes.max(1);
+        let graph_content_width = lane_width * max_lanes as f32 + left_padding * 2.0;
+        let max_horizontal_scroll = (graph_content_width - self.graph_viewport_width).max(px(0.));
+
+        let new_horizontal_offset =
+            (self.horizontal_scroll_offset - delta.x).clamp(px(0.), max_horizontal_scroll);
+
+        let vertical_changed = new_offset != current_offset;
+        let horizontal_changed = new_horizontal_offset != self.horizontal_scroll_offset;
+
+        if vertical_changed {
             table_state.set_scroll_offset(new_offset);
+        }
+
+        if horizontal_changed {
+            self.horizontal_scroll_offset = new_horizontal_offset;
+        }
+
+        if vertical_changed || horizontal_changed {
             cx.notify();
         }
     }
@@ -774,14 +793,14 @@ impl Render for GitGraph {
                 .justify_center()
                 .child(Label::new(message).color(Color::Muted))
         } else {
-            let graph_width = px(16.0) * (4 as f32) + px(24.0);
+            let graph_viewport_width = self.graph_viewport_width;
             div()
                 .size_full()
                 .flex()
                 .flex_row()
                 .child(
                     div()
-                        .w(graph_width)
+                        .w(graph_viewport_width)
                         .h_full()
                         .flex()
                         .flex_col()
@@ -798,15 +817,7 @@ impl Render for GitGraph {
                                 .flex_1()
                                 .overflow_hidden()
                                 .child(render_graph(&self, cx))
-                                .on_scroll_wheel(cx.listener(Self::handle_graph_scroll))
-                                .overflow_x_scroll()
-                                .track_scroll(&self.horizontal_scroll_handle)
-                                .custom_scrollbars(
-                                    ui::Scrollbars::new(ui::ScrollAxes::Horizontal)
-                                        .tracked_scroll_handle(&self.horizontal_scroll_handle),
-                                    window,
-                                    cx,
-                                ),
+                                .on_scroll_wheel(cx.listener(Self::handle_graph_scroll)),
                         ),
                 )
                 .child({

@@ -24,7 +24,7 @@ fn lane_center_x(
     lane: f32,
     horizontal_scroll_offset: Pixels,
 ) -> Pixels {
-    bounds.origin.x + left_padding + lane * LANE_WIDTH + LANE_WIDTH / 2.0 + horizontal_scroll_offset
+    bounds.origin.x + left_padding + lane * LANE_WIDTH + LANE_WIDTH / 2.0 - horizontal_scroll_offset
 }
 
 fn to_row_center(
@@ -54,9 +54,11 @@ pub fn render_graph(graph: &GitGraph, cx: &mut Context<GitGraph>) -> impl IntoEl
 
     let first_visible_row = (scroll_offset_y / row_height).floor() as usize;
     let vertical_scroll_offset = scroll_offset_y - (first_visible_row as f32 * row_height);
-    let horizontal_scroll_offset = dbg!(graph.horizontal_scroll_handle.offset().x);
+    let horizontal_scroll_offset = graph.horizontal_scroll_offset;
 
-    let graph_width = px(16.0) * (4 as f32) + px(24.0);
+    let left_padding = px(12.0);
+    let max_lanes = graph.graph.max_lanes.max(1);
+    let graph_width = LANE_WIDTH * max_lanes as f32 + left_padding * 2.0;
     let last_visible_row = first_visible_row + (viewport_height / row_height).ceil() as usize + 1;
 
     let viewport_range = first_visible_row.min(loaded_commit_count.saturating_sub(1))
@@ -78,7 +80,6 @@ pub fn render_graph(graph: &GitGraph, cx: &mut Context<GitGraph>) -> impl IntoEl
         move |_bounds, _window, _cx| {},
         move |bounds: Bounds<Pixels>, _: (), window: &mut Window, cx: &mut App| {
             window.paint_layer(bounds, |window| {
-                let left_padding = px(12.0);
                 let accent_colors = cx.theme().accents();
 
                 for (row_idx, row) in rows.into_iter().enumerate() {
