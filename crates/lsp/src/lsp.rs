@@ -25,6 +25,7 @@ use smol::{
 };
 
 use std::{
+    any::TypeId,
     collections::BTreeSet,
     ffi::{OsStr, OsString},
     fmt,
@@ -200,14 +201,22 @@ pub enum RequestId {
     Str(String),
 }
 
+fn is_unit<T: 'static>(_: &T) -> bool {
+    TypeId::of::<T>() == TypeId::of::<()>()
+}
+
 /// Language server protocol RPC request message.
 ///
 /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
 #[derive(Serialize, Deserialize)]
-pub struct Request<'a, T> {
+pub struct Request<'a, T>
+where
+    T: 'static,
+{
     jsonrpc: &'static str,
     id: RequestId,
     method: &'a str,
+    #[serde(default, skip_serializing_if = "is_unit")]
     params: T,
 }
 
@@ -245,10 +254,14 @@ enum LspResult<T> {
 ///
 /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#notificationMessage)
 #[derive(Serialize, Deserialize)]
-struct Notification<'a, T> {
+struct Notification<'a, T>
+where
+    T: 'static,
+{
     jsonrpc: &'static str,
     #[serde(borrow)]
     method: &'a str,
+    #[serde(default, skip_serializing_if = "is_unit")]
     params: T,
 }
 
