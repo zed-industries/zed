@@ -12648,6 +12648,7 @@ dependencies = [
  "git",
  "git_ui",
  "gpui",
+ "itertools 0.14.0",
  "language",
  "menu",
  "notifications",
