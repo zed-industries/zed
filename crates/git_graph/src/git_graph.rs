@@ -87,8 +87,7 @@ impl GitGraph {
         let log_order = LogOrder::default();
 
         cx.subscribe(&git_store, |this, _, event, cx| match event {
-            GitStoreEvent::RepositoryUpdated(repo_id, RepositoryEvent::BranchChanged, true) => {
-                dbg!(repo_id);
+            GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::BranchChanged, true) => {
                 // todo! only call load data from render, we should set a bool here
                 // todo! We should check that the repo actually has a change that would affect the graph
                 this.graph.clear();
@@ -112,6 +111,7 @@ impl GitGraph {
         .detach();
 
         let _subscriptions = if let Some(repository) = project.read(cx).active_repository(cx) {
+            dbg!("There's is an active repository on start up");
             repository.update(cx, |repository, cx| {
                 let commits =
                     repository.graph_data(log_source.clone(), log_order, 0..usize::MAX, cx);

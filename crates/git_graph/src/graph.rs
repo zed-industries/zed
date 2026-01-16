@@ -270,10 +270,6 @@ impl GitGraph {
     }
 
     pub(crate) fn add_commits(&mut self, commits: &[Arc<InitialGraphCommitData>]) {
-        if self.commits.len() == 0 && commits.len() > 0 {
-            dbg!("Adding commits");
-        }
-
         for commit in commits.into_iter() {
             let commit_row = self.commits.len();
 
