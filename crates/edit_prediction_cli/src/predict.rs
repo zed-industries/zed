@@ -109,9 +109,7 @@ pub async fn run_prediction(
                 version,
             )),
             PredictionProvider::Sweep => Box::new(SweepModel::new(app_state.client.clone(), cx)),
-            PredictionProvider::Mercury => Box::new(MercuryModel::new(
-                edit_prediction::mercury::Mercury::new(cx),
-            )),
+            PredictionProvider::Mercury => Box::new(MercuryModel::new(cx)),
             PredictionProvider::Teacher(..) | PredictionProvider::TeacherNonBatching(..) => {
                 unreachable!()
             }

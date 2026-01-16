@@ -9,34 +9,24 @@ use gpui::{
     App, AppContext as _, Entity, Global, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
-use language::{Buffer, OffsetRangeExt as _, ToOffset, ToPoint as _};
+use language::{OffsetRangeExt as _, ToOffset, ToPoint as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
-use zeta_prompt::{RelatedFile, ZetaPromptInput};
+use zeta_prompt::ZetaPromptInput;
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
 const MAX_REWRITE_TOKENS: usize = 150;
 const MAX_CONTEXT_TOKENS: usize = 350;
 
-pub struct Mercury {
-    pub api_token: Entity<ApiKeyState>,
-}
-
-impl Mercury {
-    pub fn new(cx: &mut App) -> Self {
-        Mercury {
-            api_token: mercury_api_token(cx),
-        }
-    }
-}
-
 pub struct MercuryModel {
-    mercury: Mercury,
+    api_token: Entity<ApiKeyState>,
 }
 
 impl MercuryModel {
-    pub fn new(mercury: Mercury) -> Self {
-        Self { mercury }
+    pub fn new(cx: &mut App) -> Self {
+        Self {
+            api_token: mercury_api_token(cx),
+        }
     }
 }
 
@@ -50,24 +40,13 @@ impl EditPredictionModel2 for MercuryModel {
     }
 
     fn is_enabled(&self, cx: &App) -> bool {
-        self.mercury
-            .api_token
+        self.api_token
             .read(cx)
             .key(&MERCURY_CREDENTIALS_URL)
             .is_some()
     }
 
     fn request_prediction(
-        &self,
-        inputs: EditPredictionModelInput,
-        cx: &mut App,
-    ) -> Task<Result<Option<EditPredictionResult>>> {
-        self.mercury.request_prediction(inputs, cx)
-    }
-}
-
-impl Mercury {
-    pub(crate) fn request_prediction(
         &self,
         EditPredictionModelInput {
             buffer,
@@ -77,18 +56,6 @@ impl Mercury {
             debug_tx,
             ..
         }: EditPredictionModelInput,
-        cx: &mut App,
-    ) -> Task<Result<Option<EditPredictionResult>>> {
-        self.request_prediction_impl(buffer, position, related_files, events, debug_tx, cx)
-    }
-
-    fn request_prediction_impl(
-        &self,
-        buffer: Entity<Buffer>,
-        position: language::Anchor,
-        related_files: Vec<RelatedFile>,
-        events: Vec<Arc<zeta_prompt::Event>>,
-        debug_tx: Option<futures::channel::mpsc::UnboundedSender<DebugEvent>>,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
         let snapshot = buffer.read(cx).snapshot();

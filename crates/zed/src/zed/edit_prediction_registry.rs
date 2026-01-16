@@ -224,9 +224,7 @@ fn assign_edit_prediction_provider(
                             } else if name == EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME
                                 && cx.has_flag::<MercuryFeatureFlag>()
                             {
-                                Box::new(MercuryModel::new(edit_prediction::mercury::Mercury::new(
-                                    cx,
-                                )))
+                                Box::new(MercuryModel::new(cx))
                             } else {
                                 return false;
                             }
