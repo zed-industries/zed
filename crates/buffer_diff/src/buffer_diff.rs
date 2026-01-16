@@ -469,13 +469,7 @@ impl BufferDiffSnapshot {
                 (start, end)
             };
 
-            if start == end && end.column > 0 {
-                start.row + 1..end.row + 1
-            } else if end.column > 0 {
-                start.row..end.row + 1
-            } else {
-                start.row..end.row
-            }
+            start.row..end.row
         })
     }
 
@@ -564,13 +558,7 @@ impl BufferDiffSnapshot {
                 (start, end)
             };
 
-            if start == end && end.column > 0 {
-                start.row + 1..end.row + 1
-            } else if end.column > 0 {
-                start.row..end.row + 1
-            } else {
-                start.row..end.row
-            }
+            start.row..end.row
         })
     }
 }
@@ -2987,9 +2975,7 @@ mod tests {
         let buffer_rows: Vec<_> = diff.base_text_rows_to_rows(0..5, &buffer).collect();
         assert_eq!(buffer_rows, vec![0..0, 0..0, 1..1, 2..2, 3..3, 4..6]);
 
-        let bbb_start = buffer.text().find("bbb").unwrap();
-        let ccc_end = buffer.text().find("ccc").unwrap() + "ccc\n".len();
-        buffer.edit([(bbb_start..ccc_end, "B1\nB2\nB3\nB4\n")]);
+        buffer.edit([(Point::new(1, 0)..Point::new(3, 0), "B1\nB2\nB3\nB4\n")]);
 
         let base_rows: Vec<_> = diff.rows_to_base_text_rows(0..8, &buffer).collect();
         assert_eq!(

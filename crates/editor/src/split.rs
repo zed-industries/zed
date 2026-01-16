@@ -1953,10 +1953,7 @@ mod tests {
     }
 
     #[gpui::test]
-    #[ignore]
-    async fn test_split_editor_block_alignment_after_deleting_added_line(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_deleting_added_line(cx: &mut gpui::TestAppContext) {
         use rope::Point;
         use unindent::Unindent as _;
 
@@ -2024,26 +2021,26 @@ mod tests {
 
         cx.run_until_parked();
 
-        // assert_split_content(
-        //     &editor,
-        //     "
-        //     § <no file>
-        //     § -----
-        //     aaa
-        //     NEW1
-        //     ccc
-        //     ddd"
-        //     .unindent(),
-        //     "
-        //     § <no file>
-        //     § -----
-        //     aaa
-        //     bbb
-        //     ccc
-        //     ddd"
-        //     .unindent(),
-        //     &mut cx,
-        // );
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            NEW1
+            ccc
+            ddd"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd"
+            .unindent(),
+            &mut cx,
+        );
 
         let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
         diff.update(cx, |diff, cx| {
@@ -2076,7 +2073,7 @@ mod tests {
 
     #[gpui::test]
     #[ignore]
-    async fn test_split_editor_newline_insertion_at_line_boundary(cx: &mut gpui::TestAppContext) {
+    async fn test_inserting_consecutive_blank_line(cx: &mut gpui::TestAppContext) {
         use rope::Point;
         use unindent::Unindent as _;
 
@@ -2173,7 +2170,7 @@ mod tests {
 
     #[gpui::test]
     #[ignore]
-    async fn test_split_editor_revert_deletion_hunk(cx: &mut gpui::TestAppContext) {
+    async fn test_reverting_deletion_hunk(cx: &mut gpui::TestAppContext) {
         use git::Restore;
         use rope::Point;
         use unindent::Unindent as _;
