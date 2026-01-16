@@ -576,6 +576,7 @@ async fn windows_path_to_wsl_path_impl(
 /// Converts a WSL/POSIX path to a Windows path using `wslpath -w`.
 ///
 /// For example, `/home/user/project` becomes `\\wsl.localhost\Ubuntu\home\user\project`
+#[cfg(target_os = "windows")]
 pub fn wsl_path_to_windows_path(
     options: &WslConnectionOptions,
     wsl_path: &Path,
