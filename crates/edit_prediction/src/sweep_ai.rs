@@ -1,7 +1,7 @@
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPrediction, EditPredictionFinishedDebugEvent,
     EditPredictionId, EditPredictionModel2, EditPredictionModelInput,
-    EditPredictionStartedDebugEvent, EditPredictionStore, UserActionRecord, UserActionType,
+    EditPredictionStartedDebugEvent, UserActionRecord, UserActionType,
     prediction::EditPredictionResult,
 };
 use anyhow::{Result, bail};
@@ -27,28 +27,19 @@ use std::{
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 const SWEEP_METRICS_URL: &str = "https://backend.app.sweep.dev/backend/track_autocomplete_metrics";
 
-pub struct SweepAi {
-    pub api_token: Entity<ApiKeyState>,
-    pub debug_info: Arc<str>,
-}
-
-impl SweepAi {
-    pub fn new(cx: &mut App) -> Self {
-        SweepAi {
-            api_token: sweep_api_token(cx),
-            debug_info: debug_info(cx),
-        }
-    }
-}
-
 pub struct SweepModel {
-    sweep_ai: SweepAi,
+    api_token: Entity<ApiKeyState>,
+    debug_info: Arc<str>,
     client: Arc<Client>,
 }
 
 impl SweepModel {
-    pub fn new(sweep_ai: SweepAi, client: Arc<Client>) -> Self {
-        Self { sweep_ai, client }
+    pub fn new(client: Arc<Client>, cx: &mut App) -> Self {
+        Self {
+            api_token: sweep_api_token(cx),
+            debug_info: debug_info(cx),
+            client,
+        }
     }
 }
 
@@ -66,8 +57,7 @@ impl EditPredictionModel2 for SweepModel {
     }
 
     fn is_enabled(&self, cx: &App) -> bool {
-        self.sweep_ai
-            .api_token
+        self.api_token
             .read(cx)
             .key(&SWEEP_CREDENTIALS_URL)
             .is_some()
@@ -78,35 +68,9 @@ impl EditPredictionModel2 for SweepModel {
         inputs: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
-        self.sweep_ai.request_prediction_with_sweep(inputs, cx)
-    }
-
-    fn report_accepted_prediction(&self, current_prediction: CurrentEditPrediction, cx: &mut App) {
-        edit_prediction_accepted_impl(&self.sweep_ai, &self.client, current_prediction, cx);
-    }
-
-    fn report_shown_prediction(&self, prediction: &CurrentEditPrediction, cx: &mut App) {
-        if let Some(display_type) = prediction.shown_with {
-            edit_prediction_shown(
-                &self.sweep_ai,
-                self.client.clone(),
-                &prediction.prediction,
-                display_type,
-                cx,
-            );
-        }
-    }
-}
-
-impl SweepAi {
-    pub fn request_prediction_with_sweep(
-        &self,
-        inputs: EditPredictionModelInput,
-        cx: &mut App,
-    ) -> Task<Result<Option<EditPredictionResult>>> {
         let debug_info = self.debug_info.clone();
         self.api_token.update(cx, |key_state, cx| {
-            _ = key_state.load_if_needed(SWEEP_CREDENTIALS_URL, |s| s, cx);
+            let _ = key_state.load_if_needed(SWEEP_CREDENTIALS_URL, |s| s, cx);
         });
 
         let buffer = inputs.buffer.clone();
@@ -356,6 +320,82 @@ impl SweepAi {
                 .await,
             ))
         })
+    }
+
+    fn report_accepted_prediction(&self, current_prediction: CurrentEditPrediction, cx: &mut App) {
+        let Some(api_token) = self.api_token.read(cx).key(&SWEEP_CREDENTIALS_URL) else {
+            return;
+        };
+        let debug_info = self.debug_info.clone();
+
+        let prediction = current_prediction.prediction;
+
+        let (additions, deletions) = compute_edit_metrics(&prediction.edits, &prediction.snapshot);
+        let autocomplete_id = prediction.id.to_string();
+
+        let device_id = self
+            .client
+            .user_id()
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+
+        let suggestion_type = match current_prediction.shown_with {
+            Some(SuggestionDisplayType::DiffPopover) => SweepSuggestionType::Popup,
+            Some(SuggestionDisplayType::Jump) => return, // should'nt happen
+            Some(SuggestionDisplayType::GhostText) | None => SweepSuggestionType::GhostText,
+        };
+
+        let request_body = AutocompleteMetricsRequest {
+            event_type: SweepEventType::AutocompleteSuggestionAccepted,
+            suggestion_type,
+            additions,
+            deletions,
+            autocomplete_id,
+            edit_tracking: String::new(),
+            edit_tracking_line: None,
+            lifespan: None,
+            debug_info,
+            device_id,
+            privacy_mode_enabled: false,
+        };
+
+        send_autocomplete_metrics_request(cx, self.client.clone(), api_token, request_body);
+    }
+
+    fn report_shown_prediction(&self, prediction: &CurrentEditPrediction, cx: &mut App) {
+        if let Some(display_type) = prediction.shown_with {
+            let Some(api_token) = self.api_token.read(cx).key(&SWEEP_CREDENTIALS_URL) else {
+                return;
+            };
+            let debug_info = self.debug_info.clone();
+            let prediction = &prediction.prediction;
+            let (additions, deletions) =
+                compute_edit_metrics(&prediction.edits, &prediction.snapshot);
+            let autocomplete_id = prediction.id.to_string();
+
+            let suggestion_type = match display_type {
+                SuggestionDisplayType::GhostText => SweepSuggestionType::GhostText,
+                SuggestionDisplayType::DiffPopover => SweepSuggestionType::Popup,
+                SuggestionDisplayType::Jump => SweepSuggestionType::JumpToEdit,
+            };
+
+            let request_body = AutocompleteMetricsRequest {
+                event_type: SweepEventType::AutocompleteSuggestionShown,
+                suggestion_type,
+                additions,
+                deletions,
+                autocomplete_id,
+                edit_tracking: String::new(),
+                edit_tracking_line: None,
+                lifespan: None,
+                debug_info,
+                device_id: String::new(),
+                privacy_mode_enabled: false,
+            };
+
+            send_autocomplete_metrics_request(cx, self.client.clone(), api_token, request_body);
+        }
     }
 }
 
@@ -607,98 +647,6 @@ fn send_autocomplete_metrics_request(
         Ok(())
     })
     .detach_and_log_err(cx);
-}
-
-#[allow(dead_code)]
-pub(crate) fn edit_prediction_accepted(
-    store: &EditPredictionStore,
-    current_prediction: CurrentEditPrediction,
-    cx: &App,
-) {
-    edit_prediction_accepted_impl(&store.sweep_ai, &store.client, current_prediction, cx);
-}
-
-fn edit_prediction_accepted_impl(
-    sweep_ai: &SweepAi,
-    client: &Arc<Client>,
-    current_prediction: CurrentEditPrediction,
-    cx: &App,
-) {
-    let Some(api_token) = sweep_ai.api_token.read(cx).key(&SWEEP_CREDENTIALS_URL) else {
-        return;
-    };
-    let debug_info = sweep_ai.debug_info.clone();
-
-    let prediction = current_prediction.prediction;
-
-    let (additions, deletions) = compute_edit_metrics(&prediction.edits, &prediction.snapshot);
-    let autocomplete_id = prediction.id.to_string();
-
-    let device_id = client
-        .user_id()
-        .as_ref()
-        .map(ToString::to_string)
-        .unwrap_or_default();
-
-    let suggestion_type = match current_prediction.shown_with {
-        Some(SuggestionDisplayType::DiffPopover) => SweepSuggestionType::Popup,
-        Some(SuggestionDisplayType::Jump) => return, // should'nt happen
-        Some(SuggestionDisplayType::GhostText) | None => SweepSuggestionType::GhostText,
-    };
-
-    let request_body = AutocompleteMetricsRequest {
-        event_type: SweepEventType::AutocompleteSuggestionAccepted,
-        suggestion_type,
-        additions,
-        deletions,
-        autocomplete_id,
-        edit_tracking: String::new(),
-        edit_tracking_line: None,
-        lifespan: None,
-        debug_info,
-        device_id,
-        privacy_mode_enabled: false,
-    };
-
-    send_autocomplete_metrics_request(cx, client.clone(), api_token, request_body);
-}
-
-pub fn edit_prediction_shown(
-    sweep_ai: &SweepAi,
-    client: Arc<Client>,
-    prediction: &EditPrediction,
-    display_type: SuggestionDisplayType,
-    cx: &App,
-) {
-    let Some(api_token) = sweep_ai.api_token.read(cx).key(&SWEEP_CREDENTIALS_URL) else {
-        return;
-    };
-    let debug_info = sweep_ai.debug_info.clone();
-
-    let (additions, deletions) = compute_edit_metrics(&prediction.edits, &prediction.snapshot);
-    let autocomplete_id = prediction.id.to_string();
-
-    let suggestion_type = match display_type {
-        SuggestionDisplayType::GhostText => SweepSuggestionType::GhostText,
-        SuggestionDisplayType::DiffPopover => SweepSuggestionType::Popup,
-        SuggestionDisplayType::Jump => SweepSuggestionType::JumpToEdit,
-    };
-
-    let request_body = AutocompleteMetricsRequest {
-        event_type: SweepEventType::AutocompleteSuggestionShown,
-        suggestion_type,
-        additions,
-        deletions,
-        autocomplete_id,
-        edit_tracking: String::new(),
-        edit_tracking_line: None,
-        lifespan: None,
-        debug_info,
-        device_id: String::new(),
-        privacy_mode_enabled: false,
-    };
-
-    send_autocomplete_metrics_request(cx, client, api_token, request_body);
 }
 
 fn compute_edit_metrics(

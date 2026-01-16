@@ -209,10 +209,7 @@ fn assign_edit_prediction_provider(
                             if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
                                 && cx.has_flag::<SweepFeatureFlag>()
                             {
-                                Box::new(SweepModel::new(
-                                    edit_prediction::sweep_ai::SweepAi::new(cx),
-                                    client.clone(),
-                                ))
+                                Box::new(SweepModel::new(client.clone(), cx))
                             } else if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME
                                 && cx.has_flag::<Zeta2FeatureFlag>()
                             {

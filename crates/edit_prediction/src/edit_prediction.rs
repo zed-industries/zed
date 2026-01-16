@@ -73,12 +73,10 @@ mod edit_prediction_tests;
 
 use crate::capture_example::should_sample_edit_prediction_example_capture;
 use crate::license_detection::LicenseDetectionWatcher;
-use crate::mercury::Mercury;
 use crate::onboarding_modal::ZedPredictModal;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 use crate::prediction::EditPredictionResult;
-pub use crate::sweep_ai::SweepAi;
 pub use capture_example::capture_example;
 pub use language_model::ApiKeyState;
 pub use telemetry_events::EditPredictionRating;
@@ -150,8 +148,6 @@ pub struct EditPredictionStore {
     use_context: bool,
     update_required: bool,
     edit_prediction_model: Option<Box<dyn EditPredictionModel2>>,
-    pub sweep_ai: SweepAi,
-    pub mercury: Mercury,
     data_collection_choice: DataCollectionChoice,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
     shown_predictions: VecDeque<EditPrediction>,
@@ -159,6 +155,7 @@ pub struct EditPredictionStore {
     custom_predict_edits_url: Option<Arc<Url>>,
 }
 
+// todo! remove this enum
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub enum EditPredictionModel {
     #[default]
@@ -673,9 +670,6 @@ impl EditPredictionStore {
             ),
             update_required: false,
             edit_prediction_model: None,
-            sweep_ai: SweepAi::new(cx),
-            mercury: Mercury::new(cx),
-
             data_collection_choice,
             reject_predictions_tx: reject_tx,
             rated_predictions: Default::default(),
@@ -729,12 +723,8 @@ impl EditPredictionStore {
             .is_some_and(|model| model.is_enabled(cx))
     }
 
-    pub fn has_sweep_api_token(&self, cx: &App) -> bool {
-        self.sweep_ai.api_token.read(cx).has_key()
-    }
-
-    pub fn has_mercury_api_token(&self, cx: &App) -> bool {
-        self.mercury.api_token.read(cx).has_key()
+    pub fn model(&self) -> Option<&dyn EditPredictionModel2> {
+        self.edit_prediction_model.as_deref()
     }
 
     pub fn set_use_context(&mut self, use_context: bool) {

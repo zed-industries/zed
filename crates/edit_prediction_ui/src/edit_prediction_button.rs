@@ -319,14 +319,24 @@ impl Render for EditPredictionButton {
                             "Powered by Sweep"
                         };
                         missing_token = edit_prediction::EditPredictionStore::try_global(cx)
-                            .is_some_and(|ep_store| !ep_store.read(cx).has_sweep_api_token(cx));
+                            .is_some_and(|ep_store| {
+                                ep_store
+                                    .read(cx)
+                                    .model()
+                                    .is_some_and(|model| !model.is_enabled(cx))
+                            });
                     }
                     EditPredictionProvider::Experimental(
                         EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
                     ) => {
                         ep_icon = IconName::Inception;
                         missing_token = edit_prediction::EditPredictionStore::try_global(cx)
-                            .is_some_and(|ep_store| !ep_store.read(cx).has_mercury_api_token(cx));
+                            .is_some_and(|ep_store| {
+                                ep_store
+                                    .read(cx)
+                                    .model()
+                                    .is_some_and(|model| !model.is_enabled(cx))
+                            });
                         tooltip_meta = if missing_token {
                             "Missing API key for Mercury"
                         } else {

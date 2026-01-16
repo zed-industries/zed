@@ -108,10 +108,7 @@ pub async fn run_prediction(
                 store.reject_predictions_tx(),
                 version,
             )),
-            PredictionProvider::Sweep => Box::new(SweepModel::new(
-                edit_prediction::sweep_ai::SweepAi::new(cx),
-                app_state.client.clone(),
-            )),
+            PredictionProvider::Sweep => Box::new(SweepModel::new(app_state.client.clone(), cx)),
             PredictionProvider::Mercury => Box::new(MercuryModel::new(
                 edit_prediction::mercury::Mercury::new(cx),
             )),
