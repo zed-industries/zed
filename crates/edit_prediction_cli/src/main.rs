@@ -538,16 +538,18 @@ fn main() {
                     };
 
                 let grouped_examples = Mutex::new(group_examples_by_repo(examples));
+                let finished_examples = Mutex::new(Vec::new());
 
                 let mut tasks = Vec::new();
                 for _ in 0..args.max_parallelism {
                     tasks.push(async {
                         loop {
-                            let Some(repo_examples) = grouped_examples.lock().unwrap().pop_front()
+                            let Some(mut repo_examples) =
+                                grouped_examples.lock().unwrap().pop_front()
                             else {
                                 break;
                             };
-                            for mut example in repo_examples {
+                            for example in &mut repo_examples {
                                 let example_progress =
                                     Progress::global().start_group(&example.spec.name);
 
@@ -556,7 +558,7 @@ fn main() {
                                         Command::ParseExample => {}
                                         Command::LoadProject => {
                                             run_load_project(
-                                                &mut example,
+                                                example,
                                                 app_state.clone(),
                                                 &example_progress,
                                                 cx.clone(),
@@ -565,7 +567,7 @@ fn main() {
                                         }
                                         Command::Context => {
                                             run_context_retrieval(
-                                                &mut example,
+                                                example,
                                                 app_state.clone(),
                                                 &example_progress,
                                                 cx.clone(),
@@ -574,7 +576,7 @@ fn main() {
                                         }
                                         Command::FormatPrompt(args) => {
                                             run_format_prompt(
-                                                &mut example,
+                                                example,
                                                 args,
                                                 app_state.clone(),
                                                 &example_progress,
@@ -584,7 +586,7 @@ fn main() {
                                         }
                                         Command::Predict(args) => {
                                             run_prediction(
-                                                &mut example,
+                                                example,
                                                 args,
                                                 app_state.clone(),
                                                 &example_progress,
@@ -593,11 +595,11 @@ fn main() {
                                             .await?;
                                         }
                                         Command::Distill => {
-                                            run_distill(&mut example).await?;
+                                            run_distill(example).await?;
                                         }
                                         Command::Score(args) | Command::Eval(args) => {
                                             run_scoring(
-                                                &mut example,
+                                                example,
                                                 &args,
                                                 app_state.clone(),
                                                 &example_progress,
@@ -647,6 +649,17 @@ fn main() {
                                     }
                                 }
                             }
+
+                            app_state
+                                .project_cache
+                                .remove(&repo_examples.first().unwrap().spec.repository_url);
+                            for example in &mut repo_examples {
+                                example.state.take();
+                            }
+                            finished_examples
+                                .lock()
+                                .unwrap()
+                                .extend_from_slice(&repo_examples);
                         }
                     });
                 }
@@ -662,7 +675,7 @@ fn main() {
                 }
 
                 match &command {
-                    Command::Eval(_) => score::print_report(&grouped_examples.lock().unwrap()),
+                    Command::Eval(_) => score::print_report(&finished_examples.lock().unwrap()),
                     _ => (),
                 };
 
