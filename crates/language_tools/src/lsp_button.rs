@@ -20,7 +20,7 @@ use ui::{
     ContextMenu, ContextMenuEntry, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
 
-use util::{ResultExt, rel_path::RelPath};
+use util::{ResultExt, paths::PathExt, rel_path::RelPath};
 use workspace::{StatusItemView, Workspace};
 
 use crate::lsp_log_view;
@@ -132,12 +132,20 @@ impl LanguageServerState {
             return menu;
         };
 
-        let server_versions = self
+        let server_metadata = self
             .lsp_store
             .update(cx, |lsp_store, _| {
                 lsp_store
                     .language_server_statuses()
-                    .map(|(server_id, status)| (server_id, status.server_version.clone()))
+                    .map(|(server_id, status)| {
+                        (
+                            server_id,
+                            (
+                                status.server_version.clone(),
+                                status.binary.as_ref().map(|b| b.path.clone()),
+                            ),
+                        )
+                    })
                     .collect::<HashMap<_, _>>()
             })
             .unwrap_or_default();
@@ -266,9 +274,16 @@ impl LanguageServerState {
                 .or_else(|| server_info.binary_status.as_ref()?.message.as_ref())
                 .cloned();
 
-            let server_version = server_versions
+            let (server_version, binary_path) = server_metadata
                 .get(&server_info.id)
-                .and_then(|version| version.clone());
+                .map(|(version, path)| {
+                    (
+                        version.clone(),
+                        path.as_ref()
+                            .map(|p| SharedString::from(p.compact().to_string_lossy().to_string())),
+                    )
+                })
+                .unwrap_or((None, None));
 
             let truncated_message = message.as_ref().and_then(|message| {
                 message
@@ -527,6 +542,20 @@ impl LanguageServerState {
                                     })
                                     .into_any_element()
                             }
+                        });
+
+                        submenu = submenu.when_some(binary_path.clone(), |submenu, path| {
+                            submenu.custom_row(move |_, _| {
+                                h_flex()
+                                    .id("binary-path-container")
+                                    .gap_1()
+                                    .child(
+                                        Label::new(path.clone())
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .into_any_element()
+                            })
                         });
 
                         submenu
