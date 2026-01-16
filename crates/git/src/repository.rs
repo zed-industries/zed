@@ -808,8 +808,6 @@ pub trait GitRepository: Send + Sync {
         request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
     ) -> BoxFuture<'_, Result<()>>;
 
-    fn rev_list_count(&self, source: LogSource) -> BoxFuture<'_, Result<usize>>;
-
     fn commit_data_reader(&self) -> Result<CommitDataReader>;
 }
 
@@ -2612,21 +2610,6 @@ impl GitRepository for RealGitRepository {
 
             child.status().await?;
             Ok(())
-        }
-        .boxed()
-    }
-
-    fn rev_list_count(&self, source: LogSource) -> BoxFuture<'_, Result<usize>> {
-        let git_binary_path = self.any_git_binary_path.clone();
-        let working_directory = self.working_directory();
-        let executor = self.executor.clone();
-
-        async move {
-            let working_directory = working_directory?;
-            let git = GitBinary::new(git_binary_path, working_directory, executor);
-
-            let args = ["rev-list", "--count", source.get_arg()];
-            Ok(git.run(&args).await?.trim().parse::<usize>()?)
         }
         .boxed()
     }

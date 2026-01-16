@@ -4430,20 +4430,6 @@ impl Repository {
         });
     }
 
-    // todo! remove this functionality from repository
-    pub fn commit_count(&mut self, source: LogSource) -> oneshot::Receiver<Result<usize>> {
-        self.send_job(None, move |git_repo, _cx| async move {
-            match git_repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.rev_list_count(source).await
-                }
-                RepositoryState::Remote(_) => {
-                    bail!("commit count is not yet supported for remote repositories")
-                }
-            }
-        })
-    }
-
     fn buffer_store(&self, cx: &App) -> Option<Entity<BufferStore>> {
         Some(self.git_store.upgrade()?.read(cx).buffer_store.clone())
     }

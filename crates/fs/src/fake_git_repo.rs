@@ -748,10 +748,6 @@ impl GitRepository for FakeGitRepository {
         async { Ok(()) }.boxed()
     }
 
-    fn rev_list_count(&self, _source: LogSource) -> BoxFuture<'_, Result<usize>> {
-        async { Ok(0) }.boxed()
-    }
-
     fn commit_data_reader(&self) -> Result<CommitDataReader> {
         anyhow::bail!("commit_data_reader not supported for FakeGitRepository")
     }
