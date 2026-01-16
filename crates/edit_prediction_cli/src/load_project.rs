@@ -11,7 +11,7 @@ use edit_prediction::{
 };
 use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity};
-use language::{Anchor, Buffer, LanguageNotFound, OffsetRangeExt as _, ToOffset, ToPoint};
+use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
 use project::{Project, ProjectPath, buffer_store::BufferStoreEvent};
 use std::{fs, path::PathBuf, sync::Arc};
 
