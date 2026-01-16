@@ -613,6 +613,9 @@ impl AcpThreadView {
                 }
             })
             .next();
+        let fallback_cwd = root_dir
+            .clone()
+            .unwrap_or_else(|| paths::home_dir().as_path().into());
         let (status_tx, mut status_rx) = watch::channel("Loading…".into());
         let (new_version_available_tx, mut new_version_available_rx) = watch::channel(None);
         let delegate = AgentServerDelegate::new(
@@ -647,23 +650,34 @@ impl AcpThreadView {
                 telemetry::event!("Agent Thread Started", agent = connection.telemetry_id());
             }
 
-            let result = if let Some(native_agent) = connection
-                .clone()
-                .downcast::<agent::NativeAgentConnection>()
-                && let Some(resume) = resume_thread.clone()
-            {
-                cx.update(|_, cx| {
-                    native_agent
-                        .0
-                        .update(cx, |agent, cx| agent.open_thread(resume.session_id, cx))
-                })
-                .log_err()
+            let result = if let Some(resume) = resume_thread.clone() {
+                if connection.supports_load_session() {
+                    let session_cwd = resume
+                        .cwd
+                        .clone()
+                        .unwrap_or_else(|| fallback_cwd.as_ref().to_path_buf());
+                    cx.update(|_, cx| {
+                        connection.clone().load_session(
+                            resume,
+                            project.clone(),
+                            session_cwd.as_path(),
+                            cx,
+                        )
+                    })
+                    .log_err()
+                } else {
+                    cx.update(|_, _| {
+                        Task::ready(Err(anyhow!(LoadError::Other(
+                            "Loading sessions is not supported by this agent.".into()
+                        ))))
+                    })
+                    .log_err()
+                }
             } else {
-                let root_dir = root_dir.unwrap_or(paths::home_dir().as_path().into());
                 cx.update(|_, cx| {
                     connection
                         .clone()
-                        .new_thread(project.clone(), &root_dir, cx)
+                        .new_thread(project.clone(), fallback_cwd.as_ref(), cx)
                 })
                 .log_err()
             };
@@ -709,7 +723,11 @@ impl AcpThreadView {
 
                         let connection = thread.read(cx).connection().clone();
                         let session_id = thread.read(cx).session_id().clone();
-                        let session_list = connection.session_list(cx);
+                        let session_list = if connection.supports_load_session() {
+                            connection.session_list(cx)
+                        } else {
+                            None
+                        };
                         this.history.update(cx, |history, cx| {
                             history.set_session_list(session_list, cx);
                         });
