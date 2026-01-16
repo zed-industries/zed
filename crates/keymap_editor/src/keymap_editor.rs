@@ -561,7 +561,19 @@ impl KeymapEditor {
             actions_with_schemas: HashSet::default(),
             action_args_temp_dir: None,
             action_args_temp_dir_worktree: None,
-            current_widths: cx.new(|cx| TableColumnWidths::new(COLS, cx)),
+            current_widths: cx.new(|cx| {
+                TableColumnWidths::new(
+                    vec![
+                        DefiniteLength::Absolute(AbsoluteLength::Pixels(px(36.))),
+                        DefiniteLength::Fraction(0.25),
+                        DefiniteLength::Fraction(0.20),
+                        DefiniteLength::Fraction(0.14),
+                        DefiniteLength::Fraction(0.45),
+                        DefiniteLength::Fraction(0.08),
+                    ],
+                    cx,
+                )
+            }),
         };
 
         this.on_keymap_changed(window, cx);
@@ -1922,14 +1934,7 @@ impl Render for KeymapEditor {
                         let this = cx.entity();
                         move |window, cx| this.read(cx).render_no_matches_hint(window, cx)
                     })
-                    .column_widths(vec![
-                        DefiniteLength::Absolute(AbsoluteLength::Pixels(px(36.))),
-                        DefiniteLength::Fraction(0.25),
-                        DefiniteLength::Fraction(0.20),
-                        DefiniteLength::Fraction(0.14),
-                        DefiniteLength::Fraction(0.45),
-                        DefiniteLength::Fraction(0.08),
-                    ])
+                    .column_widths(&self.current_widths)
                     .resizable_columns(
                         vec![
                             TableResizeBehavior::None,
@@ -1937,9 +1942,8 @@ impl Render for KeymapEditor {
                             TableResizeBehavior::Resizable,
                             TableResizeBehavior::Resizable,
                             TableResizeBehavior::Resizable,
-                            TableResizeBehavior::Resizable, // this column doesn't matter
+                            TableResizeBehavior::Resizable,
                         ],
-                        &self.current_widths,
                         cx,
                     )
                     .header(vec!["", "Action", "Arguments", "Keystrokes", "Context", "Source"])

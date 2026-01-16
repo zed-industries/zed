@@ -11,7 +11,6 @@ use crate::{
 pub const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 
 /// Marker type for drag events on resize handles.
-/// This is public so that consumers can register drag move handlers for resize operations.
 #[derive(Debug, Clone)]
 pub struct DraggedSplitHandle(pub usize);
 
@@ -44,45 +43,65 @@ impl SplitResizeBehavior {
 
 /// State entity that tracks the widths of resizable splits.
 pub struct ResizableSplitState {
+    initial_sizes: Vec<DefiniteLength>,
+    resize_behavior: Vec<SplitResizeBehavior>,
     widths: Vec<DefiniteLength>,
     visible_widths: Vec<DefiniteLength>,
     cached_bounds_width: Pixels,
-    initialized: bool,
 }
 
 impl ResizableSplitState {
-    /// Creates a new state with the given number of panes.
-    pub fn new(pane_count: usize, _cx: &mut App) -> Self {
+    /// Creates a new state with the given initial sizes.
+    /// All panes are non-resizable by default until `set_resize_behavior` is called.
+    pub fn new(initial_sizes: Vec<impl Into<DefiniteLength>>, _cx: &mut App) -> Self {
+        let initial_sizes: Vec<DefiniteLength> =
+            initial_sizes.into_iter().map(Into::into).collect();
+        let pane_count = initial_sizes.len();
         Self {
-            widths: vec![DefiniteLength::default(); pane_count],
-            visible_widths: vec![DefiniteLength::default(); pane_count],
+            widths: initial_sizes.clone(),
+            visible_widths: initial_sizes.clone(),
+            resize_behavior: vec![SplitResizeBehavior::None; pane_count],
+            initial_sizes,
             cached_bounds_width: Default::default(),
-            initialized: false,
         }
     }
 
     /// Returns the number of panes.
     pub fn pane_count(&self) -> usize {
-        self.widths.len()
+        self.initial_sizes.len()
     }
 
-    /// Initialize widths from the given initial sizes if not already initialized.
-    pub fn initialize_if_needed(&mut self, initial_sizes: &[DefiniteLength]) {
-        if !self.initialized {
-            self.initialized = true;
-            self.widths = initial_sizes.to_vec();
-            self.visible_widths = self.widths.clone();
-        }
+    /// Returns the initial sizes.
+    pub fn initial_sizes(&self) -> &[DefiniteLength] {
+        &self.initial_sizes
     }
 
-    /// Returns true if the state has been initialized.
-    pub fn is_initialized(&self) -> bool {
-        self.initialized
+    /// Returns the resize behavior for each pane.
+    pub fn resize_behavior(&self) -> &[SplitResizeBehavior] {
+        &self.resize_behavior
+    }
+
+    /// Sets the resize behavior for each pane.
+    pub fn set_resize_behavior(&mut self, behavior: Vec<SplitResizeBehavior>) {
+        assert_eq!(
+            behavior.len(),
+            self.initial_sizes.len(),
+            "Resize behavior count must match pane count"
+        );
+        self.resize_behavior = behavior;
     }
 
     /// Returns the current visible widths.
     pub fn visible_widths(&self) -> &[DefiniteLength] {
         &self.visible_widths
+    }
+
+    /// Returns the current visible widths as Length values.
+    pub fn lengths(&self) -> Vec<Length> {
+        self.visible_widths
+            .iter()
+            .map(|w| Length::Definite(*w))
+            .collect()
     }
 
     /// Gets the cached bounds width.
@@ -101,7 +120,7 @@ impl ResizableSplitState {
     }
 
     /// Converts a DefiniteLength to a fraction of the container width.
-    pub fn get_fraction(length: &DefiniteLength, bounds_width: Pixels, rem_size: Pixels) -> f32 {
+    fn get_fraction(length: &DefiniteLength, bounds_width: Pixels, rem_size: Pixels) -> f32 {
         match length {
             DefiniteLength::Absolute(AbsoluteLength::Pixels(pixels)) => *pixels / bounds_width,
             DefiniteLength::Absolute(AbsoluteLength::Rems(rems_width)) => {
@@ -112,16 +131,11 @@ impl ResizableSplitState {
     }
 
     /// Handles double-click to reset a pane to its initial size.
-    pub fn on_double_click(
-        &mut self,
-        double_click_position: usize,
-        initial_sizes: &[DefiniteLength],
-        resize_behavior: &[SplitResizeBehavior],
-        window: &mut Window,
-    ) {
+    pub fn on_double_click(&mut self, double_click_position: usize, window: &mut Window) {
         let bounds_width = self.cached_bounds_width;
         let rem_size = window.rem_size();
-        let initial_sizes: Vec<f32> = initial_sizes
+        let initial_sizes: Vec<f32> = self
+            .initial_sizes
             .iter()
             .map(|length| Self::get_fraction(length, bounds_width, rem_size))
             .collect();
@@ -135,7 +149,7 @@ impl ResizableSplitState {
             double_click_position,
             &mut widths,
             &initial_sizes,
-            resize_behavior,
+            &self.resize_behavior,
         );
         self.widths = widths
             .iter()
@@ -185,7 +199,6 @@ impl ResizableSplitState {
     pub fn on_drag_move(
         &mut self,
         drag_event: &DragMoveEvent<DraggedSplitHandle>,
-        resize_behavior: &[SplitResizeBehavior],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -197,7 +210,6 @@ impl ResizableSplitState {
         let bounds_width = bounds.right() - bounds.left();
         let pane_idx = drag_event.drag(cx).0;
 
-        // Update cached bounds width from the drag event bounds
         self.cached_bounds_width = bounds_width;
 
         let handle_width = Self::get_fraction(
@@ -220,14 +232,14 @@ impl ResizableSplitState {
         for length in widths[pane_idx + 1..].iter() {
             total_length_ratio += length;
         }
-        let pane_count = resize_behavior.len();
+        let pane_count = self.resize_behavior.len();
         total_length_ratio += (pane_count - 1 - pane_idx) as f32 * handle_width;
 
         let drag_fraction = (drag_position.x - bounds.left()) / bounds_width;
         let drag_fraction = drag_fraction * total_length_ratio;
         let diff = drag_fraction - pane_position - handle_width / 2.0;
 
-        Self::drag_handle(diff, pane_idx, &mut widths, resize_behavior);
+        Self::drag_handle(diff, pane_idx, &mut widths, &self.resize_behavior);
 
         self.visible_widths = widths
             .iter()
@@ -308,203 +320,21 @@ impl ResizableSplitState {
     }
 }
 
-/// A container element that arranges children horizontally with resizable dividers between them.
-#[derive(IntoElement)]
-pub struct ResizableSplits {
-    id: ElementId,
-    children: Vec<AnyElement>,
-    initial_sizes: Vec<DefiniteLength>,
-    resize_behavior: Vec<SplitResizeBehavior>,
-    state: Option<Entity<ResizableSplitState>>,
-    handle_color: Option<crate::Hsla>,
-    handle_hover_color: Option<crate::Hsla>,
-}
-
-impl ResizableSplits {
-    /// Creates a new resizable splits container with given initial sizes.
-    /// All panes are non-resizable by default until `resizable()` or `with_resize_behavior()` is called.
-    pub fn new(id: impl Into<ElementId>, sizes: Vec<impl Into<DefiniteLength>>) -> Self {
-        let initial_sizes: Vec<DefiniteLength> = sizes.into_iter().map(Into::into).collect();
-        let pane_count = initial_sizes.len();
-        Self {
-            id: id.into(),
-            children: Vec::new(),
-            initial_sizes,
-            resize_behavior: vec![SplitResizeBehavior::None; pane_count],
-            state: None,
-            handle_color: None,
-            handle_hover_color: None,
-        }
-    }
-
-    /// Makes all panes resizable with default minimum sizes.
-    pub fn resizable(mut self, state: &Entity<ResizableSplitState>, cx: &mut App) -> Self {
-        self.resize_behavior = vec![SplitResizeBehavior::Resizable; self.initial_sizes.len()];
-        self.state = Some(state.clone());
-        let initial_sizes = self.initial_sizes.clone();
-        state.update(cx, |state, _| {
-            state.initialize_if_needed(&initial_sizes);
-        });
-        self
-    }
-
-    /// Sets custom resize behavior for each pane.
-    pub fn with_resize_behavior(
-        mut self,
-        behavior: Vec<SplitResizeBehavior>,
-        state: &Entity<ResizableSplitState>,
-        cx: &mut App,
-    ) -> Self {
-        assert_eq!(
-            behavior.len(),
-            self.initial_sizes.len(),
-            "Resize behavior count must match pane count"
-        );
-        self.resize_behavior = behavior;
-        self.state = Some(state.clone());
-        let initial_sizes = self.initial_sizes.clone();
-        state.update(cx, |state, _| {
-            state.initialize_if_needed(&initial_sizes);
-        });
-        self
-    }
-
-    /// Adds a child pane to the container.
-    pub fn child(mut self, child: impl IntoElement) -> Self {
-        self.children.push(child.into_any_element());
-        self
-    }
-
-    /// Sets the color of the resize handles.
-    pub fn handle_color(mut self, color: crate::Hsla) -> Self {
-        self.handle_color = Some(color);
-        self
-    }
-
-    /// Sets the color of the resize handles when hovered.
-    pub fn handle_hover_color(mut self, color: crate::Hsla) -> Self {
-        self.handle_hover_color = Some(color);
-        self
-    }
-
-    fn lengths(&self, cx: &App) -> Vec<Length> {
-        self.state
-            .as_ref()
-            .map(|entity| {
-                entity
-                    .read(cx)
-                    .visible_widths
-                    .iter()
-                    .map(|w| Length::Definite(*w))
-                    .collect()
-            })
-            .unwrap_or_else(|| {
-                self.initial_sizes
-                    .iter()
-                    .map(|w| Length::Definite(*w))
-                    .collect()
-            })
-    }
-}
-
-/// Adds `on_children_prepainted` handler to track container bounds for resize operations.
-///
-/// This must be called on a `Div` before `.id()` is called, because `on_children_prepainted`
-/// is only available on `Div`, not on `Stateful<Div>`.
-///
-/// # Arguments
-/// * `container` - The div to add the handler to (must not have `.id()` called yet)
-/// * `state` - The state entity to track resize operations
-///
-/// # Returns
-/// The container with the prepaint handler attached
-pub fn with_bounds_tracking(
-    container: crate::Div,
-    state: &Entity<ResizableSplitState>,
-) -> crate::Div {
-    let state_for_bounds = state.downgrade();
-
-    container.on_children_prepainted({
-        move |bounds, _, cx| {
-            state_for_bounds
-                .update(cx, |state, _| {
-                    if !bounds.is_empty() {
-                        state.set_cached_bounds_width(bounds[0].right() - bounds[0].left());
-                    }
-                })
-                .ok();
-        }
-    })
-}
-
-/// Adds drag/drop handlers for resize operations to a stateful div.
-///
-/// This should be called after `.id()` has been called on the div.
-///
-/// # Arguments
-/// * `container` - The stateful div to add handlers to
-/// * `resize_behavior` - The resize behavior for each pane
-/// * `state` - The state entity to track resize operations
-///
-/// # Returns
-/// The container with drag/drop handlers attached
-pub fn with_drag_resize_handlers(
-    container: crate::Stateful<crate::Div>,
-    resize_behavior: &[SplitResizeBehavior],
-    state: &Entity<ResizableSplitState>,
-) -> crate::Stateful<crate::Div> {
-    let resize_behavior_vec: Vec<SplitResizeBehavior> = resize_behavior.to_vec();
-    let state_for_drag = state.downgrade();
-    let state_for_drop = state.downgrade();
-
-    container
-        .on_drag_move::<DraggedSplitHandle>({
-            move |event, window, cx| {
-                let resize_behavior = resize_behavior_vec.clone();
-                state_for_drag
-                    .update(cx, |state, cx| {
-                        state.on_drag_move(event, &resize_behavior, window, cx);
-                    })
-                    .ok();
-            }
-        })
-        .on_drop::<DraggedSplitHandle>(move |_, _, cx| {
-            state_for_drop
-                .update(cx, |state, _| {
-                    state.commit_widths();
-                })
-                .ok();
-        })
-}
-
 /// Renders resize handles as an overlay.
 ///
-/// This function renders invisible resize handles that can be placed as an absolute overlay
+/// This renders invisible resize handles that can be placed as an absolute overlay
 /// on top of content. It creates spacers matching each pane width with resize handles between them.
-///
-/// # Arguments
-/// * `pane_widths` - The widths of each pane
-/// * `resize_behavior` - The resize behavior for each pane
-/// * `initial_sizes` - The initial sizes for reset on double-click
-/// * `state` - Optional state entity to track resize operations
-/// * `handle_color` - The color of the resize handle divider
-/// * `handle_hover_color` - The color when hovering over the resize handle
-/// * `render_spacer` - A function that renders a spacer element for each pane width
-/// * `window` - The window context
-/// * `cx` - The app context
 pub fn render_resize_handles(
-    pane_widths: &[Length],
-    resize_behavior: &[SplitResizeBehavior],
-    initial_sizes: &[DefiniteLength],
-    state: Option<Entity<ResizableSplitState>>,
+    state: &Entity<ResizableSplitState>,
     handle_color: crate::Hsla,
     handle_hover_color: crate::Hsla,
     render_spacer: impl Fn(Length) -> AnyElement,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let resize_behavior = Rc::new(resize_behavior.to_vec());
-    let initial_sizes = Rc::new(initial_sizes.to_vec());
+    let state_read = state.read(cx);
+    let pane_widths = state_read.lengths();
+    let resize_behavior = Rc::new(state_read.resize_behavior.clone());
 
     let spacers: Vec<AnyElement> = pane_widths
         .iter()
@@ -520,9 +350,8 @@ pub fn render_resize_handles(
         elements.push(spacer);
 
         if i < pane_widths.len() - 1 {
-            let resize_behavior = Rc::clone(&resize_behavior);
-            let initial_sizes = Rc::clone(&initial_sizes);
             let current_idx = pane_idx;
+            let state = state.clone();
 
             let handle = window.with_id(current_idx, |window| {
                 let mut resize_divider = div()
@@ -552,22 +381,16 @@ pub fn render_resize_handles(
                     resize_handle = resize_handle
                         .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
                         .cursor_col_resize()
-                        .when_some(state.clone(), |this, state| {
-                            let initial_sizes = Rc::clone(&initial_sizes);
-                            let resize_behavior = Rc::clone(&resize_behavior);
-                            this.on_click(move |event, window, cx| {
+                        .on_click({
+                            let state = state.clone();
+                            move |event, window, cx| {
                                 if event.click_count() >= 2 {
                                     state.update(cx, |state, _| {
-                                        state.on_double_click(
-                                            current_idx,
-                                            &initial_sizes,
-                                            &resize_behavior,
-                                            window,
-                                        );
+                                        state.on_double_click(current_idx, window);
                                     })
                                 }
                                 cx.stop_propagation();
-                            })
+                            }
                         })
                         .on_drag(
                             DraggedSplitHandle(current_idx),
@@ -594,91 +417,155 @@ pub fn render_resize_handles(
         .into_any_element()
 }
 
+/// Adds `on_children_prepainted` handler to track container bounds for resize operations.
+///
+/// This must be called on a `Div` before `.id()` is called, because `on_children_prepainted`
+/// is only available on `Div`, not on `Stateful<Div>`.
+pub fn with_bounds_tracking(
+    container: crate::Div,
+    state: &Entity<ResizableSplitState>,
+) -> crate::Div {
+    let state_for_bounds = state.downgrade();
+
+    container.on_children_prepainted({
+        move |bounds, _, cx| {
+            state_for_bounds
+                .update(cx, |state, _| {
+                    if !bounds.is_empty() {
+                        state.set_cached_bounds_width(bounds[0].right() - bounds[0].left());
+                    }
+                })
+                .ok();
+        }
+    })
+}
+
+/// Adds drag/drop handlers for resize operations to a stateful div.
+///
+/// This should be called after `.id()` has been called on the div.
+pub fn with_drag_resize_handlers(
+    container: crate::Stateful<crate::Div>,
+    state: &Entity<ResizableSplitState>,
+) -> crate::Stateful<crate::Div> {
+    let state_for_drag = state.downgrade();
+    let state_for_drop = state.downgrade();
+
+    container
+        .on_drag_move::<DraggedSplitHandle>({
+            move |event, window, cx| {
+                state_for_drag
+                    .update(cx, |state, cx| {
+                        state.on_drag_move(event, window, cx);
+                    })
+                    .ok();
+            }
+        })
+        .on_drop::<DraggedSplitHandle>(move |_, _, cx| {
+            state_for_drop
+                .update(cx, |state, _| {
+                    state.commit_widths();
+                })
+                .ok();
+        })
+}
+
+/// A container element that arranges children horizontally with resizable dividers between them.
+#[derive(IntoElement)]
+pub struct ResizableSplits {
+    id: ElementId,
+    children: Vec<AnyElement>,
+    state: Entity<ResizableSplitState>,
+    handle_color: Option<crate::Hsla>,
+    handle_hover_color: Option<crate::Hsla>,
+}
+
+impl ResizableSplits {
+    /// Creates a new resizable splits container with the given state.
+    pub fn new(id: impl Into<ElementId>, state: Entity<ResizableSplitState>) -> Self {
+        Self {
+            id: id.into(),
+            children: Vec::new(),
+            state,
+            handle_color: None,
+            handle_hover_color: None,
+        }
+    }
+
+    /// Makes all panes resizable with default minimum sizes.
+    pub fn resizable(self, cx: &mut App) -> Self {
+        let pane_count = self.state.read(cx).pane_count();
+        self.state.update(cx, |state, _| {
+            state.set_resize_behavior(vec![SplitResizeBehavior::Resizable; pane_count]);
+        });
+        self
+    }
+
+    /// Sets custom resize behavior for each pane.
+    pub fn with_resize_behavior(self, behavior: Vec<SplitResizeBehavior>, cx: &mut App) -> Self {
+        self.state.update(cx, |state, _| {
+            state.set_resize_behavior(behavior);
+        });
+        self
+    }
+
+    /// Adds a child pane to the container.
+    pub fn child(mut self, child: impl IntoElement) -> Self {
+        self.children.push(child.into_any_element());
+        self
+    }
+
+    /// Sets the color of the resize handles.
+    pub fn handle_color(mut self, color: crate::Hsla) -> Self {
+        self.handle_color = Some(color);
+        self
+    }
+
+    /// Sets the color of the resize handles when hovered.
+    pub fn handle_hover_color(mut self, color: crate::Hsla) -> Self {
+        self.handle_hover_color = Some(color);
+        self
+    }
+}
+
 impl RenderOnce for ResizableSplits {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let pane_widths = self.lengths(cx);
-        let resize_behavior = self.resize_behavior.clone();
-        let initial_sizes = self.initial_sizes.clone();
         let handle_color = self.handle_color.unwrap_or(crate::black().opacity(0.2));
         let handle_hover_color = self
             .handle_hover_color
             .unwrap_or(crate::black().opacity(0.4));
         let children = self.children;
 
-        // Build container - on_children_prepainted must be called before id() since it's only on Div
-        let mut container = div().flex().flex_row().size_full().relative();
-
-        if let Some(state) = &self.state {
-            let state_for_bounds = state.downgrade();
-            container = container.on_children_prepainted({
-                move |bounds, _, cx| {
-                    state_for_bounds
-                        .update(cx, |state, _| {
-                            if !bounds.is_empty() {
-                                state.set_cached_bounds_width(bounds[0].right() - bounds[0].left());
-                            }
-                        })
-                        .ok();
-                }
-            });
-        }
-
-        // Now add id() to make it stateful, then add drag/drop handlers
-        let mut container = container.id(self.id.clone());
-
-        if let Some(state) = &self.state {
-            let resize_behavior_clone = resize_behavior.clone();
-            let state_clone = state.downgrade();
-            let state_for_drop = state.downgrade();
-
-            container = container
-                .on_drag_move::<DraggedSplitHandle>({
-                    let resize_behavior = resize_behavior_clone;
-                    move |event, window, cx| {
-                        state_clone
-                            .update(cx, |state, cx| {
-                                state.on_drag_move(event, &resize_behavior, window, cx);
-                            })
-                            .ok();
-                    }
-                })
-                .on_drop::<DraggedSplitHandle>({
-                    move |_, _, cx| {
-                        state_for_drop
-                            .update(cx, |state, _| {
-                                state.commit_widths();
-                            })
-                            .ok();
-                    }
-                });
-        }
-
-        for (i, child) in children.into_iter().enumerate() {
-            let width = pane_widths.get(i).copied().unwrap_or(Length::Auto);
-            container = container.child(div().h_full().w(width).overflow_hidden().child(child));
-        }
-
+        let pane_widths = self.state.read(cx).lengths();
         let handles = render_resize_handles(
-            &pane_widths,
-            &resize_behavior,
-            &initial_sizes,
-            self.state,
+            &self.state,
             handle_color,
             handle_hover_color,
             |width| div().w(width).h_full().into_any_element(),
             window,
             cx,
         );
+
+        let mut container = div().flex().flex_row().size_full().relative();
+        container = with_bounds_tracking(container, &self.state);
+
+        let mut container = container.id(self.id.clone());
+        container = with_drag_resize_handlers(container, &self.state);
+
+        for (i, child) in children.into_iter().enumerate() {
+            let width = pane_widths.get(i).copied().unwrap_or(Length::Auto);
+            container = container.child(div().h_full().w(width).overflow_hidden().child(child));
+        }
+
         container = container.child(handles);
 
         container
     }
 }
 
-/// Creates a new resizable splits container with given initial sizes.
+/// Creates a new resizable splits container with the given state.
 pub fn resizable_splits(
     id: impl Into<ElementId>,
-    sizes: Vec<impl Into<DefiniteLength>>,
+    state: Entity<ResizableSplitState>,
 ) -> ResizableSplits {
-    ResizableSplits::new(id, sizes)
+    ResizableSplits::new(id, state)
 }

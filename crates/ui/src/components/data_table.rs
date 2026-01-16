@@ -2,10 +2,11 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    Context, DefiniteLength, Entity, EntityId, FocusHandle, Length, ListHorizontalSizingBehavior,
-    ListSizingBehavior, ListState, Point, ResizableSplitState, SplitResizeBehavior, Stateful,
-    UniformListScrollHandle, WeakEntity, list, render_resize_handles, transparent_black,
-    uniform_list, with_bounds_tracking, with_drag_resize_handlers,
+    AppContext, Context, DefiniteLength, Entity, EntityId, FocusHandle, Length,
+    ListHorizontalSizingBehavior, ListSizingBehavior, ListState, Point, ResizableSplitState,
+    SplitResizeBehavior, Stateful, UniformListScrollHandle, WeakEntity, list,
+    render_resize_handles, transparent_black, uniform_list, with_bounds_tracking,
+    with_drag_resize_handlers,
 };
 
 use crate::{
@@ -232,6 +233,25 @@ pub type TableResizeBehavior = SplitResizeBehavior;
 /// Backwards-compatible alias for `ResizableSplitState`.
 pub type TableColumnWidths = ResizableSplitState;
 
+/// Creates a `ResizableSplitState` with the given column widths.
+pub fn column_widths(
+    widths: Vec<impl Into<DefiniteLength>>,
+    cx: &mut App,
+) -> Entity<ResizableSplitState> {
+    cx.new(|cx| ResizableSplitState::new(widths, cx))
+}
+
+/// Makes columns resizable on an existing `ResizableSplitState`.
+pub fn resizable_columns(
+    state: &Entity<ResizableSplitState>,
+    resizable: Vec<SplitResizeBehavior>,
+    cx: &mut App,
+) {
+    state.update(cx, |state, _| {
+        state.set_resize_behavior(resizable);
+    });
+}
+
 struct UniformListData {
     render_list_of_rows_fn:
         Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<UncheckedTableRow<AnyElement>>>,
@@ -313,41 +333,6 @@ impl TableInteractionState {
     }
 }
 
-pub struct TableWidths {
-    initial: TableRow<DefiniteLength>,
-    current: Option<Entity<ResizableSplitState>>,
-    resizable: TableRow<SplitResizeBehavior>,
-}
-
-impl TableWidths {
-    pub fn new(widths: TableRow<impl Into<DefiniteLength>>) -> Self {
-        let widths = widths.map(Into::into);
-
-        let expected_length = widths.cols();
-        TableWidths {
-            initial: widths,
-            current: None,
-            resizable: vec![SplitResizeBehavior::None; expected_length]
-                .into_table_row(expected_length),
-        }
-    }
-
-    fn lengths(&self, cx: &App) -> TableRow<Length> {
-        self.current
-            .as_ref()
-            .map(|entity| {
-                entity
-                    .read(cx)
-                    .visible_widths()
-                    .iter()
-                    .map(|w| Length::Definite(*w))
-                    .collect::<Vec<_>>()
-                    .into_table_row(self.initial.cols())
-            })
-            .unwrap_or_else(|| self.initial.map_cloned(Length::Definite))
-    }
-}
-
 /// A table component
 #[derive(RegisterComponent, IntoElement)]
 pub struct Table {
@@ -356,7 +341,7 @@ pub struct Table {
     headers: Option<TableRow<AnyElement>>,
     rows: TableContents,
     interaction_state: Option<WeakEntity<TableInteractionState>>,
-    col_widths: Option<TableWidths>,
+    col_widths: Option<Entity<ResizableSplitState>>,
     map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
     use_ui_font: bool,
     empty_table_callback: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
@@ -473,30 +458,28 @@ impl Table {
         self
     }
 
-    pub fn column_widths(mut self, widths: UncheckedTableRow<impl Into<DefiniteLength>>) -> Self {
-        if self.col_widths.is_none() {
-            self.col_widths = Some(TableWidths::new(widths.into_table_row(self.cols)));
+    pub fn column_widths(mut self, column_widths: &Entity<ResizableSplitState>) -> Self {
+        self.col_widths = Some(column_widths.clone());
+        self
+    }
+
+    /// Makes all columns resizable with default minimum sizes.
+    pub fn resizable(self, cx: &mut App) -> Self {
+        if let Some(col_widths) = &self.col_widths {
+            let pane_count = col_widths.read(cx).pane_count();
+            col_widths.update(cx, |state, _| {
+                state.set_resize_behavior(vec![SplitResizeBehavior::Resizable; pane_count]);
+            });
         }
         self
     }
 
-    pub fn resizable_columns(
-        mut self,
-        resizable: UncheckedTableRow<SplitResizeBehavior>,
-        column_widths: &Entity<ResizableSplitState>,
-        cx: &mut App,
-    ) -> Self {
-        if let Some(table_widths) = self.col_widths.as_mut() {
-            table_widths.resizable = resizable.into_table_row(self.cols);
-            let column_widths = table_widths
-                .current
-                .get_or_insert_with(|| column_widths.clone());
-
-            let initial_sizes: Vec<DefiniteLength> =
-                table_widths.initial.as_slice().iter().copied().collect();
-            column_widths.update(cx, |widths, _| {
-                widths.initialize_if_needed(&initial_sizes);
-            })
+    /// Sets custom resize behavior for each column.
+    pub fn resizable_columns(self, resizable: Vec<SplitResizeBehavior>, cx: &mut App) -> Self {
+        if let Some(col_widths) = &self.col_widths {
+            col_widths.update(cx, |state, _| {
+                state.set_resize_behavior(resizable);
+            });
         }
         self
     }
@@ -598,26 +581,20 @@ pub fn render_table_row(
 }
 
 pub fn render_table_header(
-    headers: TableRow<impl IntoElement>,
+    headers: TableRow<AnyElement>,
     table_context: TableRenderContext,
-    columns_widths: Option<(
-        WeakEntity<TableColumnWidths>,
-        TableRow<TableResizeBehavior>,
-        TableRow<DefiniteLength>,
-    )>,
-    entity_id: Option<EntityId>,
-    cx: &mut App,
-) -> impl IntoElement {
+    column_widths_state: Option<WeakEntity<ResizableSplitState>>,
+    element_id: Option<EntityId>,
+    cx: &App,
+) -> AnyElement {
     let cols = headers.cols();
-    let column_widths = table_context
+    let column_widths: TableRow<Option<Length>> = table_context
         .column_widths
-        .map_or(vec![None; cols].into_table_row(cols), |widths| {
-            widths.map(Some)
-        });
+        .clone()
+        .map(|widths| widths.map(Some))
+        .unwrap_or_else(|| vec![None; cols].into_table_row(cols));
 
-    let element_id = entity_id
-        .map(|entity| entity.to_string())
-        .unwrap_or_default();
+    let element_id = element_id.map(|id| format!("{:?}", id)).unwrap_or_default();
 
     let shared_element_id: SharedString = format!("table-{}", element_id).into();
 
@@ -644,34 +621,27 @@ pub fn render_table_header(
                             header_idx as u64,
                         ))
                         .when_some(
-                            columns_widths.as_ref().cloned(),
-                            |this, (column_widths, resizables, initial_sizes)| {
-                                if resizables[header_idx].is_resizable() {
-                                    let initial_sizes_vec: Vec<DefiniteLength> =
-                                        initial_sizes.as_slice().to_vec();
-                                    let resizables_vec: Vec<SplitResizeBehavior> =
-                                        resizables.as_slice().to_vec();
-                                    this.on_click(move |event, window, cx| {
-                                        if event.click_count() > 1 {
-                                            column_widths
-                                                .update(cx, |column, _| {
-                                                    column.on_double_click(
-                                                        header_idx,
-                                                        &initial_sizes_vec,
-                                                        &resizables_vec,
-                                                        window,
-                                                    );
-                                                })
-                                                .ok();
-                                        }
-                                    })
-                                } else {
-                                    this
-                                }
+                            column_widths_state.as_ref().cloned(),
+                            |this, column_widths| {
+                                this.on_click(move |event, window, cx| {
+                                    if event.click_count() > 1 {
+                                        column_widths
+                                            .update(cx, |state, _| {
+                                                // todo! move this check to double click
+                                                if state.resize_behavior()[header_idx]
+                                                    .is_resizable()
+                                                {
+                                                    state.on_double_click(header_idx, window);
+                                                }
+                                            })
+                                            .ok();
+                                    }
+                                })
                             },
                         )
                 }),
         )
+        .into_any_element()
 }
 
 #[derive(Clone)]
@@ -688,7 +658,11 @@ impl TableRenderContext {
         Self {
             striped: table.striped,
             total_row_count: table.rows.len(),
-            column_widths: table.col_widths.as_ref().map(|widths| widths.lengths(cx)),
+            column_widths: table.col_widths.as_ref().map(|state| {
+                let lengths = state.read(cx).lengths();
+                let len = lengths.len();
+                lengths.into_table_row(len)
+            }),
             map_row: table.map_row.clone(),
             use_ui_font: table.use_ui_font,
         }
@@ -699,42 +673,30 @@ impl RenderOnce for Table {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let table_context = TableRenderContext::new(&self, cx);
         let interaction_state = self.interaction_state.and_then(|state| state.upgrade());
-        let current_widths = self.col_widths.as_ref().and_then(|widths| {
-            Some((
-                widths.current.as_ref()?,
-                widths.resizable.clone(),
-                widths.initial.clone(),
-            ))
-        });
 
         let width = self.width;
         let no_rows_rendered = self.rows.is_empty();
 
-        // Build the table container - on_children_prepainted must be called before id()
-        let table = div()
+        let mut table = div()
             .when_some(width, |this, width| this.w(width))
             .h_full()
             .v_flex()
             .when_some(self.headers.take(), |this, headers| {
-                let current_widths_for_header = current_widths
-                    .as_ref()
-                    .map(|(curr, resize, init)| (curr.downgrade(), resize.clone(), init.clone()));
+                let column_widths_for_header = self.col_widths.as_ref().map(|s| s.downgrade());
                 this.child(render_table_header(
                     headers,
                     table_context.clone(),
-                    current_widths_for_header,
+                    column_widths_for_header,
                     interaction_state.as_ref().map(Entity::entity_id),
                     cx,
                 ))
-            })
-            .map(|this| {
-                // Add bounds tracking before id() is called
-                if let Some((widths, _resize_behavior, _initial)) = current_widths.as_ref() {
-                    with_bounds_tracking(this, widths)
-                } else {
-                    this
-                }
-            })
+            });
+
+        if let Some(col_widths) = self.col_widths.as_ref() {
+            table = with_bounds_tracking(table, col_widths);
+        }
+
+        let table = table
             .child({
                 let content = div()
                     .flex_grow()
@@ -819,21 +781,12 @@ impl RenderOnce for Table {
                     })
                     .when_some(
                         self.col_widths.as_ref().zip(interaction_state.as_ref()),
-                        |parent, (table_widths, _state)| {
-                            let column_widths = table_widths.lengths(cx);
-                            let resizable_columns: Vec<SplitResizeBehavior> =
-                                table_widths.resizable.as_slice().to_vec();
-                            let initial_sizes: Vec<DefiniteLength> =
-                                table_widths.initial.as_slice().to_vec();
-                            let columns = table_widths.current.clone();
+                        |parent, (col_widths, _state)| {
                             let handle_color = cx.theme().colors().border.opacity(0.8);
                             let handle_hover_color = cx.theme().colors().border_focused;
 
                             parent.child(render_resize_handles(
-                                column_widths.as_slice(),
-                                &resizable_columns,
-                                &initial_sizes,
-                                columns,
+                                col_widths,
                                 handle_color,
                                 handle_hover_color,
                                 |width| base_cell_style(Some(width)).into_any_element(),
@@ -881,12 +834,8 @@ impl RenderOnce for Table {
                 .track_focus(&interaction_state.read(cx).focus_handle)
                 .id(("table", interaction_state.entity_id()));
 
-            // Add drag/drop handlers after id() is called
-            if let Some((widths, resize_behavior, _initial)) = current_widths {
-                let resize_behavior_vec: Vec<SplitResizeBehavior> =
-                    resize_behavior.as_slice().to_vec();
-                stateful_table =
-                    with_drag_resize_handlers(stateful_table, &resize_behavior_vec, &widths);
+            if let Some(col_widths) = self.col_widths.as_ref() {
+                stateful_table = with_drag_resize_handlers(stateful_table, col_widths);
             }
 
             stateful_table.into_any_element()

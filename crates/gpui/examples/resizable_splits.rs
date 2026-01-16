@@ -1,7 +1,6 @@
 use gpui::{
     App, Application, Bounds, Context, DefiniteLength, Entity, Render, ResizableSplitState,
-    ResizableSplits, SplitResizeBehavior, Window, WindowBounds, WindowOptions, div, prelude::*, px,
-    rgb, size,
+    ResizableSplits, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
 };
 
 struct ResizableSplitsExample {
@@ -10,7 +9,16 @@ struct ResizableSplitsExample {
 
 impl ResizableSplitsExample {
     fn new(cx: &mut Context<Self>) -> Self {
-        let split_state = cx.new(|cx| ResizableSplitState::new(3, cx));
+        let split_state = cx.new(|cx| {
+            ResizableSplitState::new(
+                vec![
+                    DefiniteLength::Fraction(0.3),
+                    DefiniteLength::Fraction(0.4),
+                    DefiniteLength::Fraction(0.3),
+                ],
+                cx,
+            )
+        });
         Self { split_state }
     }
 }
@@ -63,28 +71,13 @@ impl Render for ResizableSplitsExample {
                     .flex_grow()
                     .p_2()
                     .child(
-                        ResizableSplits::new(
-                            "example-splits",
-                            vec![
-                                DefiniteLength::Fraction(0.3),
-                                DefiniteLength::Fraction(0.4),
-                                DefiniteLength::Fraction(0.3),
-                            ],
-                        )
-                        .with_resize_behavior(
-                            vec![
-                                SplitResizeBehavior::Resizable,
-                                SplitResizeBehavior::Resizable,
-                                SplitResizeBehavior::Resizable,
-                            ],
-                            &self.split_state,
-                            cx,
-                        )
-                        .handle_color(rgb(0x424242).into())
-                        .handle_hover_color(rgb(0x757575).into())
-                        .child(red_pane)
-                        .child(green_pane)
-                        .child(blue_pane),
+                        ResizableSplits::new("example-splits", self.split_state.clone())
+                            .resizable(cx)
+                            .handle_color(rgb(0x424242).into())
+                            .handle_hover_color(rgb(0x757575).into())
+                            .child(red_pane)
+                            .child(green_pane)
+                            .child(blue_pane),
                     ),
             )
     }
