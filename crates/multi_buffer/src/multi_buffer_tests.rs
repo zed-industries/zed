@@ -4890,3 +4890,72 @@ fn test_excerpts_containment_functions(cx: &mut App) {
         "excerpt_containing should return None for ranges spanning multiple excerpts"
     );
 }
+
+#[gpui::test]
+fn test_range_to_buffer_ranges_mid_line_excerpts(cx: &mut App) {
+    let buffer_1 = cx.new(|cx| Buffer::local("aaa\nbbb\nccc\nddd", cx));
+    let buffer_2 = cx.new(|cx| Buffer::local("eee\nfff\nggg", cx));
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.push_excerpts(
+            buffer_1.clone(),
+            [ExcerptRange::new(Point::new(1, 0)..Point::new(1, 3))],
+            cx,
+        );
+        multibuffer.push_excerpts(
+            buffer_2.clone(),
+            [ExcerptRange::new(Point::new(0, 1)..Point::new(1, 2))],
+            cx,
+        );
+    });
+
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+    assert_eq!(snapshot.text(), "bbb\nee\nff");
+
+    let ranges = snapshot.range_to_buffer_ranges(MultiBufferOffset(0)..MultiBufferOffset(3));
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].1, BufferOffset(4)..BufferOffset(7));
+
+    let ranges = snapshot.range_to_buffer_ranges(MultiBufferOffset(0)..MultiBufferOffset(4));
+    assert_eq!(ranges.len(), 2);
+    assert_eq!(ranges[0].1, BufferOffset(4)..BufferOffset(7));
+    assert_eq!(ranges[1].1, BufferOffset(1)..BufferOffset(1));
+
+    let ranges = snapshot.range_to_buffer_ranges(MultiBufferOffset(0)..MultiBufferOffset(5));
+    assert_eq!(ranges.len(), 2);
+    assert_eq!(ranges[0].1, BufferOffset(4)..BufferOffset(7));
+    assert_eq!(ranges[1].1, BufferOffset(1)..BufferOffset(2));
+
+    let ranges = snapshot.range_to_buffer_ranges(MultiBufferOffset(3)..MultiBufferOffset(7));
+    assert_eq!(ranges.len(), 2);
+    assert_eq!(ranges[0].1, BufferOffset(7)..BufferOffset(7));
+    assert_eq!(ranges[1].1, BufferOffset(1)..BufferOffset(4));
+
+    let ranges = snapshot.range_to_buffer_ranges(MultiBufferOffset(4)..MultiBufferOffset(9));
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].1, BufferOffset(1)..BufferOffset(6));
+
+    let buffer_no_newline = cx.new(|cx| Buffer::local("xxx\nyyy", cx));
+    let multibuffer_2 = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+
+    multibuffer_2.update(cx, |multibuffer, cx| {
+        multibuffer.push_excerpts(
+            buffer_no_newline.clone(),
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 3))],
+            cx,
+        );
+    });
+
+    let snapshot_2 = multibuffer_2.read(cx).snapshot(cx);
+    assert_eq!(snapshot_2.text(), "xxx\nyyy");
+
+    let ranges = snapshot_2.range_to_buffer_ranges(MultiBufferOffset(0)..MultiBufferOffset(7));
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].1, BufferOffset(0)..BufferOffset(7));
+
+    let ranges = snapshot_2.range_to_buffer_ranges(MultiBufferOffset(4)..MultiBufferOffset(7));
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].1, BufferOffset(4)..BufferOffset(7));
+}

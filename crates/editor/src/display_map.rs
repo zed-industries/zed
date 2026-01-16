@@ -151,16 +151,16 @@ type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHi
 
 #[derive(Debug)]
 pub struct MultiBufferRowMapping {
-    pub boundaries: Vec<(MultiBufferRow, Range<MultiBufferRow>)>,
-    pub source_excerpt_end: MultiBufferRow,
-    pub target_excerpt_end: MultiBufferRow,
+    pub boundaries: Vec<(MultiBufferPoint, Range<MultiBufferPoint>)>,
+    pub source_excerpt_end: MultiBufferPoint,
+    pub target_excerpt_end: MultiBufferPoint,
 }
 
 pub type ConvertMultiBufferRows = fn(
     &HashMap<ExcerptId, ExcerptId>,
     &MultiBufferSnapshot,
     &MultiBufferSnapshot,
-    Range<MultiBufferRow>,
+    Range<MultiBufferPoint>,
 ) -> Vec<MultiBufferRowMapping>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
@@ -227,14 +227,14 @@ impl Companion {
         display_map_id: EntityId,
         companion_snapshot: &MultiBufferSnapshot,
         our_snapshot: &MultiBufferSnapshot,
-        rows: Range<MultiBufferRow>,
+        range: Range<MultiBufferPoint>,
     ) -> Vec<MultiBufferRowMapping> {
         let (excerpt_map, convert_fn) = if display_map_id == self.rhs_display_map_id {
             (&self.rhs_excerpt_to_lhs_excerpt, self.rhs_rows_to_lhs_rows)
         } else {
             (&self.lhs_excerpt_to_rhs_excerpt, self.lhs_rows_to_rhs_rows)
         };
-        convert_fn(excerpt_map, companion_snapshot, our_snapshot, rows)
+        convert_fn(excerpt_map, companion_snapshot, our_snapshot, range)
     }
 
     pub(crate) fn convert_rows_from_companion(
@@ -242,14 +242,14 @@ impl Companion {
         display_map_id: EntityId,
         our_snapshot: &MultiBufferSnapshot,
         companion_snapshot: &MultiBufferSnapshot,
-        rows: Range<MultiBufferRow>,
+        range: Range<MultiBufferPoint>,
     ) -> Vec<MultiBufferRowMapping> {
         let (excerpt_map, convert_fn) = if display_map_id == self.rhs_display_map_id {
             (&self.lhs_excerpt_to_rhs_excerpt, self.lhs_rows_to_rhs_rows)
         } else {
             (&self.rhs_excerpt_to_lhs_excerpt, self.rhs_rows_to_lhs_rows)
         };
-        convert_fn(excerpt_map, our_snapshot, companion_snapshot, rows)
+        convert_fn(excerpt_map, our_snapshot, companion_snapshot, range)
     }
 
     pub(crate) fn companion_excerpt_to_excerpt(

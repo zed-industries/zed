@@ -9,7 +9,7 @@ use gpui::{
 use language::{Buffer, Capability};
 use multi_buffer::{
     Anchor, BufferOffset, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer,
-    MultiBufferRow, MultiBufferSnapshot, PathKey,
+    MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, PathKey,
 };
 use project::Project;
 use rope::Point;
@@ -31,14 +31,14 @@ pub(crate) fn convert_lhs_rows_to_rhs(
     lhs_excerpt_to_rhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
     rhs_snapshot: &MultiBufferSnapshot,
     lhs_snapshot: &MultiBufferSnapshot,
-    lhs_rows: Range<MultiBufferRow>,
+    lhs_range: Range<MultiBufferPoint>,
 ) -> Vec<MultiBufferRowMapping> {
     convert_rows(
         lhs_excerpt_to_rhs_excerpt,
         lhs_snapshot,
         rhs_snapshot,
-        lhs_rows,
-        |diff, rows, buffer| diff.base_text_rows_to_rows(rows, buffer).collect(),
+        lhs_range,
+        |diff, points, buffer| diff.base_text_rows_to_rows(points, buffer).collect(),
     )
 }
 
@@ -46,14 +46,14 @@ pub(crate) fn convert_rhs_rows_to_lhs(
     rhs_excerpt_to_lhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
     lhs_snapshot: &MultiBufferSnapshot,
     rhs_snapshot: &MultiBufferSnapshot,
-    rhs_rows: Range<MultiBufferRow>,
+    rhs_range: Range<MultiBufferPoint>,
 ) -> Vec<MultiBufferRowMapping> {
     convert_rows(
         rhs_excerpt_to_lhs_excerpt,
         rhs_snapshot,
         lhs_snapshot,
-        rhs_rows,
-        |diff, rows, buffer| diff.rows_to_base_text_rows(rows, buffer).collect(),
+        rhs_range,
+        |diff, points, buffer| diff.rows_to_base_text_rows(points, buffer).collect(),
     )
 }
 
@@ -61,21 +61,18 @@ fn convert_rows<F>(
     excerpt_map: &HashMap<ExcerptId, ExcerptId>,
     source_snapshot: &MultiBufferSnapshot,
     target_snapshot: &MultiBufferSnapshot,
-    source_rows: Range<MultiBufferRow>,
+    source_range: Range<MultiBufferPoint>,
     translate_fn: F,
 ) -> Vec<MultiBufferRowMapping>
 where
-    F: Fn(&BufferDiffSnapshot, Range<u32>, &text::BufferSnapshot) -> Vec<Range<u32>>,
+    F: Fn(&BufferDiffSnapshot, Vec<Point>, &text::BufferSnapshot) -> Vec<Range<Point>>,
 {
     let mut result = Vec::new();
 
-    let start_point = Point::new(source_rows.start.0, 0);
-    let end_point = Point::new(source_rows.end.0, 0);
-
     for (buffer, buffer_offset_range, source_excerpt_id) in
-        source_snapshot.range_to_buffer_ranges(start_point..end_point)
+        source_snapshot.range_to_buffer_ranges(source_range.clone())
     {
-        if buffer_offset_range.is_empty() && start_point != end_point {
+        if buffer_offset_range.is_empty() && source_range.start != source_range.end {
             continue;
         }
         if let Some(translation) = convert_excerpt_rows(
@@ -104,7 +101,7 @@ fn convert_excerpt_rows<F>(
     translate_fn: F,
 ) -> Option<MultiBufferRowMapping>
 where
-    F: Fn(&BufferDiffSnapshot, Range<u32>, &text::BufferSnapshot) -> Vec<Range<u32>>,
+    F: Fn(&BufferDiffSnapshot, Vec<Point>, &text::BufferSnapshot) -> Vec<Range<Point>>,
 {
     let target_excerpt_id = excerpt_map.get(&source_excerpt_id).copied()?;
     let target_buffer = target_snapshot.buffer_for_excerpt(target_excerpt_id)?;
@@ -117,12 +114,16 @@ where
     };
 
     let local_start = source_buffer.offset_to_point(source_buffer_range.start.0);
-    let mut local_end = source_buffer.offset_to_point(source_buffer_range.end.0);
+    let local_end = source_buffer.offset_to_point(source_buffer_range.end.0);
+
+    let mut input_points: Vec<Point> = (local_start.row..=local_end.row)
+        .map(|row| Point::new(row, 0))
+        .collect();
     if local_end.column > 0 {
-        local_end.row += 1;
+        input_points.push(local_end);
     }
 
-    let translated_ranges = translate_fn(&diff, local_start.row..local_end.row, rhs_buffer);
+    let translated_ranges = translate_fn(&diff, input_points.clone(), rhs_buffer);
 
     let source_multibuffer_range = source_snapshot.range_for_excerpt(source_excerpt_id)?;
     let source_excerpt_start_in_multibuffer = source_multibuffer_range.start;
@@ -137,41 +138,30 @@ where
         .start
         .to_point(&target_buffer);
 
-    let boundaries: Vec<_> = (local_start.row..=local_end.row)
+    let boundaries: Vec<_> = input_points
+        .into_iter()
         .zip(translated_ranges)
-        .filter_map(|(buffer_row, target_range)| {
-            let source_buffer_point = Point::new(buffer_row, 0);
+        .map(|(source_buffer_point, target_range)| {
             let source_multibuffer_point = source_excerpt_start_in_multibuffer
                 + (source_buffer_point - source_excerpt_start_in_buffer.min(source_buffer_point));
 
-            let target_buffer_start = Point::new(target_range.start, 0);
             let target_multibuffer_start = target_excerpt_start_in_multibuffer
-                + (target_buffer_start - target_excerpt_start_in_buffer.min(target_buffer_start));
+                + (target_range.start - target_excerpt_start_in_buffer.min(target_range.start));
 
-            let target_buffer_end = Point::new(target_range.end, 0);
             let target_multibuffer_end = target_excerpt_start_in_multibuffer
-                + (target_buffer_end - target_excerpt_start_in_buffer.min(target_buffer_end));
-            Some((
-                MultiBufferRow(source_multibuffer_point.row),
-                MultiBufferRow(target_multibuffer_start.row)
-                    ..MultiBufferRow(target_multibuffer_end.row),
-            ))
+                + (target_range.end - target_excerpt_start_in_buffer.min(target_range.end));
+
+            (
+                source_multibuffer_point,
+                target_multibuffer_start..target_multibuffer_end,
+            )
         })
         .collect();
 
-    let mut source_excerpt_end = source_multibuffer_range.end.row;
-    if source_multibuffer_range.end.column > 0 {
-        source_excerpt_end += 1;
-    }
-    let mut target_excerpt_end = target_multibuffer_range.end.row;
-    if target_multibuffer_range.end.column > 0 {
-        target_excerpt_end += 1;
-    }
-
     Some(MultiBufferRowMapping {
         boundaries,
-        source_excerpt_end: MultiBufferRow(source_excerpt_end),
-        target_excerpt_end: MultiBufferRow(target_excerpt_end),
+        source_excerpt_end: source_multibuffer_range.end,
+        target_excerpt_end: target_multibuffer_range.end,
     })
 }
 
@@ -1143,16 +1133,12 @@ impl SecondaryEditor {
             .into_iter()
             .map(|(_, excerpt_range)| {
                 let point_range_to_base_text_point_range = |range: Range<Point>| {
-                    let start_row = diff_snapshot
-                        .rows_to_base_text_rows(range.start.row..range.start.row, main_buffer)
-                        .next()
-                        .unwrap()
-                        .start;
-                    let end_row = diff_snapshot
-                        .rows_to_base_text_rows(range.end.row..range.end.row, main_buffer)
-                        .next()
-                        .unwrap()
-                        .end;
+                    let mut translated = diff_snapshot.rows_to_base_text_rows(
+                        [Point::new(range.start.row, 0), Point::new(range.end.row, 0)],
+                        main_buffer,
+                    );
+                    let start_row = translated.next().unwrap().start.row;
+                    let end_row = translated.next().unwrap().end.row;
                     let end_column = diff_snapshot.base_text().line_len(end_row);
                     Point::new(start_row, 0)..Point::new(end_row, end_column)
                 };

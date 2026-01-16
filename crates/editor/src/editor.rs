@@ -21101,16 +21101,15 @@ impl Editor {
             };
 
             let buffer_diff_snapshot = buffer_diff.read(cx).snapshot(cx);
-            let start_row = buffer_diff_snapshot
-                .rows_to_base_text_rows(start_row_in_buffer..start_row_in_buffer, buffer)
-                .next()
-                .unwrap()
-                .start;
-            let end_row = buffer_diff_snapshot
-                .rows_to_base_text_rows(end_row_in_buffer..end_row_in_buffer, buffer)
-                .next()
-                .unwrap()
-                .end;
+            let mut translated = buffer_diff_snapshot.rows_to_base_text_rows(
+                [
+                    Point::new(start_row_in_buffer, 0),
+                    Point::new(end_row_in_buffer, 0),
+                ],
+                buffer,
+            );
+            let start_row = translated.next().unwrap().start.row;
+            let end_row = translated.next().unwrap().end.row;
 
             Some((
                 multi_buffer.buffer(buffer.remote_id()).unwrap(),

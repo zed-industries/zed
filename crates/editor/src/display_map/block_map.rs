@@ -627,56 +627,49 @@ impl BlockMap {
         if let Some((companion_new_snapshot, companion_edits)) = companion_wrap_edits
             && let Some((companion, display_map_id)) = companion
         {
-            let max_row = MultiBufferRow(wrap_snapshot.buffer_snapshot().max_point().row);
             let mut companion_edits_in_my_space: Vec<WrapEdit> = companion_edits
                 .clone()
                 .into_inner()
                 .iter()
                 .map(|edit| {
-                    let companion_start_row = MultiBufferRow(
-                        companion_new_snapshot
-                            .to_point(WrapPoint::new(edit.new.start, 0), Bias::Left)
-                            .row,
-                    );
-                    let companion_end_row = MultiBufferRow(
-                        companion_new_snapshot
-                            .to_point(WrapPoint::new(edit.new.end, 0), Bias::Right)
-                            .row,
-                    );
+                    let companion_start = companion_new_snapshot
+                        .to_point(WrapPoint::new(edit.new.start, 0), Bias::Left);
+                    let companion_end = companion_new_snapshot
+                        .to_point(WrapPoint::new(edit.new.end, 0), Bias::Right);
 
-                    let my_start_row = companion
+                    let my_start = companion
                         .convert_rows_from_companion(
                             display_map_id,
                             wrap_snapshot.buffer_snapshot(),
                             companion_new_snapshot.buffer_snapshot(),
-                            companion_start_row..companion_start_row,
+                            companion_start..companion_start,
                         )
                         .first()
                         .and_then(|t| t.boundaries.first())
                         .map(|(_, range)| range.start)
-                        .unwrap_or(max_row);
-                    let my_end_row = companion
+                        .unwrap_or(wrap_snapshot.buffer_snapshot().max_point());
+                    let my_end = companion
                         .convert_rows_from_companion(
                             display_map_id,
                             wrap_snapshot.buffer_snapshot(),
                             companion_new_snapshot.buffer_snapshot(),
-                            companion_end_row..companion_end_row,
+                            companion_end..companion_end,
                         )
                         .first()
                         .and_then(|t| t.boundaries.first())
                         .map(|(_, range)| range.end)
-                        .unwrap_or(max_row);
+                        .unwrap_or(wrap_snapshot.buffer_snapshot().max_point());
 
-                    let my_start = wrap_snapshot
-                        .make_wrap_point(Point::new(my_start_row.0, 0), Bias::Left)
-                        .row();
-                    let my_end = wrap_snapshot
-                        .make_wrap_point(Point::new(my_end_row.0, 0), Bias::Right)
-                        .row();
+                    let my_start = wrap_snapshot.make_wrap_point(my_start, Bias::Left);
+                    let mut my_end = wrap_snapshot.make_wrap_point(my_end, Bias::Right);
+                    if my_end.column() > 0 {
+                        my_end.0.row += 1;
+                        my_end.0.column = 0;
+                    }
 
                     WrapEdit {
-                        old: my_start..my_end,
-                        new: my_start..my_end,
+                        old: my_start.row()..my_end.row(),
+                        new: my_start.row()..my_end.row(),
                     }
                 })
                 .collect();
@@ -1072,12 +1065,12 @@ impl BlockMap {
         let companion_buffer = companion_snapshot.buffer_snapshot();
 
         let start_row = match bounds.start_bound() {
-            Bound::Included(point) => MultiBufferRow(point.row),
+            Bound::Included(point) => *point,
             _ => unreachable!(),
         };
         let end_row = match bounds.end_bound() {
-            Bound::Excluded(point) => MultiBufferRow(point.row),
-            Bound::Unbounded => our_buffer.max_row() + 1,
+            Bound::Excluded(point) => *point,
+            Bound::Unbounded => our_buffer.max_point(),
             _ => unreachable!(),
         };
 
@@ -1111,11 +1104,12 @@ impl BlockMap {
                 continue;
             };
 
+            // FIXME if first_boundary is part of a group we need to walk back to the beginning of the group
             let first_our_wrap = wrap_snapshot
-                .make_wrap_point(Point::new(first_boundary.0, 0), Bias::Left)
+                .make_wrap_point(*first_boundary, Bias::Left)
                 .row();
             let companion_start_wrap = companion_snapshot
-                .make_wrap_point(Point::new(first_range.start.0, 0), Bias::Left)
+                .make_wrap_point(first_range.start, Bias::Left)
                 .row();
 
             let mut delta = companion_start_wrap.0 as i32 - first_our_wrap.0 as i32;
@@ -1125,7 +1119,7 @@ impl BlockMap {
                 let mut current_boundary = *boundary;
                 let mut current_range = range.clone();
 
-                if current_boundary == row_mapping.source_excerpt_end {
+                if current_boundary.column > 0 {
                     break;
                 }
 
@@ -1133,15 +1127,12 @@ impl BlockMap {
                     .peek()
                     .is_some_and(|(_, next_range)| next_range.end <= current_range.end);
                 let (new_delta, spacer) = determine_spacer(
-                    Point::new(current_boundary.0, 0),
-                    Point::new(
-                        if align_at_start {
-                            current_range.start.0
-                        } else {
-                            current_range.end.0
-                        },
-                        0,
-                    ),
+                    current_boundary,
+                    if align_at_start {
+                        current_range.start
+                    } else {
+                        current_range.end
+                    },
                     delta,
                 );
                 delta = new_delta;
@@ -1169,15 +1160,12 @@ impl BlockMap {
                     current_range = r.clone();
                 }
 
-                if current_boundary == row_mapping.source_excerpt_end {
+                if current_boundary.column > 0 {
                     break;
                 }
 
-                let (new_delta, spacer) = determine_spacer(
-                    Point::new(current_boundary.0, 0),
-                    Point::new(current_range.end.0, 0),
-                    delta,
-                );
+                let (new_delta, spacer) =
+                    determine_spacer(current_boundary, current_range.end, delta);
                 delta = new_delta;
                 if let Some((wrap_row, height)) = spacer {
                     result.push((
@@ -1191,21 +1179,9 @@ impl BlockMap {
                 }
             }
 
-            let (last_boundary, _last_range) = boundaries.last().cloned().unwrap();
-            if last_boundary == row_mapping.source_excerpt_end {
-                // FIXME these subtractions can underflow (repro: uncommit)
-                let companion_point = Point::new(
-                    row_mapping.target_excerpt_end.0 - 1,
-                    companion_buffer.line_len(MultiBufferRow(row_mapping.target_excerpt_end.0 - 1)),
-                );
-                let (_new_delta, spacer) = determine_spacer(
-                    Point::new(
-                        row_mapping.source_excerpt_end.0 - 1,
-                        our_buffer.line_len(MultiBufferRow(row_mapping.source_excerpt_end.0 - 1)),
-                    ),
-                    companion_point,
-                    delta,
-                );
+            let (last_boundary, last_range) = boundaries.last().cloned().unwrap();
+            if last_boundary.column > 0 {
+                let (_new_delta, spacer) = determine_spacer(last_boundary, last_range.end, delta);
                 if let Some((wrap_row, height)) = spacer {
                     result.push((
                         BlockPlacement::Below(wrap_row),
