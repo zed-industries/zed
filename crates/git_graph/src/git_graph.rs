@@ -12,8 +12,8 @@ use git_ui::commit_tooltip::CommitAvatar;
 use gpui::{
     AnyElement, App, ClipboardItem, Context, Corner, DefiniteLength, ElementId, Entity,
     EventEmitter, FocusHandle, Focusable, FontWeight, InteractiveElement, ParentElement, Pixels,
-    Point, Render, ScrollWheelEvent, SharedString, Styled, Subscription, Task, WeakEntity, Window,
-    actions, anchored, deferred, px,
+    Point, Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled, Subscription, Task,
+    WeakEntity, Window, actions, anchored, deferred, px,
 };
 use graph_rendering::accent_colors_count;
 use project::{
@@ -24,7 +24,9 @@ use settings::Settings;
 use std::ops::Range;
 use theme::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
-use ui::{ContextMenu, ScrollableHandle, Table, TableInteractionState, Tooltip, prelude::*};
+use ui::{
+    ContextMenu, ScrollableHandle, Table, TableInteractionState, Tooltip, WithScrollbar, prelude::*,
+};
 use workspace::{
     Workspace,
     item::{Item, ItemEvent, SerializableItem},
@@ -65,6 +67,7 @@ pub struct GitGraph {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     row_height: Pixels,
     table_interaction_state: Entity<TableInteractionState>,
+    horizontal_scroll_handle: ScrollHandle,
     selected_entry_idx: Option<usize>,
     log_source: LogSource,
     log_order: LogOrder,
@@ -94,7 +97,6 @@ impl GitGraph {
                 cx.notify();
             }
             GitStoreEvent::ActiveRepositoryChanged(repo_id) => {
-                dbg!(repo_id, "active changed");
                 this.graph.clear();
                 this._subscriptions.clear();
                 cx.notify();
@@ -111,7 +113,6 @@ impl GitGraph {
         .detach();
 
         let _subscriptions = if let Some(repository) = project.read(cx).active_repository(cx) {
-            dbg!("There's is an active repository on start up");
             repository.update(cx, |repository, cx| {
                 let commits =
                     repository.graph_data(log_source.clone(), log_order, 0..usize::MAX, cx);
@@ -120,7 +121,6 @@ impl GitGraph {
 
             vec![cx.subscribe(&repository, Self::on_repository_event)]
         } else {
-            dbg!("There's no active repository");
             vec![]
         };
 
@@ -141,6 +141,7 @@ impl GitGraph {
             context_menu: None,
             row_height,
             table_interaction_state,
+            horizontal_scroll_handle: ScrollHandle::new(),
             selected_entry_idx: None,
             selected_commit_diff: None,
             log_source,
@@ -793,10 +794,19 @@ impl Render for GitGraph {
                         )
                         .child(
                             div()
+                                .id("graph-canvas")
                                 .flex_1()
                                 .overflow_hidden()
                                 .child(render_graph(&self, cx))
-                                .on_scroll_wheel(cx.listener(Self::handle_graph_scroll)),
+                                .on_scroll_wheel(cx.listener(Self::handle_graph_scroll))
+                                .overflow_x_scroll()
+                                .track_scroll(&self.horizontal_scroll_handle)
+                                .custom_scrollbars(
+                                    ui::Scrollbars::new(ui::ScrollAxes::Horizontal)
+                                        .tracked_scroll_handle(&self.horizontal_scroll_handle),
+                                    window,
+                                    cx,
+                                ),
                         ),
                 )
                 .child({

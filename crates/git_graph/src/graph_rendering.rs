@@ -18,8 +18,13 @@ pub fn accent_colors_count(accents: &AccentColors) -> usize {
     accents.0.len()
 }
 
-fn lane_center_x(bounds: Bounds<Pixels>, left_padding: Pixels, lane: f32) -> Pixels {
-    bounds.origin.x + left_padding + lane * LANE_WIDTH + LANE_WIDTH / 2.0
+fn lane_center_x(
+    bounds: Bounds<Pixels>,
+    left_padding: Pixels,
+    lane: f32,
+    horizontal_scroll_offset: Pixels,
+) -> Pixels {
+    bounds.origin.x + left_padding + lane * LANE_WIDTH + LANE_WIDTH / 2.0 + horizontal_scroll_offset
 }
 
 fn to_row_center(
@@ -48,7 +53,9 @@ pub fn render_graph(graph: &GitGraph, cx: &mut Context<GitGraph>) -> impl IntoEl
     let scroll_offset_y = (-table_state.scroll_offset().y).clamp(px(0.), max_scroll);
 
     let first_visible_row = (scroll_offset_y / row_height).floor() as usize;
-    let scroll_offset = scroll_offset_y - (first_visible_row as f32 * row_height);
+    let vertical_scroll_offset = scroll_offset_y - (first_visible_row as f32 * row_height);
+    let horizontal_scroll_offset = dbg!(graph.horizontal_scroll_handle.offset().x);
+
     let graph_width = px(16.0) * (4 as f32) + px(24.0);
     let last_visible_row = first_visible_row + (viewport_height / row_height).ceil() as usize + 1;
 
@@ -78,9 +85,14 @@ pub fn render_graph(graph: &GitGraph, cx: &mut Context<GitGraph>) -> impl IntoEl
                     let row_color = accent_colors.color_for_index(row.color_idx as u32);
                     let row_y_center =
                         bounds.origin.y + row_idx as f32 * row_height + row_height / 2.0
-                            - scroll_offset;
+                            - vertical_scroll_offset;
 
-                    let commit_x = lane_center_x(bounds, left_padding, row.lane as f32);
+                    let commit_x = lane_center_x(
+                        bounds,
+                        left_padding,
+                        row.lane as f32,
+                        horizontal_scroll_offset,
+                    );
 
                     draw_commit_circle(commit_x, row_y_center, row_color, window);
                 }
@@ -93,12 +105,17 @@ pub fn render_graph(graph: &GitGraph, cx: &mut Context<GitGraph>) -> impl IntoEl
                     };
 
                     let line_color = accent_colors.color_for_index(line.color_idx as u32);
-                    let line_x = lane_center_x(bounds, left_padding, start_column as f32);
+                    let line_x = lane_center_x(
+                        bounds,
+                        left_padding,
+                        start_column as f32,
+                        horizontal_scroll_offset,
+                    );
 
                     let start_row = line.full_interval.start as i32 - first_visible_row as i32;
 
                     let from_y = bounds.origin.y + start_row as f32 * row_height + row_height / 2.0
-                        - scroll_offset
+                        - vertical_scroll_offset
                         + COMMIT_CIRCLE_RADIUS;
 
                     let mut current_row = from_y;
@@ -117,7 +134,7 @@ pub fn render_graph(graph: &GitGraph, cx: &mut Context<GitGraph>) -> impl IntoEl
                                 let mut dest_row = to_row_center(
                                     to_row - first_visible_row,
                                     row_height,
-                                    scroll_offset,
+                                    vertical_scroll_offset,
                                     bounds,
                                 );
                                 if is_last {
@@ -135,14 +152,18 @@ pub fn render_graph(graph: &GitGraph, cx: &mut Context<GitGraph>) -> impl IntoEl
                                 on_row,
                                 curve_kind,
                             } => {
-                                let mut to_column =
-                                    lane_center_x(bounds, left_padding, *to_column as f32);
+                                let mut to_column = lane_center_x(
+                                    bounds,
+                                    left_padding,
+                                    *to_column as f32,
+                                    horizontal_scroll_offset,
+                                );
 
                                 let mut to_row = to_row_center(
                                     // todo! subtract with overflow here
                                     *on_row - first_visible_row,
                                     row_height,
-                                    scroll_offset,
+                                    vertical_scroll_offset,
                                     bounds,
                                 );
 
