@@ -94,7 +94,6 @@ impl GitGraph {
                 this.graph.clear();
                 cx.notify();
             }
-
             GitStoreEvent::ActiveRepositoryChanged(repo_id) => {
                 dbg!(repo_id, "active changed");
                 this.graph.clear();
@@ -121,6 +120,7 @@ impl GitGraph {
 
             vec![cx.subscribe(&repository, Self::on_repository_event)]
         } else {
+            dbg!("There's no active repository");
             vec![]
         };
 
@@ -277,7 +277,7 @@ impl GitGraph {
                                 .items_center()
                                 .overflow_hidden()
                                 .children((!commit.data.ref_names.is_empty()).then(|| {
-                                    h_flex().gap_2().items_center().overflow_hidden().children(
+                                    h_flex().flex_shrink().gap_2().items_center().children(
                                         commit
                                             .data
                                             .ref_names
@@ -285,7 +285,12 @@ impl GitGraph {
                                             .map(|name| self.render_badge(name, accent_color)),
                                     )
                                 }))
-                                .child(Label::new(subject).color(text_color).single_line()),
+                                .child(
+                                    Label::new(subject)
+                                        .color(text_color)
+                                        .truncate()
+                                        .single_line(),
+                                ),
                         )
                         .into_any_element(),
                     Label::new(formatted_time)
