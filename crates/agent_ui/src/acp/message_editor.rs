@@ -418,20 +418,18 @@ impl MessageEditor {
         let available_commands = self.available_commands.borrow().clone();
         let agent_name = self.agent_name.clone();
 
-        let user_slash_commands = if let Some(cached) = cached_user_commands {
+        let user_slash_commands = if !cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+            UserSlashCommands::Cached(collections::HashMap::default())
+        } else if let Some(cached) = cached_user_commands {
             UserSlashCommands::Cached(cached)
-        } else if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-            if let Some(workspace) = self.workspace.upgrade() {
-                let fs = workspace.read(cx).project().read(cx).fs().clone();
-                let worktree_roots: Vec<std::path::PathBuf> = workspace
-                    .read(cx)
-                    .visible_worktrees(cx)
-                    .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                    .collect();
-                UserSlashCommands::FromFs { fs, worktree_roots }
-            } else {
-                UserSlashCommands::Cached(collections::HashMap::default())
-            }
+        } else if let Some(workspace) = self.workspace.upgrade() {
+            let fs = workspace.read(cx).project().read(cx).fs().clone();
+            let worktree_roots: Vec<std::path::PathBuf> = workspace
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect();
+            UserSlashCommands::FromFs { fs, worktree_roots }
         } else {
             UserSlashCommands::Cached(collections::HashMap::default())
         };
