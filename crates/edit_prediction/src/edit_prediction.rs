@@ -155,18 +155,6 @@ pub struct EditPredictionStore {
     custom_predict_edits_url: Option<Arc<Url>>,
 }
 
-// todo! remove this enum
-#[derive(Copy, Clone, Default, PartialEq, Eq)]
-pub enum EditPredictionModel {
-    #[default]
-    Zeta1,
-    Zeta2 {
-        version: ZetaVersion,
-    },
-    Sweep,
-    Mercury,
-}
-
 pub struct EditPredictionModelInput {
     pub project: Entity<Project>,
     pub buffer: Entity<Buffer>,
