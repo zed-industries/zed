@@ -4372,7 +4372,21 @@ impl Workspace {
             self.last_active_center_pane = Some(pane.downgrade());
         }
 
-        self.dismiss_zoomed_items_to_reveal(None, window, cx);
+        // If this pane is in a dock, preserve that dock when dismissing zoomed items.
+        // This prevents the dock from closing when focus events fire during window activation.
+        let dock_to_preserve = self.all_docks().iter().find_map(|dock| {
+            let dock_read = dock.read(cx);
+            if let Some(panel) = dock_read.active_panel()
+                && let Some(dock_pane) = panel.pane(cx)
+                && dock_pane == pane
+            {
+                Some(dock_read.position())
+            } else {
+                None
+            }
+        });
+
+        self.dismiss_zoomed_items_to_reveal(dock_to_preserve, window, cx);
         if pane.read(cx).is_zoomed() {
             self.zoomed = Some(pane.downgrade().into());
         } else {
