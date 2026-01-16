@@ -491,6 +491,97 @@ impl<T: Item> SumTree<T> {
         None
     }
 
+    /// A more efficient version of `Cursor::new()` + `Cursor::seek()` + `Cursor::item()`
+    #[instrument(skip_all)]
+    pub fn find_with_prev<'a, 'slf, D, Target>(
+        &'slf self,
+        cx: <T::Summary as Summary>::Context<'a>,
+        target: &Target,
+        bias: Bias,
+    ) -> (D, D, Option<(Option<&'slf T>, &'slf T)>)
+    where
+        D: Dimension<'slf, T::Summary>,
+        Target: SeekTarget<'slf, T::Summary, D>,
+    {
+        let tree_end = D::zero(cx).with_added_summary(self.summary(), cx);
+        let comparison = target.cmp(&tree_end, cx);
+        if comparison == Ordering::Greater || (comparison == Ordering::Equal && bias == Bias::Right)
+        {
+            return (tree_end.clone(), tree_end, None);
+        }
+
+        let mut pos = D::zero(cx);
+        return match Self::find_recurse_with_prev::<_, _, false>(
+            cx, target, bias, &mut pos, self, None,
+        ) {
+            Some((prev, item, end)) => (pos, end, Some((prev, item))),
+            None => (pos.clone(), pos, None),
+        };
+    }
+
+    fn find_recurse_with_prev<'tree, 'a, D, Target, const EXACT: bool>(
+        cx: <T::Summary as Summary>::Context<'a>,
+        target: &Target,
+        bias: Bias,
+        position: &mut D,
+        this: &'tree SumTree<T>,
+        prev: Option<&'tree T>,
+    ) -> Option<(Option<&'tree T>, &'tree T, D)>
+    where
+        D: Dimension<'tree, T::Summary>,
+        Target: SeekTarget<'tree, T::Summary, D>,
+    {
+        match &*this.0 {
+            Node::Internal {
+                child_summaries,
+                child_trees,
+                ..
+            } => {
+                let mut prev = prev;
+                for (child_tree, child_summary) in child_trees.iter().zip(child_summaries) {
+                    let child_end = position.clone().with_added_summary(child_summary, cx);
+
+                    let comparison = target.cmp(&child_end, cx);
+                    let target_in_child = comparison == Ordering::Less
+                        || (comparison == Ordering::Equal && bias == Bias::Left);
+                    if target_in_child {
+                        return Self::find_recurse_with_prev::<D, Target, EXACT>(
+                            cx, target, bias, position, child_tree, prev,
+                        );
+                    }
+                    prev = child_tree.last();
+                    *position = child_end;
+                }
+            }
+            Node::Leaf {
+                items,
+                item_summaries,
+                ..
+            } => {
+                let mut prev = prev;
+                for (item, item_summary) in items.iter().zip(item_summaries) {
+                    let mut child_end = position.clone();
+                    child_end.add_summary(item_summary, cx);
+
+                    let comparison = target.cmp(&child_end, cx);
+                    let entry_found = if EXACT {
+                        comparison == Ordering::Equal
+                    } else {
+                        comparison == Ordering::Less
+                            || (comparison == Ordering::Equal && bias == Bias::Left)
+                    };
+                    if entry_found {
+                        return Some((prev, item, child_end));
+                    }
+
+                    prev = Some(item);
+                    *position = child_end;
+                }
+            }
+        }
+        None
+    }
+
     pub fn cursor<'a, 'b, D>(
         &'a self,
         cx: <T::Summary as Summary>::Context<'b>,
