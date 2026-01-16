@@ -1384,13 +1384,7 @@ impl AgentPanel {
                             let entry = entry.clone();
                             panel
                                 .update(cx, move |this, cx| {
-                                    this.external_thread(
-                                        Some(ExternalAgent::NativeAgent),
-                                        Some(entry.clone()),
-                                        None,
-                                        window,
-                                        cx,
-                                    );
+                                    this.load_agent_thread(entry.clone(), window, cx);
                                 })
                                 .ok();
                         }
