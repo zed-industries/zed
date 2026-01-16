@@ -12,6 +12,10 @@ mod thread_store;
 mod tool_permissions;
 mod tools;
 
+use agent_skills::{
+    SKILL_FILE_NAME, Skill, SkillLoadError, SkillSource, global_skills_dir,
+    load_skills_from_directory, project_skills_relative_path,
+};
 use context_server::ContextServerId;
 pub use db::*;
 pub use native_agent_server::NativeAgentServer;
@@ -35,7 +39,8 @@ use futures::channel::{mpsc, oneshot};
 use futures::future::Shared;
 use futures::{StreamExt, future};
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
+    WeakEntity,
 };
 use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
@@ -49,6 +54,7 @@ use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 use util::ResultExt;
 use util::rel_path::RelPath;
 
@@ -59,6 +65,12 @@ pub struct ProjectSnapshot {
 }
 
 pub struct RulesLoadingError {
+    pub message: SharedString,
+}
+
+#[derive(Clone)]
+pub struct SkillLoadingError {
+    pub path: PathBuf,
     pub message: SharedString,
 }
 
@@ -232,8 +244,11 @@ pub struct NativeAgent {
     thread_store: Entity<ThreadStore>,
     /// Shared project context for all threads
     project_context: Entity<ProjectContext>,
+    /// Full skills data (not just summaries) for tool use
+    skills: Arc<Vec<Skill>>,
     project_context_needs_refresh: watch::Sender<()>,
     _maintain_project_context: Task<Result<()>>,
+    _watch_global_skills: Task<()>,
     context_server_registry: Entity<ContextServerRegistry>,
     /// Shared templates for all threads
     templates: Arc<Templates>,
@@ -244,6 +259,8 @@ pub struct NativeAgent {
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
 }
+
+impl EventEmitter<SkillLoadingError> for NativeAgent {}
 
 impl NativeAgent {
     pub async fn new(
@@ -256,8 +273,10 @@ impl NativeAgent {
     ) -> Result<Entity<NativeAgent>> {
         log::debug!("Creating new NativeAgent");
 
-        let project_context = cx
-            .update(|cx| Self::build_project_context(&project, prompt_store.as_ref(), cx))
+        let (project_context, skills, skill_errors) = cx
+            .update(|cx| {
+                Self::build_project_context(&project, prompt_store.as_ref(), fs.clone(), cx)
+            })
             .await;
 
         Ok(cx.new(|cx| {
@@ -286,13 +305,25 @@ impl NativeAgent {
 
             let (project_context_needs_refresh_tx, project_context_needs_refresh_rx) =
                 watch::channel(());
-            Self {
+            let this = Self {
                 sessions: HashMap::default(),
                 thread_store,
                 project_context: cx.new(|_| project_context),
+                skills: Arc::new(skills),
                 project_context_needs_refresh: project_context_needs_refresh_tx,
-                _maintain_project_context: cx.spawn(async move |this, cx| {
-                    Self::maintain_project_context(this, project_context_needs_refresh_rx, cx).await
+                _maintain_project_context: cx.spawn({
+                    let this = cx.weak_entity();
+                    async move |_, cx| {
+                        Self::maintain_project_context(this, project_context_needs_refresh_rx, cx)
+                            .await
+                    }
+                }),
+                _watch_global_skills: cx.spawn({
+                    let this = cx.weak_entity();
+                    let fs = fs.clone();
+                    async move |_, cx| {
+                        Self::watch_global_skills_directory(this, fs, cx).await;
+                    }
                 }),
                 context_server_registry,
                 templates,
@@ -301,7 +332,16 @@ impl NativeAgent {
                 prompt_store,
                 fs,
                 _subscriptions: subscriptions,
+            };
+
+            for skill_error in skill_errors {
+                cx.emit(SkillLoadingError {
+                    path: skill_error.path,
+                    message: skill_error.message.into(),
+                });
             }
+
+            this
         }))
     }
 
@@ -373,19 +413,66 @@ impl NativeAgent {
         &self.models
     }
 
+    async fn watch_global_skills_directory(
+        this: WeakEntity<Self>,
+        fs: Arc<dyn Fs>,
+        cx: &mut AsyncApp,
+    ) {
+        let skills_dir = global_skills_dir();
+
+        // If the skills directory doesn't exist yet, don't watch
+        if !fs.is_dir(skills_dir).await {
+            return;
+        }
+
+        let (mut events, _watcher) = fs.watch(skills_dir, Duration::from_millis(500)).await;
+
+        while let Some(changed_paths) = events.next().await {
+            // Check if any skill files changed
+            let skill_changed = changed_paths.iter().any(|event| {
+                event
+                    .path
+                    .file_name()
+                    .map(|name| name == SKILL_FILE_NAME)
+                    .unwrap_or(false)
+                    || event.path.ends_with(SKILL_FILE_NAME)
+            });
+
+            if skill_changed {
+                let Ok(()) = this.update(cx, |this, _cx| {
+                    this.project_context_needs_refresh.send(()).ok();
+                }) else {
+                    break;
+                };
+            }
+        }
+    }
+
     async fn maintain_project_context(
         this: WeakEntity<Self>,
         mut needs_refresh: watch::Receiver<()>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         while needs_refresh.changed().await.is_ok() {
-            let project_context = this
+            let (project_context, skills, skill_errors) = this
                 .update(cx, |this, cx| {
-                    Self::build_project_context(&this.project, this.prompt_store.as_ref(), cx)
+                    Self::build_project_context(
+                        &this.project,
+                        this.prompt_store.as_ref(),
+                        this.fs.clone(),
+                        cx,
+                    )
                 })?
                 .await;
             this.update(cx, |this, cx| {
                 this.project_context = cx.new(|_| project_context);
+                this.skills = Arc::new(skills);
+                for skill_error in skill_errors {
+                    cx.emit(SkillLoadingError {
+                        path: skill_error.path,
+                        message: skill_error.message.into(),
+                    });
+                }
             })?;
         }
 
@@ -395,15 +482,43 @@ impl NativeAgent {
     fn build_project_context(
         project: &Entity<Project>,
         prompt_store: Option<&Entity<PromptStore>>,
+        fs: Arc<dyn Fs>,
         cx: &mut App,
-    ) -> Task<ProjectContext> {
+    ) -> Task<(ProjectContext, Vec<Skill>, Vec<SkillLoadError>)> {
         let worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
         let worktree_tasks = worktrees
-            .into_iter()
+            .iter()
             .map(|worktree| {
-                Self::load_worktree_info_for_system_prompt(worktree, project.clone(), cx)
+                Self::load_worktree_info_for_system_prompt(worktree.clone(), project.clone(), cx)
             })
             .collect::<Vec<_>>();
+
+        // Load global skills
+        let global_skills_dir = global_skills_dir();
+        let global_skills_fs = fs.clone();
+        let global_skills_task = cx.background_spawn(async move {
+            load_skills_from_directory(&global_skills_fs, &global_skills_dir, SkillSource::Global)
+                .await
+        });
+
+        // Load project-local skills from each worktree
+        let project_skills_tasks: Vec<_> = worktrees
+            .iter()
+            .map(|worktree| {
+                let worktree_id = worktree.read(cx).id();
+                let abs_path = worktree.read(cx).abs_path();
+                let skills_dir = abs_path.join(project_skills_relative_path());
+                let fs = fs.clone();
+                cx.background_spawn(async move {
+                    load_skills_from_directory(
+                        &fs,
+                        &skills_dir,
+                        SkillSource::ProjectLocal { worktree_id },
+                    )
+                    .await
+                })
+            })
+            .collect();
         let default_user_rules_task = if let Some(prompt_store) = prompt_store.as_ref() {
             prompt_store.read_with(cx, |prompt_store, cx| {
                 let prompts = prompt_store.default_prompt_metadata();
@@ -453,7 +568,15 @@ impl NativeAgent {
                 })
                 .collect::<Vec<_>>();
 
-            ProjectContext::new(worktrees, default_user_rules)
+            // Load and merge skills
+            let global_skills = global_skills_task.await;
+            let project_skills_results = future::join_all(project_skills_tasks).await;
+            let (skills, skill_errors) =
+                merge_skills(global_skills, project_skills_results.into_iter().flatten());
+
+            let project_context =
+                ProjectContext::new(worktrees, default_user_rules, skills.clone());
+            (project_context, skills, skill_errors)
         })
     }
 
@@ -586,11 +709,19 @@ impl NativeAgent {
                 self.project_context_needs_refresh.send(()).ok();
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
-                if items.iter().any(|(path, _, _)| {
+                let rules_changed = items.iter().any(|(path, _, _)| {
                     RULES_FILE_NAMES
                         .iter()
                         .any(|name| path.as_ref() == RelPath::unix(name).unwrap())
-                }) {
+                });
+
+                let skills_changed = items.iter().any(|(path, _, _)| {
+                    let path_str = path.as_ref().as_unix_str();
+                    path_str.contains(project_skills_relative_path())
+                        && path_str.ends_with(SKILL_FILE_NAME)
+                });
+
+                if rules_changed || skills_changed {
                     self.project_context_needs_refresh.send(()).ok();
                 }
             }
@@ -749,6 +880,7 @@ impl NativeAgent {
                         db_thread,
                         this.project.clone(),
                         this.project_context.clone(),
+                        this.skills.clone(),
                         this.context_server_registry.clone(),
                         this.templates.clone(),
                         cx,
@@ -1209,6 +1341,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                     Thread::new(
                         project.clone(),
                         agent.project_context.clone(),
+                        agent.skills.clone(),
                         agent.context_server_registry.clone(),
                         agent.templates.clone(),
                         default_model,
@@ -1961,6 +2094,176 @@ mod internal_tests {
             LanguageModelRegistry::test(cx);
         });
     }
+
+    #[test]
+    fn test_merge_skills_name_conflict() {
+        use agent_skills::{Skill, SkillSource};
+        use std::path::PathBuf;
+
+        let global_skill = Skill {
+            name: "my-skill".to_string(),
+            description: "Global version".to_string(),
+            source: SkillSource::Global,
+            directory_path: PathBuf::from("/global/skills/my-skill"),
+            skill_file_path: PathBuf::from("/global/skills/my-skill/SKILL.md"),
+            content: "Global content".to_string(),
+        };
+
+        let project_skill = Skill {
+            name: "my-skill".to_string(),
+            description: "Project version".to_string(),
+            source: SkillSource::ProjectLocal {
+                worktree_id: worktree::WorktreeId::from_usize(1),
+            },
+            directory_path: PathBuf::from("/project/.zed/skills/my-skill"),
+            skill_file_path: PathBuf::from("/project/.zed/skills/my-skill/SKILL.md"),
+            content: "Project content".to_string(),
+        };
+
+        let (skills, errors) =
+            merge_skills(vec![Ok(global_skill)], vec![Ok(project_skill)].into_iter());
+
+        // First skill wins, second produces error
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].description, "Global version");
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("conflicts with"));
+    }
+
+    #[gpui::test]
+    async fn test_build_project_context_loads_skills(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Create global skills directory at the path returned by paths::skills_dir()
+        let global_skills_dir = paths::skills_dir();
+        fs.insert_tree(
+            global_skills_dir,
+            json!({
+                "global-skill": {
+                    "SKILL.md": "---\nname: global-skill\ndescription: A global skill\n---\n\nGlobal instructions"
+                }
+            }),
+        )
+        .await;
+
+        // Create project with project-local skills
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".zed": {
+                    "skills": {
+                        "project-skill": {
+                            "SKILL.md": "---\nname: project-skill\ndescription: A project skill\n---\n\nProject instructions"
+                        }
+                    }
+                },
+                "src": {
+                    "main.rs": "fn main() {}"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        // Build project context (this is what we're testing)
+        let (project_context, skills, errors) = cx
+            .update(|cx| NativeAgent::build_project_context(&project, None, fs.clone(), cx))
+            .await;
+
+        // Verify no errors
+        assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+
+        // Verify both skills were loaded
+        assert_eq!(skills.len(), 2, "Should have loaded 2 skills");
+
+        let skill_names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+        assert!(
+            skill_names.contains(&"global-skill"),
+            "Should contain global-skill"
+        );
+        assert!(
+            skill_names.contains(&"project-skill"),
+            "Should contain project-skill"
+        );
+
+        // Verify skills appear in project context
+        assert!(project_context.has_skills);
+        assert_eq!(project_context.skills.len(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_skills_reload_on_project_context_refresh(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Create initial global skills directory with one skill
+        let global_skills_dir = paths::skills_dir();
+        fs.insert_tree(
+            global_skills_dir,
+            json!({
+                "skill-one": {
+                    "SKILL.md": "---\nname: skill-one\ndescription: First skill\n---\n\nContent one"
+                }
+            }),
+        )
+        .await;
+
+        // Create empty project
+        fs.insert_tree("/project", json!({ "file.txt": "hello" }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        // Create NativeAgent
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = NativeAgent::new(
+            project.clone(),
+            thread_store,
+            Templates::new(),
+            None,
+            fs.clone(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        // Verify initial skill count
+        agent.read_with(cx, |agent, _| {
+            assert_eq!(agent.skills.len(), 1);
+            assert_eq!(agent.skills[0].name, "skill-one");
+        });
+
+        // Add a new skill file to the global skills directory
+        let new_skill_dir = global_skills_dir.join("skill-two");
+        fs.create_dir(&new_skill_dir).await.unwrap();
+        fs.insert_file(
+            &new_skill_dir.join("SKILL.md"),
+            "---\nname: skill-two\ndescription: Second skill\n---\n\nContent two"
+                .as_bytes()
+                .to_vec(),
+        )
+        .await;
+
+        // Manually trigger a project context refresh
+        // This simulates what the file watcher would do when it detects changes
+        agent.update(cx, |agent, _cx| {
+            agent.project_context_needs_refresh.send(()).ok();
+        });
+
+        // Process the refresh
+        cx.run_until_parked();
+
+        // Verify skills were reloaded
+        agent.read_with(cx, |agent, _| {
+            assert_eq!(agent.skills.len(), 2, "Should have 2 skills after reload");
+            let names: Vec<&str> = agent.skills.iter().map(|s| s.name.as_str()).collect();
+            assert!(names.contains(&"skill-one"));
+            assert!(names.contains(&"skill-two"));
+        });
+    }
 }
 
 fn mcp_message_content_to_acp_content_block(
@@ -1993,4 +2296,38 @@ fn mcp_message_content_to_acp_content_block(
             acp::ContentBlock::ResourceLink(link)
         }
     }
+}
+
+/// Merge global and project-local skills.
+/// Name conflicts produce errors - NO OVERRIDES ALLOWED.
+fn merge_skills(
+    global: Vec<Result<Skill, SkillLoadError>>,
+    project: impl Iterator<Item = Result<Skill, SkillLoadError>>,
+) -> (Vec<Skill>, Vec<SkillLoadError>) {
+    let mut skills = Vec::new();
+    let mut errors = Vec::new();
+    let mut seen_names: HashMap<String, PathBuf> = HashMap::default();
+
+    for result in global.into_iter().chain(project) {
+        match result {
+            Ok(skill) => {
+                if let Some(existing_path) = seen_names.get(&skill.name) {
+                    errors.push(SkillLoadError {
+                        path: skill.skill_file_path.clone(),
+                        message: format!(
+                            "Skill name '{}' conflicts with skill at '{}'",
+                            skill.name,
+                            existing_path.display()
+                        ),
+                    });
+                } else {
+                    seen_names.insert(skill.name.clone(), skill.skill_file_path.clone());
+                    skills.push(skill);
+                }
+            }
+            Err(e) => errors.push(e),
+        }
+    }
+
+    (skills, errors)
 }

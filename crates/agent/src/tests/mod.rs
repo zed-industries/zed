@@ -3212,8 +3212,9 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let thread = cx.new(|cx| {
         Thread::new(
-            project,
+            project.clone(),
             project_context.clone(),
+            Arc::new(Vec::new()),
             context_server_registry,
             templates,
             Some(model.clone()),
@@ -3764,8 +3765,9 @@ async fn test_subagent_tool_is_present_when_feature_flag_enabled(cx: &mut TestAp
 
     let thread = cx.new(|cx| {
         let mut thread = Thread::new(
-            project.clone(),
+            project,
             project_context,
+            Arc::new(Vec::new()),
             context_server_registry,
             Templates::new(),
             Some(model),
@@ -3810,8 +3812,9 @@ async fn test_subagent_thread_inherits_parent_model(cx: &mut TestAppContext) {
 
     let subagent = cx.new(|cx| {
         Thread::new_subagent(
-            project.clone(),
+            project,
             project_context,
+            Arc::new(Vec::new()),
             context_server_registry,
             Templates::new(),
             model.clone(),
@@ -3858,8 +3861,9 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
 
     let deep_subagent = cx.new(|cx| {
         let mut thread = Thread::new_subagent(
-            project.clone(),
+            project,
             project_context,
+            Arc::new(Vec::new()),
             context_server_registry,
             Templates::new(),
             model.clone(),
@@ -3905,8 +3909,9 @@ async fn test_subagent_receives_task_prompt(cx: &mut TestAppContext) {
 
     let subagent = cx.new(|cx| {
         Thread::new_subagent(
-            project.clone(),
+            project,
             project_context,
+            Arc::new(Vec::new()),
             context_server_registry,
             Templates::new(),
             model.clone(),
@@ -3965,8 +3970,9 @@ async fn test_subagent_returns_summary_on_completion(cx: &mut TestAppContext) {
     let subagent = cx.new(|cx| {
         Thread::new_subagent(
             project.clone(),
-            project_context,
-            context_server_registry,
+            project_context.clone(),
+            Arc::new(Vec::new()),
+            context_server_registry.clone(),
             Templates::new(),
             model.clone(),
             subagent_context,
@@ -4039,8 +4045,9 @@ async fn test_allowed_tools_restricts_subagent_capabilities(cx: &mut TestAppCont
 
     let subagent = cx.new(|cx| {
         let mut thread = Thread::new_subagent(
-            project.clone(),
+            project,
             project_context,
+            Arc::new(Vec::new()),
             context_server_registry,
             Templates::new(),
             model.clone(),
@@ -4104,6 +4111,7 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
         Thread::new(
             project.clone(),
             project_context.clone(),
+            Arc::new(Vec::new()),
             context_server_registry.clone(),
             Templates::new(),
             Some(model.clone()),
@@ -4123,6 +4131,7 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
         Thread::new_subagent(
             project.clone(),
             project_context.clone(),
+            Arc::new(Vec::new()),
             context_server_registry.clone(),
             Templates::new(),
             model.clone(),
@@ -4181,6 +4190,7 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
         Thread::new(
             project.clone(),
             project_context.clone(),
+            Arc::new(Vec::new()),
             context_server_registry.clone(),
             Templates::new(),
             Some(model.clone()),
@@ -4195,8 +4205,9 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
     let tool = Arc::new(SubagentTool::new(
         parent.downgrade(),
         project.clone(),
-        project_context,
-        context_server_registry,
+        Arc::new(Vec::new()),
+        project_context.clone(),
+        context_server_registry.clone(),
         Templates::new(),
         0,
         parent_tools,
@@ -4272,8 +4283,9 @@ async fn test_subagent_model_error_returned_as_tool_error(cx: &mut TestAppContex
     let subagent = cx.new(|cx| {
         Thread::new_subagent(
             project.clone(),
-            project_context,
-            context_server_registry,
+            project_context.clone(),
+            Arc::new(Vec::new()),
+            context_server_registry.clone(),
             Templates::new(),
             model.clone(),
             subagent_context,
@@ -4330,8 +4342,9 @@ async fn test_subagent_timeout_triggers_early_summary(cx: &mut TestAppContext) {
 
     let subagent = cx.new(|cx| {
         Thread::new_subagent(
-            project.clone(),
-            project_context.clone(),
+            project,
+            project_context,
+            Arc::new(Vec::new()),
             context_server_registry.clone(),
             Templates::new(),
             model.clone(),
@@ -4413,8 +4426,9 @@ async fn test_context_low_check_returns_true_when_usage_high(cx: &mut TestAppCon
     let subagent = cx.new(|cx| {
         Thread::new_subagent(
             project.clone(),
-            project_context,
-            context_server_registry,
+            project_context.clone(),
+            Arc::new(Vec::new()),
+            context_server_registry.clone(),
             Templates::new(),
             model.clone(),
             subagent_context,
@@ -4477,6 +4491,7 @@ async fn test_allowed_tools_rejects_unknown_tool(cx: &mut TestAppContext) {
         let mut thread = Thread::new(
             project.clone(),
             project_context.clone(),
+            Arc::new(Vec::new()),
             context_server_registry.clone(),
             Templates::new(),
             Some(model.clone()),
@@ -4496,6 +4511,7 @@ async fn test_allowed_tools_rejects_unknown_tool(cx: &mut TestAppContext) {
     let tool = Arc::new(SubagentTool::new(
         parent.downgrade(),
         project,
+        Arc::new(Vec::new()),
         project_context,
         context_server_registry,
         Templates::new(),
@@ -4552,8 +4568,9 @@ async fn test_subagent_empty_response_handled(cx: &mut TestAppContext) {
     let subagent = cx.new(|cx| {
         Thread::new_subagent(
             project.clone(),
-            project_context,
-            context_server_registry,
+            project_context.clone(),
+            Arc::new(Vec::new()),
+            context_server_registry.clone(),
             Templates::new(),
             model.clone(),
             subagent_context,
@@ -4609,6 +4626,7 @@ async fn test_nested_subagent_at_depth_2_succeeds(cx: &mut TestAppContext) {
         Thread::new_subagent(
             project.clone(),
             project_context.clone(),
+            Arc::new(Vec::new()),
             context_server_registry.clone(),
             Templates::new(),
             model.clone(),
@@ -4635,6 +4653,7 @@ async fn test_nested_subagent_at_depth_2_succeeds(cx: &mut TestAppContext) {
         Thread::new_subagent(
             project.clone(),
             project_context.clone(),
+            Arc::new(Vec::new()),
             context_server_registry.clone(),
             Templates::new(),
             model.clone(),
@@ -4693,8 +4712,9 @@ async fn test_subagent_uses_tool_and_returns_result(cx: &mut TestAppContext) {
     let subagent = cx.new(|cx| {
         let mut thread = Thread::new_subagent(
             project.clone(),
-            project_context,
-            context_server_registry,
+            project_context.clone(),
+            Arc::new(Vec::new()),
+            context_server_registry.clone(),
             Templates::new(),
             model.clone(),
             subagent_context,
@@ -4770,6 +4790,7 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
         Thread::new(
             project.clone(),
             project_context.clone(),
+            Arc::new(Vec::new()),
             context_server_registry.clone(),
             Templates::new(),
             Some(model.clone()),
@@ -4791,6 +4812,7 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
             Thread::new_subagent(
                 project.clone(),
                 project_context.clone(),
+                Arc::new(Vec::new()),
                 context_server_registry.clone(),
                 Templates::new(),
                 model.clone(),
@@ -4821,8 +4843,9 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
     let tool = Arc::new(SubagentTool::new(
         parent.downgrade(),
         project.clone(),
-        project_context,
-        context_server_registry,
+        Arc::new(Vec::new()),
+        project_context.clone(),
+        context_server_registry.clone(),
         Templates::new(),
         0,
         parent_tools,
@@ -4880,6 +4903,7 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
         let mut thread = Thread::new(
             project.clone(),
             project_context.clone(),
+            Arc::new(Vec::new()),
             context_server_registry.clone(),
             Templates::new(),
             Some(model.clone()),
@@ -4899,8 +4923,9 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
     let tool = Arc::new(SubagentTool::new(
         parent.downgrade(),
         project.clone(),
-        project_context,
-        context_server_registry,
+        Arc::new(Vec::new()),
+        project_context.clone(),
+        context_server_registry.clone(),
         Templates::new(),
         0,
         parent_tools,
@@ -5017,6 +5042,7 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
         crate::Thread::new(
             project.clone(),
             cx.new(|_cx| prompt_store::ProjectContext::default()),
+            Arc::new(Vec::new()),
             context_server_registry,
             templates.clone(),
             None,
@@ -5446,6 +5472,7 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
         crate::Thread::new(
             project.clone(),
             cx.new(|_cx| prompt_store::ProjectContext::default()),
+            Arc::new(Vec::new()),
             context_server_registry,
             templates.clone(),
             None,
@@ -5561,4 +5588,107 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
         !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
         "expected no authorization request for allowed docs.rs URL"
     );
+}
+
+#[gpui::test]
+async fn test_subagent_inherits_skills(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({ "file.txt": "hello" }))
+        .await;
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Create a skill
+    let skill = agent_skills::parse_skill(
+        Path::new("/skills/test-skill/SKILL.md"),
+        "---\nname: test-skill\ndescription: Test skill\n---\n\nInstructions",
+        agent_skills::SkillSource::Global,
+    )
+    .unwrap();
+    let skills = Arc::new(vec![skill]);
+
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let project_context = cx.new(|_| ProjectContext::default());
+    let model = Arc::new(FakeLanguageModel::default());
+
+    // Create parent thread with skills
+    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+    let environment = Rc::new(FakeThreadEnvironment { handle });
+
+    let parent = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project.clone(),
+            project_context.clone(),
+            skills.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        );
+        thread.add_default_tools(environment, cx);
+        thread
+    });
+
+    // Verify parent has skill tool
+    let parent_id = parent.read_with(cx, |thread, _| {
+        assert!(
+            thread.has_registered_tool("skill"),
+            "Parent should have skill tool"
+        );
+        thread.id().clone()
+    });
+
+    // Create parent_tools map with SkillTool (simulating what add_default_tools does)
+    let mut parent_tools: std::collections::BTreeMap<
+        gpui::SharedString,
+        Arc<dyn crate::AnyAgentTool>,
+    > = std::collections::BTreeMap::new();
+    parent_tools.insert(
+        "skill".into(),
+        SkillTool::new(skills.clone(), project.clone()).erase(),
+    );
+
+    // Create subagent context
+    let subagent_context = SubagentContext {
+        parent_thread_id: parent_id,
+        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
+        depth: 1,
+        summary_prompt: "Summarize".to_string(),
+        context_low_prompt: "Context low".to_string(),
+    };
+
+    let subagent = cx.new(|cx| {
+        Thread::new_subagent(
+            project.clone(),
+            project_context.clone(),
+            skills.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            model.clone(),
+            subagent_context,
+            parent_tools,
+            cx,
+        )
+    });
+
+    // Verify subagent also has skill tool (inherited from parent tools)
+    subagent.read_with(cx, |thread, _| {
+        assert!(
+            thread.has_registered_tool("skill"),
+            "Subagent should inherit skill tool"
+        );
+    });
+
+    // Verify subagent has same skills
+    subagent.read_with(cx, |thread, _| {
+        assert_eq!(thread.skills().len(), 1);
+        assert_eq!(thread.skills()[0].name, "test-skill");
+    });
 }

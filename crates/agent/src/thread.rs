@@ -2,12 +2,13 @@ use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SubagentTool, SystemPromptTemplate, Template, Templates,
-    TerminalTool, ThinkingTool, ToolPermissionDecision, WebSearchTool,
+    RestoreFileFromDiskTool, SaveFileTool, SkillTool, SubagentTool, SystemPromptTemplate, Template,
+    Templates, TerminalTool, ThinkingTool, ToolPermissionDecision, WebSearchTool,
     decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
+use agent_skills::Skill;
 use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
 
 use agent_client_protocol as acp;
@@ -704,6 +705,7 @@ pub struct Thread {
     context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
     project_context: Entity<ProjectContext>,
+    skills: Arc<Vec<Skill>>,
     templates: Arc<Templates>,
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
@@ -732,6 +734,7 @@ impl Thread {
     pub fn new(
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
+        skills: Arc<Vec<Skill>>,
         context_server_registry: Entity<ContextServerRegistry>,
         templates: Arc<Templates>,
         model: Option<Arc<dyn LanguageModel>>,
@@ -765,6 +768,7 @@ impl Thread {
             context_server_registry,
             profile_id,
             project_context,
+            skills,
             templates,
             model,
             summarization_model: None,
@@ -782,6 +786,7 @@ impl Thread {
     pub fn new_subagent(
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
+        skills: Arc<Vec<Skill>>,
         context_server_registry: Entity<ContextServerRegistry>,
         templates: Arc<Templates>,
         model: Arc<dyn LanguageModel>,
@@ -812,6 +817,7 @@ impl Thread {
             context_server_registry,
             profile_id,
             project_context,
+            skills,
             templates,
             model: Some(model),
             summarization_model: None,
@@ -950,6 +956,7 @@ impl Thread {
         db_thread: DbThread,
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
+        skills: Arc<Vec<Skill>>,
         context_server_registry: Entity<ContextServerRegistry>,
         templates: Arc<Templates>,
         cx: &mut Context<Self>,
@@ -1008,6 +1015,7 @@ impl Thread {
             context_server_registry,
             profile_id,
             project_context,
+            skills,
             templates,
             model,
             summarization_model: None,
@@ -1139,7 +1147,10 @@ impl Thread {
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
         self.add_tool(FindPathTool::new(self.project.clone()));
         self.add_tool(GrepTool::new(self.project.clone()));
-        self.add_tool(ListDirectoryTool::new(self.project.clone()));
+        self.add_tool(ListDirectoryTool::new(
+            self.project.clone(),
+            cx.weak_entity(),
+        ));
         self.add_tool(MovePathTool::new(self.project.clone()));
         self.add_tool(NowTool);
         self.add_tool(OpenTool::new(self.project.clone()));
@@ -1154,11 +1165,16 @@ impl Thread {
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
 
+        if !self.skills.is_empty() {
+            self.add_tool(SkillTool::new(self.skills.clone(), self.project.clone()));
+        }
+
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
             let parent_tools = self.tools.clone();
             self.add_tool(SubagentTool::new(
                 cx.weak_entity(),
                 self.project.clone(),
+                self.skills.clone(),
                 self.project_context.clone(),
                 self.context_server_registry.clone(),
                 self.templates.clone(),
@@ -1166,6 +1182,10 @@ impl Thread {
                 parent_tools,
             ));
         }
+    }
+
+    pub fn skills(&self) -> &Arc<Vec<Skill>> {
+        &self.skills
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
@@ -2260,7 +2280,6 @@ impl Thread {
             .is_some_and(|turn| turn.tools.contains_key(name))
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn has_registered_tool(&self, name: &str) -> bool {
         self.tools.contains_key(name)
     }

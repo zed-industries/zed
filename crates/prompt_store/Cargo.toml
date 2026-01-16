@@ -12,6 +12,7 @@ workspace = true
 path = "src/prompt_store.rs"
 
 [dependencies]
+agent_skills.workspace = true
 anyhow.workspace = true
 assets.workspace = true
 chrono.workspace = true

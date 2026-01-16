@@ -1,6 +1,7 @@
 use acp_thread::{AcpThread, AgentConnection, UserMessageId};
 use action_log::ActionLog;
 use agent_client_protocol as acp;
+use agent_skills::Skill;
 use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashSet};
 use futures::{FutureExt, channel::mpsc};
@@ -98,6 +99,7 @@ pub struct SubagentConfig {
 pub struct SubagentTool {
     parent_thread: WeakEntity<Thread>,
     project: Entity<Project>,
+    skills: Arc<Vec<Skill>>,
     project_context: Entity<ProjectContext>,
     context_server_registry: Entity<ContextServerRegistry>,
     templates: Arc<Templates>,
@@ -112,6 +114,7 @@ impl SubagentTool {
     pub fn new(
         parent_thread: WeakEntity<Thread>,
         project: Entity<Project>,
+        skills: Arc<Vec<Skill>>,
         project_context: Entity<ProjectContext>,
         context_server_registry: Entity<ContextServerRegistry>,
         templates: Arc<Templates>,
@@ -121,6 +124,7 @@ impl SubagentTool {
         Self {
             parent_thread,
             project,
+            skills,
             project_context,
             context_server_registry,
             templates,
@@ -248,6 +252,7 @@ impl AgentTool for SubagentTool {
 
         let parent_thread_id = parent_thread.read(cx).id().clone();
         let project = self.project.clone();
+        let skills = self.skills.clone();
         let project_context = self.project_context.clone();
         let context_server_registry = self.context_server_registry.clone();
         let templates = self.templates.clone();
@@ -299,6 +304,7 @@ impl AgentTool for SubagentTool {
                     Thread::new_subagent(
                         project.clone(),
                         project_context.clone(),
+                        skills.clone(),
                         context_server_registry.clone(),
                         templates.clone(),
                         model.clone(),

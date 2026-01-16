@@ -159,6 +159,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
+ "agent_skills",
  "anyhow",
  "chrono",
  "client",
@@ -323,6 +324,22 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "util",
+]
+
+[[package]]
+name = "agent_skills"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "paths",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "worktree",
 ]
 
 [[package]]
@@ -12712,6 +12729,7 @@ dependencies = [
 name = "prompt_store"
 version = "0.1.0"
 dependencies = [
+ "agent_skills",
  "anyhow",
  "assets",
  "chrono",
