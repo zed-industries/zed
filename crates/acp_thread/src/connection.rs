@@ -50,9 +50,7 @@ pub trait AgentConnection {
         _cwd: &Path,
         _cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
-        Task::ready(Err(anyhow::Error::msg(
-            "Loading sessions is not supported",
-        )))
+        Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")))
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod];
