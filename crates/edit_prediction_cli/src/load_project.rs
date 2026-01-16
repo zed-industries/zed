@@ -2,7 +2,7 @@ use crate::{
     example::{Example, ExamplePromptInputs, ExampleState},
     git,
     headless::EpAppState,
-    progress::{InfoStyle, Progress, Step, StepProgress},
+    progress::{ExampleProgress, InfoStyle, Step, StepProgress},
 };
 use anyhow::{Context as _, Result};
 use edit_prediction::{
@@ -18,13 +18,14 @@ use std::{fs, path::PathBuf, sync::Arc};
 pub async fn run_load_project(
     example: &mut Example,
     app_state: Arc<EpAppState>,
+    example_progress: &ExampleProgress,
     mut cx: AsyncApp,
 ) -> Result<()> {
     if example.state.is_some() {
         return Ok(());
     }
 
-    let progress = Progress::global().start(Step::LoadProject, &example.spec.name);
+    let progress = example_progress.start(Step::LoadProject);
 
     let project = setup_project(example, &app_state, &progress, &mut cx).await?;
 
@@ -160,15 +161,11 @@ async fn cursor_position(
 
         let mut matches = text.match_indices(&cursor_excerpt);
         let (excerpt_offset, _) = matches.next().with_context(|| {
-            format!(
-                "\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n.Example: {}\nCursor excerpt did not exist in buffer.",
-                example.spec.name
-            )
+            format!("Cursor excerpt did not exist in buffer:\n\n{cursor_excerpt}\n",)
         })?;
         anyhow::ensure!(
             matches.next().is_none(),
-            "More than one cursor position match found for {}",
-            &example.spec.name
+            "More than one cursor position match found",
         );
         Ok(excerpt_offset)
     })?;
@@ -193,9 +190,6 @@ async fn setup_project(
     let worktree_path = setup_worktree(example, step_progress).await?;
 
     if let Some(project) = app_state.project_cache.get(&example.spec.repository_url) {
-        ep_store.update(cx, |ep_store, _| {
-            ep_store.clear_history_for_project(&project);
-        });
         let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone());
         let buffers = buffer_store.read_with(cx, |buffer_store, _| {
             buffer_store.buffers().collect::<Vec<_>>()
@@ -203,6 +197,9 @@ async fn setup_project(
         for buffer in buffers {
             buffer.update(cx, |buffer, cx| buffer.reload(cx)).await.ok();
         }
+        ep_store.update(cx, |ep_store, _| {
+            ep_store.clear_history_for_project(&project);
+        });
         return Ok(project);
     }
 

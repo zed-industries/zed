@@ -4,7 +4,7 @@ use crate::{
     headless::EpAppState,
     metrics,
     predict::run_prediction,
-    progress::{Progress, Step},
+    progress::{ExampleProgress, Step},
 };
 use anyhow::Context as _;
 use edit_prediction::udiff::apply_diff_to_string;
@@ -15,11 +15,12 @@ pub async fn run_scoring(
     example: &mut Example,
     args: &PredictArgs,
     app_state: Arc<EpAppState>,
+    example_progress: &ExampleProgress,
     cx: AsyncApp,
 ) -> anyhow::Result<()> {
-    run_prediction(example, args, app_state, cx).await?;
+    run_prediction(example, args, app_state, example_progress, cx).await?;
 
-    let progress = Progress::global().start(Step::Score, &example.spec.name);
+    let progress = example_progress.start(Step::Score);
 
     progress.set_substatus("applying patches");
     let original_text = &example.prompt_inputs.as_ref().unwrap().content;
