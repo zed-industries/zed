@@ -584,14 +584,7 @@ pub enum ExecuteProxyError {
         path: PathBuf,
     },
 
-    #[error("Failed to kill existing server with pid '{pid}': {source:#}")]
-    KillRunningServer {
-        #[source]
-        source: std::io::Error,
-        pid: u32,
-    },
-
-    #[error("failed to spawn server: {0:#}")]
+    #[error("failed to spawn server")]
     SpawnServer(#[source] SpawnServerError),
 
     #[error("stdin_task failed: {0:#}")]
@@ -632,47 +625,31 @@ pub(crate) fn execute_proxy(
     .detach();
 
     log::info!("starting proxy process. PID: {}", std::process::id());
-    let server_pid = smol::block_on(async {
-        let server_pid = check_pid_file(&server_paths.pid_file)
-            .await
-            .map_err(|source| ExecuteProxyError::CheckPidFile {
-                source,
-                path: server_paths.pid_file.clone(),
-            })?;
-        if is_reconnecting {
-            match server_pid {
-                None => {
-                    log::error!("attempted to reconnect, but no server running");
-                    Err(ExecuteProxyError::ServerNotRunning(
-                        ProxyLaunchError::ServerNotRunning,
-                    ))
-                }
-                Some(server_pid) => Ok(server_pid),
-            }
-        } else {
-            if let Some(pid) = server_pid {
-                log::info!(
-                    "proxy found server already running with PID {}. Killing process and cleaning up files...",
-                    pid
-                );
-                kill_running_server(pid, &server_paths).await?;
-            }
-            spawn_server(&server_paths)
-                .await
-                .map_err(ExecuteProxyError::SpawnServer)?;
-            std::fs::read_to_string(&server_paths.pid_file)
-                .and_then(|contents| {
-                    contents.parse::<u32>().map_err(|_| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "Invalid PID file contents",
-                        )
-                    })
-                })
-                .map_err(SpawnServerError::ProcessStatus)
-                .map_err(ExecuteProxyError::SpawnServer)
+    let server_pid = check_pid_file(&server_paths.pid_file).map_err(|source| {
+        ExecuteProxyError::CheckPidFile {
+            source,
+            path: server_paths.pid_file.clone(),
         }
     })?;
+    let server_running = server_pid.is_some();
+    if is_reconnecting {
+        if !server_running {
+            log::error!("attempted to reconnect, but no server running");
+            return Err(ExecuteProxyError::ServerNotRunning(
+                ProxyLaunchError::ServerNotRunning,
+            ));
+        }
+    } else {
+        if let Some(pid) = server_pid {
+            log::info!(
+                "proxy found server already running with PID {}. Killing process and cleaning up files...",
+                pid
+            );
+            kill_running_server(pid, &server_paths);
+        }
+
+        smol::block_on(spawn_server(&server_paths)).map_err(ExecuteProxyError::SpawnServer)?;
+    }
 
     let stdin_task = smol::spawn(async move {
         let stdin = smol::Unblock::new(std::io::stdin());
@@ -750,13 +727,16 @@ pub(crate) fn execute_proxy(
     Ok(())
 }
 
-async fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
+fn kill_running_server(pid: u32, paths: &ServerPaths) {
     log::info!("killing existing server with PID {}", pid);
-    new_smol_command("kill")
-        .arg(pid.to_string())
-        .output()
-        .await
-        .map_err(|source| ExecuteProxyError::KillRunningServer { source, pid })?;
+
+    let system = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::nothing()),
+    );
+
+    if let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) {
+        process.kill();
+    }
 
     for file in [
         &paths.pid_file,
@@ -767,7 +747,6 @@ async fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), Execut
         log::debug!("cleaning up file {:?} before starting new server", file);
         std::fs::remove_file(file).ok();
     }
-    Ok(())
 }
 
 #[derive(Debug, Error)]
@@ -863,8 +842,8 @@ async fn check_server_running(pid: u32) -> std::io::Result<bool> {
         .map(|output| output.status.success())
 }
 
-async fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
-    let Some(pid) = std::fs::read_to_string(&path)
+fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
+    let Some(pid) = std::fs::read_to_string(path)
         .ok()
         .and_then(|contents| contents.parse::<u32>().ok())
     else {
@@ -872,21 +851,21 @@ async fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     };
 
     log::debug!("Checking if process with PID {} exists...", pid);
-    match check_server_running(pid).await {
-        Ok(true) => {
-            log::debug!(
-                "Process with PID {} exists. NOT spawning new server, but attaching to existing one.",
-                pid
-            );
-            Ok(Some(pid))
-        }
-        _ => {
-            log::debug!(
-                "Found PID file, but process with that PID does not exist. Removing PID file."
-            );
-            std::fs::remove_file(&path).map_err(|source| CheckPidError { source, pid })?;
-            Ok(None)
-        }
+
+    let system = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::nothing()),
+    );
+
+    if system.process(sysinfo::Pid::from_u32(pid)).is_some() {
+        log::debug!(
+            "Process with PID {} exists. NOT spawning new server, but attaching to existing one.",
+            pid
+        );
+        Ok(Some(pid))
+    } else {
+        log::debug!("Found PID file, but process with that PID does not exist. Removing PID file.");
+        std::fs::remove_file(path).map_err(|source| CheckPidError { source, pid })?;
+        Ok(None)
     }
 }
 
