@@ -25,7 +25,6 @@ use std::ops::Range;
 use theme::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{ContextMenu, ScrollableHandle, Table, TableInteractionState, Tooltip, prelude::*};
-use util::ResultExt;
 use workspace::{
     Workspace,
     item::{Item, ItemEvent, SerializableItem},
@@ -61,13 +60,14 @@ pub struct GitGraph {
     focus_handle: FocusHandle,
     graph: crate::graph::GitGraph,
     project: Entity<Project>,
-    max_lanes: usize,
     loading: bool,
     error: Option<SharedString>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     row_height: Pixels,
     table_interaction_state: Entity<TableInteractionState>,
     selected_entry_idx: Option<usize>,
+    log_source: LogSource,
+    log_order: LogOrder,
     selected_commit_diff: Option<CommitDiff>,
     _commit_diff_task: Option<Task<()>>,
     _load_task: Option<Task<()>>,
@@ -81,28 +81,55 @@ impl GitGraph {
             .detach();
 
         let git_store = project.read(cx).git_store().clone();
-        let git_store_subscription = cx.subscribe(&git_store, |this, _, event, cx| match event {
+        cx.subscribe(&git_store, |this, _, event, cx| match event {
             GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::BranchChanged, true)
             | GitStoreEvent::ActiveRepositoryChanged(_) => {
                 // todo! only call load data from render, we should set a bool here
                 // todo! We should check that the repo actually has a change that would affect the graph
-                this.load_data(cx);
+                this.graph.clear();
+                cx.notify();
             }
+            // todo! active repository has changed we should invalidate the graph state and reset our repo subscription
             _ => {}
-        });
+        })
+        .detach();
+
+        let _subscriptions = if let Some(repository) = project.read(cx).active_repository(cx) {
+            vec![
+                cx.subscribe(&repository, |this, repository, event, cx| match event {
+                    RepositoryEvent::GitGraphCountUpdated(_, commit_count) => {
+                        let old_count = this.graph.commits.len();
+
+                        repository.update(cx, |repository, cx| {
+                            let commits = repository.graph_data(
+                                this.log_source.clone(),
+                                this.log_order,
+                                old_count..*commit_count,
+                                cx,
+                            );
+                            this.graph.add_commits(commits);
+                        });
+
+                        this.graph.max_commit_count = AllCommitCount::Loaded(*commit_count);
+                    }
+                    _ => {}
+                }),
+            ]
+        } else {
+            vec![]
+        };
 
         let settings = ThemeSettings::get_global(cx);
         let font_size = settings.buffer_font_size(cx);
         let row_height = font_size + px(12.0);
 
         let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
-
         let accent_colors = cx.theme().accents();
-        let mut this = GitGraph {
+
+        GitGraph {
             focus_handle,
             project,
             graph: crate::graph::GitGraph::new(accent_colors_count(accent_colors)),
-            max_lanes: 0,
             loading: true,
             error: None,
             _load_task: None,
@@ -112,56 +139,10 @@ impl GitGraph {
             table_interaction_state,
             selected_entry_idx: None,
             selected_commit_diff: None,
-            // todo! We can just make this a simple Subscription instead of wrapping it
-            _subscriptions: vec![git_store_subscription],
-        };
-
-        this.load_data(cx);
-        this
-    }
-
-    fn load_data(&mut self, cx: &mut Context<Self>) {
-        let project = self.project.clone();
-        self.loading = true;
-        self.error = None;
-
-        if self._load_task.is_some() {
-            return;
+            log_source: LogSource::default(),
+            log_order: LogOrder::default(),
+            _subscriptions,
         }
-
-        let Some(repository) = project.read_with(cx, |project, cx| project.active_repository(cx))
-        else {
-            return;
-        };
-
-        let commits = repository.update(cx, |repo, cx| {
-            repo.initial_graph_data(LogSource::All, LogOrder::DateOrder, cx)
-        });
-
-        self._load_task = Some(cx.spawn(async move |this: WeakEntity<Self>, cx| {
-            let commits = commits.await;
-
-            this.update(cx, |this, cx| {
-                this.loading = false;
-
-                match commits {
-                    Ok(commits) => {
-                        this.graph.clear();
-                        let commit_count = commits.len();
-                        this.graph.add_commits(commits);
-                        this.max_lanes = this.graph.max_lanes;
-                        this.graph.max_commit_count = AllCommitCount::Loaded(commit_count);
-                    }
-                    Err(e) => {
-                        this.error = Some(format!("{:?}", e).into());
-                    }
-                };
-
-                this._load_task.take();
-                cx.notify();
-            })
-            .log_err();
-        }));
     }
 
     fn render_badge(&self, name: &SharedString, accent_color: gpui::Hsla) -> impl IntoElement {
@@ -725,7 +706,23 @@ impl Render for GitGraph {
 
         let commit_count = match self.graph.max_commit_count {
             AllCommitCount::Loaded(count) => count,
-            AllCommitCount::NotLoaded => self.graph.commits.len(),
+            AllCommitCount::NotLoaded => {
+                self.project.update(cx, |project, cx| {
+                    if let Some(repository) = project.active_repository(cx) {
+                        repository.update(cx, |repository, cx| {
+                            // Start loading the graph data if we haven't started already
+                            repository.graph_data(
+                                self.log_source.clone(),
+                                self.log_order,
+                                0..0,
+                                cx,
+                            );
+                        })
+                    }
+                });
+
+                self.graph.commits.len()
+            }
         };
 
         let content = if self.loading && self.graph.commits.is_empty() && false {

@@ -394,6 +394,7 @@ pub enum RepositoryEvent {
     BranchChanged,
     StashEntriesChanged,
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
+    GitGraphCountUpdated((LogOrder, LogSource), usize),
 }
 
 #[derive(Clone, Debug)]
@@ -4240,45 +4241,10 @@ impl Repository {
                             Ok(RepositoryState::Local(LocalRepositoryState {
                                 backend, ..
                             })) => {
-                                let (request_tx, request_rx) =
-                                    smol::channel::unbounded::<Vec<Arc<InitialGraphCommitData>>>();
-
-                                let task = cx.background_executor().spawn({
-                                    let log_source = log_source.clone();
-                                    async move {
-                                        backend
-                                            .initial_graph_data(log_source, log_order, request_tx)
-                                            .await
-                                            .map_err(|err| SharedString::from(err.to_string()))
-                                    }
-                                });
-
-                                let graph_data_key = (log_order, log_source.clone());
-
-                                while let Ok(initial_graph_commit_data) = request_rx.recv().await {
-                                    repository
-                                        .update(cx, |repository, cx| {
-                                            let graph_data = repository
-                                                .initial_graph_data
-                                                .get_mut(&graph_data_key)
-                                                .map(|(_, graph_data)| graph_data);
-                                            debug_assert!(
-                                                graph_data.is_some(),
-                                                "This task should be dropped if data doesn't exist"
-                                            );
-
-                                            if let Some(graph_data) = graph_data {
-                                                graph_data.extend(initial_graph_commit_data);
-                                                // todo! emit an event here for git graph
-                                            }
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                }
-
-                                task.await?;
-
-                                Ok(())
+                                Self::local_git_graph_data(
+                                    repository, backend, log_source, log_order, cx,
+                                )
+                                .await
                             }
                             Ok(RepositoryState::Remote(_)) => {
                                 Err("Git graph is not supported for collab yet".into())
@@ -4291,8 +4257,57 @@ impl Repository {
             })
             .1;
 
-        &initial_commit_data
-            [range.start..range.end.min(initial_commit_data.len().saturating_sub(1))]
+        let end_index = initial_commit_data.len().saturating_sub(1);
+        &initial_commit_data[range.start.min(end_index)..range.end.min(end_index)]
+    }
+
+    async fn local_git_graph_data(
+        this: WeakEntity<Self>,
+        backend: Arc<dyn GitRepository>,
+        log_source: LogSource,
+        log_order: LogOrder,
+        cx: &mut AsyncApp,
+    ) -> Result<(), SharedString> {
+        let (request_tx, request_rx) =
+            smol::channel::unbounded::<Vec<Arc<InitialGraphCommitData>>>();
+
+        let task = cx.background_executor().spawn({
+            let log_source = log_source.clone();
+            async move {
+                backend
+                    .initial_graph_data(log_source, log_order, request_tx)
+                    .await
+                    .map_err(|err| SharedString::from(err.to_string()))
+            }
+        });
+
+        let graph_data_key = (log_order, log_source.clone());
+
+        while let Ok(initial_graph_commit_data) = request_rx.recv().await {
+            this.update(cx, |repository, cx| {
+                let graph_data = repository
+                    .initial_graph_data
+                    .get_mut(&graph_data_key)
+                    .map(|(_, graph_data)| graph_data);
+                debug_assert!(
+                    graph_data.is_some(),
+                    "This task should be dropped if data doesn't exist"
+                );
+
+                if let Some(graph_data) = graph_data {
+                    graph_data.extend(initial_graph_commit_data);
+                    cx.emit(RepositoryEvent::GitGraphCountUpdated(
+                        graph_data_key.clone(),
+                        graph_data.len(),
+                    ));
+                }
+            })
+            .ok();
+        }
+
+        task.await?;
+
+        Ok(())
     }
 
     pub fn fetch_commit_data(&mut self, sha: Oid, cx: &mut Context<Self>) -> &CommitDataState {

@@ -269,8 +269,8 @@ impl GitGraph {
         })
     }
 
-    pub(crate) fn add_commits(&mut self, commits: Arc<Vec<Arc<InitialGraphCommitData>>>) {
-        for commit in commits.as_ref().into_iter() {
+    pub(crate) fn add_commits(&mut self, commits: &[Arc<InitialGraphCommitData>]) {
+        for commit in commits.into_iter() {
             let commit_row = self.commits.len();
 
             let commit_lane = self
