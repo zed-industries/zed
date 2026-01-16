@@ -23,6 +23,10 @@ impl OpenedBuffers {
     pub fn get(&self, path: &str) -> Option<&Entity<Buffer>> {
         self.0.get(path)
     }
+
+    pub fn buffers(&self) -> impl Iterator<Item = &Entity<Buffer>> {
+        self.0.values()
+    }
 }
 
 #[must_use]

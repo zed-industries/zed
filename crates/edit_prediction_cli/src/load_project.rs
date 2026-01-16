@@ -12,8 +12,7 @@ use edit_prediction::{
 use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity};
 use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
-use project::Project;
-use project::buffer_store::BufferStoreEvent;
+use project::{Project, ProjectPath, buffer_store::BufferStoreEvent};
 use std::{fs, path::PathBuf, sync::Arc};
 
 pub async fn run_load_project(
@@ -32,16 +31,31 @@ pub async fn run_load_project(
     progress.set_substatus("applying edit history");
     let open_buffers = apply_edit_history(example, &project, &mut cx).await?;
 
+    let ep_store = cx
+        .update(|cx| EditPredictionStore::try_global(cx))
+        .context("EditPredictionStore not initialized")?;
+
+    let recent_paths: Vec<ProjectPath> = open_buffers
+        .buffers()
+        .filter_map(|buffer| {
+            buffer.read_with(&cx, |buffer, cx| {
+                buffer
+                    .file()
+                    .map(|file| ProjectPath::from_file(file.as_ref(), cx))
+            })
+        })
+        .collect();
+
+    ep_store.update(&mut cx, |store, cx| {
+        store.set_recent_paths_for_project(&project, recent_paths, cx);
+    });
+
     progress.set_substatus("resolving cursor");
     let (buffer, cursor_position) =
         cursor_position(example, &project, &open_buffers, &mut cx).await?;
     buffer
         .read_with(&cx, |buffer, _| buffer.parsing_idle())
         .await;
-
-    let ep_store = cx
-        .update(|cx| EditPredictionStore::try_global(cx))
-        .context("EditPredictionStore not initialized")?;
 
     let edit_history = ep_store.update(&mut cx, |store, cx| {
         store
