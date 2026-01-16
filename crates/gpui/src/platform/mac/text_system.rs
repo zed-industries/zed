@@ -367,16 +367,10 @@ impl MacTextSystemState {
             )?
             .into();
 
-        // Adjust to avoid glyph clippe
-        // Ref: https://github.com/Aloxaf/silicon/blob/adf96cb7a79f90f038c2ef6a219e4579b3d445fd/src/font.rs#L371
-        let metrics = font.metrics();
-        let glyph_width = (font.advance(params.font_id.0 as u32).unwrap().x()
-            / metrics.units_per_em as f32
-            * params.font_size.0)
-            .ceil() as i32;
-        let glyph_width = DevicePixels(glyph_width);
-        bounds.origin.x -= glyph_width;
-        bounds.size.width += glyph_width;
+        // Add 3% of font size as padding, clamped between 1 and 5 pixels.
+        let pad = ((params.font_size.0 * 0.03 * params.scale_factor).ceil() as i32).clamp(1, 5);
+        bounds.origin.x -= DevicePixels(pad);
+        bounds.size.width += DevicePixels(pad);
 
         Ok(bounds)
     }
