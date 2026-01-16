@@ -609,9 +609,7 @@ impl WorktreeStore {
                 scanning_enabled,
                 cx,
             )
-            .await;
-
-            let worktree = worktree?;
+            .await?;
 
             this.update(cx, |this, cx| this.add(&worktree, cx))?;
 

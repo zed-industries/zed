@@ -840,7 +840,7 @@ impl Item for ProjectDiff {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -1446,20 +1446,104 @@ impl Render for ProjectDiffToolbar {
             // "Send Review to Agent" button (only shown when there are review comments)
             .when(review_count > 0, |el| {
                 el.child(vertical_divider()).child(
-                    Button::new(
-                        "send-review",
-                        format!("Send Review to Agent ({})", review_count),
-                    )
-                    .icon(IconName::ZedAssistant)
-                    .icon_position(IconPosition::Start)
-                    .tooltip(Tooltip::for_action_title_in(
-                        "Send all review comments to the Agent panel",
-                        &SendReviewToAgent,
-                        &focus_handle,
-                    ))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.dispatch_action(&SendReviewToAgent, window, cx)
-                    })),
+                    render_send_review_to_agent_button(review_count, &focus_handle).on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.dispatch_action(&SendReviewToAgent, window, cx)
+                        }),
+                    ),
+                )
+            })
+    }
+}
+
+fn render_send_review_to_agent_button(review_count: usize, focus_handle: &FocusHandle) -> Button {
+    Button::new(
+        "send-review",
+        format!("Send Review to Agent ({})", review_count),
+    )
+    .icon(IconName::ZedAssistant)
+    .icon_position(IconPosition::Start)
+    .tooltip(Tooltip::for_action_title_in(
+        "Send all review comments to the Agent panel",
+        &SendReviewToAgent,
+        focus_handle,
+    ))
+}
+
+pub struct BranchDiffToolbar {
+    project_diff: Option<WeakEntity<ProjectDiff>>,
+}
+
+impl BranchDiffToolbar {
+    pub fn new(_: &mut Context<Self>) -> Self {
+        Self { project_diff: None }
+    }
+
+    fn project_diff(&self, _: &App) -> Option<Entity<ProjectDiff>> {
+        self.project_diff.as_ref()?.upgrade()
+    }
+
+    fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(project_diff) = self.project_diff(cx) {
+            project_diff.focus_handle(cx).focus(window, cx);
+        }
+        let action = action.boxed_clone();
+        cx.defer(move |cx| {
+            cx.dispatch_action(action.as_ref());
+        })
+    }
+}
+
+impl EventEmitter<ToolbarItemEvent> for BranchDiffToolbar {}
+
+impl ToolbarItemView for BranchDiffToolbar {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ToolbarItemLocation {
+        self.project_diff = active_pane_item
+            .and_then(|item| item.act_as::<ProjectDiff>(cx))
+            .filter(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Merge { .. }))
+            .map(|entity| entity.downgrade());
+        if self.project_diff.is_some() {
+            ToolbarItemLocation::PrimaryRight
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+
+    fn pane_focus_update(
+        &mut self,
+        _pane_focused: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+}
+
+impl Render for BranchDiffToolbar {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(project_diff) = self.project_diff(cx) else {
+            return div();
+        };
+        let focus_handle = project_diff.focus_handle(cx);
+        let review_count = project_diff.read(cx).total_review_comment_count();
+
+        h_group_xl()
+            .my_neg_1()
+            .py_1()
+            .items_center()
+            .flex_wrap()
+            .justify_end()
+            .when(review_count > 0, |el| {
+                el.child(
+                    render_send_review_to_agent_button(review_count, &focus_handle).on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.dispatch_action(&SendReviewToAgent, window, cx)
+                        }),
+                    ),
                 )
             })
     }

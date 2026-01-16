@@ -1177,6 +1177,7 @@ impl PlanEntry {
 pub struct TokenUsage {
     pub max_tokens: u64,
     pub used_tokens: u64,
+    pub input_tokens: u64,
     pub output_tokens: u64,
 }
 

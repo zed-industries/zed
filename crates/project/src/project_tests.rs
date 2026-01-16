@@ -4152,7 +4152,7 @@ async fn test_save_file_spawns_language_server(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |this, cx| this.create_buffer(false, cx))
+        .update(cx, |this, cx| this.create_buffer(None, false, cx))
         .unwrap()
         .await;
     project.update(cx, |this, cx| {

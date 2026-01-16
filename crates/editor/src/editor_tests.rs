@@ -954,7 +954,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             invalid_anchor.text_anchor.buffer_id = BufferId::new(999).ok();
             let invalid_point = Point::new(9999, 0);
             editor.navigate(
-                Box::new(NavigationData {
+                Arc::new(NavigationData {
                     cursor_anchor: invalid_anchor,
                     cursor_position: invalid_point,
                     scroll_anchor: ScrollAnchor {
@@ -8364,6 +8364,84 @@ async fn test_add_selection_above_below(cx: &mut TestAppContext) {
            n«ˇlm»o
            "#
     ));
+
+    // Assert that the oldest selection's goal column is used when adding more
+    // selections, not the most recently added selection's actual column.
+    cx.set_state(indoc! {"
+        foo bar bazˇ
+        foo
+        foo bar
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        foo bar bazˇ
+        fooˇ
+        foo bar
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        foo bar bazˇ
+        fooˇ
+        foo barˇ
+    "});
+
+    cx.set_state(indoc! {"
+        foo bar baz
+        foo
+        foo barˇ
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        foo bar baz
+        fooˇ
+        foo barˇ
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        foo barˇ baz
+        fooˇ
+        foo barˇ
+    "});
 }
 
 #[gpui::test]
@@ -18484,7 +18562,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     let _fake_server = fake_servers.next().await.unwrap();
     update_test_language_settings(cx, |language_settings| {
         language_settings.languages.0.insert(
-            language_name.clone().0,
+            language_name.clone().0.to_string(),
             LanguageSettingsContent {
                 tab_size: NonZeroU32::new(8),
                 ..Default::default()

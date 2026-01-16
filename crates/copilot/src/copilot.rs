@@ -1021,7 +1021,7 @@ impl Copilot {
                     }
                     inline = inline_request => {
                         let completions = inline.into_response().ok().map(convert_inline).unwrap_or_default();
-                        if !completions.is_empty() && nes_result.is_some() {
+                        if !completions.is_empty() {
                             return Ok(completions);
                         }
                         inline_result = Some(completions);

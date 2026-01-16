@@ -906,198 +906,6 @@ async fn test_tool_hallucination(cx: &mut TestAppContext) {
     assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Failed));
 }
 
-#[gpui::test]
-async fn test_resume_after_tool_use_limit(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-
-    let events = thread
-        .update(cx, |thread, cx| {
-            thread.add_tool(EchoTool);
-            thread.send(UserMessageId::new(), ["abc"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-    let tool_use = LanguageModelToolUse {
-        id: "tool_id_1".into(),
-        name: EchoTool::name().into(),
-        raw_input: "{}".into(),
-        input: serde_json::to_value(&EchoToolInput { text: "def".into() }).unwrap(),
-        is_input_complete: true,
-        thought_signature: None,
-    };
-    fake_model
-        .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
-    fake_model.end_last_completion_stream();
-
-    cx.run_until_parked();
-    let completion = fake_model.pending_completions().pop().unwrap();
-    let tool_result = LanguageModelToolResult {
-        tool_use_id: "tool_id_1".into(),
-        tool_name: EchoTool::name().into(),
-        is_error: false,
-        content: "def".into(),
-        output: Some("def".into()),
-    };
-    assert_eq!(
-        completion.messages[1..],
-        vec![
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec!["abc".into()],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::Assistant,
-                content: vec![MessageContent::ToolUse(tool_use.clone())],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::ToolResult(tool_result.clone())],
-                cache: true,
-                reasoning_details: None,
-            },
-        ]
-    );
-
-    // Simulate reaching tool use limit.
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUseLimitReached);
-    fake_model.end_last_completion_stream();
-    let last_event = events.collect::<Vec<_>>().await.pop().unwrap();
-    assert!(
-        last_event
-            .unwrap_err()
-            .is::<language_model::ToolUseLimitReachedError>()
-    );
-
-    let events = thread.update(cx, |thread, cx| thread.resume(cx)).unwrap();
-    cx.run_until_parked();
-    let completion = fake_model.pending_completions().pop().unwrap();
-    assert_eq!(
-        completion.messages[1..],
-        vec![
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec!["abc".into()],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::Assistant,
-                content: vec![MessageContent::ToolUse(tool_use)],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::ToolResult(tool_result)],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec!["Continue where you left off".into()],
-                cache: true,
-                reasoning_details: None,
-            }
-        ]
-    );
-
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Text("Done".into()));
-    fake_model.end_last_completion_stream();
-    events.collect::<Vec<_>>().await;
-    thread.read_with(cx, |thread, _cx| {
-        assert_eq!(
-            thread.last_message().unwrap().to_markdown(),
-            indoc! {"
-                ## Assistant
-
-                Done
-            "}
-        )
-    });
-}
-
-#[gpui::test]
-async fn test_send_after_tool_use_limit(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-
-    let events = thread
-        .update(cx, |thread, cx| {
-            thread.add_tool(EchoTool);
-            thread.send(UserMessageId::new(), ["abc"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    let tool_use = LanguageModelToolUse {
-        id: "tool_id_1".into(),
-        name: EchoTool::name().into(),
-        raw_input: "{}".into(),
-        input: serde_json::to_value(&EchoToolInput { text: "def".into() }).unwrap(),
-        is_input_complete: true,
-        thought_signature: None,
-    };
-    let tool_result = LanguageModelToolResult {
-        tool_use_id: "tool_id_1".into(),
-        tool_name: EchoTool::name().into(),
-        is_error: false,
-        content: "def".into(),
-        output: Some("def".into()),
-    };
-    fake_model
-        .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUseLimitReached);
-    fake_model.end_last_completion_stream();
-    let last_event = events.collect::<Vec<_>>().await.pop().unwrap();
-    assert!(
-        last_event
-            .unwrap_err()
-            .is::<language_model::ToolUseLimitReachedError>()
-    );
-
-    thread
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), vec!["ghi"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-    let completion = fake_model.pending_completions().pop().unwrap();
-    assert_eq!(
-        completion.messages[1..],
-        vec![
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec!["abc".into()],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::Assistant,
-                content: vec![MessageContent::ToolUse(tool_use)],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::ToolResult(tool_result)],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec!["ghi".into()],
-                cache: true,
-                reasoning_details: None,
-            }
-        ]
-    );
-}
-
 async fn expect_tool_call(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -> acp::ToolCall {
     let event = events
         .next()
@@ -2517,6 +2325,7 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
             Some(acp_thread::TokenUsage {
                 used_tokens: 32_000 + 16_000,
                 max_tokens: 1_000_000,
+                input_tokens: 32_000,
                 output_tokens: 16_000,
             })
         );
@@ -2577,6 +2386,7 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
             Some(acp_thread::TokenUsage {
                 used_tokens: 40_000 + 20_000,
                 max_tokens: 1_000_000,
+                input_tokens: 40_000,
                 output_tokens: 20_000,
             })
         );
@@ -2626,6 +2436,7 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
                 Some(acp_thread::TokenUsage {
                     used_tokens: 32_000 + 16_000,
                     max_tokens: 1_000_000,
+                    input_tokens: 32_000,
                     output_tokens: 16_000,
                 })
             );
@@ -2681,6 +2492,7 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
             Some(acp_thread::TokenUsage {
                 used_tokens: 40_000 + 20_000,
                 max_tokens: 1_000_000,
+                input_tokens: 40_000,
                 output_tokens: 20_000,
             })
         );
@@ -3047,7 +2859,6 @@ async fn test_send_no_retry_on_success(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
@@ -3091,7 +2902,6 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
@@ -3156,7 +2966,6 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
 
     let events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.add_tool(EchoTool);
             thread.send(UserMessageId::new(), ["Call the echo tool!"], cx)
         })
@@ -3237,7 +3046,6 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
@@ -5982,4 +5790,96 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
         !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
         "expected no authorization request for allowed docs.rs URL"
     );
+}
+
+#[gpui::test]
+async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    // Add a tool so we can simulate tool calls
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(EchoTool);
+    });
+
+    // Start a turn by sending a message
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Use the echo tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Simulate the model making a tool call
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "echo".into(),
+            raw_input: r#"{"text": "hello"}"#.into(),
+            input: json!({"text": "hello"}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::ToolUse));
+
+    // Queue a message before ending the stream
+    thread.update(cx, |thread, _cx| {
+        thread.queue_message(
+            vec![acp::ContentBlock::Text(acp::TextContent::new(
+                "This is my queued message".to_string(),
+            ))],
+            vec![],
+        );
+    });
+
+    // Now end the stream - tool will run, and the boundary check should see the queue
+    fake_model.end_last_completion_stream();
+
+    // Collect all events until the turn stops
+    let all_events = collect_events_until_stop(&mut events, cx).await;
+
+    // Verify we received the tool call event
+    let tool_call_ids: Vec<_> = all_events
+        .iter()
+        .filter_map(|e| match e {
+            Ok(ThreadEvent::ToolCall(tc)) => Some(tc.tool_call_id.to_string()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        tool_call_ids,
+        vec!["tool_1"],
+        "Should have received a tool call event for our echo tool"
+    );
+
+    // The turn should have stopped with EndTurn
+    let stop_reasons = stop_events(all_events);
+    assert_eq!(
+        stop_reasons,
+        vec![acp::StopReason::EndTurn],
+        "Turn should have ended after tool completion due to queued message"
+    );
+
+    // Verify the queued message is still there
+    thread.update(cx, |thread, _cx| {
+        let queued = thread.queued_messages();
+        assert_eq!(queued.len(), 1, "Should still have one queued message");
+        assert!(matches!(
+            &queued[0].content[0],
+            acp::ContentBlock::Text(t) if t.text == "This is my queued message"
+        ));
+    });
+
+    // Thread should be idle now
+    thread.update(cx, |thread, _cx| {
+        assert!(
+            thread.is_turn_complete(),
+            "Thread should not be running after turn ends"
+        );
+    });
 }

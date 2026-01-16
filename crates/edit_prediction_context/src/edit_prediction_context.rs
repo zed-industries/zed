@@ -20,12 +20,9 @@ use util::{RangeExt as _, ResultExt};
 mod assemble_excerpts;
 #[cfg(test)]
 mod edit_prediction_context_tests;
-mod excerpt;
 #[cfg(test)]
 mod fake_definition_lsp;
 
-pub use cloud_llm_client::predict_edits_v3::Line;
-pub use excerpt::{EditPredictionExcerpt, EditPredictionExcerptOptions, EditPredictionExcerptText};
 pub use zeta_prompt::{RelatedExcerpt, RelatedFile};
 
 const IDENTIFIER_LINE_COUNT: u32 = 3;
