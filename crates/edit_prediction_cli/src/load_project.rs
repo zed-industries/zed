@@ -2,7 +2,7 @@ use crate::{
     example::{Example, ExamplePromptInputs, ExampleState},
     git,
     headless::EpAppState,
-    progress::{InfoStyle, Progress, Step, StepProgress},
+    progress::{ExampleProgress, InfoStyle, Step, StepProgress},
 };
 use anyhow::{Context as _, Result};
 use edit_prediction::{
@@ -18,13 +18,14 @@ use std::{fs, path::PathBuf, sync::Arc};
 pub async fn run_load_project(
     example: &mut Example,
     app_state: Arc<EpAppState>,
+    example_progress: &ExampleProgress,
     mut cx: AsyncApp,
 ) -> Result<()> {
     if example.state.is_some() {
         return Ok(());
     }
 
-    let progress = Progress::global().start(Step::LoadProject, &example.spec.name);
+    let progress = example_progress.start(Step::LoadProject);
 
     let project = setup_project(example, &app_state, &progress, &mut cx).await?;
 

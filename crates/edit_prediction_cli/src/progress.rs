@@ -22,6 +22,7 @@ struct ProgressInner {
     max_example_name_len: usize,
     status_lines_displayed: usize,
     total_examples: usize,
+    completed_examples: usize,
     failed_examples: usize,
     last_line_is_logging: bool,
     ticker: Option<std::thread::JoinHandle<()>>,
@@ -107,6 +108,7 @@ impl Progress {
                         max_example_name_len: 0,
                         status_lines_displayed: 0,
                         total_examples: 0,
+                        completed_examples: 0,
                         failed_examples: 0,
                         last_line_is_logging: false,
                         ticker: None,
@@ -117,6 +119,18 @@ impl Progress {
                 progress
             })
             .clone()
+    }
+
+    pub fn start_group(self: &Arc<Self>, example_name: &str) -> ExampleProgress {
+        ExampleProgress {
+            progress: self.clone(),
+            example_name: example_name.to_string(),
+        }
+    }
+
+    fn increment_completed(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.completed_examples += 1;
     }
 
     pub fn set_total_examples(&self, total: usize) {
@@ -317,7 +331,7 @@ impl Progress {
         let dim = "\x1b[2m";
 
         // Build the done/in-progress/total label
-        let done_count = inner.completed.len();
+        let done_count = inner.completed_examples;
         let in_progress_count = inner.in_progress.len();
         let failed_count = inner.failed_examples;
 
@@ -424,6 +438,23 @@ impl Progress {
                 failed_jsonl_path.display()
             );
         }
+    }
+}
+
+pub struct ExampleProgress {
+    progress: Arc<Progress>,
+    example_name: String,
+}
+
+impl ExampleProgress {
+    pub fn start(&self, step: Step) -> StepProgress {
+        self.progress.start(step, &self.example_name)
+    }
+}
+
+impl Drop for ExampleProgress {
+    fn drop(&mut self) {
+        self.progress.increment_completed();
     }
 }
 

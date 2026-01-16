@@ -548,6 +548,9 @@ fn main() {
                                 break;
                             };
                             for mut example in repo_examples {
+                                let example_progress =
+                                    Progress::global().start_group(&example.spec.name);
+
                                 let result = async {
                                     match &command {
                                         Command::ParseExample => {}
@@ -555,6 +558,7 @@ fn main() {
                                             run_load_project(
                                                 &mut example,
                                                 app_state.clone(),
+                                                &example_progress,
                                                 cx.clone(),
                                             )
                                             .await?;
@@ -563,6 +567,7 @@ fn main() {
                                             run_context_retrieval(
                                                 &mut example,
                                                 app_state.clone(),
+                                                &example_progress,
                                                 cx.clone(),
                                             )
                                             .await?;
@@ -572,6 +577,7 @@ fn main() {
                                                 &mut example,
                                                 args,
                                                 app_state.clone(),
+                                                &example_progress,
                                                 cx.clone(),
                                             )
                                             .await?;
@@ -581,6 +587,7 @@ fn main() {
                                                 &mut example,
                                                 args,
                                                 app_state.clone(),
+                                                &example_progress,
                                                 cx.clone(),
                                             )
                                             .await?;
@@ -593,6 +600,7 @@ fn main() {
                                                 &mut example,
                                                 &args,
                                                 app_state.clone(),
+                                                &example_progress,
                                                 cx.clone(),
                                             )
                                             .await?;

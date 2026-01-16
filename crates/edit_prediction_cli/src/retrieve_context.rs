@@ -2,7 +2,7 @@ use crate::{
     example::Example,
     headless::EpAppState,
     load_project::run_load_project,
-    progress::{InfoStyle, Progress, Step, StepProgress},
+    progress::{ExampleProgress, InfoStyle, Step, StepProgress},
 };
 use anyhow::Context as _;
 use collections::HashSet;
@@ -17,6 +17,7 @@ use std::time::Duration;
 pub async fn run_context_retrieval(
     example: &mut Example,
     app_state: Arc<EpAppState>,
+    example_progress: &ExampleProgress,
     mut cx: AsyncApp,
 ) -> anyhow::Result<()> {
     if example
@@ -27,11 +28,9 @@ pub async fn run_context_retrieval(
         return Ok(());
     }
 
-    run_load_project(example, app_state.clone(), cx.clone()).await?;
+    run_load_project(example, app_state.clone(), example_progress, cx.clone()).await?;
 
-    let step_progress: Arc<StepProgress> = Progress::global()
-        .start(Step::Context, &example.spec.name)
-        .into();
+    let step_progress: Arc<StepProgress> = example_progress.start(Step::Context).into();
 
     let state = example.state.as_ref().unwrap();
     let project = state.project.clone();
