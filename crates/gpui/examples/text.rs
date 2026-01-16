@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
@@ -97,7 +98,7 @@ struct Specimen {
 
 impl Specimen {
     pub fn new(id: usize) -> Self {
-        let string = SharedString::new_static("The quick brown fox jumps over the lazy dog");
+        let string = SharedString::new_static("// The quick brown fox jumps over the lazy dog");
         let id_string = format!("specimen-{}", id);
         let id = ElementId::Name(id_string.into());
         Self {
@@ -262,6 +263,7 @@ impl Render for TextExample {
         let step_up_6 = step_up_5 * type_scale;
 
         div()
+            .font_family(".ZedMono")
             .size_full()
             .child(
                 div()
@@ -303,6 +305,15 @@ fn main() {
             name: "GPUI Typography".into(),
             items: vec![],
         }]);
+
+        let fonts = vec![include_bytes!(
+            "../../../assets/fonts/lilex/Lilex-Regular.ttf"
+        )]
+        .iter()
+        .map(|b| Cow::Borrowed(&b[..]))
+        .collect();
+
+        _ = cx.text_system().add_fonts(fonts);
 
         cx.init_colors();
         cx.set_global(GlobalTextContext(Arc::new(TextContext::default())));
