@@ -93,6 +93,8 @@ pub enum Model {
     FivePointOne,
     #[serde(rename = "gpt-5.2")]
     FivePointTwo,
+    #[serde(rename = "gpt-5.2-codex")]
+    FivePointTwoCodex,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -137,6 +139,7 @@ impl Model {
             "gpt-5-nano" => Ok(Self::FiveNano),
             "gpt-5.1" => Ok(Self::FivePointOne),
             "gpt-5.2" => Ok(Self::FivePointTwo),
+            "gpt-5.2-codex" => Ok(Self::FivePointTwoCodex),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -161,6 +164,7 @@ impl Model {
             Self::FiveNano => "gpt-5-nano",
             Self::FivePointOne => "gpt-5.1",
             Self::FivePointTwo => "gpt-5.2",
+            Self::FivePointTwoCodex => "gpt-5.2-codex",
             Self::Custom { name, .. } => name,
         }
     }
@@ -185,6 +189,7 @@ impl Model {
             Self::FiveNano => "gpt-5-nano",
             Self::FivePointOne => "gpt-5.1",
             Self::FivePointTwo => "gpt-5.2",
+            Self::FivePointTwoCodex => "gpt-5.2-codex",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -211,6 +216,7 @@ impl Model {
             Self::FiveNano => 272_000,
             Self::FivePointOne => 400_000,
             Self::FivePointTwo => 400_000,
+            Self::FivePointTwoCodex => 400_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -238,6 +244,7 @@ impl Model {
             Self::FiveNano => Some(128_000),
             Self::FivePointOne => Some(128_000),
             Self::FivePointTwo => Some(128_000),
+            Self::FivePointTwoCodex => Some(128_000),
         }
     }
 
@@ -256,7 +263,7 @@ impl Model {
                 supports_chat_completions,
                 ..
             } => *supports_chat_completions,
-            Self::FiveCodex => false,
+            Self::FiveCodex | Self::FivePointTwoCodex => false,
             _ => true,
         }
     }
@@ -279,6 +286,7 @@ impl Model {
             | Self::FiveMini
             | Self::FivePointOne
             | Self::FivePointTwo
+            | Self::FivePointTwoCodex
             | Self::FiveNano => true,
             Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini | Model::Custom { .. } => false,
         }
