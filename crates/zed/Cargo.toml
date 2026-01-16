@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.220.0"
+version = "0.221.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -41,6 +41,7 @@ visual-tests = [
     "image_viewer/test-support",
     "clock/test-support",
     "acp_thread/test-support",
+    "action_log/test-support",
     "agent_ui/test-support",
     "db/test-support",
     "agent/test-support",
@@ -87,6 +88,8 @@ command_palette.workspace = true
 component.workspace = true
 component_preview.workspace = true
 copilot.workspace = true
+copilot_chat.workspace = true
+copilot_ui.workspace = true
 crashes.workspace = true
 dap_adapters.workspace = true
 db.workspace = true

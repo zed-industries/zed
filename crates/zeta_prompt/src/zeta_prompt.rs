@@ -18,12 +18,25 @@ pub struct ZetaPromptInput {
     pub related_files: Vec<RelatedFile>,
 }
 
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, EnumIter, IntoStaticStr)]
+#[derive(
+    Default,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    EnumIter,
+    IntoStaticStr,
+    Serialize,
+    Deserialize,
+)]
 #[allow(non_camel_case_types)]
 pub enum ZetaVersion {
-    V0112_MiddleAtEnd,
+    V0112MiddleAtEnd,
+    V0113Ordered,
     #[default]
-    V0113_Ordered,
+    V0114180EditableRegion,
 }
 
 impl std::fmt::Display for ZetaVersion {
@@ -54,15 +67,11 @@ impl ZetaVersion {
         Ok(result)
     }
 
-    fn options_as_string() -> String {
+    pub fn options_as_string() -> String {
         ZetaVersion::iter()
             .map(|version| format!("- {}\n", <&'static str>::from(version)))
             .collect::<Vec<_>>()
             .concat()
-    }
-
-    pub fn default_as_string() -> String {
-        <&'static str>::from(Self::default()).to_string()
     }
 }
 
@@ -125,10 +134,10 @@ pub fn format_zeta_prompt(input: &ZetaPromptInput, version: ZetaVersion) -> Stri
     write_edit_history_section(&mut prompt, input);
 
     match version {
-        ZetaVersion::V0112_MiddleAtEnd => {
+        ZetaVersion::V0112MiddleAtEnd => {
             v0112_middle_at_end::write_cursor_excerpt_section(&mut prompt, input);
         }
-        ZetaVersion::V0113_Ordered => {
+        ZetaVersion::V0113Ordered | ZetaVersion::V0114180EditableRegion => {
             v0113_ordered::write_cursor_excerpt_section(&mut prompt, input)
         }
     }

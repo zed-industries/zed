@@ -21,7 +21,7 @@ use smallvec::SmallVec;
 use std::{borrow::Cow, sync::Arc};
 use swash::{
     scale::{Render, ScaleContext, Source, StrikeWith},
-    zeno::{Format, Transform, Vector},
+    zeno::{Format, Vector},
 };
 
 pub(crate) struct CosmicTextSystem(RwLock<CosmicTextSystemState>);
@@ -334,7 +334,7 @@ impl CosmicTextSystemState {
         let mut scaler = self
             .swash_scale_context
             .builder(font_ref)
-            .size(pixel_size)
+            .size(pixel_size * params.scale_factor)
             .hint(true)
             .build();
 
@@ -349,15 +349,6 @@ impl CosmicTextSystemState {
         };
 
         let mut renderer = Render::new(sources);
-        renderer.transform(Some(Transform {
-            xx: params.scale_factor,
-            xy: 0.0,
-            yx: 0.0,
-            yy: params.scale_factor,
-            x: 0.0,
-            y: 0.0,
-        }));
-
         if params.subpixel_rendering {
             // There seems to be a bug in Swash where the B and R values are swapped.
             renderer

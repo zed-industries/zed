@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use client::{Client, UserStore, zed_urls};
-use cloud_llm_client::{Plan, PlanV1, PlanV2};
+use cloud_llm_client::{Plan, PlanV2};
 use gpui::{AnyElement, App, Entity, IntoElement, RenderOnce, Window};
 use ui::{CommonAnimationExt, Divider, Vector, VectorName, prelude::*};
 
@@ -49,8 +49,6 @@ impl AiUpsellCard {
 
 impl RenderOnce for AiUpsellCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let is_v2_plan = self.user_plan.map_or(true, |plan| plan.is_v2());
-
         let pro_section = v_flex()
             .flex_grow()
             .w_full()
@@ -66,7 +64,7 @@ impl RenderOnce for AiUpsellCard {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(PlanDefinitions.pro_plan(is_v2_plan, false));
+            .child(PlanDefinitions.pro_plan());
 
         let free_section = v_flex()
             .flex_grow()
@@ -83,7 +81,7 @@ impl RenderOnce for AiUpsellCard {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(PlanDefinitions.free_plan(is_v2_plan));
+            .child(PlanDefinitions.free_plan());
 
         let grid_bg = h_flex()
             .absolute()
@@ -168,7 +166,7 @@ impl RenderOnce for AiUpsellCard {
 
         match self.sign_in_status {
             SignInStatus::SignedIn => match self.user_plan {
-                None | Some(Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree)) => card
+                None | Some(Plan::V2(PlanV2::ZedFree)) => card
                     .child(Label::new("Try Zed AI").size(LabelSize::Large))
                     .map(|this| {
                         if self.account_too_young {
@@ -187,7 +185,7 @@ impl RenderOnce for AiUpsellCard {
                                             )
                                             .child(Divider::horizontal()),
                                     )
-                                    .child(PlanDefinitions.pro_plan(is_v2_plan, true))
+                                    .child(PlanDefinitions.pro_plan())
                                     .child(
                                         Button::new("pro", "Get Started")
                                             .full_width()
@@ -234,17 +232,16 @@ impl RenderOnce for AiUpsellCard {
                             )
                         }
                     }),
-                Some(plan @ (Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial))) => {
-                    card.child(pro_trial_stamp)
-                        .child(Label::new("You're in the Zed Pro Trial").size(LabelSize::Large))
-                        .child(
-                            Label::new("Here's what you get for the next 14 days:")
-                                .color(Color::Muted)
-                                .mb_2(),
-                        )
-                        .child(PlanDefinitions.pro_trial(plan.is_v2(), false))
-                }
-                Some(plan @ (Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro))) => card
+                Some(Plan::V2(PlanV2::ZedProTrial)) => card
+                    .child(pro_trial_stamp)
+                    .child(Label::new("You're in the Zed Pro Trial").size(LabelSize::Large))
+                    .child(
+                        Label::new("Here's what you get for the next 14 days:")
+                            .color(Color::Muted)
+                            .mb_2(),
+                    )
+                    .child(PlanDefinitions.pro_trial(false)),
+                Some(Plan::V2(PlanV2::ZedPro)) => card
                     .child(certified_user_stamp)
                     .child(Label::new("You're in the Zed Pro plan").size(LabelSize::Large))
                     .child(
@@ -252,7 +249,7 @@ impl RenderOnce for AiUpsellCard {
                             .color(Color::Muted)
                             .mb_2(),
                     )
-                    .child(PlanDefinitions.pro_plan(plan.is_v2(), false)),
+                    .child(PlanDefinitions.pro_plan()),
             },
             // Signed Out State
             _ => card

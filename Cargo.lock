@@ -217,6 +217,7 @@ dependencies = [
  "tree-sitter-rust",
  "ui",
  "unindent",
+ "url",
  "util",
  "uuid",
  "watch",
@@ -268,6 +269,7 @@ dependencies = [
  "agent-client-protocol",
  "anyhow",
  "async-trait",
+ "chrono",
  "client",
  "collections",
  "env_logger 0.11.8",
@@ -306,7 +308,6 @@ version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
- "cloud_llm_client",
  "collections",
  "convert_case 0.8.0",
  "fs",
@@ -391,6 +392,7 @@ dependencies = [
  "prompt_store",
  "proto",
  "rand 0.9.2",
+ "recent_projects",
  "release_channel",
  "reqwest_client",
  "rope",
@@ -412,6 +414,7 @@ dependencies = [
  "theme",
  "time",
  "time_format",
+ "title_bar",
  "tree-sitter-md",
  "ui",
  "ui_input",
@@ -435,23 +438,16 @@ dependencies = [
  "agent_settings",
  "agent_ui",
  "anyhow",
- "chrono",
  "db",
- "editor",
  "feature_flags",
  "fs",
- "fuzzy",
  "gpui",
  "log",
- "menu",
  "project",
  "prompt_store",
  "serde",
  "serde_json",
  "settings",
- "text",
- "time",
- "time_format",
  "ui",
  "util",
  "workspace",
@@ -3138,13 +3134,13 @@ name = "cloud_llm_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
  "indoc",
  "pretty_assertions",
  "serde",
  "serde_json",
  "strum 0.27.2",
  "uuid",
+ "zeta_prompt",
 ]
 
 [[package]]
@@ -3252,7 +3248,7 @@ name = "codestral"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "edit_prediction_context",
+ "edit_prediction",
  "edit_prediction_types",
  "futures 0.3.31",
  "gpui",
@@ -3676,13 +3672,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-std",
- "chrono",
  "client",
  "clock",
  "collections",
  "command_palette_hooks",
+ "copilot_chat",
  "ctor",
- "dirs 4.0.0",
  "edit_prediction_types",
  "editor",
  "fs",
@@ -3690,11 +3685,9 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
- "itertools 0.14.0",
  "language",
  "log",
  "lsp",
- "menu",
  "node_runtime",
  "parking_lot",
  "paths",
@@ -3705,13 +3698,45 @@ dependencies = [
  "serde_json",
  "settings",
  "sum_tree",
- "task",
  "theme",
+ "util",
+ "zlog",
+]
+
+[[package]]
+name = "copilot_chat"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "collections",
+ "dirs 4.0.0",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "itertools 0.14.0",
+ "log",
+ "paths",
+ "serde",
+ "serde_json",
+ "settings",
+]
+
+[[package]]
+name = "copilot_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "copilot",
+ "gpui",
+ "log",
+ "lsp",
+ "menu",
+ "serde_json",
  "ui",
- "url",
  "util",
  "workspace",
- "zlog",
 ]
 
 [[package]]
@@ -5206,6 +5231,7 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "copilot",
+ "copilot_ui",
  "ctor",
  "db",
  "edit_prediction_context",
@@ -5266,6 +5292,7 @@ dependencies = [
  "dirs 4.0.0",
  "edit_prediction",
  "extension",
+ "flate2",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -5310,7 +5337,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clock",
- "cloud_llm_client",
  "collections",
  "env_logger 0.11.8",
  "futures 0.3.31",
@@ -5356,6 +5382,8 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "copilot",
+ "copilot_chat",
+ "copilot_ui",
  "edit_prediction",
  "edit_prediction_types",
  "editor",
@@ -6224,9 +6252,9 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 
 [[package]]
 name = "flate2"
-version = "1.1.4"
+version = "1.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc5a4e564e38c699f2880d3fda590bedc2e69f3f84cd48b457bd892ce61d0aa9"
+checksum = "b375d6465b98090a5f25b1c7703f3859783755aa9a80433b36e0379a3ec2f369"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
@@ -8655,10 +8683,12 @@ name = "json_schema_store"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "dap",
  "extension",
  "gpui",
  "language",
+ "parking_lot",
  "paths",
  "project",
  "schemars",
@@ -8967,6 +8997,8 @@ dependencies = [
  "component",
  "convert_case 0.8.0",
  "copilot",
+ "copilot_chat",
+ "copilot_ui",
  "credentials_provider",
  "deepseek",
  "editor",
@@ -9048,7 +9080,7 @@ dependencies = [
  "client",
  "collections",
  "command_palette_hooks",
- "copilot",
+ "edit_prediction",
  "editor",
  "futures 0.3.31",
  "gpui",
@@ -12617,6 +12649,7 @@ dependencies = [
  "git",
  "git_ui",
  "gpui",
+ "itertools 0.14.0",
  "language",
  "menu",
  "notifications",
@@ -14866,7 +14899,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more 0.99.20",
  "ec4rs",
  "fs",
  "futures 0.3.31",
@@ -14883,14 +14915,31 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_json_lenient",
- "serde_repr",
+ "settings_content",
  "settings_json",
  "settings_macros",
  "smallvec",
- "strum 0.27.2",
  "unindent",
  "util",
  "zlog",
+]
+
+[[package]]
+name = "settings_content"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "derive_more 0.99.20",
+ "log",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "settings_json",
+ "settings_macros",
+ "strum 0.27.2",
+ "util",
 ]
 
 [[package]]
@@ -14946,7 +14995,7 @@ dependencies = [
  "assets",
  "bm25",
  "client",
- "copilot",
+ "copilot_ui",
  "edit_prediction",
  "editor",
  "feature_flags",
@@ -20720,7 +20769,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.220.0"
+version = "0.221.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -20755,6 +20804,8 @@ dependencies = [
  "component",
  "component_preview",
  "copilot",
+ "copilot_chat",
+ "copilot_ui",
  "crashes",
  "dap",
  "dap_adapters",

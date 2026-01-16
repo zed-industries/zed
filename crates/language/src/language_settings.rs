@@ -9,6 +9,7 @@ use ec4rs::{
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers, SharedString};
 use itertools::{Either, Itertools};
+use settings::IntoGpui;
 
 pub use settings::{
     CompletionSettingsContent, DiffStrategy, EditPredictionProvider, EditPredictionsMode,
@@ -585,7 +586,9 @@ impl settings::Settings for AllLanguageSettings {
                     show_background: inlay_hints.show_background.unwrap(),
                     edit_debounce_ms: inlay_hints.edit_debounce_ms.unwrap(),
                     scroll_debounce_ms: inlay_hints.scroll_debounce_ms.unwrap(),
-                    toggle_on_modifiers_press: inlay_hints.toggle_on_modifiers_press,
+                    toggle_on_modifiers_press: inlay_hints
+                        .toggle_on_modifiers_press
+                        .map(|m| m.into_gpui()),
                 },
                 use_autoclose: settings.use_autoclose.unwrap(),
                 use_auto_surround: settings.use_auto_surround.unwrap(),
@@ -624,7 +627,7 @@ impl settings::Settings for AllLanguageSettings {
             let mut language_settings = all_languages.defaults.clone();
             settings::merge_from::MergeFrom::merge_from(&mut language_settings, settings);
             languages.insert(
-                LanguageName(language_name.clone()),
+                LanguageName(language_name.clone().into()),
                 load_from_content(language_settings),
             );
         }

@@ -1,6 +1,6 @@
 use crate::{
     RemoteArch, RemoteClientDelegate, RemoteOs, RemotePlatform,
-    remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
+    remote_client::{CommandTemplate, Interactive, RemoteConnection, RemoteConnectionOptions},
     transport::{parse_platform, parse_shell},
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -292,6 +292,7 @@ impl RemoteConnection for SshRemoteConnection {
         input_env: &HashMap<String, String>,
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
+        interactive: Interactive,
     ) -> Result<CommandTemplate> {
         let Self {
             ssh_path_style,
@@ -312,6 +313,7 @@ impl RemoteConnection for SshRemoteConnection {
             ssh_shell,
             *ssh_shell_kind,
             socket.ssh_args(),
+            interactive,
         )
     }
 
@@ -1487,6 +1489,7 @@ fn build_command(
     ssh_shell: &str,
     ssh_shell_kind: ShellKind,
     ssh_args: Vec<String>,
+    interactive: Interactive,
 ) -> Result<CommandTemplate> {
     use std::fmt::Write as _;
 
@@ -1556,7 +1559,12 @@ fn build_command(
     // -q suppresses the "Connection to ... closed." message that SSH prints when
     // the connection terminates with -t (pseudo-terminal allocation)
     args.push("-q".into());
-    args.push("-t".into());
+    match interactive {
+        // -t forces pseudo-TTY allocation (for interactive use)
+        Interactive::Yes => args.push("-t".into()),
+        // -T disables pseudo-TTY allocation (for non-interactive piped stdio)
+        Interactive::No => args.push("-T".into()),
+    }
     args.push(exec);
 
     Ok(CommandTemplate {
@@ -1577,6 +1585,26 @@ mod tests {
         let mut env = HashMap::default();
         env.insert("SSH_VAR".to_string(), "ssh-val".to_string());
 
+        // Test non-interactive command (interactive=false should use -T)
+        let command = build_command(
+            Some("remote_program".to_string()),
+            &["arg1".to_string(), "arg2".to_string()],
+            &input_env,
+            Some("~/work".to_string()),
+            None,
+            env.clone(),
+            PathStyle::Posix,
+            "/bin/bash",
+            ShellKind::Posix,
+            vec!["-o".to_string(), "ControlMaster=auto".to_string()],
+            Interactive::No,
+        )?;
+        assert_eq!(command.program, "ssh");
+        // Should contain -T for non-interactive
+        assert!(command.args.iter().any(|arg| arg == "-T"));
+        assert!(!command.args.iter().any(|arg| arg == "-t"));
+
+        // Test interactive command (interactive=true should use -t)
         let command = build_command(
             Some("remote_program".to_string()),
             &["arg1".to_string(), "arg2".to_string()],
@@ -1588,6 +1616,7 @@ mod tests {
             "/bin/fish",
             ShellKind::Fish,
             vec!["-p".to_string(), "2222".to_string()],
+            Interactive::Yes,
         )?;
 
         assert_eq!(command.program, "ssh");
@@ -1610,7 +1639,7 @@ mod tests {
 
         let command = build_command(
             None,
-            &["arg1".to_string(), "arg2".to_string()],
+            &[],
             &input_env,
             None,
             Some((1, "foo".to_owned(), 2)),
@@ -1619,6 +1648,7 @@ mod tests {
             "/bin/fish",
             ShellKind::Fish,
             vec!["-p".to_string(), "2222".to_string()],
+            Interactive::Yes,
         )?;
 
         assert_eq!(command.program, "ssh");

@@ -37,6 +37,22 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>>;
 
+    /// Whether this agent supports loading existing sessions.
+    fn supports_load_session(&self, _cx: &App) -> bool {
+        false
+    }
+
+    /// Load an existing session by ID.
+    fn load_session(
+        self: Rc<Self>,
+        _session: AgentSessionInfo,
+        _project: Entity<Project>,
+        _cwd: &Path,
+        _cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")))
+    }
+
     fn auth_methods(&self) -> &[acp::AuthMethod];
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
@@ -217,12 +233,16 @@ pub trait AgentSessionList {
         cx: &mut App,
     ) -> Task<Result<AgentSessionListResponse>>;
 
+    fn supports_delete(&self) -> bool {
+        false
+    }
+
     fn delete_session(&self, _session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<()>> {
-        Task::ready(Ok(()))
+        Task::ready(Err(anyhow::anyhow!("delete_session not supported")))
     }
 
     fn delete_sessions(&self, _cx: &mut App) -> Task<Result<()>> {
-        Task::ready(Ok(()))
+        Task::ready(Err(anyhow::anyhow!("delete_sessions not supported")))
     }
 
     fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {

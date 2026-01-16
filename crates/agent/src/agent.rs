@@ -3,6 +3,7 @@ mod edit_agent;
 mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
+mod pattern_extraction;
 mod templates;
 #[cfg(test)]
 mod tests;
@@ -14,6 +15,7 @@ mod tools;
 use context_server::ContextServerId;
 pub use db::*;
 pub use native_agent_server::NativeAgentServer;
+pub use pattern_extraction::*;
 pub use templates::*;
 pub use thread::*;
 pub use thread_store::*;
@@ -994,6 +996,7 @@ impl NativeAgentConnection {
                                 tool_call,
                                 options,
                                 response,
+                                context: _,
                             }) => {
                                 let outcome_task = acp_thread.update(cx, |thread, cx| {
                                     thread.request_tool_call_authorization(
@@ -1217,6 +1220,21 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         })
     }
 
+    fn supports_load_session(&self, _cx: &App) -> bool {
+        true
+    }
+
+    fn load_session(
+        self: Rc<Self>,
+        session: AgentSessionInfo,
+        _project: Entity<Project>,
+        _cwd: &Path,
+        cx: &mut App,
+    ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
+        self.0
+            .update(cx, |agent, cx| agent.open_thread(session.session_id, cx))
+    }
+
     fn auth_methods(&self) -> &[acp::AuthMethod] {
         &[] // No auth for in-process
     }
@@ -1426,6 +1444,10 @@ impl AgentSessionList for NativeAgentSessionList {
             .map(Self::to_session_info)
             .collect();
         Task::ready(Ok(AgentSessionListResponse::new(sessions)))
+    }
+
+    fn supports_delete(&self) -> bool {
+        true
     }
 
     fn delete_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {
