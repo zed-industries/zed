@@ -1,5 +1,5 @@
 use gpui::{App, actions};
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 pub mod markdown_elements;
 mod markdown_minifier;
@@ -34,7 +34,7 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, window, cx| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
             return;
         };

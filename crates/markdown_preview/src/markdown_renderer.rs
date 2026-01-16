@@ -19,7 +19,7 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{CopyButton, LinkPreview, ToggleState, prelude::*, tooltip_container};
-use workspace::{OpenOptions, OpenVisible, Workspace};
+use workspace::{OpenOptions, OpenVisible, MultiWorkspace};
 
 pub struct CheckboxClickedEvent {
     pub checked: bool,
@@ -40,7 +40,7 @@ type CheckboxClickedCallback = Arc<Box<dyn Fn(&CheckboxClickedEvent, &mut Window
 
 #[derive(Clone)]
 pub struct RenderContext {
-    workspace: Option<WeakEntity<Workspace>>,
+    workspace: Option<WeakEntity<MultiWorkspace>>,
     next_id: usize,
     buffer_font_family: SharedString,
     buffer_text_style: TextStyle,
@@ -62,7 +62,7 @@ pub struct RenderContext {
 
 impl RenderContext {
     pub fn new(
-        workspace: Option<WeakEntity<Workspace>>,
+        workspace: Option<WeakEntity<MultiWorkspace>>,
         window: &mut Window,
         cx: &mut App,
     ) -> RenderContext {
@@ -159,7 +159,7 @@ impl RenderContext {
 
 pub fn render_parsed_markdown(
     parsed: &ParsedMarkdown,
-    workspace: Option<WeakEntity<Workspace>>,
+    workspace: Option<WeakEntity<MultiWorkspace>>,
     window: &mut Window,
     cx: &mut App,
 ) -> Div {

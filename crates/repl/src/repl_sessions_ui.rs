@@ -7,7 +7,7 @@ use project::ProjectItem as _;
 use ui::{ButtonLike, ElevationIndex, KeyBinding, prelude::*};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
-use workspace::{Workspace, item::Item};
+use workspace::{MultiWorkspace, item::Item};
 
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
@@ -36,7 +36,7 @@ actions!(
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
-        |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
+        |workspace: &mut MultiWorkspace, _window, _cx: &mut Context<MultiWorkspace>| {
             workspace.register_action(|workspace, _: &Sessions, window, cx| {
                 let existing = workspace
                     .active_pane()
@@ -79,7 +79,7 @@ pub fn init(cx: &mut App) {
             }
 
             cx.defer_in(window, |editor, window, cx| {
-                let workspace = Workspace::for_window(window, cx);
+                let workspace = MultiWorkspace::for_window(window, cx);
                 let project = workspace.map(|workspace| workspace.read(cx).project().clone());
 
                 let is_local_project = project
@@ -149,7 +149,7 @@ pub struct ReplSessionsPage {
 }
 
 impl ReplSessionsPage {
-    pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Entity<Self> {
+    pub fn new(window: &mut Window, cx: &mut Context<MultiWorkspace>) -> Entity<Self> {
         cx.new(|cx| {
             let focus_handle = cx.focus_handle();
 

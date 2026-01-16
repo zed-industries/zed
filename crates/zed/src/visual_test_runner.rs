@@ -68,7 +68,7 @@ use {
         time::Duration,
     },
     watch,
-    workspace::{AppState, Workspace},
+    workspace::{AppState, MultiWorkspace},
 };
 
 // All macOS-specific constants grouped together
@@ -227,7 +227,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         )
     });
 
-    let workspace_window: WindowHandle<Workspace> = cx
+    let workspace_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -238,7 +238,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
                 },
                 |window, cx| {
                     cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                        MultiWorkspace::new(None, project.clone(), app_state.clone(), window, cx)
                     })
                 },
             )
@@ -906,7 +906,7 @@ fn run_breakpoint_hover_visual_tests(
     });
 
     // Open workspace window
-    let workspace_window: WindowHandle<Workspace> = cx
+    let workspace_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -917,7 +917,7 @@ fn run_breakpoint_hover_visual_tests(
                 },
                 |window, cx| {
                     cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                        MultiWorkspace::new(None, project.clone(), app_state.clone(), window, cx)
                     })
                 },
             )
@@ -1240,7 +1240,7 @@ import { AiPaneTabContext } from 'context';
         cx.update_flags(true, vec!["diff-review".to_string()]);
     });
 
-    let workspace_window: WindowHandle<Workspace> = cx
+    let workspace_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -1251,7 +1251,7 @@ import { AiPaneTabContext } from 'context';
                 },
                 |window, cx| {
                     cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                        MultiWorkspace::new(None, project.clone(), app_state.clone(), window, cx)
                     })
                 },
             )
@@ -1319,7 +1319,7 @@ import { AiPaneTabContext } from 'context';
     });
 
     // Create a new window with just a regular editor
-    let regular_window: WindowHandle<Workspace> = cx
+    let regular_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -1330,7 +1330,7 @@ import { AiPaneTabContext } from 'context';
                 },
                 |window, cx| {
                     cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                        MultiWorkspace::new(None, project.clone(), app_state.clone(), window, cx)
                     })
                 },
             )
@@ -1730,7 +1730,7 @@ fn run_subagent_visual_tests(
         size: window_size,
     };
 
-    let workspace_window: WindowHandle<Workspace> = cx
+    let workspace_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -1741,7 +1741,7 @@ fn run_subagent_visual_tests(
                 },
                 |window, cx| {
                     cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                        MultiWorkspace::new(None, project.clone(), app_state.clone(), window, cx)
                     })
                 },
             )
@@ -2130,7 +2130,7 @@ fn run_agent_thread_view_test(
         size: window_size,
     };
 
-    let workspace_window: WindowHandle<Workspace> = cx
+    let workspace_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -2141,7 +2141,7 @@ fn run_agent_thread_view_test(
                 },
                 |window, cx| {
                     cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                        MultiWorkspace::new(None, project.clone(), app_state.clone(), window, cx)
                     })
                 },
             )

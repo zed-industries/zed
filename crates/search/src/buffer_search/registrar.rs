@@ -1,5 +1,5 @@
 use gpui::{Action, Context, Div, Entity, InteractiveElement, Window, div};
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 use crate::BufferSearchBar;
 
@@ -59,7 +59,7 @@ impl<T: 'static> SearchActionsRegistrar for DivRegistrar<'_, '_, T> {
 }
 
 /// Register actions for an active pane.
-impl SearchActionsRegistrar for Workspace {
+impl SearchActionsRegistrar for MultiWorkspace {
     fn register_handler<A: Action>(&mut self, callback: impl ActionExecutor<A>) {
         self.register_action(move |workspace, action: &A, window, cx| {
             if workspace.has_active_modal(window, cx) && !workspace.hide_modal(window, cx) {

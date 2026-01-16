@@ -41,7 +41,7 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{
-    StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
+    StatusItemView, Toast, MultiWorkspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
 };
 use zed_actions::{OpenBrowser, OpenSettingsAt};
@@ -122,7 +122,7 @@ impl Render for EditPredictionButton {
                         IconButton::new("copilot-error", icon)
                             .icon_size(IconSize::Small)
                             .on_click(cx.listener(move |_, _, window, cx| {
-                                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                                if let Some(workspace) = window.root::<MultiWorkspace>().flatten() {
                                     workspace.update(cx, |workspace, cx| {
                                         workspace.show_toast(
                                             Toast::new(
@@ -1254,7 +1254,7 @@ impl SupermavenButtonStatus {
 }
 
 async fn open_disabled_globs_setting_in_editor(
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     cx: &mut AsyncWindowContext,
 ) -> Result<()> {
     let settings_editor = workspace

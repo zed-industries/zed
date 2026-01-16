@@ -17,7 +17,7 @@ use time::OffsetDateTime;
 use ui::{Avatar, Chip, Divider, ListItem, WithScrollbar, prelude::*};
 use util::ResultExt;
 use workspace::{
-    Item, Workspace,
+    Item, MultiWorkspace,
     item::{ItemEvent, SaveOptions},
 };
 
@@ -26,7 +26,7 @@ use crate::commit_view::CommitView;
 actions!(git, [ViewCommitFromHistory, LoadMoreHistory]);
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _window, _cx| {
         workspace.register_action(|_workspace, _: &ViewCommitFromHistory, _window, _cx| {});
         workspace.register_action(|_workspace, _: &LoadMoreHistory, _window, _cx| {});
     })
@@ -39,7 +39,7 @@ pub struct FileHistoryView {
     history: FileHistory,
     repository: WeakEntity<Repository>,
     git_store: WeakEntity<GitStore>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     remote: Option<GitRemote>,
     selected_entry: Option<usize>,
     scroll_handle: UniformListScrollHandle,
@@ -53,7 +53,7 @@ impl FileHistoryView {
         path: RepoPath,
         git_store: WeakEntity<GitStore>,
         repo: WeakEntity<Repository>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -108,7 +108,7 @@ impl FileHistoryView {
         history: FileHistory,
         git_store: WeakEntity<GitStore>,
         repository: Entity<Repository>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         _project: Entity<Project>,
         _window: &mut Window,
         cx: &mut Context<Self>,
@@ -631,7 +631,7 @@ impl Item for FileHistoryView {
 
     fn added_to_workspace(
         &mut self,
-        _workspace: &mut Workspace,
+        _workspace: &mut MultiWorkspace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

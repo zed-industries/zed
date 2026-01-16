@@ -20,7 +20,7 @@ use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{DismissDecision, ModalView, Workspace};
+use workspace::{DismissDecision, ModalView, MultiWorkspace};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(OutlineView::register).detach();
@@ -48,7 +48,7 @@ pub fn toggle(
         .snapshot(cx)
         .outline(Some(cx.theme().syntax()));
 
-    let workspace = window.root::<Workspace>().flatten();
+    let workspace = window.root::<MultiWorkspace>().flatten();
     if let Some((workspace, outline)) = workspace.zip(outline) {
         workspace.update(cx, |workspace, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {
@@ -396,7 +396,7 @@ mod tests {
     use project::{FakeFs, Project};
     use serde_json::json;
     use util::{path, rel_path::rel_path};
-    use workspace::{AppState, Workspace};
+    use workspace::{AppState, MultiWorkspace};
 
     #[gpui::test]
     async fn test_outline_view_row_highlights(cx: &mut TestAppContext) {
@@ -424,7 +424,7 @@ mod tests {
         });
 
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -529,7 +529,7 @@ mod tests {
     }
 
     fn open_outline_view(
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         cx: &mut VisualTestContext,
     ) -> Entity<Picker<OutlineViewDelegate>> {
         cx.dispatch_action(zed_actions::outline::ToggleOutline);

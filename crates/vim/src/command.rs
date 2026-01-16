@@ -35,7 +35,7 @@ use util::{
     paths::PathStyle,
     rel_path::{RelPath, RelPathBuf},
 };
-use workspace::{Item, SaveIntent, Workspace, notifications::NotifyResultExt};
+use workspace::{Item, SaveIntent, MultiWorkspace, notifications::NotifyResultExt};
 use workspace::{SplitDirection, notifications::DetachAndPromptErr};
 use zed_actions::{OpenDocs, RevealTarget};
 
@@ -1060,7 +1060,7 @@ impl VimCommand {
 
     fn generate_filename_completions(
         parsed_query: &ParsedQuery,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         cx: &mut App,
     ) -> Task<Vec<String>> {
         let ParsedQuery {
@@ -1808,7 +1808,7 @@ fn wrap_count(action: Box<dyn Action>, range: &CommandRange) -> Option<Box<dyn A
 
 pub fn command_interceptor(
     mut input: &str,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     cx: &mut App,
 ) -> Task<CommandInterceptResult> {
     while input.starts_with(':') {
@@ -2621,7 +2621,7 @@ mod test {
     use indoc::indoc;
     use settings::Settings;
     use util::path;
-    use workspace::{OpenOptions, Workspace};
+    use workspace::{OpenOptions, MultiWorkspace};
 
     #[gpui::test]
     async fn test_command_basics(cx: &mut TestAppContext) {
@@ -2882,10 +2882,10 @@ mod test {
 
     #[track_caller]
     fn assert_active_item(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         expected_path: &str,
         expected_text: &str,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
 

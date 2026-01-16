@@ -20,7 +20,7 @@ use std::{
 use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
 use util::paths::PathExt as _;
 use workspace::{
-    Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
+    Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, MultiWorkspace,
     item::{BreadcrumbText, ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
@@ -39,7 +39,7 @@ impl FileDiffView {
     pub fn open(
         old_path: PathBuf,
         new_path: PathBuf,
-        workspace: &Workspace,
+        workspace: &MultiWorkspace,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
@@ -329,7 +329,7 @@ impl Item for FileDiffView {
 
     fn added_to_workspace(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -372,7 +372,7 @@ mod tests {
     use std::path::PathBuf;
     use unindent::unindent;
     use util::path;
-    use workspace::Workspace;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -399,7 +399,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
 
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let diff_view = workspace
             .update_in(cx, |workspace, window, cx| {
@@ -533,7 +533,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
 
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let diff_view = workspace
             .update_in(cx, |workspace, window, cx| {

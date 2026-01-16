@@ -3,15 +3,15 @@ use notifications::status_toast::{StatusToast, ToastIcon};
 use std::sync::Arc;
 use ui::{Color, IconName, SharedString};
 use util::ResultExt;
-use workspace::{self, Workspace};
+use workspace::{self, MultiWorkspace};
 
 pub fn clone_and_open(
     repo_url: SharedString,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     window: &mut Window,
     cx: &mut App,
     on_success: Arc<
-        dyn Fn(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send + Sync + 'static,
+        dyn Fn(&mut MultiWorkspace, &mut Window, &mut Context<MultiWorkspace>) + Send + Sync + 'static,
     >,
 ) {
     let destination_prompt = cx.prompt_for_paths(gpui::PathPromptOptions {

@@ -26,7 +26,7 @@ use std::{
 };
 use util::maybe;
 use workspace::{
-    ToolbarItemEvent, ToolbarItemView, Workspace,
+    ToolbarItemEvent, ToolbarItemView, MultiWorkspace,
     item::Item,
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
     ui::{Button, Clickable, ContextMenu, Label, LabelCommon, PopoverMenu, h_flex},
@@ -957,7 +957,7 @@ actions!(
 pub fn init(cx: &mut App) {
     let log_store = cx.new(|cx| LogStore::new(cx));
 
-    cx.observe_new(move |workspace: &mut Workspace, window, cx| {
+    cx.observe_new(move |workspace: &mut MultiWorkspace, window, cx| {
         let Some(_window) = window else {
             return;
         };

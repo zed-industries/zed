@@ -855,7 +855,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, [], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
     let pane = workspace
         .update(cx, |workspace, _, _| workspace.active_pane().clone())
         .unwrap();
@@ -12199,7 +12199,7 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     .await;
 
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
@@ -12398,7 +12398,7 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
@@ -14803,7 +14803,7 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
             ..FakeLspAdapter::default()
         },
     );
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let buffer = project
         .update(cx, |project, cx| {
@@ -15206,7 +15206,7 @@ async fn test_completion_can_run_commands(cx: &mut TestAppContext) {
             ..FakeLspAdapter::default()
         },
     );
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let editor = workspace
         .update(cx, |workspace, window, cx| {
@@ -15934,7 +15934,7 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
             ..FakeLspAdapter::default()
         },
     );
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let worktree_id = workspace
         .update(cx, |workspace, _window, cx| {
@@ -17637,7 +17637,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let pane = workspace
         .update(cx, |workspace, _, _| workspace.active_pane().clone())
         .unwrap();
@@ -18305,7 +18305,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
         },
     );
 
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -18474,7 +18474,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
         },
     );
 
-    let _window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let _window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let _buffer = project
         .update(cx, |project, cx| {
             project.open_local_buffer_with_lsp(path!("/a/main.rs"), cx)
@@ -20181,7 +20181,7 @@ async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
     )
     .await;
     let project = Project::test(fs, ["/a".as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
@@ -23235,7 +23235,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
     fs.insert_file("/file.rs", Default::default()).await;
 
     let project = Project::test(fs, ["/a".as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
     let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
@@ -23308,7 +23308,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     )
     .await;
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let worktree = project.update(cx, |project, cx| {
         let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
@@ -23476,7 +23476,7 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
     )
     .await;
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let worktree = project.update(cx, |project, cx| {
         let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
@@ -23611,7 +23611,7 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
     )
     .await;
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let worktree = project.update(cx, |project, cx| {
         let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
@@ -24137,7 +24137,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
     )
     .await;
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -24149,7 +24149,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
     )
     .await;
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let worktree_id = workspace
         .update(cx, |workspace, _window, cx| {
@@ -24265,7 +24265,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let (workspace, cx) =
-        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
     let worktree_id = workspace.update(cx, |workspace, cx| {
         workspace.project().update(cx, |project, cx| {
@@ -24421,7 +24421,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
     )
     .await;
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -24433,7 +24433,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
     )
     .await;
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let worktree_id = workspace
         .update(cx, |workspace, _window, cx| {
@@ -24773,7 +24773,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     .await;
 
     let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
@@ -25015,7 +25015,7 @@ println!("5");
 
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let (workspace, cx) =
-        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let worktree_id = workspace.update(cx, |workspace, cx| {
         workspace.project().update(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
@@ -25285,7 +25285,7 @@ println!("5");
 
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let (workspace, cx) =
-        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let worktree_id = workspace.update(cx, |workspace, cx| {
         workspace.project().update(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
@@ -25405,7 +25405,7 @@ async fn test_hide_mouse_context_menu_on_modal_opened(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, [], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let buffer = cx.update(|cx| MultiBuffer::build_simple("hello world!", cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let editor = cx.new_window_entity(|window, cx| {
@@ -25504,7 +25504,7 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
         },
     );
 
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let worktree_id = workspace
@@ -25687,7 +25687,7 @@ async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
         },
     );
     let (workspace, cx) =
-        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let worktree_id = workspace.update(cx, |workspace, cx| {
         workspace.project().update(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
@@ -27213,7 +27213,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
     .await;
 
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
@@ -27605,7 +27605,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     .await;
 
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
@@ -27939,7 +27939,7 @@ async fn test_non_utf_8_opens(cx: &mut TestAppContext) {
 
     let project = Project::test(fs, ["/root1".as_ref()], cx).await;
     let (workspace, cx) =
-        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
     let worktree_id = project.update(cx, |project, cx| {
         project.worktrees(cx).next().unwrap().read(cx).id()
@@ -28510,7 +28510,7 @@ async fn test_race_in_multibuffer_save(cx: &mut TestAppContext) {
     .await;
 
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let language = rust_lang();
@@ -30305,7 +30305,7 @@ async fn test_diff_review_indicator_created_on_gutter_hover(cx: &mut TestAppCont
         .await;
 
     let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let editor = workspace
@@ -30355,7 +30355,7 @@ async fn test_diff_review_button_hidden_when_ai_disabled(cx: &mut TestAppContext
         .await;
 
     let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let editor = workspace
@@ -30414,7 +30414,7 @@ async fn test_diff_review_button_shown_when_ai_enabled(cx: &mut TestAppContext) 
         .await;
 
     let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let editor = workspace

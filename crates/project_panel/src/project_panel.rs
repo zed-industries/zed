@@ -69,7 +69,7 @@ use util::{
 };
 use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
-    SplitDirection, Workspace,
+    SplitDirection, MultiWorkspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
@@ -131,7 +131,7 @@ pub struct ProjectPanel {
     filename_editor: Entity<Editor>,
     clipboard: Option<ClipboardEntry>,
     _dragged_entry_destination: Option<Arc<Path>>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
     diagnostics: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticSeverity>,
@@ -395,7 +395,7 @@ impl FoldedAncestors {
 }
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _, _| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
         });
@@ -590,9 +590,9 @@ fn get_item_color(is_sticky: bool, cx: &App) -> ItemColors {
 
 impl ProjectPanel {
     fn new(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Entity<Self> {
         let project = workspace.project().clone();
         let git_store = project.read(cx).git_store().clone();
@@ -933,7 +933,7 @@ impl ProjectPanel {
     }
 
     pub async fn load(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         mut cx: AsyncWindowContext,
     ) -> Result<Entity<Self>> {
         let serialized_panel = match workspace
@@ -1018,7 +1018,7 @@ impl ProjectPanel {
             .or_insert(diagnostic_severity);
     }
 
-    fn serialization_key(workspace: &Workspace) -> Option<String> {
+    fn serialization_key(workspace: &MultiWorkspace) -> Option<String> {
         workspace
             .database_id()
             .map(|id| i64::from(id).to_string())

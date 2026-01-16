@@ -21,7 +21,7 @@ use ui::{
     Icon, IconButton, IconName, IconSize, Label, TextSize, Tooltip, WithScrollbar, prelude::*,
 };
 use workspace::{
-    Item, ItemHandle, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    Item, ItemHandle, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, MultiWorkspace,
     notifications::NotificationId,
 };
 
@@ -29,7 +29,7 @@ const MAX_EVENTS: usize = 10_000;
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
-        |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
+        |workspace: &mut MultiWorkspace, _window, _cx: &mut Context<MultiWorkspace>| {
             workspace.register_action(
                 |workspace, _: &zed_actions::OpenTelemetryLog, window, cx| {
                     let telemetry_log =

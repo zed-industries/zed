@@ -6,7 +6,7 @@ use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{Arc, atomic::AtomicBool};
 use ui::prelude::*;
 use util::rel_path::RelPath;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 use crate::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
@@ -101,7 +101,7 @@ impl SlashCommand for ExtensionSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakEntity<Workspace>>,
+        _workspace: Option<WeakEntity<MultiWorkspace>>,
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -132,7 +132,7 @@ impl SlashCommand for ExtensionSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakEntity<Workspace>,
+        _workspace: WeakEntity<MultiWorkspace>,
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _window: &mut Window,
         cx: &mut App,

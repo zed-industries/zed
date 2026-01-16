@@ -31,8 +31,8 @@ use std::{
 use ui::{CommonAnimationExt, IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt;
 use workspace::{
-    Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    Workspace,
+    Item, ItemHandle, ItemNavHistory, MultiWorkspace, ToolbarItemEvent, ToolbarItemLocation,
+    ToolbarItemView,
     item::{ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
@@ -43,7 +43,7 @@ pub struct AgentDiffPane {
     editor: Entity<Editor>,
     thread: Entity<AcpThread>,
     focus_handle: FocusHandle,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     title: SharedString,
     _subscriptions: Vec<Subscription>,
 }
@@ -51,7 +51,7 @@ pub struct AgentDiffPane {
 impl AgentDiffPane {
     pub fn deploy(
         thread: Entity<AcpThread>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<Entity<Self>> {
@@ -62,9 +62,9 @@ impl AgentDiffPane {
 
     pub fn deploy_in_workspace(
         thread: Entity<AcpThread>,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Entity<Self> {
         let existing_diff = workspace
             .items_of_type::<AgentDiffPane>(cx)
@@ -83,7 +83,7 @@ impl AgentDiffPane {
 
     pub fn new(
         thread: Entity<AcpThread>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -598,7 +598,7 @@ impl Item for AgentDiffPane {
 
     fn added_to_workspace(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1153,7 +1153,7 @@ impl Render for AgentDiffToolbar {
 #[derive(Default)]
 pub struct AgentDiff {
     reviewing_editors: HashMap<WeakEntity<Editor>, EditorState>,
-    workspace_threads: HashMap<WeakEntity<Workspace>, WorkspaceThread>,
+    workspace_threads: HashMap<WeakEntity<MultiWorkspace>, WorkspaceThread>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1187,7 +1187,7 @@ impl AgentDiff {
     }
 
     pub fn set_active_thread(
-        workspace: &WeakEntity<Workspace>,
+        workspace: &WeakEntity<MultiWorkspace>,
         thread: Entity<AcpThread>,
         window: &mut Window,
         cx: &mut App,
@@ -1199,7 +1199,7 @@ impl AgentDiff {
 
     fn register_active_thread_impl(
         &mut self,
-        workspace: &WeakEntity<Workspace>,
+        workspace: &WeakEntity<MultiWorkspace>,
         thread: Entity<AcpThread>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1265,7 +1265,7 @@ impl AgentDiff {
 
     fn register_workspace(
         &mut self,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1294,7 +1294,7 @@ impl AgentDiff {
     }
 
     fn register_review_action<T: Action>(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         review: impl Fn(&Entity<Editor>, &Entity<AcpThread>, &mut Window, &mut App) -> PostReviewState
         + 'static,
         this: &Entity<AgentDiff>,
@@ -1316,7 +1316,7 @@ impl AgentDiff {
 
     fn handle_acp_thread_event(
         &mut self,
-        workspace: &WeakEntity<Workspace>,
+        workspace: &WeakEntity<MultiWorkspace>,
         thread: &Entity<AcpThread>,
         event: &AcpThreadEvent,
         window: &mut Window,
@@ -1363,7 +1363,7 @@ impl AgentDiff {
 
     fn handle_workspace_event(
         &mut self,
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         event: &workspace::Event,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1390,7 +1390,7 @@ impl AgentDiff {
 
     fn register_editor(
         &mut self,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         buffer: WeakEntity<Buffer>,
         editor: Entity<Editor>,
         window: &mut Window,
@@ -1432,7 +1432,7 @@ impl AgentDiff {
 
     fn update_reviewing_editors(
         &mut self,
-        workspace: &WeakEntity<Workspace>,
+        workspace: &WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1651,7 +1651,7 @@ impl AgentDiff {
 
     fn review_in_active_editor(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         review: impl Fn(&Entity<Editor>, &Entity<AcpThread>, &mut Window, &mut App) -> PostReviewState,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1761,7 +1761,7 @@ mod tests {
         let action_log = cx.read(|cx| thread.read(cx).action_log().clone());
 
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let agent_diff = cx.new_window_entity(|window, cx| {
             AgentDiffPane::new(thread.clone(), workspace.downgrade(), window, cx)
         });
@@ -1916,7 +1916,7 @@ mod tests {
             .unwrap();
 
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         // Add the diff toolbar to the active pane
         let diff_toolbar = cx.new_window_entity(|_, cx| AgentDiffToolbar::new(cx));

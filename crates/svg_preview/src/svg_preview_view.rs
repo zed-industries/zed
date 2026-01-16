@@ -10,7 +10,7 @@ use language::{Buffer, BufferEvent};
 use multi_buffer::MultiBuffer;
 use ui::prelude::*;
 use workspace::item::Item;
-use workspace::{Pane, Workspace};
+use workspace::{Pane, MultiWorkspace};
 
 use crate::{OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide};
 
@@ -35,9 +35,9 @@ impl SvgPreviewView {
     pub fn new(
         mode: SvgPreviewMode,
         active_buffer: Entity<MultiBuffer>,
-        workspace_handle: WeakEntity<Workspace>,
+        workspace_handle: WeakEntity<MultiWorkspace>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let workspace_subscription = if mode == SvgPreviewMode::Follow
@@ -69,7 +69,7 @@ impl SvgPreviewView {
     }
 
     fn subscribe_to_workspace(
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Subscription {
@@ -153,8 +153,8 @@ impl SvgPreviewView {
     }
 
     pub fn resolve_active_item_as_svg_buffer(
-        workspace: &Workspace,
-        cx: &mut Context<Workspace>,
+        workspace: &MultiWorkspace,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Option<Entity<MultiBuffer>> {
         workspace
             .active_item(cx)?
@@ -164,10 +164,10 @@ impl SvgPreviewView {
 
     fn create_svg_view(
         mode: SvgPreviewMode,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         buffer: Entity<MultiBuffer>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Entity<SvgPreviewView> {
         let workspace_handle = workspace.weak_handle();
         SvgPreviewView::new(mode, buffer, workspace_handle, window, cx)
@@ -202,7 +202,7 @@ impl SvgPreviewView {
             })
     }
 
-    pub fn register(workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>) {
+    pub fn register(workspace: &mut MultiWorkspace, _window: &mut Window, _cx: &mut Context<MultiWorkspace>) {
         workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
             if let Some(buffer) = Self::resolve_active_item_as_svg_buffer(workspace, cx)
                 && Self::is_svg_file(&buffer, cx)

@@ -67,7 +67,7 @@ use workspace::{
     searchable::{Direction, SearchableItemHandle},
 };
 use workspace::{
-    Save, Toast, Workspace,
+    Save, Toast, MultiWorkspace,
     item::{self, FollowableItem, Item},
     notifications::NotificationId,
     pane,
@@ -132,34 +132,34 @@ pub enum ThoughtProcessStatus {
 pub trait AgentPanelDelegate {
     fn active_text_thread_editor(
         &self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Option<Entity<TextThreadEditor>>;
 
     fn open_local_text_thread(
         &self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         path: Arc<Path>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Task<Result<()>>;
 
     fn open_remote_text_thread(
         &self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         text_thread_id: TextThreadId,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Task<Result<Entity<TextThreadEditor>>>;
 
     fn quote_selection(
         &self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         selection_ranges: Vec<Range<Anchor>>,
         buffer: Entity<MultiBuffer>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     );
 }
 
@@ -184,7 +184,7 @@ pub struct TextThreadEditor {
     text_thread: Entity<TextThread>,
     fs: Arc<dyn Fs>,
     slash_commands: Arc<SlashCommandWorkingSet>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     project: Entity<Project>,
     lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
     editor: Entity<Editor>,
@@ -216,7 +216,7 @@ impl TextThreadEditor {
         workspace::FollowableViewRegistry::register::<TextThreadEditor>(cx);
 
         cx.observe_new(
-            |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
+            |workspace: &mut MultiWorkspace, _window, _cx: &mut Context<MultiWorkspace>| {
                 workspace
                     .register_action(TextThreadEditor::quote_selection)
                     .register_action(TextThreadEditor::insert_selection)
@@ -231,7 +231,7 @@ impl TextThreadEditor {
     pub fn for_text_thread(
         text_thread: Entity<TextThread>,
         fs: Arc<dyn Fs>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         project: Entity<Project>,
         lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
         window: &mut Window,
@@ -562,7 +562,7 @@ impl TextThreadEditor {
         name: &str,
         arguments: &[String],
         ensure_trailing_newline: bool,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1276,7 +1276,7 @@ impl TextThreadEditor {
     /// block surrounding the cursor.
     fn get_selection_or_code_block(
         context_editor_view: &Entity<TextThreadEditor>,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Option<(String, bool)> {
         const CODE_FENCE_DELIMITER: &str = "```";
 
@@ -1321,10 +1321,10 @@ impl TextThreadEditor {
     }
 
     pub fn insert_selection(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &InsertIntoEditor,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let Some(agent_panel_delegate) = <dyn AgentPanelDelegate>::try_global(cx) else {
             return;
@@ -1350,10 +1350,10 @@ impl TextThreadEditor {
     }
 
     pub fn copy_code(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &CopyCode,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let result = maybe!({
             let agent_panel_delegate = <dyn AgentPanelDelegate>::try_global(cx)?;
@@ -1386,10 +1386,10 @@ impl TextThreadEditor {
     }
 
     pub fn handle_insert_dragged_files(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         action: &InsertDraggedFiles,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let Some(agent_panel_delegate) = <dyn AgentPanelDelegate>::try_global(cx) else {
             return;
@@ -1408,7 +1408,7 @@ impl TextThreadEditor {
                 let tasks = paths
                     .clone()
                     .into_iter()
-                    .map(|path| Workspace::project_path_for_path(project.clone(), &path, false, cx))
+                    .map(|path| MultiWorkspace::project_path_for_path(project.clone(), &path, false, cx))
                     .collect::<Vec<_>>();
 
                 cx.background_spawn(async move {
@@ -1480,10 +1480,10 @@ impl TextThreadEditor {
     }
 
     pub fn quote_selection(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &AddSelectionToThread,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let Some(agent_panel_delegate) = <dyn AgentPanelDelegate>::try_global(cx) else {
             return;
@@ -1523,10 +1523,10 @@ impl TextThreadEditor {
     /// Collects ALL stored review comments from ALL hunks and sends them
     /// to the Agent panel as creases.
     pub fn handle_send_review_to_agent(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &SendReviewToAgent,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         use editor::{DiffHunkKey, StoredReviewComment};
         use git_ui::project_diff::ProjectDiff;
@@ -3032,7 +3032,7 @@ impl FollowableItem for TextThreadEditor {
     }
 
     fn from_state_proto(
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         id: workspace::ViewId,
         state: &mut Option<proto::view::Variant>,
         window: &mut Window,
@@ -3473,7 +3473,7 @@ mod tests {
         let text_thread = create_text_thread_with_messages(messages, cx);
 
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window.root(cx).unwrap();
         let mut cx = VisualTestContext::from_window(*window, cx);
 

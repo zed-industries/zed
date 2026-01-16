@@ -2,7 +2,7 @@ mod sign_in;
 
 use copilot::{Reinstall, SignIn, SignOut};
 use gpui::App;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 pub use sign_in::{
     ConfigurationMode, ConfigurationView, CopilotCodeVerification, initiate_sign_in,
@@ -10,7 +10,7 @@ pub use sign_in::{
 };
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _window, _cx| {
         workspace.register_action(|_, _: &SignIn, window, cx| {
             sign_in::initiate_sign_in(window, cx);
         });

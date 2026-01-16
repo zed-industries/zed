@@ -8,12 +8,12 @@ use language::LanguageRegistry;
 use settings::update_settings_file;
 use ui::prelude::*;
 use util::ResultExt;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 use crate::agent_configuration::ConfigureContextServerModal;
 
 pub(crate) fn init(language_registry: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, cx: &mut App) {
-    cx.observe_new(move |_: &mut Workspace, window, cx| {
+    cx.observe_new(move |_: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
             return;
         };
@@ -79,9 +79,9 @@ fn remove_context_server_settings(
 fn show_configure_mcp_modal(
     language_registry: Arc<LanguageRegistry>,
     manifest: &Arc<ExtensionManifest>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     window: &mut Window,
-    cx: &mut Context<'_, Workspace>,
+    cx: &mut Context<'_, MultiWorkspace>,
 ) {
     if !window.is_window_active() {
         return;

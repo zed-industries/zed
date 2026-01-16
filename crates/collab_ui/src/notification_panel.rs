@@ -26,7 +26,7 @@ use workspace::notifications::{
     Notification as WorkspaceNotification, NotificationId, SuppressEvent,
 };
 use workspace::{
-    Workspace,
+    MultiWorkspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
 
@@ -46,7 +46,7 @@ pub struct NotificationPanel {
     notification_list: ListState,
     pending_serialization: Task<Option<()>>,
     subscriptions: Vec<gpui::Subscription>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     current_notification_toast: Option<(u64, Task<()>)>,
     local_timezone: UtcOffset,
     focus_handle: FocusHandle,
@@ -82,7 +82,7 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _, _| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<NotificationPanel>(window, cx);
         });
@@ -92,9 +92,9 @@ pub fn init(cx: &mut App) {
 
 impl NotificationPanel {
     pub fn new(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Entity<Self> {
         let fs = workspace.app_state().fs.clone();
         let client = workspace.app_state().client.clone();
@@ -175,7 +175,7 @@ impl NotificationPanel {
     }
 
     pub fn load(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
@@ -692,7 +692,7 @@ impl Panel for NotificationPanel {
 pub struct NotificationToast {
     actor: Option<Arc<User>>,
     text: String,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     focus_handle: FocusHandle,
 }
 

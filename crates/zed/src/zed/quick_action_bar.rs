@@ -25,7 +25,7 @@ use ui::{
 use vim_mode_setting::{HelixModeSetting, VimModeSetting};
 use workspace::item::ItemBufferKind;
 use workspace::{
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, item::ItemHandle,
+    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, MultiWorkspace, item::ItemHandle,
 };
 use zed_actions::{agent::AddSelectionToThread, assistant::InlineAssist, outline::ToggleOutline};
 
@@ -39,13 +39,13 @@ pub struct QuickActionBar {
     show: bool,
     toggle_selections_handle: PopoverMenuHandle<ContextMenu>,
     toggle_settings_handle: PopoverMenuHandle<ContextMenu>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
 }
 
 impl QuickActionBar {
     pub fn new(
         buffer_search_bar: Entity<BufferSearchBar>,
-        workspace: &Workspace,
+        workspace: &MultiWorkspace,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut was_agent_enabled = AgentSettings::get_global(cx).enabled(cx);

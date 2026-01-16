@@ -15,7 +15,7 @@ use settings::{
 use ui::{
     KeyBinding, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry, prelude::*,
 };
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
 use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
@@ -116,9 +116,9 @@ pub struct ManageProfilesModal {
 
 impl ManageProfilesModal {
     pub fn register(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _window: Option<&mut Window>,
-        _cx: &mut Context<Workspace>,
+        _cx: &mut Context<MultiWorkspace>,
     ) {
         workspace.register_action(|workspace, action: &ManageProfiles, window, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {

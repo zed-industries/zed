@@ -157,7 +157,7 @@ impl VimTestContext {
 
     pub fn workspace<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> T,
+        F: FnOnce(&mut MultiWorkspace, &mut Window, &mut Context<MultiWorkspace>) -> T,
     {
         self.cx.update_workspace(update)
     }

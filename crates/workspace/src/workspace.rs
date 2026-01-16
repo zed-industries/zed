@@ -11,6 +11,7 @@ mod persistence;
 pub mod searchable;
 mod security_modal;
 pub mod shared_screen;
+pub mod single_workspace;
 mod status_bar;
 pub mod tasks;
 mod theme_preview;
@@ -187,10 +188,10 @@ pub trait DebuggerProvider {
 
     fn spawn_task_or_modal(
         &self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         action: &Spawn,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     );
 
     fn task_scheduled(&self, cx: &mut App);
@@ -595,7 +596,7 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
                 cx.update(|cx| {
                     if let Some(workspace_window) = cx
                         .active_window()
-                        .and_then(|window| window.downcast::<Workspace>())
+                        .and_then(|window| window.downcast::<MultiWorkspace>())
                     {
                         workspace_window
                             .update(cx, |workspace, _, cx| {
@@ -616,7 +617,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     toast_layer::init(cx);
     history_manager::init(cx);
 
-    cx.on_action(|_: &CloseWindow, cx| Workspace::close_global(cx))
+    cx.on_action(|_: &CloseWindow, cx| MultiWorkspace::close_global(cx))
         .on_action(|_: &Reload, cx| reload(cx))
         .on_action({
             let app_state = Arc::downgrade(&app_state);
@@ -800,7 +801,7 @@ pub struct FollowableViewRegistry(HashMap<TypeId, FollowableViewDescriptor>);
 
 struct FollowableViewDescriptor {
     from_state_proto: fn(
-        Entity<Workspace>,
+        Entity<MultiWorkspace>,
         ViewId,
         &mut Option<proto::view::Variant>,
         &mut Window,
@@ -828,7 +829,7 @@ impl FollowableViewRegistry {
     }
 
     pub fn from_state_proto(
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         view_id: ViewId,
         mut state: Option<proto::view::Variant>,
         window: &mut Window,
@@ -856,7 +857,7 @@ impl FollowableViewRegistry {
 struct SerializableItemDescriptor {
     deserialize: fn(
         Entity<Project>,
-        WeakEntity<Workspace>,
+        WeakEntity<MultiWorkspace>,
         WorkspaceId,
         ItemId,
         &mut Window,
@@ -878,7 +879,7 @@ impl SerializableItemRegistry {
     fn deserialize(
         item_kind: &str,
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         workspace_id: WorkspaceId,
         item_item: ItemId,
         window: &mut Window,
@@ -965,7 +966,7 @@ struct GlobalAppState(Weak<AppState>);
 impl Global for GlobalAppState {}
 
 pub struct WorkspaceStore {
-    workspaces: HashSet<WindowHandle<Workspace>>,
+    workspaces: HashSet<WindowHandle<MultiWorkspace>>,
     client: Arc<Client>,
     _subscriptions: Vec<client::Subscription>,
 }
@@ -1062,12 +1063,16 @@ impl DelayedDebouncedEditAction {
         &mut self,
         delay: Duration,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
         func: F,
     ) where
         F: 'static
             + Send
-            + FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> Task<Result<()>>,
+            + FnOnce(
+                &mut MultiWorkspace,
+                &mut Window,
+                &mut Context<MultiWorkspace>,
+            ) -> Task<Result<()>>,
     {
         if let Some(channel) = self.cancel_channel.take() {
             _ = channel.send(());
@@ -1114,7 +1119,7 @@ pub enum Event {
         save_intent: SaveIntent,
     },
     ContactRequestedJoin(u64),
-    WorkspaceCreated(WeakEntity<Workspace>),
+    WorkspaceCreated(WeakEntity<MultiWorkspace>),
     OpenBundledFile {
         text: Cow<'static, str>,
         title: &'static str,
@@ -1143,19 +1148,19 @@ enum WorkspaceLocation {
 
 type PromptForNewPath = Box<
     dyn Fn(
-        &mut Workspace,
+        &mut MultiWorkspace,
         DirectoryLister,
         &mut Window,
-        &mut Context<Workspace>,
+        &mut Context<MultiWorkspace>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
 >;
 
 type PromptForOpenPath = Box<
     dyn Fn(
-        &mut Workspace,
+        &mut MultiWorkspace,
         DirectoryLister,
         &mut Window,
-        &mut Context<Workspace>,
+        &mut Context<MultiWorkspace>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
 >;
 
@@ -1172,9 +1177,10 @@ struct DispatchingKeystrokes {
 /// A `Workspace` usually consists of 1 or more projects, a central pane group, 3 docks and a status bar.
 /// The `Workspace` owns everybody's state and serves as a default, "global context",
 /// that can be used to register a global action to be triggered from any place in the window.
-pub struct Workspace {
+pub struct MultiWorkspace {
     weak_self: WeakEntity<Self>,
-    workspace_actions: Vec<Box<dyn Fn(Div, &Workspace, &mut Window, &mut Context<Self>) -> Div>>,
+    workspace_actions:
+        Vec<Box<dyn Fn(Div, &MultiWorkspace, &mut Window, &mut Context<Self>) -> Div>>,
     zoomed: Option<AnyWeakView>,
     previous_dock_drag_coordinates: Option<Point<Pixels>>,
     zoomed_position: Option<DockPosition>,
@@ -1227,7 +1233,7 @@ pub struct Workspace {
     utility_panes: UtilityPaneState,
 }
 
-impl EventEmitter<Event> for Workspace {}
+impl EventEmitter<Event> for MultiWorkspace {}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ViewId {
@@ -1247,7 +1253,7 @@ struct FollowerView {
     location: Option<proto::PanelId>,
 }
 
-impl Workspace {
+impl MultiWorkspace {
     pub fn new(
         workspace_id: Option<WorkspaceId>,
         project: Entity<Project>,
@@ -1433,7 +1439,7 @@ impl Workspace {
 
         cx.emit(Event::PaneAdded(center_pane.clone()));
 
-        let window_handle = window.window_handle().downcast::<Workspace>().unwrap();
+        let window_handle = window.window_handle().downcast::<MultiWorkspace>().unwrap();
         app_state.workspace_store.update(cx, |store, _| {
             store.workspaces.insert(window_handle);
         });
@@ -1576,7 +1582,7 @@ impl Workspace {
         center.set_is_center(true);
         center.mark_positions(cx);
 
-        Workspace {
+        MultiWorkspace {
             weak_self: weak_handle.clone(),
             zoomed: None,
             zoomed_position: None,
@@ -1637,13 +1643,15 @@ impl Workspace {
     pub fn new_local(
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
-        requesting_window: Option<WindowHandle<Workspace>>,
+        requesting_window: Option<WindowHandle<MultiWorkspace>>,
         env: Option<HashMap<String, String>>,
-        init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
+        init: Option<
+            Box<dyn FnOnce(&mut MultiWorkspace, &mut Window, &mut Context<MultiWorkspace>) + Send>,
+        >,
         cx: &mut App,
     ) -> Task<
         anyhow::Result<(
-            WindowHandle<Workspace>,
+            WindowHandle<MultiWorkspace>,
             Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
         )>,
     > {
@@ -1687,7 +1695,12 @@ impl Workspace {
             for path in paths_to_open.into_iter() {
                 if let Some((_, project_entry)) = cx
                     .update(|cx| {
-                        Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
+                        MultiWorkspace::project_path_for_path(
+                            project_handle.clone(),
+                            &path,
+                            true,
+                            cx,
+                        )
                     })
                     .await
                     .log_err()
@@ -1749,7 +1762,7 @@ impl Workspace {
 
                 cx.update_window(window.into(), |_, window, cx| {
                     window.replace_root(cx, |window, cx| {
-                        let mut workspace = Workspace::new(
+                        let mut workspace = MultiWorkspace::new(
                             Some(workspace_id),
                             project_handle.clone(),
                             app_state.clone(),
@@ -1799,7 +1812,7 @@ impl Workspace {
                     let project_handle = project_handle.clone();
                     move |window, cx| {
                         cx.new(|cx| {
-                            let mut workspace = Workspace::new(
+                            let mut workspace = MultiWorkspace::new(
                                 Some(workspace_id),
                                 project_handle,
                                 app_state,
@@ -2065,7 +2078,11 @@ impl Workspace {
             .collect()
     }
 
-    pub fn clear_navigation_history(&mut self, _window: &mut Window, cx: &mut Context<Workspace>) {
+    pub fn clear_navigation_history(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<MultiWorkspace>,
+    ) {
         for pane in &self.panes {
             pane.update(cx, |pane, cx| pane.nav_history_mut().clear(cx));
         }
@@ -2076,7 +2093,7 @@ impl Workspace {
         pane: WeakEntity<Pane>,
         mode: NavigationMode,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Task<Result<()>> {
         let to_load = if let Some(pane) = pane.upgrade() {
             pane.update(cx, |pane, cx| {
@@ -2203,7 +2220,7 @@ impl Workspace {
         &mut self,
         pane: WeakEntity<Pane>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Task<Result<()>> {
         self.navigate_history(pane, NavigationMode::GoingBack, window, cx)
     }
@@ -2212,7 +2229,7 @@ impl Workspace {
         &mut self,
         pane: WeakEntity<Pane>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Task<Result<()>> {
         self.navigate_history(pane, NavigationMode::GoingForward, window, cx)
     }
@@ -2220,7 +2237,7 @@ impl Workspace {
     pub fn reopen_closed_item(
         &mut self,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Task<Result<()>> {
         self.navigate_history(
             self.active_pane().downgrade(),
@@ -2401,7 +2418,7 @@ impl Workspace {
     ) -> Task<Result<T>>
     where
         T: 'static,
-        F: 'static + FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> T,
+        F: 'static + FnOnce(&mut MultiWorkspace, &mut Window, &mut Context<MultiWorkspace>) -> T,
     {
         if self.project.read(cx).is_local() {
             Task::ready(Ok(callback(self, window, cx)))
@@ -2512,7 +2529,7 @@ impl Workspace {
             let workspace_count = cx.update(|_window, cx| {
                 cx.windows()
                     .iter()
-                    .filter(|window| window.downcast::<Workspace>().is_some())
+                    .filter(|window| window.downcast::<MultiWorkspace>().is_some())
                     .count()
             })?;
 
@@ -2525,7 +2542,7 @@ impl Workspace {
                 let remaining_workspaces = cx.update(|_window, cx| {
                     cx.windows()
                         .iter()
-                        .filter_map(|window| window.downcast::<Workspace>())
+                        .filter_map(|window| window.downcast::<MultiWorkspace>())
                         .filter_map(|workspace| {
                             workspace
                                 .update(cx, |workspace, _, _| workspace.removing)
@@ -2567,7 +2584,7 @@ impl Workspace {
                         let workspace = cx
                             .windows()
                             .iter()
-                            .filter_map(|window| window.downcast::<Workspace>())
+                            .filter_map(|window| window.downcast::<MultiWorkspace>())
                             .next()
                             .unwrap();
                         let project = workspace.read(cx)?.project.clone();
@@ -2845,7 +2862,7 @@ impl Workspace {
                 let project_path = match visible {
                     Some(visible) => match this
                         .update(cx, |this, cx| {
-                            Workspace::project_path_for_path(
+                            MultiWorkspace::project_path_for_path(
                                 this.project.clone(),
                                 abs_path,
                                 visible,
@@ -3710,7 +3727,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         let project_path_task =
-            Workspace::project_path_for_path(self.project.clone(), &abs_path, visible, cx);
+            MultiWorkspace::project_path_for_path(self.project.clone(), &abs_path, visible, cx);
         cx.spawn_in(window, async move |this, cx| {
             let (_, path) = project_path_task.await?;
             this.update_in(cx, |this, window, cx| this.split_path(path, window, cx))?
@@ -4471,7 +4488,7 @@ impl Workspace {
         &mut self,
         pane: &Entity<Pane>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Option<CollaboratorId> {
         let leader_id = self.leader_for_pane(pane)?;
         self.unfollow(leader_id, window, cx);
@@ -5582,7 +5599,12 @@ impl Workspace {
             .collect::<Vec<_>>()
     }
 
-    fn remove_panes(&mut self, member: Member, window: &mut Window, cx: &mut Context<Workspace>) {
+    fn remove_panes(
+        &mut self,
+        member: Member,
+        window: &mut Window,
+        cx: &mut Context<MultiWorkspace>,
+    ) {
         match member {
             Member::Axis(PaneAxis { members, .. }) => {
                 for child in members.iter() {
@@ -5605,7 +5627,7 @@ impl Workspace {
         pane: &Entity<Pane>,
         focus_on: &Option<Entity<Pane>>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         self.panes.retain(|p| p != pane);
         if let Some(focus_on) = focus_on {
@@ -5698,7 +5720,7 @@ impl Workspace {
         }
 
         fn build_serialized_docks(
-            this: &Workspace,
+            this: &MultiWorkspace,
             window: &mut Window,
             cx: &mut App,
         ) -> DockStructure {
@@ -5890,7 +5912,7 @@ impl Workspace {
         serialized_workspace: SerializedWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
         cx.spawn_in(window, async move |workspace, cx| {
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
@@ -6139,52 +6161,52 @@ impl Workspace {
                 this.toggle_dock(DockPosition::Left, window, cx);
             }))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &ToggleRightDock, window, cx| {
+                |workspace: &mut MultiWorkspace, _: &ToggleRightDock, window, cx| {
                     workspace.toggle_dock(DockPosition::Right, window, cx);
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &ToggleBottomDock, window, cx| {
+                |workspace: &mut MultiWorkspace, _: &ToggleBottomDock, window, cx| {
                     workspace.toggle_dock(DockPosition::Bottom, window, cx);
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &CloseActiveDock, window, cx| {
+                |workspace: &mut MultiWorkspace, _: &CloseActiveDock, window, cx| {
                     if !workspace.close_active_dock(window, cx) {
                         cx.propagate();
                     }
                 },
             ))
-            .on_action(
-                cx.listener(|workspace: &mut Workspace, _: &CloseAllDocks, window, cx| {
+            .on_action(cx.listener(
+                |workspace: &mut MultiWorkspace, _: &CloseAllDocks, window, cx| {
                     workspace.close_all_docks(window, cx);
-                }),
-            )
+                },
+            ))
             .on_action(cx.listener(Self::toggle_all_docks))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &ClearAllNotifications, _, cx| {
+                |workspace: &mut MultiWorkspace, _: &ClearAllNotifications, _, cx| {
                     workspace.clear_all_notifications(cx);
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &ClearNavigationHistory, window, cx| {
+                |workspace: &mut MultiWorkspace, _: &ClearNavigationHistory, window, cx| {
                     workspace.clear_navigation_history(window, cx);
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &SuppressNotification, _, cx| {
+                |workspace: &mut MultiWorkspace, _: &SuppressNotification, _, cx| {
                     if let Some((notification_id, _)) = workspace.notifications.pop() {
                         workspace.suppress_notification(&notification_id, cx);
                     }
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &ToggleWorktreeSecurity, window, cx| {
+                |workspace: &mut MultiWorkspace, _: &ToggleWorktreeSecurity, window, cx| {
                     workspace.show_worktree_trust_security_modal(true, window, cx);
                 },
             ))
             .on_action(
-                cx.listener(|_: &mut Workspace, _: &ClearTrustedWorktrees, _, cx| {
+                cx.listener(|_: &mut MultiWorkspace, _: &ClearTrustedWorktrees, _, cx| {
                     if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
                         trusted_worktrees.update(cx, |trusted_worktrees, _| {
                             trusted_worktrees.clear_trusted_paths()
@@ -6200,12 +6222,12 @@ impl Workspace {
                 }),
             )
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &ReopenClosedItem, window, cx| {
+                |workspace: &mut MultiWorkspace, _: &ReopenClosedItem, window, cx| {
                     workspace.reopen_closed_item(window, cx).detach();
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &ResetActiveDockSize, window, cx| {
+                |workspace: &mut MultiWorkspace, _: &ResetActiveDockSize, window, cx| {
                     for dock in workspace.all_docks() {
                         if dock.focus_handle(cx).contains_focused(window, cx) {
                             let Some(panel) = dock.read(cx).active_panel() else {
@@ -6221,7 +6243,7 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &ResetOpenDocksSize, window, cx| {
+                |workspace: &mut MultiWorkspace, _: &ResetOpenDocksSize, window, cx| {
                     for dock in workspace.all_docks() {
                         if let Some(panel) = dock.read(cx).visible_panel() {
                             // Set to `None`, then the size will fall back to the default.
@@ -6231,7 +6253,7 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, act: &IncreaseActiveDockSize, window, cx| {
+                |workspace: &mut MultiWorkspace, act: &IncreaseActiveDockSize, window, cx| {
                     adjust_active_dock_size_by_px(
                         px_with_ui_font_fallback(act.px, cx),
                         workspace,
@@ -6241,7 +6263,7 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, act: &DecreaseActiveDockSize, window, cx| {
+                |workspace: &mut MultiWorkspace, act: &DecreaseActiveDockSize, window, cx| {
                     adjust_active_dock_size_by_px(
                         px_with_ui_font_fallback(act.px, cx) * -1.,
                         workspace,
@@ -6251,7 +6273,7 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, act: &IncreaseOpenDocksSize, window, cx| {
+                |workspace: &mut MultiWorkspace, act: &IncreaseOpenDocksSize, window, cx| {
                     adjust_open_docks_size_by_px(
                         px_with_ui_font_fallback(act.px, cx),
                         workspace,
@@ -6261,7 +6283,7 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, act: &DecreaseOpenDocksSize, window, cx| {
+                |workspace: &mut MultiWorkspace, act: &DecreaseOpenDocksSize, window, cx| {
                     adjust_open_docks_size_by_px(
                         px_with_ui_font_fallback(act.px, cx) * -1.,
                         workspace,
@@ -6270,9 +6292,9 @@ impl Workspace {
                     );
                 },
             ))
-            .on_action(cx.listener(Workspace::toggle_centered_layout))
+            .on_action(cx.listener(MultiWorkspace::toggle_centered_layout))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _action: &pane::ActivateNextItem, window, cx| {
+                |workspace: &mut MultiWorkspace, _action: &pane::ActivateNextItem, window, cx| {
                     if let Some(active_dock) = workspace.active_dock(window, cx) {
                         let dock = active_dock.read(cx);
                         if let Some(active_panel) = dock.active_panel() {
@@ -6313,7 +6335,10 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _action: &pane::ActivatePreviousItem, window, cx| {
+                |workspace: &mut MultiWorkspace,
+                 _action: &pane::ActivatePreviousItem,
+                 window,
+                 cx| {
                     if let Some(active_dock) = workspace.active_dock(window, cx) {
                         let dock = active_dock.read(cx);
                         if let Some(active_panel) = dock.active_panel() {
@@ -6361,7 +6386,7 @@ impl Workspace {
                     }
                 }),
             )
-            .on_action(cx.listener(Workspace::cancel))
+            .on_action(cx.listener(MultiWorkspace::cancel))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -6412,7 +6437,7 @@ impl Workspace {
     }
     pub fn register_action_renderer(
         &mut self,
-        callback: impl Fn(Div, &Workspace, &mut Window, &mut Context<Self>) -> Div + 'static,
+        callback: impl Fn(Div, &MultiWorkspace, &mut Window, &mut Context<Self>) -> Div + 'static,
     ) -> &mut Self {
         self.workspace_actions.push(Box::new(callback));
         self
@@ -6514,7 +6539,7 @@ impl Workspace {
         )
     }
 
-    pub fn for_window(window: &mut Window, _: &mut App) -> Option<Entity<Workspace>> {
+    pub fn for_window(window: &mut Window, _: &mut App) -> Option<Entity<MultiWorkspace>> {
         window.root().flatten()
     }
 
@@ -6791,10 +6816,10 @@ fn open_items(
     serialized_workspace: Option<SerializedWorkspace>,
     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) -> impl 'static + Future<Output = Result<Vec<Option<Result<Box<dyn ItemHandle>>>>>> + use<> {
     let restored_items = serialized_workspace.map(|serialized_workspace| {
-        Workspace::load_workspace(
+        MultiWorkspace::load_workspace(
             serialized_workspace,
             project_paths_to_open
                 .iter()
@@ -6897,7 +6922,7 @@ enum ActivateInDirectionTarget {
     Dock(Entity<Dock>),
 }
 
-fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncApp) {
+fn notify_if_database_failed(workspace: WindowHandle<MultiWorkspace>, cx: &mut AsyncApp) {
     workspace
         .update(cx, |workspace, _, cx| {
             if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
@@ -6922,7 +6947,7 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
         .log_err();
 }
 
-fn px_with_ui_font_fallback(val: u32, cx: &Context<Workspace>) -> Pixels {
+fn px_with_ui_font_fallback(val: u32, cx: &Context<MultiWorkspace>) -> Pixels {
     if val == 0 {
         ThemeSettings::get_global(cx).ui_font_size(cx)
     } else {
@@ -6932,9 +6957,9 @@ fn px_with_ui_font_fallback(val: u32, cx: &Context<Workspace>) -> Pixels {
 
 fn adjust_active_dock_size_by_px(
     px: Pixels,
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     let Some(active_dock) = workspace
         .all_docks()
@@ -6953,9 +6978,9 @@ fn adjust_active_dock_size_by_px(
 
 fn adjust_open_docks_size_by_px(
     px: Pixels,
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     let docks = workspace
         .all_docks()
@@ -6979,7 +7004,7 @@ fn adjust_open_docks_size_by_px(
         });
 }
 
-impl Focusable for Workspace {
+impl Focusable for MultiWorkspace {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.active_pane.focus_handle(cx)
     }
@@ -6994,7 +7019,7 @@ impl Render for DraggedDock {
     }
 }
 
-impl Render for Workspace {
+impl Render for MultiWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         static FIRST_PAINT: AtomicBool = AtomicBool::new(true);
         if FIRST_PAINT.swap(false, std::sync::atomic::Ordering::Relaxed) {
@@ -7652,7 +7677,7 @@ impl WorkspaceStore {
         })
     }
 
-    pub fn workspaces(&self) -> &HashSet<WindowHandle<Workspace>> {
+    pub fn workspaces(&self) -> &HashSet<WindowHandle<MultiWorkspace>> {
         &self.workspaces
     }
 }
@@ -7690,7 +7715,7 @@ pub trait WorkspaceHandle {
     fn file_project_paths(&self, cx: &App) -> Vec<ProjectPath>;
 }
 
-impl WorkspaceHandle for Entity<Workspace> {
+impl WorkspaceHandle for Entity<MultiWorkspace> {
     fn file_project_paths(&self, cx: &App) -> Vec<ProjectPath> {
         self.read(cx)
             .worktrees(cx)
@@ -7756,7 +7781,7 @@ actions!(
 async fn join_channel_internal(
     channel_id: ChannelId,
     app_state: &Arc<AppState>,
-    requesting_window: Option<WindowHandle<Workspace>>,
+    requesting_window: Option<WindowHandle<MultiWorkspace>>,
     active_call: &Entity<ActiveCall>,
     cx: &mut AsyncApp,
 ) -> Result<bool> {
@@ -7904,7 +7929,7 @@ async fn join_channel_internal(
 pub fn join_channel(
     channel_id: ChannelId,
     app_state: Arc<AppState>,
-    requesting_window: Option<WindowHandle<Workspace>>,
+    requesting_window: Option<WindowHandle<MultiWorkspace>>,
     cx: &mut App,
 ) -> Task<Result<()>> {
     let active_call = ActiveCall::global(cx);
@@ -7924,7 +7949,7 @@ pub fn join_channel(
             // no open workspaces, make one to show the error in (blergh)
             let (window_handle, _) = cx
                 .update(|cx| {
-                    Workspace::new_local(
+                    MultiWorkspace::new_local(
                         vec![],
                         app_state.clone(),
                         requesting_window,
@@ -7992,27 +8017,27 @@ pub fn join_channel(
 pub async fn get_any_active_workspace(
     app_state: Arc<AppState>,
     mut cx: AsyncApp,
-) -> anyhow::Result<WindowHandle<Workspace>> {
+) -> anyhow::Result<WindowHandle<MultiWorkspace>> {
     // find an existing workspace to focus and show call controls
     let active_window = activate_any_workspace_window(&mut cx);
     if active_window.is_none() {
-        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, None, None, cx))
+        cx.update(|cx| MultiWorkspace::new_local(vec![], app_state.clone(), None, None, None, cx))
             .await?;
     }
     activate_any_workspace_window(&mut cx).context("could not open zed")
 }
 
-fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<Workspace>> {
+fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<MultiWorkspace>> {
     cx.update(|cx| {
         if let Some(workspace_window) = cx
             .active_window()
-            .and_then(|window| window.downcast::<Workspace>())
+            .and_then(|window| window.downcast::<MultiWorkspace>())
         {
             return Some(workspace_window);
         }
 
         for window in cx.windows() {
-            if let Some(workspace_window) = window.downcast::<Workspace>() {
+            if let Some(workspace_window) = window.downcast::<MultiWorkspace>() {
                 workspace_window
                     .update(cx, |_, window, _| window.activate_window())
                     .ok();
@@ -8023,10 +8048,10 @@ fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<Works
     })
 }
 
-pub fn local_workspace_windows(cx: &App) -> Vec<WindowHandle<Workspace>> {
+pub fn local_workspace_windows(cx: &App) -> Vec<WindowHandle<MultiWorkspace>> {
     cx.windows()
         .into_iter()
-        .filter_map(|window| window.downcast::<Workspace>())
+        .filter_map(|window| window.downcast::<MultiWorkspace>())
         .filter(|workspace| {
             workspace
                 .read(cx)
@@ -8041,7 +8066,7 @@ pub struct OpenOptions {
     pub focus: Option<bool>,
     pub open_new_workspace: Option<bool>,
     pub prefer_focused_window: bool,
-    pub replace_window: Option<WindowHandle<Workspace>>,
+    pub replace_window: Option<WindowHandle<MultiWorkspace>>,
     pub env: Option<HashMap<String, String>>,
 }
 
@@ -8053,7 +8078,7 @@ pub fn open_paths(
     cx: &mut App,
 ) -> Task<
     anyhow::Result<(
-        WindowHandle<Workspace>,
+        WindowHandle<MultiWorkspace>,
         Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
     )>,
 > {
@@ -8103,7 +8128,7 @@ pub fn open_paths(
                 cx.update(|cx| {
                     if let Some(window) = cx
                         .active_window()
-                        .and_then(|window| window.downcast::<Workspace>())
+                        .and_then(|window| window.downcast::<MultiWorkspace>())
                         && let Ok(workspace) = window.read(cx)
                     {
                         let project = workspace.project().read(cx);
@@ -8156,7 +8181,7 @@ pub fn open_paths(
             Ok((existing, open_task))
         } else {
             cx.update(move |cx| {
-                Workspace::new_local(
+                MultiWorkspace::new_local(
                     abs_paths,
                     app_state.clone(),
                     open_options.replace_window,
@@ -8204,9 +8229,9 @@ pub fn open_new(
     open_options: OpenOptions,
     app_state: Arc<AppState>,
     cx: &mut App,
-    init: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static + Send,
+    init: impl FnOnce(&mut MultiWorkspace, &mut Window, &mut Context<MultiWorkspace>) + 'static + Send,
 ) -> Task<anyhow::Result<()>> {
-    let task = Workspace::new_local(
+    let task = MultiWorkspace::new_local(
         Vec::new(),
         app_state,
         None,
@@ -8224,7 +8249,7 @@ pub fn open_new(
 pub fn create_and_open_local_file(
     path: &'static Path,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
     default_content: impl 'static + Send + FnOnce() -> Rope,
 ) -> Task<Result<Box<dyn ItemHandle>>> {
     cx.spawn_in(window, async move |workspace, cx| {
@@ -8259,7 +8284,7 @@ pub fn create_and_open_local_file(
 }
 
 pub fn open_remote_project_with_new_connection(
-    window: WindowHandle<Workspace>,
+    window: WindowHandle<MultiWorkspace>,
     remote_connection: Arc<dyn RemoteConnection>,
     cancel_rx: oneshot::Receiver<()>,
     delegate: Arc<dyn RemoteClientDelegate>,
@@ -8319,7 +8344,7 @@ pub fn open_remote_project_with_existing_connection(
     project: Entity<Project>,
     paths: Vec<PathBuf>,
     app_state: Arc<AppState>,
-    window: WindowHandle<Workspace>,
+    window: WindowHandle<MultiWorkspace>,
     cx: &mut AsyncApp,
 ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
     cx.spawn(async move |cx| {
@@ -8345,7 +8370,7 @@ async fn open_remote_project_inner(
     workspace_id: WorkspaceId,
     serialized_workspace: Option<SerializedWorkspace>,
     app_state: Arc<AppState>,
-    window: WindowHandle<Workspace>,
+    window: WindowHandle<MultiWorkspace>,
     cx: &mut AsyncApp,
 ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
     let toolchains = DB.toolchains(workspace_id).await?;
@@ -8374,7 +8399,7 @@ async fn open_remote_project_inner(
 
     for path in paths {
         let result = cx
-            .update(|cx| Workspace::project_path_for_path(project.clone(), &path, true, cx))
+            .update(|cx| MultiWorkspace::project_path_for_path(project.clone(), &path, true, cx))
             .await;
         match result {
             Ok((_, project_path)) => {
@@ -8406,7 +8431,7 @@ async fn open_remote_project_inner(
             telemetry::event!("SSH Project Opened");
 
             let mut workspace =
-                Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
+                MultiWorkspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
             workspace.update_history(cx);
 
             if let Some(ref serialized) = serialized_workspace {
@@ -8474,7 +8499,7 @@ pub fn join_in_room_project(
     cx.spawn(async move |cx| {
         let existing_workspace = windows.into_iter().find_map(|window_handle| {
             window_handle
-                .downcast::<Workspace>()
+                .downcast::<MultiWorkspace>()
                 .and_then(|window_handle| {
                     window_handle
                         .update(cx, |workspace, _window, cx| {
@@ -8512,7 +8537,13 @@ pub fn join_in_room_project(
                 options.window_bounds = window_bounds_override.map(WindowBounds::Windowed);
                 cx.open_window(options, |window, cx| {
                     cx.new(|cx| {
-                        Workspace::new(Default::default(), project, app_state.clone(), window, cx)
+                        MultiWorkspace::new(
+                            Default::default(),
+                            project,
+                            app_state.clone(),
+                            window,
+                            cx,
+                        )
                     })
                 })
             })?
@@ -8555,7 +8586,7 @@ pub fn reload(cx: &mut App) {
     let mut workspace_windows = cx
         .windows()
         .into_iter()
-        .filter_map(|window| window.downcast::<Workspace>())
+        .filter_map(|window| window.downcast::<MultiWorkspace>())
         .collect::<Vec<_>>();
 
     // If multiple windows have unsaved changes, and need a save prompt,
@@ -9059,9 +9090,12 @@ pub fn remote_workspace_position_from_db(
 
 pub fn with_active_or_new_workspace(
     cx: &mut App,
-    f: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send + 'static,
+    f: impl FnOnce(&mut MultiWorkspace, &mut Window, &mut Context<MultiWorkspace>) + Send + 'static,
 ) {
-    match cx.active_window().and_then(|w| w.downcast::<Workspace>()) {
+    match cx
+        .active_window()
+        .and_then(|w| w.downcast::<MultiWorkspace>())
+    {
         Some(workspace) => {
             cx.defer(move |cx| {
                 workspace
@@ -9113,7 +9147,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         // Adding an item with no ambiguity renders the tab without detail.
         let item1 = cx.new(|cx| {
@@ -9178,7 +9212,7 @@ mod tests {
 
         let project = Project::test(fs, ["root1".as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
@@ -9258,7 +9292,7 @@ mod tests {
 
         let project = Project::test(fs, ["root".as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         // When there are no dirty items, there's nothing to do.
         let item1 = cx.new(TestItem::new);
@@ -9306,7 +9340,7 @@ mod tests {
 
         let project = Project::test(fs, ["root".as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         // When there are dirty untitled items, but they can serialize, then there is no prompt.
         let item1 = cx.new(|cx| {
@@ -9338,7 +9372,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         let item1 = cx.new(|cx| {
             TestItem::new(cx)
@@ -9433,7 +9467,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         // Create several workspace items with single project entries, and two
         // workspace items with multiple project entries.
@@ -9592,7 +9626,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let item = cx.new(|cx| {
@@ -9748,7 +9782,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         let item = cx.new(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -9804,7 +9838,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
             let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
@@ -9954,7 +9988,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         let pane = workspace.update_in(cx, |workspace, _window, _cx| {
             workspace.active_pane().clone()
@@ -10053,7 +10087,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
         workspace.update_in(cx, |workspace, window, cx| {
             // Open two docks
             let left_dock = workspace.dock_at_position(DockPosition::Left);
@@ -10094,7 +10128,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
         workspace.update_in(cx, |workspace, window, cx| {
             // Open two docks
             let left_dock = workspace.dock_at_position(DockPosition::Left);
@@ -10135,7 +10169,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         // Open two docks (left and right) with one panel each
         let (left_panel, right_panel) = workspace.update_in(cx, |workspace, window, cx| {
@@ -10286,7 +10320,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         // Let's arrange the panes like this:
         //
@@ -10456,7 +10490,7 @@ mod tests {
 
     fn add_an_item_to_active_pane(
         cx: &mut VisualTestContext,
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         item_id: u64,
     ) -> Entity<TestItem> {
         let item = cx.new(|cx| {
@@ -10472,7 +10506,7 @@ mod tests {
         item
     }
 
-    fn split_pane(cx: &mut VisualTestContext, workspace: &Entity<Workspace>) -> Entity<Pane> {
+    fn split_pane(cx: &mut VisualTestContext, workspace: &Entity<MultiWorkspace>) -> Entity<Pane> {
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.split_pane(
                 workspace.active_pane().clone(),
@@ -10489,7 +10523,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         add_an_item_to_active_pane(cx, &workspace, 1);
         split_pane(cx, &workspace);
@@ -10567,7 +10601,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         let (panel_1, panel_2) = workspace.update_in(cx, |workspace, window, cx| {
             let panel_1 = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
@@ -10802,7 +10836,7 @@ mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let dirty_regular_buffer = cx.new(|cx| {
@@ -10947,7 +10981,7 @@ mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let dirty_regular_buffer = cx.new(|cx| {
@@ -11042,7 +11076,7 @@ mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // Create a test item that simulates a file
@@ -11110,7 +11144,7 @@ mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // Create a test item that simulates a file
@@ -11187,7 +11221,7 @@ mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // Create a dirty test item
@@ -11260,7 +11294,7 @@ mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // Create test items
@@ -11361,7 +11395,7 @@ mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let dirty_regular_buffer = cx.new(|cx| {
@@ -11475,7 +11509,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         // Add a new panel to the right dock, opening the dock and setting the
         // focus to the new panel.
@@ -11539,7 +11573,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let item_1 = cx.new(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "first.txt", cx)])
@@ -11654,7 +11688,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let item_1 = cx.new(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "first.txt", cx)])
@@ -11930,8 +11964,9 @@ mod tests {
             .await;
 
             let project = Project::test(fs, ["root1".as_ref()], cx).await;
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let (workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
 
             let worktree_id = project.update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -11993,8 +12028,9 @@ mod tests {
             )
             .await;
             let project = Project::test(fs, ["root1".as_ref()], cx).await;
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let (workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
             let worktree_id = project.update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
             });
@@ -12030,7 +12066,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, _cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         // Test with status bar shown (default)
         workspace.read_with(cx, |workspace, cx| {

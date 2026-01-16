@@ -17,7 +17,7 @@ use ui::{ButtonLike, Divider, HighlightedLabel, ListItem, ListSubHeader, Tooltip
 use ui_input::InputField;
 use workspace::AppState;
 use workspace::{
-    Item, ItemId, SerializableItem, Workspace, WorkspaceId, delete_unloaded_items, item::ItemEvent,
+    Item, ItemId, SerializableItem, MultiWorkspace, WorkspaceId, delete_unloaded_items, item::ItemEvent,
 };
 
 #[allow(unused_imports)]
@@ -26,7 +26,7 @@ pub use component_preview_example::*;
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     workspace::register_serializable_item::<ComponentPreview>(cx);
 
-    cx.observe_new(move |workspace: &mut Workspace, _window, cx| {
+    cx.observe_new(move |workspace: &mut MultiWorkspace, _window, cx| {
         let app_state = app_state.clone();
         let project = workspace.project().clone();
         let weak_workspace = cx.entity().downgrade();
@@ -106,14 +106,14 @@ struct ComponentPreview {
     nav_scroll_handle: UniformListScrollHandle,
     project: Entity<Project>,
     user_store: Entity<UserStore>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     workspace_id: Option<WorkspaceId>,
     _view_scroll_handle: ScrollHandle,
 }
 
 impl ComponentPreview {
     pub fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         project: Entity<Project>,
         language_registry: Arc<LanguageRegistry>,
         user_store: Entity<UserStore>,
@@ -763,7 +763,7 @@ impl Item for ComponentPreview {
 
     fn added_to_workspace(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -781,7 +781,7 @@ impl SerializableItem for ComponentPreview {
 
     fn deserialize(
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         workspace_id: WorkspaceId,
         item_id: ItemId,
         window: &mut Window,
@@ -856,7 +856,7 @@ impl SerializableItem for ComponentPreview {
 
     fn serialize(
         &mut self,
-        _workspace: &mut Workspace,
+        _workspace: &mut MultiWorkspace,
         item_id: ItemId,
         _closing: bool,
         _window: &mut Window,

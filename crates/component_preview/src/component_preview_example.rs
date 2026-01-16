@@ -18,7 +18,7 @@ pub fn run_component_preview() {
     use session::{AppSession, Session};
     use std::sync::Arc;
     use ui::{App, px};
-    use workspace::{AppState, Workspace, WorkspaceStore};
+    use workspace::{AppState, MultiWorkspace, WorkspaceStore};
 
     use crate::{ComponentPreview, init};
 

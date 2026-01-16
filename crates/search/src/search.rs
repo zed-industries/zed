@@ -7,7 +7,7 @@ pub use project_search::ProjectSearchView;
 use ui::{ButtonStyle, IconButton, IconButtonShape};
 use ui::{Tooltip, prelude::*};
 use workspace::notifications::NotificationId;
-use workspace::{Toast, Workspace};
+use workspace::{Toast, MultiWorkspace};
 
 pub use search_status_button::SEARCH_ICON;
 
@@ -191,7 +191,7 @@ pub(crate) fn show_no_more_matches(window: &mut Window, cx: &mut App) {
         struct NotifType();
         let notification_id = NotificationId::unique::<NotifType>();
 
-        let Some(workspace) = window.root::<Workspace>().flatten() else {
+        let Some(workspace) = window.root::<MultiWorkspace>().flatten() else {
             return;
         };
         workspace.update(cx, |workspace, cx| {

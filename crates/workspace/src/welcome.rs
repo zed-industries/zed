@@ -1,5 +1,5 @@
 use crate::{
-    NewFile, Open, PathList, SerializedWorkspaceLocation, WORKSPACE_DB, Workspace, WorkspaceId,
+    NewFile, Open, PathList, SerializedWorkspaceLocation, WORKSPACE_DB, MultiWorkspace, WorkspaceId,
     item::{Item, ItemEvent},
 };
 use git::Clone as GitClone;
@@ -207,7 +207,7 @@ impl<const COLS: usize> Section<COLS> {
 }
 
 pub struct WelcomePage {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     focus_handle: FocusHandle,
     fallback_to_recent_projects: bool,
     recent_workspaces: Option<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>>,
@@ -215,7 +215,7 @@ pub struct WelcomePage {
 
 impl WelcomePage {
     pub fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         fallback_to_recent_projects: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -474,7 +474,7 @@ impl crate::SerializableItem for WelcomePage {
 
     fn deserialize(
         _project: Entity<project::Project>,
-        workspace: gpui::WeakEntity<Workspace>,
+        workspace: gpui::WeakEntity<MultiWorkspace>,
         workspace_id: crate::WorkspaceId,
         item_id: crate::ItemId,
         window: &mut Window,
@@ -495,7 +495,7 @@ impl crate::SerializableItem for WelcomePage {
 
     fn serialize(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         item_id: crate::ItemId,
         _closing: bool,
         _window: &mut Window,

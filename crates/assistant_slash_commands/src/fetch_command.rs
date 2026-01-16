@@ -14,7 +14,7 @@ use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum ContentType {
@@ -127,7 +127,7 @@ impl SlashCommand for FetchSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakEntity<Workspace>>,
+        _workspace: Option<WeakEntity<MultiWorkspace>>,
         _window: &mut Window,
         _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -139,7 +139,7 @@ impl SlashCommand for FetchSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _: &mut Window,
         cx: &mut App,

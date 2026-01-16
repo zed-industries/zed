@@ -63,7 +63,7 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedTab, ToggleZoom, ToolbarItemView, Workspace,
+    CollaboratorId, DraggedSelection, DraggedTab, ToggleZoom, ToolbarItemView, MultiWorkspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::{
@@ -86,7 +86,7 @@ struct SerializedAgentPanel {
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
-        |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
+        |workspace: &mut MultiWorkspace, _window, _cx: &mut Context<MultiWorkspace>| {
             workspace
                 .register_action(|workspace, action: &NewThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
@@ -304,7 +304,7 @@ impl ActiveView {
         prompt_store: Option<Entity<PromptStore>>,
         thread_store: Entity<ThreadStore>,
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         history: Entity<AcpThreadHistory>,
         window: &mut Window,
         cx: &mut App,
@@ -417,7 +417,7 @@ impl ActiveView {
 }
 
 pub struct AgentPanel {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     loading: bool,
     user_store: Entity<UserStore>,
     project: Entity<Project>,
@@ -466,7 +466,7 @@ impl AgentPanel {
     }
 
     pub fn load(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         prompt_builder: Arc<PromptBuilder>,
         mut cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
@@ -528,7 +528,7 @@ impl AgentPanel {
     }
 
     fn new(
-        workspace: &Workspace,
+        workspace: &MultiWorkspace,
         text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
@@ -712,10 +712,10 @@ impl AgentPanel {
     }
 
     pub fn toggle_focus(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &ToggleFocus,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         if workspace
             .panel::<Self>(cx)
@@ -756,7 +756,7 @@ impl AgentPanel {
         &self.context_server_registry
     }
 
-    pub fn is_hidden(workspace: &Entity<Workspace>, cx: &App) -> bool {
+    pub fn is_hidden(workspace: &Entity<MultiWorkspace>, cx: &App) -> bool {
         let workspace_read = workspace.read(cx);
 
         workspace_read
@@ -1542,7 +1542,7 @@ impl AgentPanel {
         server: Rc<dyn AgentServer>,
         resume_thread: Option<AgentSessionInfo>,
         summarize_thread: Option<AgentSessionInfo>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         project: Entity<Project>,
         loading: bool,
         ext_agent: ExternalAgent,
@@ -2732,7 +2732,7 @@ impl AgentPanel {
                     .paths()
                     .iter()
                     .map(|path| {
-                        Workspace::project_path_for_path(this.project.clone(), path, false, cx)
+                        MultiWorkspace::project_path_for_path(this.project.clone(), path, false, cx)
                     })
                     .collect::<Vec<_>>();
                 cx.spawn_in(window, async move |this, cx| {
@@ -2925,11 +2925,11 @@ impl Render for AgentPanel {
 }
 
 struct PromptLibraryInlineAssist {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
 }
 
 impl PromptLibraryInlineAssist {
-    pub fn new(workspace: WeakEntity<Workspace>) -> Self {
+    pub fn new(workspace: WeakEntity<MultiWorkspace>) -> Self {
         Self { workspace }
     }
 }
@@ -2969,9 +2969,9 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
 
     fn focus_agent_panel(
         &self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> bool {
         workspace.focus_panel::<AgentPanel>(window, cx).is_some()
     }
@@ -2982,9 +2982,9 @@ pub struct ConcreteAssistantPanelDelegate;
 impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
     fn active_text_thread_editor(
         &self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Option<Entity<TextThreadEditor>> {
         let panel = workspace.panel::<AgentPanel>(cx)?;
         panel.read(cx).active_text_thread_editor()
@@ -2992,10 +2992,10 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
 
     fn open_local_text_thread(
         &self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         path: Arc<Path>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Task<Result<()>> {
         let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
             return Task::ready(Err(anyhow!("Agent panel not found")));
@@ -3008,21 +3008,21 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
 
     fn open_remote_text_thread(
         &self,
-        _workspace: &mut Workspace,
+        _workspace: &mut MultiWorkspace,
         _text_thread_id: assistant_text_thread::TextThreadId,
         _window: &mut Window,
-        _cx: &mut Context<Workspace>,
+        _cx: &mut Context<MultiWorkspace>,
     ) -> Task<Result<Entity<TextThreadEditor>>> {
         Task::ready(Err(anyhow!("opening remote context not implemented")))
     }
 
     fn quote_selection(
         &self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         selection_ranges: Vec<Range<Anchor>>,
         buffer: Entity<MultiBuffer>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
             return;

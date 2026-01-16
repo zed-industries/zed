@@ -5,7 +5,7 @@ use gpui::{
 };
 use ui::{Button, ButtonCommon, Clickable, LabelSize, Tooltip};
 use workspace::{
-    StatusBarSettings, StatusItemView, Workspace,
+    StatusBarSettings, StatusItemView, MultiWorkspace,
     item::{ItemHandle, Settings},
 };
 
@@ -17,7 +17,7 @@ pub struct ActiveBufferEncoding {
 }
 
 impl ActiveBufferEncoding {
-    pub fn new(_workspace: &Workspace) -> Self {
+    pub fn new(_workspace: &MultiWorkspace) -> Self {
         Self {
             active_encoding: None,
             //workspace: workspace.weak_handle(),

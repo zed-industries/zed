@@ -22,14 +22,14 @@ use ui::{
     ContextMenu, Divider, DropdownMenu, FluentBuilder, IntoElement, PopoverMenuHandle, Render,
     ScrollableHandle, StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
 };
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 use crate::{ToggleDataBreakpoint, session::running::stack_frame_list::StackFrameList};
 
 actions!(debugger, [GoToSelectedAddress]);
 
 pub(crate) struct MemoryView {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     stack_frame_list: WeakEntity<StackFrameList>,
     focus_handle: FocusHandle,
     view_state_handle: ViewStateHandle,
@@ -165,7 +165,7 @@ static UNKNOWN_BYTE: SharedString = SharedString::new_static("??");
 impl MemoryView {
     pub(crate) fn new(
         session: Entity<Session>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         stack_frame_list: WeakEntity<StackFrameList>,
         window: &mut Window,
         cx: &mut Context<Self>,

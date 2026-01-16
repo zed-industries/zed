@@ -5,7 +5,7 @@ use editor::Editor;
 use gpui::{App, AppContext as _, Context, Entity, Task, Window};
 use project::{Location, TaskContexts, TaskSourceKind, Worktree};
 use task::{RevealTarget, TaskContext, TaskId, TaskTemplate, TaskVariables, VariableName};
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 mod modal;
 
@@ -13,7 +13,7 @@ pub use modal::{Rerun, ShowAttachModal, Spawn, TaskOverrides, TasksModal};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
-        |workspace: &mut Workspace, _: Option<&mut Window>, _: &mut Context<Workspace>| {
+        |workspace: &mut MultiWorkspace, _: Option<&mut Window>, _: &mut Context<MultiWorkspace>| {
             workspace
                 .register_action(spawn_task_or_modal)
                 .register_action(move |workspace, action: &modal::Rerun, window, cx| {
@@ -96,10 +96,10 @@ pub fn init(cx: &mut App) {
 }
 
 fn spawn_task_or_modal(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     action: &Spawn,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     if let Some(provider) = workspace.debugger_provider() {
         provider.spawn_task_or_modal(workspace, action, window, cx);
@@ -141,10 +141,10 @@ fn spawn_task_or_modal(
 }
 
 pub fn toggle_modal(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     reveal_target: Option<RevealTarget>,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) -> Task<()> {
     let task_store = workspace.project().read(cx).task_store().clone();
     let workspace_handle = workspace.weak_handle();
@@ -182,7 +182,7 @@ pub fn spawn_tasks_filtered<F>(
     mut predicate: F,
     overrides: Option<TaskOverrides>,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) -> Task<anyhow::Result<()>>
 where
     F: FnMut((&TaskSourceKind, &TaskTemplate)) -> bool + 'static,
@@ -269,7 +269,7 @@ where
 }
 
 pub fn task_contexts(
-    workspace: &Workspace,
+    workspace: &MultiWorkspace,
     window: &mut Window,
     cx: &mut App,
 ) -> Task<TaskContexts> {
@@ -400,7 +400,7 @@ mod tests {
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
     use util::{path, rel_path::rel_path};
-    use workspace::{AppState, Workspace};
+    use workspace::{AppState, MultiWorkspace};
 
     use crate::task_contexts;
 
@@ -475,7 +475,7 @@ mod tests {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let buffer1 = workspace
             .update(cx, |this, cx| {

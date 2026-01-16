@@ -38,7 +38,7 @@ use serde::de::DeserializeOwned;
 use settings::{EditPredictionProvider, SettingsStore, update_settings_file};
 use std::collections::{VecDeque, hash_map};
 use text::Edit;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 use zeta_prompt::ZetaVersion;
 
 use std::ops::Range;
@@ -2377,7 +2377,7 @@ pub fn should_show_upsell_modal() -> bool {
 }
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
+    cx.observe_new(move |workspace: &mut MultiWorkspace, _, _cx| {
         workspace.register_action(
             move |workspace, _: &zed_actions::OpenZedPredictOnboarding, window, cx| {
                 ZedPredictModal::toggle(

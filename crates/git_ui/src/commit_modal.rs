@@ -13,7 +13,7 @@ use editor::{Editor, EditorElement};
 use gpui::*;
 use util::ResultExt;
 use workspace::{
-    ModalView, Workspace,
+    ModalView, MultiWorkspace,
     dock::{Dock, PanelHandle},
 };
 
@@ -108,7 +108,7 @@ pub enum ForceMode {
 }
 
 impl CommitModal {
-    pub fn register(workspace: &mut Workspace) {
+    pub fn register(workspace: &mut MultiWorkspace) {
         workspace.register_action(|workspace, _: &Commit, window, cx| {
             CommitModal::toggle(workspace, Some(ForceMode::Commit), window, cx);
         });
@@ -118,10 +118,10 @@ impl CommitModal {
     }
 
     pub fn toggle(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         force_mode: Option<ForceMode>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let Some(git_panel) = workspace.panel::<GitPanel>(cx) else {
             return;

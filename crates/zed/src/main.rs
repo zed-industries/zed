@@ -54,7 +54,7 @@ use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
-    AppState, PathList, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceSettings,
+    AppState, PathList, SerializedWorkspaceLocation, Toast, MultiWorkspace, WorkspaceSettings,
     WorkspaceStore, notifications::NotificationId,
 };
 use zed::{
@@ -1008,7 +1008,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                             cx.weak_entity(),
                             window,
                             cx,
-                            Arc::new(|workspace: &mut workspace::Workspace, window, cx| {
+                            Arc::new(|workspace: &mut workspace::MultiWorkspace, window, cx| {
                                 workspace.focus_panel::<ProjectPanel>(window, cx);
                             }),
                         );
@@ -1026,7 +1026,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                     workspace_entity.downgrade(),
                                     window,
                                     cx,
-                                    Arc::new(|workspace: &mut workspace::Workspace, window, cx| {
+                                    Arc::new(|workspace: &mut workspace::MultiWorkspace, window, cx| {
                                         workspace.focus_panel::<ProjectPanel>(window, cx);
                                     }),
                                 );
@@ -1312,7 +1312,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
             // Try to find an active workspace to show the toast
             let toast_shown = cx.update(|cx| {
                 if let Some(window) = cx.active_window()
-                    && let Some(workspace) = window.downcast::<Workspace>()
+                    && let Some(workspace) = window.downcast::<MultiWorkspace>()
                 {
                     workspace
                         .update(cx, |workspace, _, cx| {

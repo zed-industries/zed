@@ -54,7 +54,7 @@ use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
 use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
-use workspace::{self, Pane, Workspace};
+use workspace::{self, Pane, MultiWorkspace};
 
 use crate::{
     normal::{GoToPreviousTab, GoToTab},
@@ -280,7 +280,7 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(Vim::register).detach();
 
-    cx.observe_new(|workspace: &mut Workspace, _, _| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleVimMode, _, cx| {
             let fs = workspace.app_state().fs.clone();
             let currently_enabled = VimModeSetting::get_global(cx).0;
@@ -999,8 +999,8 @@ impl Vim {
         self.editor.upgrade()
     }
 
-    pub fn workspace(&self, window: &mut Window) -> Option<Entity<Workspace>> {
-        window.root::<Workspace>().flatten()
+    pub fn workspace(&self, window: &mut Window) -> Option<Entity<MultiWorkspace>> {
+        window.root::<MultiWorkspace>().flatten()
     }
 
     pub fn pane(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Entity<Pane>> {

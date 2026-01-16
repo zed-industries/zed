@@ -6,18 +6,18 @@ use gpui::{
 use language::LanguageName;
 use settings::Settings as _;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
-use workspace::{StatusBarSettings, StatusItemView, Workspace, item::ItemHandle};
+use workspace::{StatusBarSettings, StatusItemView, MultiWorkspace, item::ItemHandle};
 
 use crate::{LanguageSelector, Toggle};
 
 pub struct ActiveBufferLanguage {
     active_language: Option<Option<LanguageName>>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     _observe_active_editor: Option<Subscription>,
 }
 
 impl ActiveBufferLanguage {
-    pub fn new(workspace: &Workspace) -> Self {
+    pub fn new(workspace: &MultiWorkspace) -> Self {
         Self {
             active_language: None,
             workspace: workspace.weak_handle(),

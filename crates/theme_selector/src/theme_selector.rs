@@ -15,7 +15,7 @@ use theme::{
 };
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
-use workspace::{ModalView, Workspace, ui::HighlightedLabel, with_active_or_new_workspace};
+use workspace::{ModalView, MultiWorkspace, ui::HighlightedLabel, with_active_or_new_workspace};
 use zed_actions::{ExtensionCategoryFilter, Extensions};
 
 use crate::icon_theme_selector::{IconThemeSelector, IconThemeSelectorDelegate};
@@ -44,10 +44,10 @@ pub fn init(cx: &mut App) {
 }
 
 fn toggle_theme_selector(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     toggle: &zed_actions::theme_selector::Toggle,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     let fs = workspace.app_state().fs.clone();
     workspace.toggle_modal(window, cx, |window, cx| {
@@ -62,10 +62,10 @@ fn toggle_theme_selector(
 }
 
 fn toggle_icon_theme_selector(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     toggle: &zed_actions::icon_theme_selector::Toggle,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     let fs = workspace.app_state().fs.clone();
     workspace.toggle_modal(window, cx, |window, cx| {

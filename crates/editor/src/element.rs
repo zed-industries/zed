@@ -96,7 +96,7 @@ use util::post_inc;
 use util::{RangeExt, ResultExt, debug_panic};
 use workspace::{
     CollaboratorId, ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel,
-    Workspace,
+    MultiWorkspace,
     item::{BreadcrumbText, Item, ItemBufferKind},
     notifications::NotifyTaskExt,
 };
@@ -8388,7 +8388,7 @@ fn render_blame_entry_popover(
     scroll_handle: ScrollHandle,
     commit_message: Option<ParsedCommitMessage>,
     markdown: Entity<Markdown>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     blame: &Entity<GitBlame>,
     buffer: BufferId,
     window: &mut Window,
@@ -8416,7 +8416,7 @@ fn render_blame_entry(
     style: &EditorStyle,
     last_used_color: &mut Option<(Hsla, Oid)>,
     editor: Entity<Editor>,
-    workspace: Entity<Workspace>,
+    workspace: Entity<MultiWorkspace>,
     buffer: BufferId,
     renderer: &dyn BlameRenderer,
     window: &mut Window,

@@ -22,7 +22,7 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 use crate::{branch_picker, git_panel::show_error_toast};
 
@@ -37,28 +37,28 @@ actions!(
 );
 
 pub fn checkout_branch(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     _: &zed_actions::git::CheckoutBranch,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     open(workspace, &zed_actions::git::Branch, window, cx);
 }
 
 pub fn switch(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     _: &zed_actions::git::Switch,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     open(workspace, &zed_actions::git::Branch, window, cx);
 }
 
 pub fn open(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     _: &zed_actions::git::Branch,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     let workspace_handle = workspace.weak_handle();
     let project = workspace.project().clone();
@@ -102,7 +102,7 @@ pub fn open(
 }
 
 pub fn popover(
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     modal_style: bool,
     repository: Option<Entity<Repository>>,
     window: &mut Window,
@@ -122,7 +122,7 @@ pub fn popover(
 }
 
 pub fn create_embedded(
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     repository: Option<Entity<Repository>>,
     width: Rems,
     window: &mut Window,
@@ -147,7 +147,7 @@ pub struct BranchList {
 
 impl BranchList {
     fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         repository: Option<Entity<Repository>>,
         style: BranchListStyle,
         width: Rems,
@@ -162,7 +162,7 @@ impl BranchList {
     }
 
     fn new_inner(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         repository: Option<Entity<Repository>>,
         style: BranchListStyle,
         width: Rems,
@@ -249,7 +249,7 @@ impl BranchList {
     }
 
     fn new_embedded(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         repository: Option<Entity<Repository>>,
         width: Rems,
         window: &mut Window,
@@ -401,7 +401,7 @@ impl BranchFilter {
 }
 
 pub struct BranchListDelegate {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     matches: Vec<Entry>,
     all_branches: Option<Vec<Branch>>,
     default_branch: Option<SharedString>,
@@ -429,7 +429,7 @@ enum PickerState {
 
 impl BranchListDelegate {
     fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         repo: Option<Entity<Repository>>,
         style: BranchListStyle,
         cx: &mut Context<BranchList>,
@@ -1366,7 +1366,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
 
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         let branch_list = workspace
             .update(cx, |workspace, window, cx| {

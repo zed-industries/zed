@@ -36,7 +36,7 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
-    CopyRoomId, Deafen, LeaveCall, Mute, OpenChannelNotes, ScreenShare, ShareProject, Workspace,
+    CopyRoomId, Deafen, LeaveCall, Mute, OpenChannelNotes, ScreenShare, ShareProject, MultiWorkspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt},
 };
@@ -79,7 +79,7 @@ struct ChannelMoveClipboard {
 const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _, _| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<CollabPanel>(window, cx);
             if let Some(collab_panel) = workspace.panel::<CollabPanel>(cx) {
@@ -227,7 +227,7 @@ pub struct CollabPanel {
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelId>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -291,9 +291,9 @@ enum ListEntry {
 
 impl CollabPanel {
     pub fn new(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let filter_editor = cx.new(|cx| {
@@ -401,7 +401,7 @@ impl CollabPanel {
     }
 
     pub async fn load(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
         let serialized_panel = match workspace
@@ -442,7 +442,7 @@ impl CollabPanel {
         })
     }
 
-    fn serialization_key(workspace: &Workspace) -> Option<String> {
+    fn serialization_key(workspace: &MultiWorkspace) -> Option<String> {
         workspace
             .database_id()
             .map(|id| i64::from(id).to_string())
@@ -2267,7 +2267,7 @@ impl CollabPanel {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let Some(handle) = window.window_handle().downcast::<Workspace>() else {
+        let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() else {
             return;
         };
         workspace::join_channel(

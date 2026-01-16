@@ -36,7 +36,7 @@ use std::{
 use text::OffsetRangeExt;
 use ui::{Disclosure, Toggleable, prelude::*};
 use util::{ResultExt, debug_panic, rel_path::RelPath};
-use workspace::{Workspace, notifications::NotifyResultExt as _};
+use workspace::{MultiWorkspace, notifications::NotifyResultExt as _};
 
 use crate::ui::MentionCrease;
 
@@ -151,7 +151,7 @@ impl MentionSet {
         mention_uri: MentionUri,
         supports_images: bool,
         editor: Entity<Editor>,
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<()> {

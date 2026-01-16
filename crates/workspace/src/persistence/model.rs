@@ -1,6 +1,6 @@
 use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
-    Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
+    Member, Pane, PaneAxis, SerializableItemRegistry, MultiWorkspace, WorkspaceId, item::ItemHandle,
     path_list::PathList,
 };
 use anyhow::{Context, Result};
@@ -172,7 +172,7 @@ impl SerializedPaneGroup {
         self,
         project: &Entity<Project>,
         workspace_id: WorkspaceId,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         cx: &mut AsyncWindowContext,
     ) -> Option<(
         Member,
@@ -271,7 +271,7 @@ impl SerializedPane {
         project: &Entity<Project>,
         pane: &WeakEntity<Pane>,
         workspace_id: WorkspaceId,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         cx: &mut AsyncWindowContext,
     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
         let mut item_tasks = Vec::new();

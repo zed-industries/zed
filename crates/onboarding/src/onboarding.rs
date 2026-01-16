@@ -19,7 +19,7 @@ use ui::{
 pub use workspace::welcome::ShowWelcome;
 use workspace::welcome::WelcomePage;
 use workspace::{
-    AppState, Workspace, WorkspaceId,
+    AppState, MultiWorkspace, WorkspaceId,
     dock::DockPosition,
     item::{Item, ItemEvent},
     notifications::NotifyResultExt as _,
@@ -68,7 +68,7 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _, _cx| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _, _cx| {
         workspace
             .register_action(|_workspace, _: &ResetHints, _, cx| MultibufferHint::set_count(0, cx));
     })
@@ -129,7 +129,7 @@ pub fn init(cx: &mut App) {
         });
     });
 
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _window, _cx| {
         workspace.register_action(|_workspace, action: &ImportVsCodeSettings, window, cx| {
             let fs = <dyn Fs>::global(cx);
             let action = *action;
@@ -202,7 +202,7 @@ pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyh
 }
 
 struct Onboarding {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     focus_handle: FocusHandle,
     user_store: Entity<UserStore>,
     scroll_handle: ScrollHandle,
@@ -210,7 +210,7 @@ struct Onboarding {
 }
 
 impl Onboarding {
-    fn new(workspace: &Workspace, cx: &mut App) -> Entity<Self> {
+    fn new(workspace: &MultiWorkspace, cx: &mut App) -> Entity<Self> {
         let font_family_cache = theme::FontFamilyCache::global(cx);
 
         cx.new(|cx| {
@@ -433,7 +433,7 @@ fn go_to_welcome_page(cx: &mut App) {
 }
 
 pub async fn handle_import_vscode_settings(
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     source: VsCodeSettingsSource,
     skip_prompt: bool,
     fs: Arc<dyn Fs>,
@@ -565,7 +565,7 @@ impl workspace::SerializableItem for Onboarding {
 
     fn deserialize(
         _project: Entity<project::Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
         window: &mut Window,
@@ -584,7 +584,7 @@ impl workspace::SerializableItem for Onboarding {
 
     fn serialize(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         item_id: workspace::ItemId,
         _closing: bool,
         _window: &mut Window,

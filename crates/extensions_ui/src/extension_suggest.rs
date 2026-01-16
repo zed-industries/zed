@@ -9,7 +9,7 @@ use language::Buffer;
 use ui::prelude::*;
 use util::rel_path::RelPath;
 use workspace::notifications::simple_message_notification::MessageNotification;
-use workspace::{Workspace, notifications::NotificationId};
+use workspace::{MultiWorkspace, notifications::NotificationId};
 
 const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("astro", &["astro"]),
@@ -133,7 +133,7 @@ fn language_extension_key(extension_id: &str) -> String {
     format!("{}_extension_suggest", extension_id)
 }
 
-pub(crate) fn suggest(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Context<Workspace>) {
+pub(crate) fn suggest(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Context<MultiWorkspace>) {
     let Some(file) = buffer.read(cx).file().cloned() else {
         return;
     };

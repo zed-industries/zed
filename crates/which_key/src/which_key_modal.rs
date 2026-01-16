@@ -12,12 +12,12 @@ use ui::{
     Divider, DividerColor, DynamicSpacing, LabelSize, WithScrollbar, prelude::*,
     text_for_keystrokes,
 };
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 use crate::FILTERED_KEYSTROKES;
 
 pub struct WhichKeyModal {
-    _workspace: WeakEntity<Workspace>,
+    _workspace: WeakEntity<MultiWorkspace>,
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
     bindings: Vec<(SharedString, SharedString)>,
@@ -28,7 +28,7 @@ pub struct WhichKeyModal {
 
 impl WhichKeyModal {
     pub fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {

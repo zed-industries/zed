@@ -19,7 +19,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::ActiveTheme;
-use workspace::{Workspace, ui::IconName};
+use workspace::{MultiWorkspace, ui::IconName};
 
 pub fn init(cx: &mut App) {
     SlashCommandRegistry::default_global(cx);
@@ -83,7 +83,7 @@ pub trait SlashCommand: 'static + Send + Sync {
         self: Arc<Self>,
         arguments: &[String],
         cancel: Arc<AtomicBool>,
-        workspace: Option<WeakEntity<Workspace>>,
+        workspace: Option<WeakEntity<MultiWorkspace>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>>;
@@ -96,7 +96,7 @@ pub trait SlashCommand: 'static + Send + Sync {
         arguments: &[String],
         context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         context_buffer: BufferSnapshot,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         // TODO: We're just using the `LspAdapterDelegate` here because that is
         // what the extension API is already expecting.
         //

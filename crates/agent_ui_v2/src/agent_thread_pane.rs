@@ -17,7 +17,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use ui::{Tab, Tooltip, prelude::*};
 use workspace::{
-    Workspace,
+    MultiWorkspace,
     dock::{ClosePane, MinimizePane, UtilityPane, UtilityPanePosition},
     utility_pane::UtilityPaneSlot,
 };
@@ -61,13 +61,13 @@ pub struct AgentThreadPane {
     expanded: bool,
     width: Option<Pixels>,
     thread_view: Option<ActiveThreadView>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     history: Entity<AcpThreadHistory>,
 }
 
 impl AgentThreadPane {
     pub fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         history: Entity<AcpThreadHistory>,
         cx: &mut ui::Context<Self>,
     ) -> Self {
@@ -98,7 +98,7 @@ impl AgentThreadPane {
         &mut self,
         entry: AgentSessionInfo,
         fs: Arc<dyn Fs>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         project: Entity<Project>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
@@ -166,7 +166,7 @@ impl AgentThreadPane {
         let toggle_icon = self.toggle_icon(cx);
         let title = self.title(cx);
 
-        let pane_toggle_button = |workspace: WeakEntity<Workspace>| {
+        let pane_toggle_button = |workspace: WeakEntity<MultiWorkspace>| {
             IconButton::new("toggle_utility_pane", toggle_icon)
                 .icon_size(IconSize::Small)
                 .tooltip(Tooltip::text("Toggle Agent Pane"))

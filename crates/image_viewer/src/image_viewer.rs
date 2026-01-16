@@ -19,7 +19,7 @@ use theme::{Theme, ThemeSettings};
 use ui::prelude::*;
 use util::paths::PathExt;
 use workspace::{
-    ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
+    ItemId, ItemSettings, Pane, ToolbarItemLocation, MultiWorkspace, WorkspaceId, delete_unloaded_items,
     invalid_item_view::InvalidItemView,
     item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
 };
@@ -220,7 +220,7 @@ impl SerializableItem for ImageView {
 
     fn deserialize(
         project: Entity<Project>,
-        _workspace: WeakEntity<Workspace>,
+        _workspace: WeakEntity<MultiWorkspace>,
         workspace_id: WorkspaceId,
         item_id: ItemId,
         window: &mut Window,
@@ -271,7 +271,7 @@ impl SerializableItem for ImageView {
 
     fn serialize(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         item_id: ItemId,
         _closing: bool,
         _window: &mut Window,

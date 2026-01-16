@@ -32,7 +32,7 @@ use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_con
 use util::{ResultExt, paths::PathExt};
 use workspace::{
     CloseIntent, HistoryManager, ModalView, OpenOptions, PathList, SerializedWorkspaceLocation,
-    WORKSPACE_DB, Workspace, WorkspaceId, notifications::DetachAndPromptErr,
+    WORKSPACE_DB, MultiWorkspace, WorkspaceId, notifications::DetachAndPromptErr,
     with_active_or_new_workspace,
 };
 use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
@@ -176,7 +176,7 @@ pub fn init(cx: &mut App) {
             let fs = workspace.project().read(cx).fs().clone();
             add_wsl_distro(fs, &open_wsl.distro, cx);
             let open_options = OpenOptions {
-                replace_window: window.window_handle().downcast::<Workspace>(),
+                replace_window: window.window_handle().downcast::<MultiWorkspace>(),
                 ..Default::default()
             };
 
@@ -233,7 +233,7 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &OpenDevContainer, cx| {
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
             let app_state = workspace.app_state().clone();
-            let replace_window = window.window_handle().downcast::<Workspace>();
+            let replace_window = window.window_handle().downcast::<MultiWorkspace>();
 
             cx.spawn_in(window, async move |_, mut cx| {
                 let (connection, starting_dir) = match dev_container::start_dev_container(
@@ -293,7 +293,7 @@ pub fn init(cx: &mut App) {
 
     // Subscribe to worktree additions to suggest opening the project in a dev container
     cx.observe_new(
-        |workspace: &mut Workspace, window: Option<&mut Window>, cx: &mut Context<Workspace>| {
+        |workspace: &mut MultiWorkspace, window: Option<&mut Window>, cx: &mut Context<MultiWorkspace>| {
             let Some(window) = window else {
                 return;
             };
@@ -401,11 +401,11 @@ impl RecentProjects {
     }
 
     pub fn open(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         create_new_window: bool,
         window: &mut Window,
         focus_handle: FocusHandle,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let weak = cx.entity().downgrade();
         workspace.toggle_modal(window, cx, |window, cx| {
@@ -416,7 +416,7 @@ impl RecentProjects {
     }
 
     pub fn popover(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         create_new_window: bool,
         focus_handle: FocusHandle,
         window: &mut Window,
@@ -455,7 +455,7 @@ impl Render for RecentProjects {
 }
 
 pub struct RecentProjectsDelegate {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     workspaces: Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>,
     selected_match_index: usize,
     matches: Vec<StringMatch>,
@@ -469,7 +469,7 @@ pub struct RecentProjectsDelegate {
 
 impl RecentProjectsDelegate {
     fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         create_new_window: bool,
         render_paths: bool,
         focus_handle: FocusHandle,
@@ -638,7 +638,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         let app_state = workspace.app_state().clone();
 
                         let replace_window = if replace_current_window {
-                            window.window_handle().downcast::<Workspace>()
+                            window.window_handle().downcast::<MultiWorkspace>()
                         } else {
                             None
                         };
@@ -1016,7 +1016,7 @@ mod tests {
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
-        let workspace = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
+        let workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
         workspace
             .update(cx, |workspace, _, _| assert!(!workspace.is_edited()))
             .unwrap();
@@ -1093,7 +1093,7 @@ mod tests {
     }
 
     fn open_recent_projects(
-        workspace: &WindowHandle<Workspace>,
+        workspace: &WindowHandle<MultiWorkspace>,
         cx: &mut TestAppContext,
     ) -> Entity<Picker<RecentProjectsDelegate>> {
         cx.dispatch_action(

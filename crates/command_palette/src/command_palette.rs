@@ -25,7 +25,7 @@ use postage::{sink::Sink, stream::Stream};
 use settings::Settings;
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{ModalView, Workspace, WorkspaceSettings};
+use workspace::{ModalView, MultiWorkspace, WorkspaceSettings};
 use zed_actions::{OpenZedUrl, command_palette::Toggle};
 
 pub fn init(cx: &mut App) {
@@ -64,9 +64,9 @@ pub fn normalize_action_query(input: &str) -> String {
 
 impl CommandPalette {
     fn register(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _window: Option<&mut Window>,
-        _: &mut Context<Workspace>,
+        _: &mut Context<MultiWorkspace>,
     ) {
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
             Self::toggle(workspace, "", window, cx)
@@ -74,10 +74,10 @@ impl CommandPalette {
     }
 
     pub fn toggle(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         query: &str,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let Some(previous_focus_handle) = window.focused(cx) else {
             return;
@@ -92,7 +92,7 @@ impl CommandPalette {
     fn new(
         previous_focus_handle: FocusHandle,
         query: &str,
-        entity: WeakEntity<Workspace>,
+        entity: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -154,7 +154,7 @@ impl Render for CommandPalette {
 pub struct CommandPaletteDelegate {
     latest_query: String,
     command_palette: WeakEntity<CommandPalette>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     all_commands: Vec<Command>,
     commands: Vec<Command>,
     matches: Vec<StringMatch>,
@@ -269,7 +269,7 @@ impl Clone for Command {
 impl CommandPaletteDelegate {
     fn new(
         command_palette: WeakEntity<CommandPalette>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         commands: Vec<Command>,
         previous_focus_handle: FocusHandle,
     ) -> Self {
@@ -723,7 +723,7 @@ mod tests {
     use language::Point;
     use project::Project;
     use settings::KeymapFile;
-    use workspace::{AppState, Workspace};
+    use workspace::{AppState, MultiWorkspace};
 
     #[test]
     fn test_humanize_action_name() {
@@ -778,7 +778,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let editor = cx.new_window_entity(|window, cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -849,7 +849,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let editor = cx.new_window_entity(|window, cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -885,7 +885,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         cx.simulate_keystrokes("cmd-n");
 
@@ -947,7 +947,7 @@ mod tests {
     }
 
     fn open_palette_with_history(
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         history: &[&str],
         cx: &mut VisualTestContext,
     ) -> Entity<Picker<CommandPaletteDelegate>> {
@@ -975,7 +975,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let palette = open_palette_with_history(&workspace, &["backspace", "select all"], cx);
 
@@ -1018,7 +1018,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let palette = open_palette_with_history(&workspace, &["backspace"], cx);
 
@@ -1042,7 +1042,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let palette = open_palette_with_history(&workspace, &["editor: close", "editor: open"], cx);
 
@@ -1084,7 +1084,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let palette = open_palette_with_history(
             &workspace,
@@ -1137,7 +1137,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let palette =
             open_palette_with_history(&workspace, &["open file", "backspace", "select all"], cx);
@@ -1159,7 +1159,7 @@ mod tests {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let palette = open_palette_with_history(&workspace, &["alpha", "beta", "gamma"], cx);
 

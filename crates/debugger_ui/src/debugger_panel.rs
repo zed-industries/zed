@@ -40,7 +40,7 @@ use util::{ResultExt, debug_panic, maybe};
 use workspace::SplitDirection;
 use workspace::item::SaveOptions;
 use workspace::{
-    Item, Pane, Workspace,
+    Item, Pane, MultiWorkspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::ToggleFocus;
@@ -57,7 +57,7 @@ pub struct DebugPanel {
     size: Pixels,
     active_session: Option<Entity<DebugSession>>,
     project: Entity<Project>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     focus_handle: FocusHandle,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     debug_scenario_scheduled_last: bool,
@@ -73,9 +73,9 @@ pub struct DebugPanel {
 
 impl DebugPanel {
     pub fn new(
-        workspace: &Workspace,
+        workspace: &MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let project = workspace.project().clone();
@@ -150,7 +150,7 @@ impl DebugPanel {
     }
 
     pub fn load(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         cx: &mut AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
@@ -305,7 +305,7 @@ impl DebugPanel {
 
     pub(crate) fn rerun_last_session(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1972,10 +1972,10 @@ impl workspace::DebuggerProvider for DebuggerProvider {
 
     fn spawn_task_or_modal(
         &self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         action: &tasks_ui::Spawn,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         spawn_task_or_modal(workspace, action, window, cx);
     }

@@ -36,7 +36,7 @@ use zed_actions::{outline::ToggleOutline, workspace::CopyPath, workspace::CopyRe
 use ui::{BASE_REM_SIZE_IN_PX, IconButtonShape, Tooltip, prelude::*, utils::SearchInputWidth};
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, MultiWorkspace,
     item::{ItemBufferKind, ItemHandle},
     searchable::{
         CollapseDirection, Direction, FilteredSearchRange, SearchEvent, SearchableItemHandle,
@@ -97,7 +97,7 @@ pub enum Event {
 }
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _, _| BufferSearchBar::register(workspace))
+    cx.observe_new(|workspace: &mut MultiWorkspace, _, _| BufferSearchBar::register(workspace))
         .detach();
 }
 

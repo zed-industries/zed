@@ -45,7 +45,7 @@ use std::{
 };
 use text::Point;
 use util::{path, rel_path::rel_path, uri};
-use workspace::{CloseIntent, Workspace};
+use workspace::{CloseIntent, MultiWorkspace};
 
 #[gpui::test(iterations = 10)]
 async fn test_host_disconnect(
@@ -90,7 +90,7 @@ async fn test_host_disconnect(
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.has_update_observer()));
 
     let workspace_b = cx_b.add_window(|window, cx| {
-        Workspace::new(
+        MultiWorkspace::new(
             None,
             project_b.clone(),
             client_b.app_state.clone(),

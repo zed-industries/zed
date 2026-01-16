@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use workspace::{AppState, OpenVisible, Workspace};
+use workspace::{AppState, OpenVisible, MultiWorkspace};
 
 actions!(
     journal,
@@ -45,7 +45,7 @@ impl settings::Settings for JournalSettings {
 
 pub fn init(_: Arc<AppState>, cx: &mut App) {
     cx.observe_new(
-        |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
+        |workspace: &mut MultiWorkspace, _window, _cx: &mut Context<MultiWorkspace>| {
             workspace.register_action(|workspace, _: &NewJournalEntry, window, cx| {
                 new_journal_entry(workspace, window, cx);
             });
@@ -54,7 +54,7 @@ pub fn init(_: Arc<AppState>, cx: &mut App) {
     .detach();
 }
 
-pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut App) {
+pub fn new_journal_entry(workspace: &MultiWorkspace, window: &mut Window, cx: &mut App) {
     let settings = JournalSettings::get_global(cx);
     let journal_dir = match journal_dir(&settings.path) {
         Some(journal_dir) => journal_dir,

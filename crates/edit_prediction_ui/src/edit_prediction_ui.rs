@@ -14,7 +14,7 @@ use rate_prediction_modal::RatePredictionsModal;
 use settings::{Settings as _, SettingsStore};
 use std::any::{Any as _, TypeId};
 use ui::{App, prelude::*};
-use workspace::{SplitDirection, Workspace};
+use workspace::{SplitDirection, MultiWorkspace};
 
 pub use edit_prediction_button::{EditPredictionButton, ToggleMenu};
 
@@ -41,7 +41,7 @@ actions!(
 pub fn init(cx: &mut App) {
     feature_gate_predict_edits_actions(cx);
 
-    cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
+    cx.observe_new(move |workspace: &mut MultiWorkspace, _, _cx| {
         workspace.register_action(|workspace, _: &RatePredictions, window, cx| {
             if cx.has_flag::<PredictEditsRatePredictionsFeatureFlag>() {
                 RatePredictionsModal::toggle(workspace, window, cx);
@@ -133,9 +133,9 @@ fn feature_gate_predict_edits_actions(cx: &mut App) {
 }
 
 fn capture_example_as_markdown(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) -> Option<()> {
     let markdown_language = workspace
         .app_state()

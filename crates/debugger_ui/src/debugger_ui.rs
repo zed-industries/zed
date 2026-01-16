@@ -13,7 +13,7 @@ use stack_trace_view::StackTraceView;
 use tasks_ui::{Spawn, TaskOverrides};
 use ui::{FluentBuilder, InteractiveElement};
 use util::maybe;
-use workspace::{ItemHandle, ShutdownDebugAdapters, Workspace};
+use workspace::{ItemHandle, ShutdownDebugAdapters, MultiWorkspace};
 use zed_actions::ToggleFocus;
 use zed_actions::debugger::OpenOnboardingModal;
 
@@ -115,16 +115,16 @@ actions!(
 pub fn init(cx: &mut App) {
     workspace::FollowableViewRegistry::register::<DebugSession>(cx);
 
-    cx.observe_new(|workspace: &mut Workspace, _, _| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _, _| {
         workspace
             .register_action(spawn_task_or_modal)
             .register_action(|workspace, _: &ToggleFocus, window, cx| {
                 workspace.toggle_panel_focus::<DebugPanel>(window, cx);
             })
-            .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
+            .register_action(|workspace: &mut MultiWorkspace, _: &Start, window, cx| {
                 NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
             })
-            .register_action(|workspace: &mut Workspace, _: &Rerun, window, cx| {
+            .register_action(|workspace: &mut MultiWorkspace, _: &Rerun, window, cx| {
                 let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
                     return;
                 };
@@ -134,7 +134,7 @@ pub fn init(cx: &mut App) {
                 })
             })
             .register_action(
-                |workspace: &mut Workspace, _: &ShutdownDebugAdapters, _window, cx| {
+                |workspace: &mut MultiWorkspace, _: &ShutdownDebugAdapters, _window, cx| {
                     workspace.project().update(cx, |project, cx| {
                         project.dap_store().update(cx, |store, cx| {
                             store.shutdown_sessions(cx).detach();
@@ -438,10 +438,10 @@ pub fn init(cx: &mut App) {
 }
 
 fn spawn_task_or_modal(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     action: &Spawn,
     window: &mut ui::Window,
-    cx: &mut ui::Context<Workspace>,
+    cx: &mut ui::Context<MultiWorkspace>,
 ) {
     match action {
         Spawn::ByName {

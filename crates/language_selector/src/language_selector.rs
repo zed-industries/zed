@@ -17,7 +17,7 @@ use settings::Settings;
 use std::{ops::Not as _, path::Path, sync::Arc};
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 actions!(
     language_selector,
@@ -37,9 +37,9 @@ pub struct LanguageSelector {
 
 impl LanguageSelector {
     fn register(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _window: Option<&mut Window>,
-        _: &mut Context<Workspace>,
+        _: &mut Context<MultiWorkspace>,
     ) {
         workspace.register_action(move |workspace, _: &Toggle, window, cx| {
             Self::toggle(workspace, window, cx);
@@ -47,9 +47,9 @@ impl LanguageSelector {
     }
 
     fn toggle(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Option<()> {
         let registry = workspace.app_state().languages.clone();
         let (_, buffer, _) = workspace

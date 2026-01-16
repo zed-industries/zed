@@ -4,17 +4,17 @@ use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{Project, git_store::Repository};
 use std::sync::Arc;
 use ui::{ListItem, ListItemSpacing, prelude::*};
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
-pub fn register(workspace: &mut Workspace) {
+pub fn register(workspace: &mut MultiWorkspace) {
     workspace.register_action(open);
 }
 
 pub fn open(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     _: &zed_actions::git::SelectRepo,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     let project = workspace.project().clone();
     workspace.toggle_modal(window, cx, |window, cx| {

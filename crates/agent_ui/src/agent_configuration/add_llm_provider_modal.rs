@@ -14,7 +14,7 @@ use ui::{
     WithScrollbar, prelude::*,
 };
 use ui_input::InputField;
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 fn single_line_input(
     label: impl Into<SharedString>,
@@ -294,9 +294,9 @@ pub struct AddLlmProviderModal {
 impl AddLlmProviderModal {
     pub fn toggle(
         provider: LlmCompatibleProvider,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         workspace.toggle_modal(window, cx, |window, cx| Self::new(provider, window, cx));
     }
@@ -823,7 +823,7 @@ mod tests {
         cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         let (_, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         cx
     }

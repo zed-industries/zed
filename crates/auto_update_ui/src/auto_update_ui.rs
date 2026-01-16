@@ -6,7 +6,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use serde::Deserialize;
 use smol::io::AsyncReadExt;
 use util::ResultExt as _;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 use workspace::notifications::ErrorMessagePrompt;
 use workspace::notifications::simple_message_notification::MessageNotification;
 use workspace::notifications::{NotificationId, show_app_notification};
@@ -21,7 +21,7 @@ actions!(
 
 pub fn init(cx: &mut App) {
     notify_if_app_was_updated(cx);
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _window, _cx| {
         workspace.register_action(|workspace, _: &ViewReleaseNotesLocally, window, cx| {
             view_release_notes_locally(workspace, window, cx);
         });
@@ -40,9 +40,9 @@ struct ReleaseNotesBody {
 }
 
 fn notify_release_notes_failed_to_show_locally(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     _window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     struct ViewReleaseNotesLocallyError;
     workspace.show_notification(
@@ -62,9 +62,9 @@ fn notify_release_notes_failed_to_show_locally(
 }
 
 fn view_release_notes_locally(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     let release_channel = ReleaseChannel::global(cx);
 

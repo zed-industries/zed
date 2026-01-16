@@ -11,7 +11,7 @@ use running::RunningState;
 use std::cell::OnceCell;
 use ui::prelude::*;
 use workspace::{
-    CollaboratorId, FollowableItem, ViewId, Workspace,
+    CollaboratorId, FollowableItem, ViewId, MultiWorkspace,
     item::{self, Item},
 };
 
@@ -21,13 +21,13 @@ pub struct DebugSession {
     pub(crate) quirks: SessionQuirks,
     stack_trace_view: OnceCell<Entity<StackTraceView>>,
     _worktree_store: WeakEntity<WorktreeStore>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
 }
 
 impl DebugSession {
     pub(crate) fn running(
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         parent_terminal: Option<Entity<DebugTerminal>>,
         session: Entity<Session>,
         serialized_layout: Option<SerializedLayout>,
@@ -146,7 +146,7 @@ impl FollowableItem for DebugSession {
     }
 
     fn from_state_proto(
-        _workspace: Entity<Workspace>,
+        _workspace: Entity<MultiWorkspace>,
         _remote_id: ViewId,
         _state: &mut Option<proto::view::Variant>,
         _window: &mut Window,

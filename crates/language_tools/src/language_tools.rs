@@ -11,7 +11,7 @@ use gpui::{App, AppContext, Entity};
 pub use lsp_log_view::LspLogView;
 pub use syntax_tree_view::{SyntaxTreeToolbarItemView, SyntaxTreeView};
 use ui::{Context, Window};
-use workspace::{Item, ItemHandle, SplitDirection, Workspace};
+use workspace::{Item, ItemHandle, SplitDirection, MultiWorkspace};
 
 pub fn init(cx: &mut App) {
     lsp_log_view::init(false, cx);
@@ -20,10 +20,10 @@ pub fn init(cx: &mut App) {
 }
 
 fn get_or_create_tool<T>(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     destination: SplitDirection,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
     new_tool: impl FnOnce(&mut Window, &mut Context<T>) -> T,
 ) -> Entity<T>
 where

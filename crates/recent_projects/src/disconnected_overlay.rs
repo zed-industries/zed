@@ -7,7 +7,7 @@ use ui::{
     HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement, Label, Modal,
     ModalFooter, ModalHeader, ParentElement, Section, Styled, StyledExt, Window, div, h_flex, rems,
 };
-use workspace::{ModalView, OpenOptions, Workspace, notifications::DetachAndPromptErr};
+use workspace::{ModalView, OpenOptions, MultiWorkspace, notifications::DetachAndPromptErr};
 
 use crate::open_remote_project;
 
@@ -17,7 +17,7 @@ enum Host {
 }
 
 pub struct DisconnectedOverlay {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     host: Host,
     focus_handle: FocusHandle,
     finished: bool,
@@ -44,9 +44,9 @@ impl ModalView for DisconnectedOverlay {
 
 impl DisconnectedOverlay {
     pub fn register(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: Option<&mut Window>,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let Some(window) = window else {
             return;
@@ -100,7 +100,7 @@ impl DisconnectedOverlay {
             return;
         };
 
-        let Some(window_handle) = window.window_handle().downcast::<Workspace>() else {
+        let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
             return;
         };
 

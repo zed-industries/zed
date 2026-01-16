@@ -38,7 +38,7 @@ use ui::{
 use ui_input::InputField;
 use util::ResultExt;
 use workspace::{
-    Item, ModalView, SerializableItem, Workspace, notifications::NotifyTaskExt as _,
+    Item, ModalView, SerializableItem, MultiWorkspace, notifications::NotifyTaskExt as _,
     register_serializable_item,
 };
 
@@ -88,9 +88,9 @@ pub fn init(cx: &mut App) {
 
     fn open_keymap_editor(
         filter: Option<String>,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         workspace
             .with_local_workspace(window, cx, |workspace, window, cx| {
@@ -131,7 +131,7 @@ pub fn init(cx: &mut App) {
             .detach_and_log_err(cx);
     }
 
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _window, _cx| {
         workspace
             .register_action(|workspace, _: &OpenKeymap, window, cx| {
                 open_keymap_editor(None, workspace, window, cx);
@@ -411,7 +411,7 @@ impl ConflictState {
 }
 
 struct KeymapEditor {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     focus_handle: FocusHandle,
     _keymap_subscription: Subscription,
     keybindings: Vec<ProcessedBinding>,
@@ -483,7 +483,7 @@ fn keystrokes_match_exactly(
 }
 
 impl KeymapEditor {
-    fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(workspace: WeakEntity<MultiWorkspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let _keymap_subscription =
             cx.observe_global_in::<KeymapEventChannel>(window, Self::on_keymap_changed);
         let table_interaction_state = cx.new(|cx| {
@@ -2265,7 +2265,7 @@ struct KeybindingEditorModal {
     fs: Arc<dyn Fs>,
     error: Option<InputError>,
     keymap_editor: Entity<KeymapEditor>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     focus_state: KeybindingEditorModalFocusState,
 }
 
@@ -2289,7 +2289,7 @@ impl KeybindingEditorModal {
         editing_keybind_idx: usize,
         keymap_editor: Entity<KeymapEditor>,
         action_args_temp_dir: Option<&std::path::Path>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         fs: Arc<dyn Fs>,
         window: &mut Window,
         cx: &mut App,
@@ -3053,7 +3053,7 @@ impl ActionArgumentsEditor {
         action_name: &'static str,
         arguments: Option<SharedString>,
         temp_dir: Option<&std::path::Path>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -3319,7 +3319,7 @@ impl CompletionProvider for KeyContextCompletionProvider {
     }
 }
 
-async fn load_json_language(workspace: WeakEntity<Workspace>, cx: &mut AsyncApp) -> Arc<Language> {
+async fn load_json_language(workspace: WeakEntity<MultiWorkspace>, cx: &mut AsyncApp) -> Arc<Language> {
     let json_language_task = workspace
         .read_with(cx, |workspace, cx| {
             workspace
@@ -3346,7 +3346,7 @@ async fn load_json_language(workspace: WeakEntity<Workspace>, cx: &mut AsyncApp)
 }
 
 async fn load_keybind_context_language(
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     cx: &mut AsyncApp,
 ) -> Arc<Language> {
     let language_task = workspace
@@ -3711,7 +3711,7 @@ impl SerializableItem for KeymapEditor {
 
     fn deserialize(
         _project: Entity<project::Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
         window: &mut Window,
@@ -3731,7 +3731,7 @@ impl SerializableItem for KeymapEditor {
 
     fn serialize(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         item_id: workspace::ItemId,
         _closing: bool,
         _window: &mut Window,

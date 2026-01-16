@@ -51,7 +51,7 @@ use ui::{
 };
 use util::{RangeExt, ResultExt, TryFutureExt, debug_panic, rel_path::RelPath};
 use workspace::{
-    OpenInTerminal, WeakItemHandle, Workspace,
+    OpenInTerminal, WeakItemHandle, MultiWorkspace,
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemHandle,
     searchable::{SearchEvent, SearchableItem},
@@ -106,7 +106,7 @@ pub struct OutlinePanel {
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
     project: Entity<Project>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     active: bool,
     pinned: bool,
     scroll_handle: UniformListScrollHandle,
@@ -664,7 +664,7 @@ struct SerializedOutlinePanel {
 }
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _, _| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<OutlinePanel>(window, cx);
         });
@@ -674,7 +674,7 @@ pub fn init(cx: &mut App) {
 
 impl OutlinePanel {
     pub async fn load(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
         let serialized_panel = match workspace
@@ -711,9 +711,9 @@ impl OutlinePanel {
     }
 
     fn new(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Entity<Self> {
         let project = workspace.project().clone();
         let workspace_handle = cx.entity().downgrade();
@@ -888,7 +888,7 @@ impl OutlinePanel {
         })
     }
 
-    fn serialization_key(workspace: &Workspace) -> Option<String> {
+    fn serialization_key(workspace: &MultiWorkspace) -> Option<String> {
         workspace
             .database_id()
             .map(|id| i64::from(id).to_string())
@@ -4890,7 +4890,7 @@ impl OutlinePanel {
 }
 
 fn workspace_active_editor(
-    workspace: &Workspace,
+    workspace: &MultiWorkspace,
     cx: &App,
 ) -> Option<(Box<dyn ItemHandle>, Entity<Editor>)> {
     let active_item = workspace.active_item(cx)?;
@@ -6756,8 +6756,8 @@ outline: struct OutlineEntryExcerpt
     async fn add_outline_panel(
         project: &Entity<Project>,
         cx: &mut TestAppContext,
-    ) -> WindowHandle<Workspace> {
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    ) -> WindowHandle<MultiWorkspace> {
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let outline_panel = window
             .update(cx, |_, window, cx| {
@@ -6778,7 +6778,7 @@ outline: struct OutlineEntryExcerpt
     }
 
     fn outline_panel(
-        workspace: &WindowHandle<Workspace>,
+        workspace: &WindowHandle<MultiWorkspace>,
         cx: &mut TestAppContext,
     ) -> Entity<OutlinePanel> {
         workspace

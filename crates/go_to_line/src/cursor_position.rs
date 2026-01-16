@@ -8,7 +8,7 @@ use ui::{
     Render, Tooltip, Window, div,
 };
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::{StatusBarSettings, StatusItemView, Workspace, item::ItemHandle};
+use workspace::{StatusBarSettings, StatusItemView, MultiWorkspace, item::ItemHandle};
 
 #[derive(Copy, Clone, Debug, Default, PartialOrd, PartialEq)]
 pub(crate) struct SelectionStats {
@@ -21,7 +21,7 @@ pub struct CursorPosition {
     position: Option<UserCaretPosition>,
     selected_count: SelectionStats,
     context: Option<FocusHandle>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     update_position: Task<()>,
     _observe_active_editor: Option<Subscription>,
 }
@@ -68,7 +68,7 @@ impl UserCaretPosition {
 }
 
 impl CursorPosition {
-    pub fn new(workspace: &Workspace) -> Self {
+    pub fn new(workspace: &MultiWorkspace) -> Self {
         Self {
             position: None,
             context: None,

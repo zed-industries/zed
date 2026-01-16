@@ -19,20 +19,20 @@ use std::{
         atomic::{AtomicBool, Ordering::SeqCst},
     },
 };
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 pub struct SlashCommandCompletionProvider {
     cancel_flag: Mutex<Arc<AtomicBool>>,
     slash_commands: Arc<SlashCommandWorkingSet>,
     editor: Option<WeakEntity<TextThreadEditor>>,
-    workspace: Option<WeakEntity<Workspace>>,
+    workspace: Option<WeakEntity<MultiWorkspace>>,
 }
 
 impl SlashCommandCompletionProvider {
     pub fn new(
         slash_commands: Arc<SlashCommandWorkingSet>,
         editor: Option<WeakEntity<TextThreadEditor>>,
-        workspace: Option<WeakEntity<Workspace>>,
+        workspace: Option<WeakEntity<MultiWorkspace>>,
     ) -> Self {
         Self {
             cancel_flag: Mutex::new(Arc::new(AtomicBool::new(false))),

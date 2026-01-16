@@ -19,7 +19,7 @@ use ui::{
 };
 
 use util::{ResultExt, truncate_and_trailoff};
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 pub use zed_actions::{Rerun, Spawn};
 
 /// A modal used to spawn new tasks.
@@ -31,7 +31,7 @@ pub struct TasksModalDelegate {
     divider_index: Option<usize>,
     matches: Vec<StringMatch>,
     selected_index: usize,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     prompt: String,
     task_contexts: Arc<TaskContexts>,
     placeholder_text: Arc<str>,
@@ -49,7 +49,7 @@ impl TasksModalDelegate {
         task_store: Entity<TaskStore>,
         task_contexts: Arc<TaskContexts>,
         task_overrides: Option<TaskOverrides>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
     ) -> Self {
         let placeholder_text = if let Some(TaskOverrides {
             reveal_target: Some(RevealTarget::Center),
@@ -133,7 +133,7 @@ impl TasksModal {
         task_contexts: Arc<TaskContexts>,
         task_overrides: Option<TaskOverrides>,
         is_modal: bool,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -782,7 +782,7 @@ mod tests {
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
@@ -955,7 +955,7 @@ mod tests {
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
@@ -1110,7 +1110,7 @@ mod tests {
             ));
         });
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let _ts_file_1 = workspace
             .update_in(cx, |workspace, window, cx| {
@@ -1275,7 +1275,7 @@ mod tests {
     }
 
     fn open_spawn_tasks(
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         cx: &mut VisualTestContext,
     ) -> Entity<Picker<TasksModalDelegate>> {
         cx.dispatch_action(Spawn::modal());

@@ -38,7 +38,7 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{
-    CloseActiveItem, NewCenterTerminal, NewTerminal, ToolbarItemLocation, Workspace, WorkspaceId,
+    CloseActiveItem, NewCenterTerminal, NewTerminal, ToolbarItemLocation, MultiWorkspace, WorkspaceId,
     delete_unloaded_items,
     item::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
@@ -94,7 +94,7 @@ pub fn init(cx: &mut App) {
 
     register_serializable_item::<TerminalView>(cx);
 
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _window, _cx| {
         workspace.register_action(TerminalView::deploy);
     })
     .detach();
@@ -115,7 +115,7 @@ pub struct BlockContext<'a, 'b> {
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
 pub struct TerminalView {
     terminal: Entity<Terminal>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     project: WeakEntity<Project>,
     focus_handle: FocusHandle,
     //Currently using iTerm bell, show bell emoji in tab until input is received
@@ -192,10 +192,10 @@ impl Focusable for TerminalView {
 impl TerminalView {
     ///Create a new Terminal in the current working directory or the user's home directory
     pub fn deploy(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         action: &NewCenterTerminal,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let local = action.local;
         let working_directory = default_working_directory(workspace, cx);
@@ -211,7 +211,7 @@ impl TerminalView {
 
     pub fn new(
         terminal: Entity<Terminal>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         workspace_id: Option<WorkspaceId>,
         project: WeakEntity<Project>,
         window: &mut Window,
@@ -859,7 +859,7 @@ fn terminal_rerun_override(task: &TaskId) -> zed_actions::Rerun {
 
 fn subscribe_for_terminal_events(
     terminal: &Entity<Terminal>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     window: &mut Window,
     cx: &mut Context<TerminalView>,
 ) -> Vec<Subscription> {
@@ -1322,7 +1322,7 @@ impl Item for TerminalView {
 
     fn added_to_workspace(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1363,7 +1363,7 @@ impl SerializableItem for TerminalView {
 
     fn serialize(
         &mut self,
-        _workspace: &mut Workspace,
+        _workspace: &mut MultiWorkspace,
         item_id: workspace::ItemId,
         _closing: bool,
         _: &mut Window,
@@ -1392,7 +1392,7 @@ impl SerializableItem for TerminalView {
 
     fn deserialize(
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
         window: &mut Window,
@@ -1581,7 +1581,7 @@ impl SearchableItem for TerminalView {
 
 /// Gets the working directory for the given workspace, respecting the user's settings.
 /// Falls back to home directory when no project directory is available.
-pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
+pub(crate) fn default_working_directory(workspace: &MultiWorkspace, cx: &App) -> Option<PathBuf> {
     let directory = match &TerminalSettings::get_global(cx).working_directory {
         WorkingDirectory::CurrentProjectDirectory => workspace
             .project()
@@ -1600,7 +1600,7 @@ pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Opti
     directory.or_else(dirs::home_dir)
 }
 ///Gets the first project's home directory, or the home directory
-fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
+fn first_project_directory(workspace: &MultiWorkspace, cx: &App) -> Option<PathBuf> {
     let worktree = workspace.worktrees(cx).next()?.read(cx);
     let worktree_path = worktree.abs_path();
     if worktree.root_entry()?.is_dir() {
@@ -1727,7 +1727,7 @@ mod tests {
     }
 
     /// Creates a worktree with 1 file: /root.txt
-    pub async fn init_test(cx: &mut TestAppContext) -> (Entity<Project>, Entity<Workspace>) {
+    pub async fn init_test(cx: &mut TestAppContext) -> (Entity<Project>, Entity<MultiWorkspace>) {
         let params = cx.update(AppState::test);
         cx.update(|cx| {
             theme::init(theme::LoadThemes::JustBase, cx);
@@ -1735,7 +1735,7 @@ mod tests {
 
         let project = Project::test(params.fs.clone(), [], cx).await;
         let workspace = cx
-            .add_window(|window, cx| Workspace::test_new(project.clone(), window, cx))
+            .add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx))
             .root(cx)
             .unwrap();
 

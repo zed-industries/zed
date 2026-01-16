@@ -40,7 +40,7 @@ use ui::{
     WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
-use workspace::{Workspace, create_and_open_local_file};
+use workspace::{MultiWorkspace, create_and_open_local_file};
 use zed_actions::{ExtensionCategoryFilter, OpenBrowser};
 
 pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
@@ -55,7 +55,7 @@ pub struct AgentConfiguration {
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     agent_server_store: Entity<AgentServerStore>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     focus_handle: FocusHandle,
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
     context_server_store: Entity<ContextServerStore>,
@@ -73,7 +73,7 @@ impl AgentConfiguration {
         context_server_store: Entity<ContextServerStore>,
         context_server_registry: Entity<ContextServerRegistry>,
         language_registry: Arc<LanguageRegistry>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1265,7 +1265,7 @@ pub(crate) fn resolve_extension_for_context_server(
 // an MCP server extension that not only provides
 // the server, but other things, too, like language servers and more.
 fn show_unable_to_uninstall_extension_with_context_server(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     id: ContextServerId,
     cx: &mut App,
 ) {
@@ -1322,7 +1322,7 @@ fn show_unable_to_uninstall_extension_with_context_server(
 }
 
 async fn open_new_agent_servers_entry_in_settings_editor(
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     cx: &mut AsyncWindowContext,
 ) -> Result<()> {
     let settings_editor = workspace

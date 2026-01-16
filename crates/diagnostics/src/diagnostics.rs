@@ -45,7 +45,7 @@ pub use toolbar_controls::ToolbarControls;
 use ui::{Icon, IconName, Label, h_flex, prelude::*};
 use util::ResultExt;
 use workspace::{
-    ItemNavHistory, Workspace,
+    ItemNavHistory, MultiWorkspace,
     item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
@@ -74,7 +74,7 @@ pub fn init(cx: &mut App) {
 
 pub(crate) struct ProjectDiagnosticsEditor {
     pub project: Entity<Project>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     focus_handle: FocusHandle,
     editor: Entity<Editor>,
     diagnostics: HashMap<BufferId, Vec<DiagnosticEntry<text::Anchor>>>,
@@ -158,9 +158,9 @@ enum RetainExcerpts {
 
 impl ProjectDiagnosticsEditor {
     pub fn register(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _window: Option<&mut Window>,
-        _: &mut Context<Workspace>,
+        _: &mut Context<MultiWorkspace>,
     ) {
         workspace.register_action(Self::deploy);
     }
@@ -168,7 +168,7 @@ impl ProjectDiagnosticsEditor {
     fn new(
         include_warnings: bool,
         project_handle: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -382,10 +382,10 @@ impl ProjectDiagnosticsEditor {
     }
 
     fn deploy(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &Deploy,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
             let is_active = workspace
@@ -896,7 +896,7 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn added_to_workspace(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

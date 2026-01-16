@@ -31,7 +31,7 @@ use ui::{
     LabelCommon, ListItem, Styled, Window, prelude::*,
 };
 use util::paths::PathWithPosition;
-use workspace::{AppState, ModalView, Workspace};
+use workspace::{AppState, ModalView, MultiWorkspace};
 
 #[derive(RegisterSetting)]
 pub struct RemoteSettings {
@@ -662,7 +662,7 @@ pub async fn open_remote_project(
                 cx,
             );
             cx.new(|cx| {
-                let mut workspace = Workspace::new(None, project, app_state.clone(), window, cx);
+                let mut workspace = MultiWorkspace::new(None, project, app_state.clone(), window, cx);
                 workspace.centered_layout = workspace_position.centered_layout;
                 workspace
             })
@@ -1005,7 +1005,7 @@ mod tests {
         let windows = cx.update(|cx| cx.windows().len());
         assert_eq!(windows, 1, "Should have opened a window");
 
-        let workspace_handle = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
+        let workspace_handle = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
 
         workspace_handle
             .update(cx, |workspace, _, cx| {

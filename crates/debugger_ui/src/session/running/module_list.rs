@@ -10,13 +10,13 @@ use project::{
 };
 use std::{ops::Range, path::Path, sync::Arc};
 use ui::{WithScrollbar, prelude::*};
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 pub struct ModuleList {
     scroll_handle: UniformListScrollHandle,
     selected_ix: Option<usize>,
     session: Entity<Session>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     focus_handle: FocusHandle,
     entries: Vec<Module>,
     _rebuild_task: Option<Task<()>>,
@@ -26,7 +26,7 @@ pub struct ModuleList {
 impl ModuleList {
     pub fn new(
         session: Entity<Session>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();

@@ -19,7 +19,7 @@ use std::{
 };
 use ui::prelude::*;
 use util::{ResultExt, rel_path::RelPath};
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 use worktree::ChildEntriesOptions;
 
 pub struct FileSlashCommand;
@@ -29,7 +29,7 @@ impl FileSlashCommand {
         &self,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         cx: &mut App,
     ) -> Task<Vec<PathMatch>> {
         if query.is_empty() {
@@ -140,7 +140,7 @@ impl SlashCommand for FileSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         cancellation_flag: Arc<AtomicBool>,
-        workspace: Option<WeakEntity<Workspace>>,
+        workspace: Option<WeakEntity<MultiWorkspace>>,
         _: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -196,7 +196,7 @@ impl SlashCommand for FileSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _: &mut Window,
         cx: &mut App,

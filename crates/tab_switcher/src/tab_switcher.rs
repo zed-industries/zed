@@ -23,7 +23,7 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{
-    Event as WorkspaceEvent, ModalView, Pane, SaveIntent, Workspace,
+    Event as WorkspaceEvent, ModalView, Pane, SaveIntent, MultiWorkspace,
     item::{ItemHandle, ItemSettings, ShowDiagnostics, TabContentParams},
     pane::{render_item_indicator, tab_details},
 };
@@ -61,9 +61,9 @@ pub fn init(cx: &mut App) {
 
 impl TabSwitcher {
     fn register(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _window: Option<&mut Window>,
-        _: &mut Context<Workspace>,
+        _: &mut Context<MultiWorkspace>,
     ) {
         workspace.register_action(|workspace, action: &Toggle, window, cx| {
             let Some(tab_switcher) = workspace.active_modal::<Self>(cx) else {
@@ -92,11 +92,11 @@ impl TabSwitcher {
     }
 
     fn open(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         select_last: bool,
         is_global: bool,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let mut weak_pane = workspace.active_pane().downgrade();
         for dock in [
@@ -230,7 +230,7 @@ pub struct TabSwitcherDelegate {
     tab_switcher: WeakEntity<TabSwitcher>,
     selected_index: usize,
     pane: WeakEntity<Pane>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     project: Entity<Project>,
     matches: Vec<TabMatch>,
     original_items: Vec<(Entity<Pane>, usize)>,
@@ -316,7 +316,7 @@ impl TabSwitcherDelegate {
         select_last: bool,
         tab_switcher: WeakEntity<TabSwitcher>,
         pane: WeakEntity<Pane>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         is_all_panes: bool,
         window: &mut Window,
         cx: &mut Context<TabSwitcher>,
@@ -338,7 +338,7 @@ impl TabSwitcherDelegate {
     }
 
     fn subscribe_to_updates(
-        workspace: &WeakEntity<Workspace>,
+        workspace: &WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<TabSwitcher>,
     ) {

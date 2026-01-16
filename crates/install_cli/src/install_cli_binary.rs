@@ -6,7 +6,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use util::ResultExt;
 use workspace::notifications::{DetachAndPromptErr, NotificationId};
-use workspace::{Toast, Workspace};
+use workspace::{MultiWorkspace, Toast};
 
 actions!(
     cli,
@@ -61,7 +61,7 @@ async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
     Ok(link_path.into())
 }
 
-pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
+pub fn install_cli_binary(window: &mut Window, cx: &mut Context<MultiWorkspace>) {
     const LINUX_PROMPT_DETAIL: &str = "If you installed Zed from our official release add ~/.local/bin to your PATH.\n\nIf you installed Zed from a different source like your package manager, then you may need to create an alias/symlink manually.\n\nDepending on your package manager, the CLI might be named zeditor, zedit, zed-editor or something else.";
 
     cx.spawn_in(window, async move |workspace, cx| {

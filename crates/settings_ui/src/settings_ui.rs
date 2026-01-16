@@ -34,7 +34,7 @@ use ui::{
 };
 use ui_input::{NumberField, NumberFieldMode, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
-use workspace::{AppState, OpenOptions, OpenVisible, Workspace, client_side_decorations};
+use workspace::{AppState, OpenOptions, OpenVisible, MultiWorkspace, client_side_decorations};
 use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
 use crate::components::{
@@ -373,13 +373,13 @@ struct SettingsFieldMetadata {
 pub fn init(cx: &mut App) {
     init_renderers(cx);
 
-    cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
+    cx.observe_new(|workspace: &mut workspace::MultiWorkspace, _, _| {
         workspace
             .register_action(
                 |workspace, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
                     let window_handle = window
                         .window_handle()
-                        .downcast::<Workspace>()
+                        .downcast::<MultiWorkspace>()
                         .expect("Workspaces are root Windows");
                     open_settings_editor(workspace, Some(&path), false, window_handle, cx);
                 },
@@ -387,14 +387,14 @@ pub fn init(cx: &mut App) {
             .register_action(|workspace, _: &OpenSettings, window, cx| {
                 let window_handle = window
                     .window_handle()
-                    .downcast::<Workspace>()
+                    .downcast::<MultiWorkspace>()
                     .expect("Workspaces are root Windows");
                 open_settings_editor(workspace, None, false, window_handle, cx);
             })
             .register_action(|workspace, _: &OpenProjectSettings, window, cx| {
                 let window_handle = window
                     .window_handle()
-                    .downcast::<Workspace>()
+                    .downcast::<MultiWorkspace>()
                     .expect("Workspaces are root Windows");
                 open_settings_editor(workspace, None, true, window_handle, cx);
             });
@@ -526,10 +526,10 @@ fn init_renderers(cx: &mut App) {
 }
 
 pub fn open_settings_editor(
-    _workspace: &mut Workspace,
+    _workspace: &mut MultiWorkspace,
     path: Option<&str>,
     open_project_settings: bool,
-    workspace_handle: WindowHandle<Workspace>,
+    workspace_handle: WindowHandle<MultiWorkspace>,
     cx: &mut App,
 ) {
     telemetry::event!("Settings Viewed");
@@ -672,7 +672,7 @@ fn sub_page_stack_mut() -> std::sync::RwLockWriteGuard<'static, Vec<SubPage>> {
 
 pub struct SettingsWindow {
     title_bar: Option<Entity<PlatformTitleBar>>,
-    original_window: Option<WindowHandle<Workspace>>,
+    original_window: Option<WindowHandle<MultiWorkspace>>,
     files: Vec<(SettingsUiFile, FocusHandle)>,
     worktree_root_dirs: HashMap<WorktreeId, String>,
     current_file: SettingsUiFile,
@@ -1354,7 +1354,7 @@ impl SettingsUiFile {
 
 impl SettingsWindow {
     fn new(
-        original_window: Option<WindowHandle<Workspace>>,
+        original_window: Option<WindowHandle<MultiWorkspace>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1485,7 +1485,7 @@ impl SettingsWindow {
         })
         .detach();
 
-        cx.observe_new::<Workspace>(move |_, window, cx| {
+        cx.observe_new::<MultiWorkspace>(move |_, window, cx| {
             let workspace = cx.entity();
             let Some(window) = window else {
                 return;

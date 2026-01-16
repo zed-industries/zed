@@ -28,7 +28,7 @@ use util::ResultExt as _;
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use util::truncate_and_remove_front;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 use crate::AgentPanel;
 use crate::mention_set::MentionSet;
@@ -196,7 +196,7 @@ pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     mention_set: Entity<MentionSet>,
     history: WeakEntity<AcpThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
 }
 
 impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
@@ -206,7 +206,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         mention_set: Entity<MentionSet>,
         history: WeakEntity<AcpThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
     ) -> Self {
         Self {
             source: Arc::new(source),
@@ -223,7 +223,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source_range: Range<Anchor>,
         editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         cx: &mut App,
     ) -> Option<Completion> {
         match entry {
@@ -260,7 +260,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: Arc<T>,
         editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         cx: &mut App,
     ) -> Completion {
         let title = session_title(&thread_entry);
@@ -307,7 +307,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: Arc<T>,
         editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         cx: &mut App,
     ) -> Completion {
         let uri = MentionUri::Rule {
@@ -349,7 +349,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: Arc<T>,
         editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         project: Entity<Project>,
         label_max_chars: usize,
         cx: &mut App,
@@ -412,7 +412,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: Arc<T>,
         editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         label_max_chars: usize,
         cx: &mut App,
     ) -> Option<Completion> {
@@ -477,7 +477,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: Arc<T>,
         editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         cx: &mut App,
     ) -> Option<Completion> {
         let new_text = format!("@fetch {} ", url_to_fetch);
@@ -516,7 +516,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source_range: Range<Anchor>,
         editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         cx: &mut App,
     ) -> Option<Completion> {
         let (new_text, on_action) = match action {
@@ -755,7 +755,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
     fn recent_context_picker_entries(
         &self,
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         cx: &mut App,
     ) -> Task<Vec<Match>> {
         let mut recent = Vec::with_capacity(6);
@@ -843,7 +843,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
     fn available_context_picker_entries(
         &self,
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         cx: &mut App,
     ) -> Vec<PromptContextEntry> {
         let mut entries = vec![
@@ -1189,7 +1189,7 @@ fn confirm_completion_callback<T: PromptCompletionProviderDelegate>(
     source: Arc<T>,
     editor: WeakEntity<Editor>,
     mention_set: WeakEntity<MentionSet>,
-    workspace: Entity<Workspace>,
+    workspace: Entity<MultiWorkspace>,
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
     Arc::new(move |_, window, cx| {
         let source = source.clone();
@@ -1383,7 +1383,7 @@ impl MentionCompletion {
 pub(crate) fn search_files(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
-    workspace: &Entity<Workspace>,
+    workspace: &Entity<MultiWorkspace>,
     cx: &App,
 ) -> Task<Vec<FileMatch>> {
     if query.is_empty() {
@@ -1483,7 +1483,7 @@ pub(crate) fn search_files(
 pub(crate) fn search_symbols(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
-    workspace: &Entity<Workspace>,
+    workspace: &Entity<MultiWorkspace>,
     cx: &mut App,
 ) -> Task<Vec<SymbolMatch>> {
     let symbols_task = workspace.update(cx, |workspace, cx| {
@@ -1694,7 +1694,7 @@ fn build_code_label_for_path(
 }
 
 fn selection_ranges(
-    workspace: &Entity<Workspace>,
+    workspace: &Entity<MultiWorkspace>,
     cx: &mut App,
 ) -> Vec<(Entity<Buffer>, Range<text::Anchor>)> {
     let Some(editor) = workspace

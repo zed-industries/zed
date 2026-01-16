@@ -53,7 +53,7 @@ use plain::TerminalOutput;
 
 pub(crate) mod user_error;
 use user_error::ErrorView;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 use crate::repl_settings::ReplSettings;
 use settings::Settings;
@@ -130,7 +130,7 @@ pub enum Output {
 impl Output {
     fn render_output_controls<V: OutputContent + 'static>(
         v: Entity<V>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<ExecutionView>,
     ) -> Option<AnyElement> {
@@ -202,7 +202,7 @@ impl Output {
 
     pub fn render(
         &self,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<ExecutionView>,
     ) -> impl IntoElement + use<> {
@@ -370,7 +370,7 @@ pub struct ExecutionViewFinishedSmall(pub String);
 /// sees as "the output" for a single execution.
 pub struct ExecutionView {
     #[allow(unused)]
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     pub outputs: Vec<Output>,
     pub status: ExecutionStatus,
 }
@@ -381,7 +381,7 @@ impl EventEmitter<ExecutionViewFinishedSmall> for ExecutionView {}
 impl ExecutionView {
     pub fn new(
         status: ExecutionStatus,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         _cx: &mut Context<Self>,
     ) -> Self {
         Self {

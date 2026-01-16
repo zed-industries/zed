@@ -10,7 +10,7 @@ use ui::{
     FluentBuilder, ToggleButtonGroup, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip,
     prelude::*,
 };
-use workspace::{ModalView, Workspace, pane};
+use workspace::{ModalView, MultiWorkspace, pane};
 
 use crate::branch_picker::{self, BranchList, DeleteBranch, FilterRemotes};
 use crate::stash_picker::{self, DropStashItem, ShowStashItem, StashList};
@@ -43,7 +43,7 @@ impl Display for GitPickerTab {
 
 pub struct GitPicker {
     tab: GitPickerTab,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     repository: Option<Entity<Repository>>,
     width: Rems,
     branch_list: Option<Entity<BranchList>>,
@@ -54,7 +54,7 @@ pub struct GitPicker {
 
 impl GitPicker {
     pub fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         repository: Option<Entity<Repository>>,
         initial_tab: GitPickerTab,
         width: Rems,
@@ -516,37 +516,37 @@ impl Render for GitPicker {
 }
 
 pub fn open_branches(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     _: &zed_actions::git::Branch,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     open_with_tab(workspace, GitPickerTab::Branches, window, cx);
 }
 
 pub fn open_worktrees(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     _: &zed_actions::git::Worktree,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     open_with_tab(workspace, GitPickerTab::Worktrees, window, cx);
 }
 
 pub fn open_stash(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     _: &zed_actions::git::ViewStash,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     open_with_tab(workspace, GitPickerTab::Stash, window, cx);
 }
 
 fn open_with_tab(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     tab: GitPickerTab,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     let workspace_handle = workspace.weak_handle();
     let project = workspace.project().clone();
@@ -583,7 +583,7 @@ fn open_with_tab(
 }
 
 /// Register all git picker actions with the workspace.
-pub fn register(workspace: &mut Workspace) {
+pub fn register(workspace: &mut MultiWorkspace) {
     workspace.register_action(|workspace, _: &zed_actions::git::Branch, window, cx| {
         open_with_tab(workspace, GitPickerTab::Branches, window, cx);
     });

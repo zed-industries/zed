@@ -26,7 +26,7 @@ use onboarding::GitOnboardingModal;
 use project::git_store::Repository;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
-use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
+use workspace::{ModalView, MultiWorkspace, notifications::DetachAndPromptErr};
 use zed_actions;
 
 use crate::{git_panel::GitPanel, text_diff_view::TextDiffView};
@@ -69,7 +69,7 @@ pub fn init(cx: &mut App) {
     })
     .detach();
 
-    cx.observe_new(|workspace: &mut Workspace, _, cx| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _, cx| {
         ProjectDiff::register(workspace, cx);
         CommitModal::register(workspace);
         git_panel::register(workspace);
@@ -280,9 +280,9 @@ pub fn init(cx: &mut App) {
 }
 
 fn open_modified_files(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
         return;
@@ -400,9 +400,9 @@ impl Render for RenameBranchModal {
 }
 
 fn rename_current_branch(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
         return;

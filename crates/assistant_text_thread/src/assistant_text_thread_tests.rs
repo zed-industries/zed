@@ -38,7 +38,7 @@ use text::{ReplicaId, ToOffset, network::Network};
 use ui::{IconName, Window};
 use unindent::Unindent;
 use util::RandomCharIter;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 #[gpui::test]
 fn test_inserting_and_removing_messages(cx: &mut App) {
@@ -1422,7 +1422,7 @@ impl SlashCommand for FakeSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakEntity<Workspace>>,
+        _workspace: Option<WeakEntity<MultiWorkspace>>,
         _window: &mut Window,
         _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -1438,7 +1438,7 @@ impl SlashCommand for FakeSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakEntity<Workspace>,
+        _workspace: WeakEntity<MultiWorkspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _window: &mut Window,
         _cx: &mut App,

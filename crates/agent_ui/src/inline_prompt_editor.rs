@@ -29,7 +29,7 @@ use ui::utils::WithRemSize;
 use ui::{IconButtonShape, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use uuid::Uuid;
 use workspace::notifications::NotificationId;
-use workspace::{Toast, Workspace};
+use workspace::{Toast, MultiWorkspace};
 use zed_actions::agent::ToggleModelSelector;
 
 use crate::agent_model_selector::AgentModelSelector;
@@ -63,7 +63,7 @@ pub struct PromptEditor<T> {
     mention_set: Entity<MentionSet>,
     history: WeakEntity<AcpThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     model_selector: Entity<AgentModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
@@ -435,7 +435,7 @@ impl<T: 'static> PromptEditor<T> {
                 self.mention_set
                     .update(cx, |mention_set, _cx| mention_set.remove_invalid(&snapshot));
 
-                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                if let Some(workspace) = window.root::<MultiWorkspace>().flatten() {
                     workspace.update(cx, |workspace, cx| {
                         let is_via_ssh = workspace.project().read(cx).is_via_remote_server();
 
@@ -1214,7 +1214,7 @@ impl PromptEditor<BufferCodegen> {
         prompt_store: Option<Entity<PromptStore>>,
         history: WeakEntity<AcpThreadHistory>,
         project: WeakEntity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<PromptEditor<BufferCodegen>>,
     ) -> PromptEditor<BufferCodegen> {
@@ -1373,7 +1373,7 @@ impl PromptEditor<TerminalCodegen> {
         prompt_store: Option<Entity<PromptStore>>,
         history: WeakEntity<AcpThreadHistory>,
         project: WeakEntity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {

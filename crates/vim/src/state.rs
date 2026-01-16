@@ -36,7 +36,7 @@ use ui::{
 use util::ResultExt;
 use util::rel_path::RelPath;
 use workspace::searchable::Direction;
-use workspace::{Workspace, WorkspaceDb, WorkspaceId};
+use workspace::{MultiWorkspace, WorkspaceDb, WorkspaceId};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
@@ -243,7 +243,7 @@ pub struct VimGlobals {
 }
 
 pub struct MarksState {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
 
     multibuffer_marks: HashMap<EntityId, HashMap<String, Vec<Anchor>>>,
     buffer_marks: HashMap<BufferId, HashMap<String, Vec<text::Anchor>>>,
@@ -268,7 +268,7 @@ pub enum Mark {
 }
 
 impl MarksState {
-    pub fn new(workspace: &Workspace, cx: &mut App) -> Entity<MarksState> {
+    pub fn new(workspace: &MultiWorkspace, cx: &mut App) -> Entity<MarksState> {
         cx.new(|cx| {
             let buffer_store = workspace.project().read(cx).buffer_store().clone();
             let subscription = cx.subscribe(&buffer_store, move |this: &mut Self, _, event, cx| {
@@ -706,12 +706,12 @@ impl VimGlobals {
         })
         .detach();
 
-        cx.observe_new(|workspace: &mut Workspace, window, _| {
+        cx.observe_new(|workspace: &mut MultiWorkspace, window, _| {
             RegistersView::register(workspace, window);
         })
         .detach();
 
-        cx.observe_new(move |workspace: &mut Workspace, window, _| {
+        cx.observe_new(move |workspace: &mut MultiWorkspace, window, _| {
             MarksView::register(workspace, window);
         })
         .detach();
@@ -731,7 +731,7 @@ impl VimGlobals {
                 });
                 GlobalCommandPaletteInterceptor::set(cx, command_interceptor);
                 for window in cx.windows() {
-                    if let Some(workspace) = window.downcast::<Workspace>() {
+                    if let Some(workspace) = window.downcast::<MultiWorkspace>() {
                         workspace
                             .update(cx, |workspace, _, cx| {
                                 Vim::update_globals(cx, |globals, cx| {
@@ -751,13 +751,13 @@ impl VimGlobals {
             }
         })
         .detach();
-        cx.observe_new(|workspace: &mut Workspace, _, cx| {
+        cx.observe_new(|workspace: &mut MultiWorkspace, _, cx| {
             Vim::update_globals(cx, |globals, cx| globals.register_workspace(workspace, cx));
         })
         .detach()
     }
 
-    fn register_workspace(&mut self, workspace: &Workspace, cx: &mut Context<Workspace>) {
+    fn register_workspace(&mut self, workspace: &MultiWorkspace, cx: &mut Context<MultiWorkspace>) {
         let entity_id = cx.entity_id();
         self.marks.insert(entity_id, MarksState::new(workspace, cx));
         cx.observe_release(&cx.entity(), move |_, _, cx| {
@@ -1300,13 +1300,13 @@ impl PickerDelegate for RegistersViewDelegate {
 pub struct RegistersView {}
 
 impl RegistersView {
-    fn register(workspace: &mut Workspace, _window: Option<&mut Window>) {
+    fn register(workspace: &mut MultiWorkspace, _window: Option<&mut Window>) {
         workspace.register_action(|workspace, _: &ToggleRegistersView, window, cx| {
             Self::toggle(workspace, window, cx);
         });
     }
 
-    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    pub fn toggle(workspace: &mut MultiWorkspace, window: &mut Window, cx: &mut Context<MultiWorkspace>) {
         let editor = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx));
@@ -1400,7 +1400,7 @@ pub struct MarksViewDelegate {
     selected_index: usize,
     matches: Vec<MarksMatch>,
     point_column_width: usize,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
 }
 
 impl PickerDelegate for MarksViewDelegate {
@@ -1689,13 +1689,13 @@ impl PickerDelegate for MarksViewDelegate {
 pub struct MarksView {}
 
 impl MarksView {
-    fn register(workspace: &mut Workspace, _window: Option<&mut Window>) {
+    fn register(workspace: &mut MultiWorkspace, _window: Option<&mut Window>) {
         workspace.register_action(|workspace, _: &ToggleMarksView, window, cx| {
             Self::toggle(workspace, window, cx);
         });
     }
 
-    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    pub fn toggle(workspace: &mut MultiWorkspace, window: &mut Window, cx: &mut Context<MultiWorkspace>) {
         let handle = cx.weak_entity();
         workspace.toggle_modal(window, cx, move |window, cx| {
             MarksView::new(handle, window, cx)
@@ -1703,7 +1703,7 @@ impl MarksView {
     }
 
     fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Picker<MarksViewDelegate>>,
     ) -> Picker<MarksViewDelegate> {

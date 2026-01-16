@@ -11,7 +11,7 @@ use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{Arc, atomic::AtomicBool};
 use text::OffsetRangeExt;
 use ui::prelude::*;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 pub struct DeltaSlashCommand;
 
@@ -40,7 +40,7 @@ impl SlashCommand for DeltaSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancellation_flag: Arc<AtomicBool>,
-        _workspace: Option<WeakEntity<Workspace>>,
+        _workspace: Option<WeakEntity<MultiWorkspace>>,
         _window: &mut Window,
         _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -52,7 +52,7 @@ impl SlashCommand for DeltaSlashCommand {
         _arguments: &[String],
         context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         context_buffer: BufferSnapshot,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
         window: &mut Window,
         cx: &mut App,

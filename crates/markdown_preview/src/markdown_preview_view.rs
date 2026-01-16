@@ -16,7 +16,7 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{WithScrollbar, prelude::*};
 use workspace::item::{Item, ItemHandle};
-use workspace::{Pane, Workspace};
+use workspace::{Pane, MultiWorkspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::markdown_renderer::CheckboxClickedEvent;
@@ -31,7 +31,7 @@ use crate::{ScrollDown, ScrollDownByItem, ScrollUp, ScrollUpByItem};
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
 pub struct MarkdownPreviewView {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     image_cache: Entity<RetainAllImageCache>,
     active_editor: Option<EditorState>,
     focus_handle: FocusHandle,
@@ -57,7 +57,7 @@ struct EditorState {
 }
 
 impl MarkdownPreviewView {
-    pub fn register(workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>) {
+    pub fn register(workspace: &mut MultiWorkspace, _window: &mut Window, _cx: &mut Context<MultiWorkspace>) {
         workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
             if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
                 let view = Self::create_markdown_view(workspace, editor.clone(), window, cx);
@@ -146,8 +146,8 @@ impl MarkdownPreviewView {
     }
 
     pub fn resolve_active_item_as_markdown_editor(
-        workspace: &Workspace,
-        cx: &mut Context<Workspace>,
+        workspace: &MultiWorkspace,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Option<Entity<Editor>> {
         if let Some(editor) = workspace
             .active_item(cx)
@@ -160,10 +160,10 @@ impl MarkdownPreviewView {
     }
 
     fn create_markdown_view(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         editor: Entity<Editor>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Entity<MarkdownPreviewView> {
         let language_registry = workspace.project().read(cx).languages().clone();
         let workspace_handle = workspace.weak_handle();
@@ -178,10 +178,10 @@ impl MarkdownPreviewView {
     }
 
     fn create_following_markdown_view(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         editor: Entity<Editor>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Entity<MarkdownPreviewView> {
         let language_registry = workspace.project().read(cx).languages().clone();
         let workspace_handle = workspace.weak_handle();
@@ -198,10 +198,10 @@ impl MarkdownPreviewView {
     pub fn new(
         mode: MarkdownPreviewMode,
         active_editor: Entity<Editor>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let list_state = ListState::new(0, gpui::ListAlignment::Top, px(1000.));

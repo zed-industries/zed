@@ -40,7 +40,7 @@ use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
-    ToolbarItemView, Workspace,
+    ToolbarItemView, MultiWorkspace,
     item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
@@ -67,7 +67,7 @@ pub struct ProjectDiff {
     branch_diff: Entity<branch_diff::BranchDiff>,
     editor: Entity<SplittableEditor>,
     buffer_diff_subscriptions: HashMap<Arc<RelPath>, (Entity<BufferDiff>, Subscription)>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
     review_comment_count: usize,
@@ -87,7 +87,7 @@ const TRACKED_SORT_PREFIX: u64 = 2;
 const NEW_SORT_PREFIX: u64 = 3;
 
 impl ProjectDiff {
-    pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
+    pub(crate) fn register(workspace: &mut MultiWorkspace, cx: &mut Context<MultiWorkspace>) {
         workspace.register_action(Self::deploy);
         workspace.register_action(Self::deploy_branch_diff);
         workspace.register_action(|workspace, _: &Add, window, cx| {
@@ -97,19 +97,19 @@ impl ProjectDiff {
     }
 
     fn deploy(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &Diff,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         Self::deploy_at(workspace, None, window, cx)
     }
 
     fn deploy_branch_diff(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &BranchDiff,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         telemetry::event!("Git Branch Diff Opened");
         let project = workspace.project().clone();
@@ -140,10 +140,10 @@ impl ProjectDiff {
     }
 
     pub fn deploy_at(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         entry: Option<GitStatusEntry>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         telemetry::event!(
             "Git Diff Opened",
@@ -184,10 +184,10 @@ impl ProjectDiff {
     }
 
     pub fn deploy_at_project_path(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         project_path: ProjectPath,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         telemetry::event!("Git Diff Opened", source = "Agent Panel");
         let existing = workspace
@@ -224,7 +224,7 @@ impl ProjectDiff {
 
     fn new_with_default_branch(
         project: Entity<Project>,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
@@ -255,7 +255,7 @@ impl ProjectDiff {
 
     fn new(
         project: Entity<Project>,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -267,7 +267,7 @@ impl ProjectDiff {
     fn new_impl(
         branch_diff: Entity<branch_diff::BranchDiff>,
         project: Entity<Project>,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -993,7 +993,7 @@ impl Item for ProjectDiff {
 
     fn added_to_workspace(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1082,7 +1082,7 @@ impl SerializableItem for ProjectDiff {
 
     fn deserialize(
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
         window: &mut Window,
@@ -1106,7 +1106,7 @@ impl SerializableItem for ProjectDiff {
 
     fn serialize(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         item_id: workspace::ItemId,
         _closing: bool,
         _window: &mut Window,
@@ -1205,11 +1205,11 @@ mod persistence {
 
 pub struct ProjectDiffToolbar {
     project_diff: Option<WeakEntity<ProjectDiff>>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
 }
 
 impl ProjectDiffToolbar {
-    pub fn new(workspace: &Workspace, _: &mut Context<Self>) -> Self {
+    pub fn new(workspace: &MultiWorkspace, _: &mut Context<Self>) -> Self {
         Self {
             project_diff: None,
             workspace: workspace.weak_handle(),
@@ -1790,7 +1790,7 @@ mod tests {
         );
 
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let diff = cx.new_window_entity(|window, cx| {
             ProjectDiff::new(project.clone(), workspace, window, cx)
         });
@@ -1838,7 +1838,7 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let diff = cx.new_window_entity(|window, cx| {
             ProjectDiff::new(project.clone(), workspace, window, cx)
         });
@@ -1908,7 +1908,7 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
             &[("foo", "original\n".into())],
@@ -2039,7 +2039,7 @@ mod tests {
 
         let project = Project::test(fs, [Path::new(path!("/a"))], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         cx.run_until_parked();
 
@@ -2153,7 +2153,7 @@ mod tests {
 
         let project = Project::test(fs, [Path::new(path!("/a"))], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         cx.run_until_parked();
 
@@ -2208,7 +2208,7 @@ mod tests {
         );
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let diff = cx.new_window_entity(|window, cx| {
             ProjectDiff::new(project.clone(), workspace, window, cx)
         });
@@ -2288,7 +2288,7 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let diff = cx.new_window_entity(|window, cx| {
             ProjectDiff::new(project.clone(), workspace, window, cx)
         });
@@ -2404,7 +2404,7 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let diff = cx
             .update(|window, cx| {
                 ProjectDiff::new_with_default_branch(project.clone(), workspace, window, cx)
@@ -2501,7 +2501,7 @@ mod tests {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         cx.run_until_parked();
 
         let _editor = workspace

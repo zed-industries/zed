@@ -11,7 +11,7 @@ use ui::{
     LabelSize, Tab, h_flex, prelude::*, right_click_menu,
 };
 use workspace::{
-    CloseWindow, ItemSettings, Workspace, WorkspaceSettings,
+    CloseWindow, ItemSettings, MultiWorkspace, WorkspaceSettings,
     item::{ClosePosition, ShowCloseButton},
 };
 
@@ -93,7 +93,7 @@ impl SystemWindowTabs {
         })
         .detach();
 
-        cx.observe_new(|workspace: &mut Workspace, _, _| {
+        cx.observe_new(|workspace: &mut MultiWorkspace, _, _| {
             workspace.register_action_renderer(|div, _, window, cx| {
                 let window_id = window.window_handle().window_id();
                 let controller = cx.global::<SystemWindowTabController>();

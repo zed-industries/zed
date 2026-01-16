@@ -44,7 +44,7 @@ use ui::{IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::Se
 use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
-    ToolbarItemView, Workspace, WorkspaceId,
+    ToolbarItemView, MultiWorkspace, WorkspaceId,
     item::{Item, ItemEvent, ItemHandle, SaveOptions},
     searchable::{CollapseDirection, Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
@@ -72,7 +72,7 @@ impl Global for ActiveSettings {}
 
 pub fn init(cx: &mut App) {
     cx.set_global(ActiveSettings::default());
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _window, _cx| {
         register_workspace_action(workspace, move |search_bar, _: &Deploy, window, cx| {
             search_bar.focus_search(window, cx);
         });
@@ -221,7 +221,7 @@ enum InputPanel {
 }
 
 pub struct ProjectSearchView {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     focus_handle: FocusHandle,
     entity: Entity<ProjectSearch>,
     query_editor: Entity<Editor>,
@@ -620,7 +620,7 @@ impl Item for ProjectSearchView {
 
     fn added_to_workspace(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -786,7 +786,7 @@ impl ProjectSearchView {
     }
 
     pub fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         entity: Entity<ProjectSearch>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -967,10 +967,10 @@ impl ProjectSearchView {
     }
 
     pub fn new_search_in_directory(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         dir_path: &RelPath,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let filter_str = dir_path.display(workspace.path_style(cx));
 
@@ -991,10 +991,10 @@ impl ProjectSearchView {
     /// Re-activate the most recently activated search in this pane or the most recent if it has been closed.
     /// If no search exists in the workspace, create a new one.
     pub fn deploy_search(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         action: &workspace::DeploySearch,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let existing = workspace
             .active_pane()
@@ -1006,10 +1006,10 @@ impl ProjectSearchView {
     }
 
     fn search_in_new(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &SearchInNew,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         if let Some(search_view) = workspace
             .active_item(cx)
@@ -1055,20 +1055,20 @@ impl ProjectSearchView {
 
     // Add another search tab to the workspace.
     fn new_search(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &workspace::NewSearch,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         Self::existing_or_new_search(workspace, None, &DeploySearch::find(), window, cx)
     }
 
     fn existing_or_new_search(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         existing: Option<Entity<ProjectSearchView>>,
         action: &workspace::DeploySearch,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let query = workspace.active_item(cx).and_then(|item| {
             if let Some(buffer_search_query) = buffer_search_query(workspace, item.as_ref(), cx) {
@@ -1356,7 +1356,7 @@ impl ProjectSearchView {
         query
     }
 
-    fn open_buffers(&self, cx: &App, workspace: &Workspace) -> Vec<Entity<Buffer>> {
+    fn open_buffers(&self, cx: &App, workspace: &MultiWorkspace) -> Vec<Entity<Buffer>> {
         let mut buffers = Vec::new();
         for editor in workspace.items_of_type::<Editor>(cx) {
             if let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
@@ -1654,9 +1654,9 @@ impl ProjectSearchView {
 }
 
 fn buffer_search_query(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     item: &dyn ItemHandle,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) -> Option<String> {
     let buffer_search_bar = workspace
         .pane_for(item)
@@ -2387,7 +2387,7 @@ impl ToolbarItemView for ProjectSearchBar {
 }
 
 fn register_workspace_action<A: Action>(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     callback: fn(&mut ProjectSearchBar, &A, &mut Window, &mut Context<ProjectSearchBar>),
 ) {
     workspace.register_action(move |workspace, action: &A, window, cx| {
@@ -2414,8 +2414,8 @@ fn register_workspace_action<A: Action>(
 }
 
 fn register_workspace_action_for_present_search<A: Action>(
-    workspace: &mut Workspace,
-    callback: fn(&mut Workspace, &A, &mut Window, &mut Context<Workspace>),
+    workspace: &mut MultiWorkspace,
+    callback: fn(&mut MultiWorkspace, &A, &mut Window, &mut Context<MultiWorkspace>),
 ) {
     workspace.register_action(move |workspace, action: &A, window, cx| {
         if workspace.has_active_modal(window, cx) && !workspace.hide_modal(window, cx) {
@@ -2596,7 +2596,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window.root(cx).unwrap();
         let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
         let search_view = cx.add_window(|window, cx| {
@@ -2755,7 +2755,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let workspace = window;
         let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
 
@@ -2996,7 +2996,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let workspace = window;
         let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
 
@@ -3117,7 +3117,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let workspace = window;
         let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
 
@@ -3420,7 +3420,7 @@ pub mod tests {
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
         let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
 
@@ -3540,7 +3540,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
         let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
 
@@ -3872,7 +3872,7 @@ pub mod tests {
             this.worktrees(cx).next().unwrap().read(cx).id()
         });
 
-        let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
 
         let panes: Vec<_> = window
@@ -4097,7 +4097,7 @@ pub mod tests {
         let worktree_id = project.update(cx, |this, cx| {
             this.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let panes: Vec<_> = window
             .update(cx, |this, _, _| this.panes().to_owned())
             .unwrap();
@@ -4274,7 +4274,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window.root(cx).unwrap();
         let search = cx.new(|cx| ProjectSearch::new(project, cx));
         let search_view = cx.add_window(|window, cx| {
@@ -4338,7 +4338,7 @@ pub mod tests {
         let worktree_id = project.update(cx, |this, cx| {
             this.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window.root(cx).unwrap();
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
 
@@ -4414,7 +4414,7 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         struct EmptyModalView {
             focus_handle: gpui::FocusHandle,
@@ -4526,7 +4526,7 @@ pub mod tests {
             },
         );
 
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window.root(cx).unwrap();
         let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
         let search_view = cx.add_window(|window, cx| {

@@ -11,7 +11,7 @@ use project::{Project, Worktree, git_store::Repository};
 use recent_projects::{RecentProjectEntry, delete_recent_project, get_recent_projects};
 use settings::WorktreeId;
 use ui::{ContextMenu, DocumentationAside, DocumentationSide, Tooltip, prelude::*};
-use workspace::{CloseIntent, Workspace};
+use workspace::{CloseIntent, MultiWorkspace};
 
 actions!(project_dropdown, [RemoveSelectedFolder]);
 
@@ -26,7 +26,7 @@ struct ProjectEntry {
 
 pub struct ProjectDropdown {
     menu: Entity<ContextMenu>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     worktree_ids: Rc<RefCell<Vec<WorktreeId>>>,
     menu_shell: Rc<RefCell<Option<Entity<ContextMenu>>>>,
     _recent_projects: Rc<RefCell<Vec<RecentProjectEntry>>>,
@@ -36,7 +36,7 @@ pub struct ProjectDropdown {
 impl ProjectDropdown {
     pub fn new(
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         initial_active_worktree_id: Option<WorktreeId>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -104,7 +104,7 @@ impl ProjectDropdown {
 
     fn build_menu(
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         initial_active_worktree_id: Option<WorktreeId>,
         menu_shell: Rc<RefCell<Option<Entity<ContextMenu>>>>,
         worktree_ids: Rc<RefCell<Vec<WorktreeId>>>,
@@ -285,7 +285,7 @@ impl ProjectDropdown {
     fn add_recent_project_entry(
         menu: ContextMenu,
         entry: RecentProjectEntry,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         menu_shell: Rc<RefCell<Option<Entity<ContextMenu>>>>,
         recent_projects: Rc<RefCell<Vec<RecentProjectEntry>>>,
         enter_hint: &str,
@@ -390,7 +390,7 @@ impl ProjectDropdown {
     }
 
     fn open_recent_project(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         paths: Vec<PathBuf>,
         create_new_window: bool,
         window: &mut Window,
@@ -483,7 +483,7 @@ impl ProjectDropdown {
     }
 
     fn handle_select(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         worktree_id: WorktreeId,
         _window: &mut Window,
         cx: &mut App,
@@ -496,7 +496,7 @@ impl ProjectDropdown {
     }
 
     fn handle_remove(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         worktree_id: WorktreeId,
         _window: &mut Window,
         cx: &mut App,

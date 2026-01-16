@@ -42,7 +42,7 @@ use theme::Theme;
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
-    CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, MultiWorkspace, WorkspaceId,
     invalid_item_view::InvalidItemView,
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
@@ -67,7 +67,7 @@ impl FollowableItem for Editor {
     }
 
     fn from_state_proto(
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         remote_id: ViewId,
         state: &mut Option<proto::view::Variant>,
         window: &mut Window,
@@ -980,7 +980,7 @@ impl Item for Editor {
 
     fn added_to_workspace(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1053,7 +1053,7 @@ impl SerializableItem for Editor {
 
     fn deserialize(
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: ItemId,
         window: &mut Window,
@@ -1245,7 +1245,7 @@ impl SerializableItem for Editor {
 
     fn serialize(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         item_id: ItemId,
         closing: bool,
         window: &mut Window,
@@ -1962,7 +1962,7 @@ mod tests {
     async fn deserialize_editor(
         item_id: ItemId,
         workspace_id: WorkspaceId,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         project: Entity<Project>,
         cx: &mut VisualTestContext,
     ) -> Entity<Editor> {
@@ -1995,7 +1995,7 @@ mod tests {
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+                cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
             let item_id = 1234 as ItemId;
             let mtime = fs
@@ -2032,7 +2032,7 @@ mod tests {
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+                cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -2070,7 +2070,7 @@ mod tests {
             });
 
             let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+                cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -2106,7 +2106,7 @@ mod tests {
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+                cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -2136,7 +2136,7 @@ mod tests {
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+                cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 

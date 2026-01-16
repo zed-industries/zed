@@ -18,7 +18,7 @@ use std::{
 };
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{ModalView, OpenOptions, OpenVisible, Workspace, notifications::NotifyResultExt};
+use workspace::{ModalView, OpenOptions, OpenVisible, MultiWorkspace, notifications::NotifyResultExt};
 
 #[derive(Eq, Hash, PartialEq)]
 struct ScopeName(Cow<'static, str>);
@@ -68,16 +68,16 @@ pub fn init(cx: &mut App) {
     cx.observe_new(register).detach();
 }
 
-fn register(workspace: &mut Workspace, _window: Option<&mut Window>, _: &mut Context<Workspace>) {
+fn register(workspace: &mut MultiWorkspace, _window: Option<&mut Window>, _: &mut Context<MultiWorkspace>) {
     workspace.register_action(configure_snippets);
     workspace.register_action(open_folder);
 }
 
 fn configure_snippets(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     _: &ConfigureSnippets,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     let language_registry = workspace.app_state().languages.clone();
     let workspace_handle = workspace.weak_handle();
@@ -88,10 +88,10 @@ fn configure_snippets(
 }
 
 fn open_folder(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     _: &OpenFolder,
     _: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     fs::create_dir_all(snippets_dir()).notify_err(workspace, cx);
     cx.open_with_system(snippets_dir().borrow());
@@ -104,7 +104,7 @@ pub struct ScopeSelector {
 impl ScopeSelector {
     fn new(
         language_registry: Arc<LanguageRegistry>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -134,7 +134,7 @@ impl Render for ScopeSelector {
 }
 
 pub struct ScopeSelectorDelegate {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     scope_selector: WeakEntity<ScopeSelector>,
     language_registry: Arc<LanguageRegistry>,
     candidates: Vec<StringMatchCandidate>,
@@ -145,7 +145,7 @@ pub struct ScopeSelectorDelegate {
 
 impl ScopeSelectorDelegate {
     fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         scope_selector: WeakEntity<ScopeSelector>,
         language_registry: Arc<LanguageRegistry>,
     ) -> Self {

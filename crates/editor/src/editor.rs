@@ -205,7 +205,7 @@ use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
     RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
-    ViewId, Workspace, WorkspaceId, WorkspaceSettings,
+    ViewId, MultiWorkspace, WorkspaceId, WorkspaceSettings,
     item::{BreadcrumbText, ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::{CollapseDirection, SearchEvent},
@@ -330,7 +330,7 @@ pub fn init(cx: &mut App) {
     workspace::register_serializable_item::<Editor>(cx);
 
     cx.observe_new(
-        |workspace: &mut Workspace, _: Option<&mut Window>, _cx: &mut Context<Workspace>| {
+        |workspace: &mut MultiWorkspace, _: Option<&mut Window>, _cx: &mut Context<MultiWorkspace>| {
             workspace.register_action(Editor::new_file);
             workspace.register_action(Editor::new_file_split);
             workspace.register_action(Editor::new_file_vertical);
@@ -1198,7 +1198,7 @@ pub struct Editor {
     current_line_highlight: Option<CurrentLineHighlight>,
     pub collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
-    workspace: Option<(WeakEntity<Workspace>, Option<WorkspaceId>)>,
+    workspace: Option<(WeakEntity<MultiWorkspace>, Option<WorkspaceId>)>,
     input_enabled: bool,
     use_modal_editing: bool,
     read_only: bool,
@@ -2904,10 +2904,10 @@ impl Editor {
     }
 
     pub fn new_file(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &workspace::NewFile,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         Self::new_in_workspace(workspace, window, cx).detach_and_prompt_err(
             "Failed to create buffer",
@@ -2924,9 +2924,9 @@ impl Editor {
     }
 
     pub fn new_in_workspace(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Task<Result<Entity<Editor>>> {
         let project = workspace.project().clone();
         let create = project.update(cx, |project, cx| project.create_buffer(true, cx));
@@ -2943,37 +2943,37 @@ impl Editor {
     }
 
     fn new_file_vertical(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &workspace::NewFileSplitVertical,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         Self::new_file_in_direction(workspace, SplitDirection::vertical(cx), window, cx)
     }
 
     fn new_file_horizontal(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &workspace::NewFileSplitHorizontal,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         Self::new_file_in_direction(workspace, SplitDirection::horizontal(cx), window, cx)
     }
 
     fn new_file_split(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         action: &workspace::NewFileSplit,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         Self::new_file_in_direction(workspace, action.0, window, cx)
     }
 
     fn new_file_in_direction(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         direction: SplitDirection,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let project = workspace.project().clone();
         let create = project.update(cx, |project, cx| project.create_buffer(true, cx));
@@ -3015,7 +3015,7 @@ impl Editor {
         self.project.as_ref()
     }
 
-    pub fn workspace(&self) -> Option<Entity<Workspace>> {
+    pub fn workspace(&self) -> Option<Entity<MultiWorkspace>> {
         self.workspace.as_ref()?.0.upgrade()
     }
 
@@ -6753,7 +6753,7 @@ impl Editor {
     }
 
     fn open_transaction_for_hidden_buffers(
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         transaction: ProjectTransaction,
         title: String,
         window: &mut Window,
@@ -6800,7 +6800,7 @@ impl Editor {
 
     pub async fn open_project_transaction(
         editor: &WeakEntity<Editor>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         transaction: ProjectTransaction,
         title: String,
         cx: &mut AsyncWindowContext,
@@ -8018,7 +8018,7 @@ impl Editor {
     fn open_editor_at_anchor(
         snapshot: &language::BufferSnapshot,
         target: language::Anchor,
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
@@ -18195,14 +18195,14 @@ impl Editor {
 
     /// Opens a multibuffer with the given project locations in it.
     pub fn open_locations_in_multibuffer(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         locations: std::collections::HashMap<Entity<Buffer>, Vec<Range<Point>>>,
         title: String,
         split: bool,
         allow_preview: bool,
         multibuffer_selection_mode: MultibufferSelectionMode,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         if locations.is_empty() {
             log::error!("bug: open_locations_in_multibuffer called with empty list of locations");
@@ -18840,10 +18840,10 @@ impl Editor {
     }
 
     fn cancel_language_server_work(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &actions::CancelLanguageServerWork,
         _: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let project = workspace.project();
         let buffers = workspace
@@ -19381,10 +19381,10 @@ impl Editor {
     }
 
     pub fn toggle_focus(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &actions::ToggleFocus,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let Some(item) = workspace.recent_active_item_by_type::<Self>(cx) else {
             return;

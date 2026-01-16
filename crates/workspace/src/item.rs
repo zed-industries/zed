@@ -1,6 +1,6 @@
 use crate::{
     CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
-    SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    SerializableItemRegistry, ToolbarItemLocation, ViewId, MultiWorkspace, WorkspaceId,
     invalid_item_view::InvalidItemView,
     pane::{self, Pane},
     persistence::model::ItemId,
@@ -338,7 +338,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
 
     fn added_to_workspace(
         &mut self,
-        _workspace: &mut Workspace,
+        _workspace: &mut MultiWorkspace,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
@@ -373,7 +373,7 @@ pub trait SerializableItem: Item {
 
     fn deserialize(
         _project: Entity<Project>,
-        _workspace: WeakEntity<Workspace>,
+        _workspace: WeakEntity<MultiWorkspace>,
         _workspace_id: WorkspaceId,
         _item_id: ItemId,
         _window: &mut Window,
@@ -382,7 +382,7 @@ pub trait SerializableItem: Item {
 
     fn serialize(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         item_id: ItemId,
         closing: bool,
         window: &mut Window,
@@ -396,7 +396,7 @@ pub trait SerializableItemHandle: ItemHandle {
     fn serialized_item_kind(&self) -> &'static str;
     fn serialize(
         &self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         closing: bool,
         window: &mut Window,
         cx: &mut App,
@@ -414,7 +414,7 @@ where
 
     fn serialize(
         &self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         closing: bool,
         window: &mut Window,
         cx: &mut App,
@@ -472,10 +472,10 @@ pub trait ItemHandle: 'static + Send {
     ) -> Task<Option<Box<dyn ItemHandle>>>;
     fn added_to_pane(
         &self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         pane: Entity<Pane>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     );
     fn deactivated(&self, window: &mut Window, cx: &mut App);
     fn on_removed(&self, cx: &App);
@@ -699,10 +699,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn added_to_pane(
         &self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         pane: Entity<Pane>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let weak_item = self.downgrade();
         let history = pane.read(cx).nav_history_for_item(self);
@@ -1162,7 +1162,7 @@ pub trait FollowableItem: Item {
     fn remote_id(&self) -> Option<ViewId>;
     fn to_state_proto(&self, window: &Window, cx: &App) -> Option<proto::view::Variant>;
     fn from_state_proto(
-        project: Entity<Workspace>,
+        project: Entity<MultiWorkspace>,
         id: ViewId,
         state: &mut Option<proto::view::Variant>,
         window: &mut Window,
@@ -1323,7 +1323,7 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakEntity<T> {
 pub mod test {
     use super::{Item, ItemEvent, SerializableItem, TabContentParams};
     use crate::{
-        ItemId, ItemNavHistory, Workspace, WorkspaceId,
+        ItemId, ItemNavHistory, MultiWorkspace, WorkspaceId,
         item::{ItemBufferKind, SaveOptions},
     };
     use gpui::{
@@ -1688,7 +1688,7 @@ pub mod test {
 
         fn deserialize(
             _project: Entity<Project>,
-            _workspace: WeakEntity<Workspace>,
+            _workspace: WeakEntity<MultiWorkspace>,
             workspace_id: WorkspaceId,
             _item_id: ItemId,
             _window: &mut Window,
@@ -1709,7 +1709,7 @@ pub mod test {
 
         fn serialize(
             &mut self,
-            _workspace: &mut Workspace,
+            _workspace: &mut MultiWorkspace,
             _item_id: ItemId,
             _closing: bool,
             _window: &mut Window,

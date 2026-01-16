@@ -8,11 +8,11 @@ use remote::ConnectionState;
 use task::{DebugScenario, ResolvedTask, SpawnInTerminal, TaskContext, TaskTemplate};
 use ui::Window;
 
-use crate::{Toast, Workspace, notifications::NotificationId};
+use crate::{Toast, MultiWorkspace, notifications::NotificationId};
 
-impl Workspace {
+impl MultiWorkspace {
     pub fn schedule_task(
-        self: &mut Workspace,
+        self: &mut MultiWorkspace,
         task_source_kind: TaskSourceKind,
         task_to_resolve: &TaskTemplate,
         task_cx: &TaskContext,
@@ -47,12 +47,12 @@ impl Workspace {
     }
 
     pub fn schedule_resolved_task(
-        self: &mut Workspace,
+        self: &mut MultiWorkspace,
         task_source_kind: TaskSourceKind,
         resolved_task: ResolvedTask,
         omit_history: bool,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let spawn_in_terminal = resolved_task.resolved.clone();
         if !omit_history {
@@ -120,10 +120,10 @@ impl Workspace {
     }
 
     pub fn spawn_in_terminal(
-        self: &mut Workspace,
+        self: &mut MultiWorkspace,
         spawn_in_terminal: SpawnInTerminal,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Task<Option<Result<ExitStatus>>> {
         if let Some(terminal_provider) = self.terminal_provider.as_ref() {
             terminal_provider.spawn(spawn_in_terminal, window, cx)

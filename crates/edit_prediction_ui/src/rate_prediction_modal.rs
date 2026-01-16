@@ -12,7 +12,7 @@ use settings::Settings as _;
 use std::{fmt::Write, sync::Arc, time::Duration};
 use theme::ThemeSettings;
 use ui::{KeyBinding, List, ListItem, ListItemSpacing, Tooltip, prelude::*};
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 actions!(
     zeta,
@@ -71,7 +71,7 @@ impl RatePredictionView {
 }
 
 impl RatePredictionsModal {
-    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    pub fn toggle(workspace: &mut MultiWorkspace, window: &mut Window, cx: &mut Context<MultiWorkspace>) {
         if let Some(ep_store) = EditPredictionStore::try_global(cx) {
             let language_registry = workspace.app_state().languages.clone();
             workspace.toggle_modal(window, cx, |window, cx| {

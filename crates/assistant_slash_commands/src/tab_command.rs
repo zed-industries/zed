@@ -11,7 +11,7 @@ use language::{BufferSnapshot, CodeLabel, CodeLabelBuilder, HighlightId, LspAdap
 use std::sync::{Arc, atomic::AtomicBool};
 use ui::{ActiveTheme, App, Window, prelude::*};
 use util::{ResultExt, paths::PathStyle};
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 use crate::file_command::append_buffer_to_output;
 
@@ -48,7 +48,7 @@ impl SlashCommand for TabSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         cancel: Arc<AtomicBool>,
-        workspace: Option<WeakEntity<Workspace>>,
+        workspace: Option<WeakEntity<MultiWorkspace>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -143,7 +143,7 @@ impl SlashCommand for TabSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         window: &mut Window,
         cx: &mut App,
@@ -168,7 +168,7 @@ impl SlashCommand for TabSlashCommand {
 }
 
 fn tab_items_for_queries(
-    workspace: Option<WeakEntity<Workspace>>,
+    workspace: Option<WeakEntity<MultiWorkspace>>,
     queries: &[String],
     cancel: Arc<AtomicBool>,
     strict_match: bool,
@@ -283,8 +283,8 @@ fn tab_items_for_queries(
 }
 
 fn active_item_buffer(
-    workspace: &mut Workspace,
-    cx: &mut Context<Workspace>,
+    workspace: &mut MultiWorkspace,
+    cx: &mut Context<MultiWorkspace>,
 ) -> anyhow::Result<BufferSnapshot> {
     let active_editor = workspace
         .active_item(cx)

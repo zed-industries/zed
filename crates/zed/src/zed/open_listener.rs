@@ -30,7 +30,7 @@ use util::ResultExt;
 use util::paths::PathWithPosition;
 use workspace::PathList;
 use workspace::item::ItemHandle;
-use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
+use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, MultiWorkspace};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -320,7 +320,7 @@ pub async fn open_paths_with_positions(
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
 ) -> Result<(
-    WindowHandle<Workspace>,
+    WindowHandle<MultiWorkspace>,
     Vec<Option<Result<Box<dyn ItemHandle>>>>,
 )> {
     let mut caret_positions = HashMap::default();
@@ -716,7 +716,7 @@ mod tests {
     use serde_json::json;
     use std::{sync::Arc, task::Poll};
     use util::path;
-    use workspace::{AppState, Workspace};
+    use workspace::{AppState, MultiWorkspace};
 
     #[gpui::test]
     fn test_parse_ssh_url(cx: &mut TestAppContext) {
@@ -852,7 +852,7 @@ mod tests {
         open_workspace_file(path!("/root/dir1"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
-        let workspace = cx.windows()[0].downcast::<Workspace>().unwrap();
+        let workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
         workspace
             .update(cx, |workspace, _, cx| {
                 assert!(workspace.active_item_as::<Editor>(cx).is_none())
@@ -880,7 +880,7 @@ mod tests {
 
         assert_eq!(cx.windows().len(), 2);
 
-        let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
+        let workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
         workspace_2
             .update(cx, |workspace, _, cx| {
                 assert!(workspace.active_item_as::<Editor>(cx).is_some());
@@ -960,7 +960,7 @@ mod tests {
         open_workspace_file(path!("/root/file5.txt"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
-        let workspace_1 = cx.windows()[0].downcast::<Workspace>().unwrap();
+        let workspace_1 = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
         workspace_1
             .update(cx, |workspace, _, cx| {
                 assert!(workspace.active_item_as::<Editor>(cx).is_some())
@@ -984,7 +984,7 @@ mod tests {
         open_workspace_file(path!("/root/file7.txt"), Some(true), app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 2);
-        let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
+        let workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
         workspace_2
             .update(cx, |workspace, _, cx| {
                 let items = workspace.items(cx).collect::<Vec<_>>();

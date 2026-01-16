@@ -20,14 +20,14 @@ use theme::ThemeSettings;
 use ui::{CopyButton, Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt as _;
 use workspace::{
-    Item, ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    Item, ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, MultiWorkspace,
 };
 
 actions!(dev, [OpenAcpLogs]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
-        |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
+        |workspace: &mut MultiWorkspace, _window, _cx: &mut Context<MultiWorkspace>| {
             workspace.register_action(|workspace, _: &OpenAcpLogs, window, cx| {
                 let acp_tools =
                     Box::new(cx.new(|cx| AcpTools::new(workspace.project().clone(), cx)));

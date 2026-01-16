@@ -27,7 +27,7 @@ use theme::ThemeSettings;
 use ui::{CopyButton, Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
-use workspace::{OpenOptions, OpenVisible, Workspace};
+use workspace::{OpenOptions, OpenVisible, MultiWorkspace};
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
@@ -718,7 +718,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) {
     if let Ok(uri) = Url::parse(&link)
         && uri.scheme() == "file"
-        && let Some(workspace) = window.root::<Workspace>().flatten()
+        && let Some(workspace) = window.root::<MultiWorkspace>().flatten()
     {
         workspace.update(cx, |workspace, cx| {
             let task = workspace.open_abs_path(

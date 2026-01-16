@@ -1,5 +1,5 @@
 use crate::{
-    AppState, CollaboratorId, FollowerState, Pane, Workspace, WorkspaceSettings,
+    AppState, CollaboratorId, FollowerState, Pane, MultiWorkspace, WorkspaceSettings,
     pane_group::element::pane_axis,
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
 };
@@ -321,7 +321,7 @@ pub struct PaneRenderContext<'a> {
     pub active_call: Option<&'a Entity<ActiveCall>>,
     pub active_pane: &'a Entity<Pane>,
     pub app_state: &'a Arc<AppState>,
-    pub workspace: &'a WeakEntity<Workspace>,
+    pub workspace: &'a WeakEntity<MultiWorkspace>,
 }
 
 #[derive(Default)]
@@ -333,16 +333,16 @@ pub struct LeaderDecoration {
 pub trait PaneLeaderDecorator {
     fn decorate(&self, pane: &Entity<Pane>, cx: &App) -> LeaderDecoration;
     fn active_pane(&self) -> &Entity<Pane>;
-    fn workspace(&self) -> &WeakEntity<Workspace>;
+    fn workspace(&self) -> &WeakEntity<MultiWorkspace>;
 }
 
 pub struct ActivePaneDecorator<'a> {
     active_pane: &'a Entity<Pane>,
-    workspace: &'a WeakEntity<Workspace>,
+    workspace: &'a WeakEntity<MultiWorkspace>,
 }
 
 impl<'a> ActivePaneDecorator<'a> {
-    pub fn new(active_pane: &'a Entity<Pane>, workspace: &'a WeakEntity<Workspace>) -> Self {
+    pub fn new(active_pane: &'a Entity<Pane>, workspace: &'a WeakEntity<MultiWorkspace>) -> Self {
         Self {
             active_pane,
             workspace,
@@ -358,7 +358,7 @@ impl PaneLeaderDecorator for ActivePaneDecorator<'_> {
         self.active_pane
     }
 
-    fn workspace(&self) -> &WeakEntity<Workspace> {
+    fn workspace(&self) -> &WeakEntity<MultiWorkspace> {
         self.workspace
     }
 }
@@ -480,7 +480,7 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
         self.active_pane
     }
 
-    fn workspace(&self) -> &WeakEntity<Workspace> {
+    fn workspace(&self) -> &WeakEntity<MultiWorkspace> {
         self.workspace
     }
 }
@@ -1061,7 +1061,7 @@ mod element {
     use ui::prelude::*;
     use util::ResultExt;
 
-    use crate::Workspace;
+    use crate::MultiWorkspace;
 
     use crate::WorkspaceSettings;
 
@@ -1074,7 +1074,7 @@ mod element {
         basis: usize,
         flexes: Arc<Mutex<Vec<f32>>>,
         bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
     ) -> PaneAxisElement {
         PaneAxisElement {
             axis,
@@ -1097,7 +1097,7 @@ mod element {
         bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
         children: SmallVec<[AnyElement; 2]>,
         active_pane_ix: Option<usize>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         // Track which children are leaf panes (Member::Pane) vs axes (Member::Axis)
         is_leaf_pane_mask: Vec<bool>,
     }
@@ -1137,7 +1137,7 @@ mod element {
             axis: Axis,
             child_start: Point<Pixels>,
             container_size: Size<Pixels>,
-            workspace: WeakEntity<Workspace>,
+            workspace: WeakEntity<MultiWorkspace>,
             window: &mut Window,
             cx: &mut App,
         ) {

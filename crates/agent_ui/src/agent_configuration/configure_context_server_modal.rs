@@ -26,7 +26,7 @@ use ui::{
     WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 use crate::AddContextServer;
 
@@ -347,7 +347,7 @@ enum State {
 
 pub struct ConfigureContextServerModal {
     context_server_store: Entity<ContextServerStore>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     source: ConfigurationSource,
     state: State,
     original_server_id: Option<ContextServerId>,
@@ -356,10 +356,10 @@ pub struct ConfigureContextServerModal {
 
 impl ConfigureContextServerModal {
     pub fn register(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         language_registry: Arc<LanguageRegistry>,
         _window: Option<&mut Window>,
-        _cx: &mut Context<Workspace>,
+        _cx: &mut Context<MultiWorkspace>,
     ) {
         workspace.register_action({
             move |_workspace, _: &AddContextServer, window, cx| {
@@ -383,7 +383,7 @@ impl ConfigureContextServerModal {
     pub fn show_modal_for_existing_server(
         server_id: ContextServerId,
         language_registry: Arc<LanguageRegistry>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
@@ -449,7 +449,7 @@ impl ConfigureContextServerModal {
     fn show_modal(
         target: ConfigurationTarget,
         language_registry: Arc<LanguageRegistry>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         cx: &mut AsyncWindowContext,
     ) -> Task<Result<()>> {
         cx.spawn(async move |cx| {

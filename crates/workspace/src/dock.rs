@@ -1,6 +1,6 @@
 use crate::persistence::model::DockData;
 use crate::{DraggedDock, Event, ModalLayer, Pane};
-use crate::{Workspace, status_bar::StatusItemView};
+use crate::{MultiWorkspace, status_bar::StatusItemView};
 use anyhow::Context as _;
 use client::proto;
 
@@ -266,7 +266,7 @@ impl From<&dyn PanelHandle> for AnyView {
 pub struct Dock {
     position: DockPosition,
     panel_entries: Vec<PanelEntry>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     is_open: bool,
     active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
@@ -341,7 +341,7 @@ impl Dock {
         position: DockPosition,
         modal_layer: Entity<ModalLayer>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Entity<Self> {
         let focus_handle = cx.focus_handle();
         let workspace = cx.entity();
@@ -527,7 +527,7 @@ impl Dock {
     pub(crate) fn add_panel<T: Panel>(
         &mut self,
         panel: Entity<T>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> usize {

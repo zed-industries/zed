@@ -32,7 +32,7 @@ use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff
 use workspace::item::TabTooltipContent;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    Workspace,
+    MultiWorkspace,
     item::{ItemEvent, TabContentParams},
     notifications::NotifyTaskExt,
     pane::SaveIntent,
@@ -45,7 +45,7 @@ use crate::git_panel::GitPanel;
 actions!(git, [ApplyCurrentStash, PopCurrentStash, DropCurrentStash,]);
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _window, _cx| {
         workspace.register_action(|workspace, _: &ApplyCurrentStash, window, cx| {
             CommitView::apply_stash(workspace, window, cx);
         });
@@ -101,7 +101,7 @@ impl CommitView {
     pub fn open(
         commit_sha: String,
         repo: WeakEntity<Repository>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         stash: Option<usize>,
         file_filter: Option<RepoPath>,
         window: &mut Window,
@@ -627,7 +627,7 @@ impl CommitView {
             )
     }
 
-    fn apply_stash(workspace: &mut Workspace, window: &mut Window, cx: &mut App) {
+    fn apply_stash(workspace: &mut MultiWorkspace, window: &mut Window, cx: &mut App) {
         Self::stash_action(
             workspace,
             "Apply",
@@ -654,7 +654,7 @@ impl CommitView {
         );
     }
 
-    fn pop_stash(workspace: &mut Workspace, window: &mut Window, cx: &mut App) {
+    fn pop_stash(workspace: &mut MultiWorkspace, window: &mut Window, cx: &mut App) {
         Self::stash_action(
             workspace,
             "Pop",
@@ -681,7 +681,7 @@ impl CommitView {
         );
     }
 
-    fn remove_stash(workspace: &mut Workspace, window: &mut Window, cx: &mut App) {
+    fn remove_stash(workspace: &mut MultiWorkspace, window: &mut Window, cx: &mut App) {
         Self::stash_action(
             workspace,
             "Drop",
@@ -709,7 +709,7 @@ impl CommitView {
     }
 
     fn stash_action<AsyncFn>(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         str_action: &str,
         window: &mut Window,
         cx: &mut App,
@@ -720,7 +720,7 @@ impl CommitView {
                 &SharedString,
                 usize,
                 Entity<CommitView>,
-                WeakEntity<Workspace>,
+                WeakEntity<MultiWorkspace>,
                 &mut AsyncWindowContext,
             ) -> anyhow::Result<()>
             + 'static,
@@ -771,7 +771,7 @@ impl CommitView {
 
     async fn close_commit_view(
         commit_view: Entity<CommitView>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         cx: &mut AsyncWindowContext,
     ) -> anyhow::Result<()> {
         workspace
@@ -1015,7 +1015,7 @@ impl Item for CommitView {
 
     fn added_to_workspace(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

@@ -1,7 +1,7 @@
 use gpui::{App, ClipboardItem, PromptLevel, actions};
 use system_specs::{CopySystemSpecsIntoClipboard, SystemSpecs};
 use util::ResultExt;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 use zed_actions::feedback::{EmailZed, FileBugReport, RequestFeature};
 
 actions!(
@@ -42,7 +42,7 @@ fn email_body(specs: &SystemSpecs) -> String {
 }
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _, _| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _, _| {
         workspace
             .register_action(|_, _: &CopySystemSpecsIntoClipboard, window, cx| {
                 let specs = SystemSpecs::new(window, cx);

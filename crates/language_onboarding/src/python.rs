@@ -2,7 +2,7 @@ use db::kvp::Dismissable;
 use editor::Editor;
 use gpui::{Context, EventEmitter, Subscription};
 use ui::{Banner, FluentBuilder as _, prelude::*};
-use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace};
+use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, MultiWorkspace};
 
 pub struct BasedPyrightBanner {
     dismissed: bool,
@@ -15,7 +15,7 @@ impl Dismissable for BasedPyrightBanner {
 }
 
 impl BasedPyrightBanner {
-    pub fn new(workspace: &Workspace, cx: &mut Context<Self>) -> Self {
+    pub fn new(workspace: &MultiWorkspace, cx: &mut Context<Self>) -> Self {
         let subscription = cx.subscribe(workspace.project(), |this, _, event, _| {
             if let project::Event::LanguageServerAdded(_, name, _) = event
                 && name == "basedpyright"

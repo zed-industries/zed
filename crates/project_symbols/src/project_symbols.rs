@@ -12,13 +12,13 @@ use std::{cmp::Reverse, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use util::ResultExt;
 use workspace::{
-    Workspace,
+    MultiWorkspace,
     ui::{LabelLike, ListItem, ListItemSpacing, prelude::*},
 };
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
-        |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
+        |workspace: &mut MultiWorkspace, _window, _: &mut Context<MultiWorkspace>| {
             workspace.register_action(
                 |workspace, _: &workspace::ToggleProjectSymbols, window, cx| {
                     let project = workspace.project().clone();
@@ -37,7 +37,7 @@ pub fn init(cx: &mut App) {
 pub type ProjectSymbols = Entity<Picker<ProjectSymbolsDelegate>>;
 
 pub struct ProjectSymbolsDelegate {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     project: Entity<Project>,
     selected_match_index: usize,
     symbols: Vec<Symbol>,
@@ -48,7 +48,7 @@ pub struct ProjectSymbolsDelegate {
 }
 
 impl ProjectSymbolsDelegate {
-    fn new(workspace: WeakEntity<Workspace>, project: Entity<Project>) -> Self {
+    fn new(workspace: WeakEntity<MultiWorkspace>, project: Entity<Project>) -> Self {
         Self {
             workspace,
             project,
@@ -410,7 +410,7 @@ mod tests {
         );
 
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         // Create the project symbols view.
         let symbols = cx.new_window_entity(|window, cx| {

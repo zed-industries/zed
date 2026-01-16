@@ -29,7 +29,7 @@ use ui::{
 };
 use ui_input::InputField;
 use util::{ResultExt, debug_panic, rel_path::RelPath, shell::ShellKind};
-use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr, pane};
+use workspace::{ModalView, MultiWorkspace, notifications::DetachAndPromptErr, pane};
 
 use crate::{
     attach_modal::{AttachModal, ModalIntent},
@@ -47,7 +47,7 @@ actions!(
 );
 
 pub(super) struct NewProcessModal {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     debug_panel: WeakEntity<DebugPanel>,
     mode: NewProcessMode,
     debug_picker: Entity<Picker<DebugDelegate>>,
@@ -78,11 +78,11 @@ fn suggested_label(request: &DebugRequest, debugger: &str) -> SharedString {
 
 impl NewProcessModal {
     pub(super) fn show(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
         mode: NewProcessMode,
         reveal_target: Option<RevealTarget>,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
             return;
@@ -962,7 +962,7 @@ pub(super) struct AttachMode {
 impl AttachMode {
     pub(super) fn new(
         debugger: Option<DebugAdapterName>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<NewProcessModal>,

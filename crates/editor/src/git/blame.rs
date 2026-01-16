@@ -23,7 +23,7 @@ use smallvec::SmallVec;
 use std::{sync::Arc, time::Duration};
 use sum_tree::SumTree;
 use text::BufferId;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
@@ -92,7 +92,7 @@ pub trait BlameRenderer {
         _: BlameEntry,
         _: Option<ParsedCommitMessage>,
         _: Entity<Repository>,
-        _: WeakEntity<Workspace>,
+        _: WeakEntity<MultiWorkspace>,
         _: Entity<Editor>,
         _: usize,
         _: Hsla,
@@ -114,7 +114,7 @@ pub trait BlameRenderer {
         _: Option<ParsedCommitMessage>,
         _: Entity<Markdown>,
         _: Entity<Repository>,
-        _: WeakEntity<Workspace>,
+        _: WeakEntity<MultiWorkspace>,
         _: &mut Window,
         _: &mut App,
     ) -> Option<AnyElement>;
@@ -123,7 +123,7 @@ pub trait BlameRenderer {
         &self,
         _: BlameEntry,
         _: Entity<Repository>,
-        _: WeakEntity<Workspace>,
+        _: WeakEntity<MultiWorkspace>,
         _: &mut Window,
         _: &mut App,
     );
@@ -140,7 +140,7 @@ impl BlameRenderer for () {
         _: BlameEntry,
         _: Option<ParsedCommitMessage>,
         _: Entity<Repository>,
-        _: WeakEntity<Workspace>,
+        _: WeakEntity<MultiWorkspace>,
         _: Entity<Editor>,
         _: usize,
         _: Hsla,
@@ -166,7 +166,7 @@ impl BlameRenderer for () {
         _: Option<ParsedCommitMessage>,
         _: Entity<Markdown>,
         _: Entity<Repository>,
-        _: WeakEntity<Workspace>,
+        _: WeakEntity<MultiWorkspace>,
         _: &mut Window,
         _: &mut App,
     ) -> Option<AnyElement> {
@@ -177,7 +177,7 @@ impl BlameRenderer for () {
         &self,
         _: BlameEntry,
         _: Entity<Repository>,
-        _: WeakEntity<Workspace>,
+        _: WeakEntity<MultiWorkspace>,
         _: &mut Window,
         _: &mut App,
     ) {

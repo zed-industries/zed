@@ -23,7 +23,7 @@ use theme::ThemeSettings;
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{Divider, ListItem, ListItemSpacing, ListSubHeader, Tooltip, prelude::*};
 use util::{ResultExt, TryFutureExt};
-use workspace::{Workspace, WorkspaceSettings, client_side_decorations};
+use workspace::{MultiWorkspace, WorkspaceSettings, client_side_decorations};
 use zed_actions::assistant::InlineAssist;
 
 use prompt_store::*;
@@ -60,9 +60,9 @@ pub trait InlineAssistDelegate {
     /// Returns whether the Agent panel was focused.
     fn focus_agent_panel(
         &self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> bool;
 }
 
@@ -965,7 +965,7 @@ impl RulesLibrary {
                 .assist(rule_editor, initial_prompt, window, cx);
         } else {
             for window in cx.windows() {
-                if let Some(workspace) = window.downcast::<Workspace>() {
+                if let Some(workspace) = window.downcast::<MultiWorkspace>() {
                     let panel = workspace
                         .update(cx, |workspace, window, cx| {
                             window.activate_window();

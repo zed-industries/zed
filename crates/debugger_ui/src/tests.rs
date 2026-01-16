@@ -8,7 +8,7 @@ use project::{Project, debugger::session::Session};
 use settings::SettingsStore;
 use task::TaskContext;
 use terminal_view::terminal_panel::TerminalPanel;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 use crate::{debugger_panel::DebugPanel, session::DebugSession};
 
@@ -52,9 +52,9 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
 pub async fn init_test_workspace(
     project: &Entity<Project>,
     cx: &mut TestAppContext,
-) -> WindowHandle<Workspace> {
+) -> WindowHandle<MultiWorkspace> {
     let workspace_handle =
-        cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
     let debugger_panel = workspace_handle
         .update(cx, |_, window, cx| {
@@ -87,7 +87,7 @@ pub async fn init_test_workspace(
 
 #[track_caller]
 pub fn active_debug_session_panel(
-    workspace: WindowHandle<Workspace>,
+    workspace: WindowHandle<MultiWorkspace>,
     cx: &mut TestAppContext,
 ) -> Entity<DebugSession> {
     workspace
@@ -101,7 +101,7 @@ pub fn active_debug_session_panel(
 }
 
 pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
-    workspace: &WindowHandle<Workspace>,
+    workspace: &WindowHandle<MultiWorkspace>,
     cx: &mut gpui::TestAppContext,
     config: DebugTaskDefinition,
     configure: T,
@@ -131,7 +131,7 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
 }
 
 pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
-    workspace: &WindowHandle<Workspace>,
+    workspace: &WindowHandle<MultiWorkspace>,
     cx: &mut gpui::TestAppContext,
     configure: T,
 ) -> Result<Entity<Session>> {

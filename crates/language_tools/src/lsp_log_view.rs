@@ -21,7 +21,7 @@ use std::{any::TypeId, borrow::Cow, sync::Arc};
 use ui::{Button, Checkbox, ContextMenu, Label, PopoverMenu, ToggleState, prelude::*};
 use util::ResultExt as _;
 use workspace::{
-    SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
+    SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, MultiWorkspace, WorkspaceId,
     item::{Item, ItemHandle},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
@@ -30,7 +30,7 @@ use crate::get_or_create_tool;
 
 pub fn open_server_trace(
     log_store: &Entity<LogStore>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     server: LanguageServerSelector,
     window: &mut Window,
     cx: &mut App,
@@ -115,7 +115,7 @@ actions!(
 pub fn init(on_headless_host: bool, cx: &mut App) {
     let log_store = log_store::init(on_headless_host, cx);
 
-    cx.observe_new(move |workspace: &mut Workspace, _, cx| {
+    cx.observe_new(move |workspace: &mut MultiWorkspace, _, cx| {
         log_store.update(cx, |store, cx| {
             store.add_project(workspace.project(), cx);
         });

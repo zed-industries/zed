@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use text::LineEnding;
 use ui::{IconName, SharedString};
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 use crate::create_label_for_command;
 
@@ -72,7 +72,7 @@ impl SlashCommand for ContextServerSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakEntity<Workspace>>,
+        _workspace: Option<WeakEntity<MultiWorkspace>>,
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -128,7 +128,7 @@ impl SlashCommand for ContextServerSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakEntity<Workspace>,
+        _workspace: WeakEntity<MultiWorkspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _window: &mut Window,
         cx: &mut App,

@@ -11,7 +11,7 @@ use util::{
     paths::{PathStyle, PathWithPosition},
     rel_path::RelPath,
 };
-use workspace::{OpenOptions, OpenVisible, Workspace};
+use workspace::{OpenOptions, OpenVisible, MultiWorkspace};
 
 /// The way we found the open target. This is important to have for test assertions.
 /// For example, remote projects never look in the file system.
@@ -68,7 +68,7 @@ impl OpenTarget {
 }
 
 pub(super) fn hover_path_like_target(
-    workspace: &WeakEntity<Workspace>,
+    workspace: &WeakEntity<MultiWorkspace>,
     hovered_word: HoveredWord,
     path_like_target: &PathLikeTarget,
     cx: &mut Context<TerminalView>,
@@ -90,7 +90,7 @@ pub(super) fn hover_path_like_target(
 }
 
 fn possible_hover_target(
-    workspace: &WeakEntity<Workspace>,
+    workspace: &WeakEntity<MultiWorkspace>,
     hovered_word: HoveredWord,
     path_like_target: &PathLikeTarget,
     cx: &mut Context<TerminalView>,
@@ -122,7 +122,7 @@ fn possible_hover_target(
 }
 
 fn possible_open_target(
-    workspace: &WeakEntity<Workspace>,
+    workspace: &WeakEntity<MultiWorkspace>,
     path_like_target: &PathLikeTarget,
     cx: &App,
     #[cfg(test)] background_fs_checks: BackgroundFsChecks,
@@ -397,7 +397,7 @@ fn possible_open_target(
 }
 
 pub(super) fn open_path_like_target(
-    workspace: &WeakEntity<Workspace>,
+    workspace: &WeakEntity<MultiWorkspace>,
     terminal_view: &mut TerminalView,
     path_like_target: &PathLikeTarget,
     window: &mut Window,
@@ -423,7 +423,7 @@ pub(super) fn open_path_like_target(
 }
 
 fn possibly_open_target(
-    workspace: &WeakEntity<Workspace>,
+    workspace: &WeakEntity<MultiWorkspace>,
     terminal_view: &mut TerminalView,
     path_like_target: &PathLikeTarget,
     window: &mut Window,
@@ -553,7 +553,7 @@ mod tests {
         .await;
 
         let (workspace, _cx) =
-            app_cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            app_cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let terminal = app_cx.new(|cx| {
             TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)

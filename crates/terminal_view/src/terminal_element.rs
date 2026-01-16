@@ -29,7 +29,7 @@ use theme::{ActiveTheme, Theme, ThemeSettings};
 use ui::utils::ensure_minimum_contrast;
 use ui::{ParentElement, Tooltip};
 use util::ResultExt;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive, rc::Rc};
@@ -283,7 +283,7 @@ fn merge_background_regions(regions: Vec<BackgroundRegion>) -> Vec<BackgroundReg
 pub struct TerminalElement {
     terminal: Entity<Terminal>,
     terminal_view: Entity<TerminalView>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     focus: FocusHandle,
     focused: bool,
     cursor_visible: bool,
@@ -304,7 +304,7 @@ impl TerminalElement {
     pub fn new(
         terminal: Entity<Terminal>,
         terminal_view: Entity<TerminalView>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         focus: FocusHandle,
         focused: bool,
         cursor_visible: bool,
@@ -1424,7 +1424,7 @@ impl IntoElement for TerminalElement {
 struct TerminalInputHandler {
     terminal: Entity<Terminal>,
     terminal_view: Entity<TerminalView>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     cursor_bounds: Option<Bounds<Pixels>>,
 }
 

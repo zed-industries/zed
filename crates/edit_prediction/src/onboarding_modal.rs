@@ -12,7 +12,7 @@ use gpui::{
 use language::language_settings::EditPredictionProvider;
 use settings::update_settings_file;
 use ui::{Vector, VectorName, prelude::*};
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 #[macro_export]
 macro_rules! onboarding_event {
@@ -44,11 +44,11 @@ pub(crate) fn set_edit_prediction_provider(provider: EditPredictionProvider, cx:
 
 impl ZedPredictModal {
     pub fn toggle(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         user_store: Entity<UserStore>,
         client: Arc<Client>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let project = workspace.project().clone();
         workspace.toggle_modal(window, cx, |_window, cx| {

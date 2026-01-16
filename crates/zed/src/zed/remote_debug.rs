@@ -1,8 +1,8 @@
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 use zed_actions::remote_debug::{SimulateDisconnect, SimulateTimeout, SimulateTimeoutExhausted};
 
 pub fn init(cx: &mut gpui::App) {
-    cx.observe_new(|workspace: &mut Workspace, _, cx| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _, cx| {
         let project = workspace.project().read(cx);
         let Some(remote_client) = project.remote_client() else {
             return;

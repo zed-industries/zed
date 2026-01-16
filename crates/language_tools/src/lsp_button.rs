@@ -21,7 +21,7 @@ use ui::{
 };
 
 use util::{ResultExt, rel_path::RelPath};
-use workspace::{StatusItemView, Workspace};
+use workspace::{StatusItemView, MultiWorkspace};
 
 use crate::lsp_log_view;
 
@@ -44,7 +44,7 @@ pub struct LspButton {
 #[derive(Debug)]
 struct LanguageServerState {
     items: Vec<LspMenuItem>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     lsp_store: WeakEntity<LspStore>,
     active_editor: Option<ActiveEditor>,
     language_servers: LanguageServers,
@@ -686,7 +686,7 @@ impl ServerData<'_> {
 
 impl LspButton {
     pub fn new(
-        workspace: &Workspace,
+        workspace: &MultiWorkspace,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
         window: &mut Window,
         cx: &mut Context<Self>,

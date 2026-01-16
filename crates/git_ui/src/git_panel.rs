@@ -76,7 +76,7 @@ use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, maybe, rel_path::RelPath};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
-    Workspace,
+    MultiWorkspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
@@ -214,7 +214,7 @@ const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 // TODO: We should revise this part. It seems the indentation width is not aligned with the one in project panel
 const TREE_INDENT: f32 = 16.0;
 
-pub fn register(workspace: &mut Workspace) {
+pub fn register(workspace: &mut MultiWorkspace) {
     workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
         workspace.toggle_panel_focus::<GitPanel>(window, cx);
     });
@@ -608,7 +608,7 @@ pub struct GitPanel {
     tracked_staged_count: usize,
     update_visible_entries_task: Task<()>,
     width: Option<Pixels>,
-    pub(crate) workspace: WeakEntity<Workspace>,
+    pub(crate) workspace: WeakEntity<MultiWorkspace>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     modal_open: bool,
     show_placeholders: bool,
@@ -660,9 +660,9 @@ pub(crate) fn commit_message_editor(
 
 impl GitPanel {
     fn new(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Entity<Self> {
         let project = workspace.project().clone();
         let app_state = workspace.app_state().clone();
@@ -859,7 +859,7 @@ impl GitPanel {
         self.scroll_to_selected_entry(cx);
     }
 
-    fn serialization_key(workspace: &Workspace) -> Option<String> {
+    fn serialization_key(workspace: &MultiWorkspace) -> Option<String> {
         workspace
             .database_id()
             .map(|id| i64::from(id).to_string())
@@ -2851,7 +2851,7 @@ impl GitPanel {
             workspace,
             window,
             cx,
-            Arc::new(|_workspace: &mut workspace::Workspace, _window, _cx| {}),
+            Arc::new(|_workspace: &mut workspace::MultiWorkspace, _window, _cx| {}),
         );
     }
 
@@ -5333,7 +5333,7 @@ impl GitPanel {
     }
 
     pub async fn load(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
         let serialized_panel = match workspace
@@ -5526,7 +5526,7 @@ impl EventEmitter<Event> for GitPanel {}
 impl EventEmitter<PanelEvent> for GitPanel {}
 
 pub(crate) struct GitPanelAddon {
-    pub(crate) workspace: WeakEntity<Workspace>,
+    pub(crate) workspace: WeakEntity<MultiWorkspace>,
 }
 
 impl editor::Addon for GitPanelAddon {
@@ -6115,10 +6115,10 @@ impl Component for PanelRepoFooter {
 
 fn open_output(
     operation: impl Into<SharedString>,
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     output: &str,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     let operation = operation.into();
     let buffer = cx.new(|cx| Buffer::local(output, cx));
@@ -6138,7 +6138,7 @@ fn open_output(
 }
 
 pub(crate) fn show_error_toast(
-    workspace: Entity<Workspace>,
+    workspace: Entity<MultiWorkspace>,
     action: impl Into<SharedString>,
     e: anyhow::Error,
     cx: &mut App,
@@ -6232,7 +6232,7 @@ mod tests {
         let project =
             Project::test(fs.clone(), [path!("/root/zed/crates/gpui").as_ref()], cx).await;
         let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
         cx.read(|cx| {
@@ -6353,7 +6353,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
         let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
         cx.read(|cx| {
@@ -6545,7 +6545,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
         let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
         cx.read(|cx| {
@@ -6756,7 +6756,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
         let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
         let panel = workspace.update(cx, GitPanel::new).unwrap();
@@ -6825,7 +6825,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
         let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
         // Wait for the project scanning to finish so that `head_commit(cx)` is
@@ -6911,7 +6911,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
         let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let panel = workspace.update(cx, GitPanel::new).unwrap();
 
@@ -6984,7 +6984,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
         let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
         cx.read(|cx| {
@@ -7170,7 +7170,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
         let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let panel = workspace.update(cx, GitPanel::new).unwrap();
 

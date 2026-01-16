@@ -16,7 +16,7 @@ use ui::{
     Styled as _, Window, div,
 };
 use workspace::{
-    ActivePaneDecorator, Item, ItemHandle, Pane, PaneGroup, SplitDirection, Workspace,
+    ActivePaneDecorator, Item, ItemHandle, Pane, PaneGroup, SplitDirection, MultiWorkspace,
 };
 
 use crate::{Editor, EditorEvent};
@@ -44,7 +44,7 @@ pub struct SplittableEditor {
     primary_editor: Entity<Editor>,
     secondary: Option<SecondaryEditor>,
     panes: PaneGroup,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -76,7 +76,7 @@ impl SplittableEditor {
     pub fn new_unsplit(
         primary_multibuffer: Entity<MultiBuffer>,
         project: Entity<Project>,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -277,7 +277,7 @@ impl SplittableEditor {
 
     pub fn added_to_workspace(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -739,7 +739,7 @@ mod tests {
     use rand::rngs::StdRng;
     use settings::SettingsStore;
     use ui::VisualContext as _;
-    use workspace::Workspace;
+    use workspace::MultiWorkspace;
 
     use crate::SplittableEditor;
 
@@ -760,7 +760,7 @@ mod tests {
         init_test(cx);
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let primary_multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
             multibuffer.set_all_diff_hunks_expanded(cx);

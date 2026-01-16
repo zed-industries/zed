@@ -8,7 +8,7 @@ use svg_preview::{
     svg_preview_view::SvgPreviewView,
 };
 use ui::{Tooltip, prelude::*, text_for_keystroke};
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 use super::QuickActionBar;
 
@@ -21,7 +21,7 @@ enum PreviewType {
 impl QuickActionBar {
     pub fn render_preview_button(
         &self,
-        workspace_handle: WeakEntity<Workspace>,
+        workspace_handle: WeakEntity<MultiWorkspace>,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let mut preview_type = None;

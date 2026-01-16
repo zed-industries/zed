@@ -11,7 +11,7 @@ use ui::{
     LabelSize, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div,
     h_flex, px, v_flex,
 };
-use workspace::{Item, SplitDirection, Workspace};
+use workspace::{Item, SplitDirection, MultiWorkspace};
 
 actions!(
     dev,
@@ -22,7 +22,7 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _, _| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _, _| {
         workspace.register_action(|workspace, _: &OpenKeyContextView, window, cx| {
             let key_context_view = cx.new(|cx| KeyContextView::new(window, cx));
             workspace.split_item(

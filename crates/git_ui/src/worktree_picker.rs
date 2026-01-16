@@ -20,15 +20,15 @@ use remote::{RemoteConnectionOptions, remote_client::ConnectionIdentifier};
 use std::{path::PathBuf, sync::Arc};
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
+use workspace::{ModalView, MultiWorkspace, notifications::DetachAndPromptErr};
 
 actions!(git, [WorktreeFromDefault, WorktreeFromDefaultOnWindow]);
 
 pub fn open(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     _: &zed_actions::git::Worktree,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     let repository = workspace.project().read(cx).active_repository(cx);
     let workspace_handle = workspace.weak_handle();
@@ -39,7 +39,7 @@ pub fn open(
 
 pub fn create_embedded(
     repository: Option<Entity<Repository>>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     width: Rems,
     window: &mut Window,
     cx: &mut Context<WorktreeList>,
@@ -58,7 +58,7 @@ pub struct WorktreeList {
 impl WorktreeList {
     fn new(
         repository: Option<Entity<Repository>>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         width: Rems,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -72,7 +72,7 @@ impl WorktreeList {
 
     fn new_inner(
         repository: Option<Entity<Repository>>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         width: Rems,
         embedded: bool,
         window: &mut Window,
@@ -129,7 +129,7 @@ impl WorktreeList {
 
     fn new_embedded(
         repository: Option<Entity<Repository>>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         width: Rems,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -222,7 +222,7 @@ struct WorktreeEntry {
 pub struct WorktreeListDelegate {
     matches: Vec<WorktreeEntry>,
     all_worktrees: Option<Vec<GitWorktree>>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     repo: Option<Entity<Repository>>,
     selected_index: usize,
     last_query: String,
@@ -233,7 +233,7 @@ pub struct WorktreeListDelegate {
 
 impl WorktreeListDelegate {
     fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         repo: Option<Entity<Repository>>,
         _window: &mut Window,
         cx: &mut Context<WorktreeList>,
@@ -442,7 +442,7 @@ async fn open_remote_worktree(
     cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
     let workspace_window = window
-        .downcast::<Workspace>()
+        .downcast::<MultiWorkspace>()
         .ok_or_else(|| anyhow::anyhow!("Window is not a Workspace window"))?;
 
     let connect_task = workspace_window.update(cx, |workspace, window, cx| {
@@ -509,7 +509,7 @@ async fn open_remote_worktree(
         cx.open_window(options, |window, cx| {
             cx.new(|cx| {
                 let mut workspace =
-                    Workspace::new(None, new_project.clone(), app_state.clone(), window, cx);
+                    MultiWorkspace::new(None, new_project.clone(), app_state.clone(), window, cx);
                 workspace.centered_layout = workspace_position.centered_layout;
                 workspace
             })

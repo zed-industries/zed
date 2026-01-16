@@ -25,7 +25,7 @@ use std::{
     time::Duration,
 };
 use util::command::new_smol_command;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
@@ -165,7 +165,7 @@ struct GlobalAutoUpdate(Option<Entity<AutoUpdater>>);
 impl Global for GlobalAutoUpdate {}
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _window, _cx| {
         workspace.register_action(|_, action, window, cx| check(action, window, cx));
 
         workspace.register_action(|_, action, _, cx| {

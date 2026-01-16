@@ -48,7 +48,7 @@ use util::{
     rel_path::RelPath,
 };
 use workspace::{
-    ModalView, OpenOptions, Toast, Workspace,
+    ModalView, OpenOptions, Toast, MultiWorkspace,
     notifications::{DetachAndPromptErr, NotificationId},
     open_remote_project_with_existing_connection,
 };
@@ -56,7 +56,7 @@ use workspace::{
 pub struct RemoteServerProjects {
     mode: Mode,
     focus_handle: FocusHandle,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     retained_connections: Vec<Entity<RemoteClient>>,
     ssh_config_updates: Task<()>,
     ssh_config_servers: BTreeSet<SharedString>,
@@ -216,7 +216,7 @@ impl ProjectPicker {
         connection: RemoteConnectionOptions,
         project: Entity<Project>,
         home_dir: RemotePathBuf,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<RemoteServerProjects>,
     ) -> Entity<Self> {
@@ -325,7 +325,7 @@ impl ProjectPicker {
                         .open_window(options, |window, cx| {
                             cx.new(|cx| {
                                 telemetry::event!("SSH Project Created");
-                                Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                                MultiWorkspace::new(None, project.clone(), app_state.clone(), window, cx)
                             })
                         })
                         .log_err()?;
@@ -615,7 +615,7 @@ impl RemoteServerProjects {
         create_new_window: bool,
         fs: Arc<dyn Fs>,
         window: &mut Window,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_inner(
@@ -632,7 +632,7 @@ impl RemoteServerProjects {
         create_new_window: bool,
         fs: Arc<dyn Fs>,
         window: &mut Window,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_inner(
@@ -650,7 +650,7 @@ impl RemoteServerProjects {
     pub fn new_dev_container(
         fs: Arc<dyn Fs>,
         window: &mut Window,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_inner(
@@ -668,7 +668,7 @@ impl RemoteServerProjects {
 
     pub fn popover(
         fs: Arc<dyn Fs>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         create_new_window: bool,
         window: &mut Window,
         cx: &mut App,
@@ -685,7 +685,7 @@ impl RemoteServerProjects {
         create_new_window: bool,
         fs: Arc<dyn Fs>,
         window: &mut Window,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -736,7 +736,7 @@ impl RemoteServerProjects {
         home_dir: RemotePathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
     ) -> Self {
         let fs = project.read(cx).fs().clone();
         let mut this = Self::new(create_new_window, fs, window, workspace.clone(), cx);
@@ -1357,7 +1357,7 @@ impl RemoteServerProjects {
 
                 let replace_window = match (create_new_window, secondary_confirm) {
                     (true, false) | (false, true) => None,
-                    (true, true) | (false, false) => window.window_handle().downcast::<Workspace>(),
+                    (true, true) | (false, false) => window.window_handle().downcast::<MultiWorkspace>(),
                 };
 
                 cx.spawn_in(window, async move |_, cx| {
@@ -1597,7 +1597,7 @@ impl RemoteServerProjects {
             return;
         };
 
-        let replace_window = window.window_handle().downcast::<Workspace>();
+        let replace_window = window.window_handle().downcast::<MultiWorkspace>();
 
         cx.spawn_in(window, async move |entity, cx| {
             let (connection, starting_dir) =
@@ -2194,7 +2194,7 @@ impl RemoteServerProjects {
             .child({
                 let workspace = self.workspace.clone();
                 fn callback(
-                    workspace: WeakEntity<Workspace>,
+                    workspace: WeakEntity<MultiWorkspace>,
                     connection_string: SharedString,
                     cx: &mut App,
                 ) {

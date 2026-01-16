@@ -1,4 +1,4 @@
-use crate::{SuppressNotification, Toast, Workspace};
+use crate::{MultiWorkspace, SuppressNotification, Toast};
 use anyhow::Context as _;
 use gpui::{
     AnyView, App, AppContext as _, AsyncWindowContext, ClickEvent, Context, DismissEvent, Entity,
@@ -67,7 +67,7 @@ pub trait Notification:
 
 pub struct SuppressEvent;
 
-impl Workspace {
+impl MultiWorkspace {
     #[cfg(any(test, feature = "test-support"))]
     pub fn notification_ids(&self) -> Vec<NotificationId> {
         self.notifications
@@ -94,7 +94,7 @@ impl Workspace {
             .detach();
             cx.subscribe(&notification, {
                 let id = id.clone();
-                move |workspace: &mut Workspace, _, _: &SuppressEvent, cx| {
+                move |workspace: &mut MultiWorkspace, _, _: &SuppressEvent, cx| {
                     workspace.suppress_notification(&id, cx);
                 }
             })
@@ -921,7 +921,7 @@ static GLOBAL_APP_NOTIFICATIONS: LazyLock<Mutex<AppNotifications>> = LazyLock::n
 struct AppNotifications {
     app_notifications: Vec<(
         NotificationId,
-        Arc<dyn Fn(&mut Context<Workspace>) -> AnyView + Send + Sync>,
+        Arc<dyn Fn(&mut Context<MultiWorkspace>) -> AnyView + Send + Sync>,
     )>,
 }
 
@@ -929,7 +929,7 @@ impl AppNotifications {
     pub fn insert(
         &mut self,
         id: NotificationId,
-        build_notification: Arc<dyn Fn(&mut Context<Workspace>) -> AnyView + Send + Sync>,
+        build_notification: Arc<dyn Fn(&mut Context<MultiWorkspace>) -> AnyView + Send + Sync>,
     ) {
         self.remove(&id);
         self.app_notifications.push((id, build_notification))
@@ -947,12 +947,12 @@ impl AppNotifications {
 pub fn show_app_notification<V: Notification + 'static>(
     id: NotificationId,
     cx: &mut App,
-    build_notification: impl Fn(&mut Context<Workspace>) -> Entity<V> + 'static + Send + Sync,
+    build_notification: impl Fn(&mut Context<MultiWorkspace>) -> Entity<V> + 'static + Send + Sync,
 ) {
     // Defer notification creation so that windows on the stack can be returned to GPUI
     cx.defer(move |cx| {
         // Handle dismiss events by removing the notification from all workspaces.
-        let build_notification: Arc<dyn Fn(&mut Context<Workspace>) -> AnyView + Send + Sync> =
+        let build_notification: Arc<dyn Fn(&mut Context<MultiWorkspace>) -> AnyView + Send + Sync> =
             Arc::new({
                 let id = id.clone();
                 move |cx| {
@@ -966,7 +966,7 @@ pub fn show_app_notification<V: Notification + 'static>(
                     .detach();
                     cx.subscribe(&notification, {
                         let id = id.clone();
-                        move |workspace: &mut Workspace, _, _: &SuppressEvent, cx| {
+                        move |workspace: &mut MultiWorkspace, _, _: &SuppressEvent, cx| {
                             workspace.suppress_notification(&id, cx);
                         }
                     })
@@ -981,7 +981,7 @@ pub fn show_app_notification<V: Notification + 'static>(
             .insert(id.clone(), build_notification.clone());
 
         for window in cx.windows() {
-            if let Some(workspace_window) = window.downcast::<Workspace>() {
+            if let Some(workspace_window) = window.downcast::<MultiWorkspace>() {
                 workspace_window
                     .update(cx, |workspace, _window, cx| {
                         workspace.show_notification_without_handling_dismiss_events(
@@ -1002,7 +1002,7 @@ pub fn dismiss_app_notification(id: &NotificationId, cx: &mut App) {
     cx.defer(move |cx| {
         GLOBAL_APP_NOTIFICATIONS.lock().remove(&id);
         for window in cx.windows() {
-            if let Some(workspace_window) = window.downcast::<Workspace>() {
+            if let Some(workspace_window) = window.downcast::<MultiWorkspace>() {
                 let id = id.clone();
                 workspace_window
                     .update(cx, |workspace, _window, cx| {
@@ -1017,8 +1017,11 @@ pub fn dismiss_app_notification(id: &NotificationId, cx: &mut App) {
 pub trait NotifyResultExt {
     type Ok;
 
-    fn notify_err(self, workspace: &mut Workspace, cx: &mut Context<Workspace>)
-    -> Option<Self::Ok>;
+    fn notify_err(
+        self,
+        workspace: &mut MultiWorkspace,
+        cx: &mut Context<MultiWorkspace>,
+    ) -> Option<Self::Ok>;
 
     fn notify_async_err(self, cx: &mut AsyncWindowContext) -> Option<Self::Ok>;
 
@@ -1032,7 +1035,11 @@ where
 {
     type Ok = T;
 
-    fn notify_err(self, workspace: &mut Workspace, cx: &mut Context<Workspace>) -> Option<T> {
+    fn notify_err(
+        self,
+        workspace: &mut MultiWorkspace,
+        cx: &mut Context<MultiWorkspace>,
+    ) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(err) => {
@@ -1049,7 +1056,7 @@ where
             Err(err) => {
                 log::error!("{err:?}");
                 cx.update_root(|view, _, cx| {
-                    if let Ok(workspace) = view.downcast::<Workspace>() {
+                    if let Ok(workspace) = view.downcast::<MultiWorkspace>() {
                         workspace.update(cx, |workspace, cx| workspace.show_error(&err, cx))
                     }
                 })

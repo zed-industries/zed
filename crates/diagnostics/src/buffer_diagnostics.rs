@@ -29,7 +29,7 @@ use std::{
 use text::{Anchor, BufferSnapshot, OffsetRangeExt};
 use ui::{Button, ButtonStyle, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
 use workspace::{
-    ItemHandle, ItemNavHistory, Workspace,
+    ItemHandle, ItemNavHistory, MultiWorkspace,
     item::{Item, ItemEvent, TabContentParams},
 };
 
@@ -209,10 +209,10 @@ impl BufferDiagnosticsEditor {
     }
 
     fn deploy(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _: &DeployCurrentFile,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         // Determine the currently opened path by finding the active editor and
         // finding the project path for the buffer.
@@ -253,9 +253,9 @@ impl BufferDiagnosticsEditor {
     }
 
     pub fn register(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _window: Option<&mut Window>,
-        _: &mut Context<Workspace>,
+        _: &mut Context<MultiWorkspace>,
     ) {
         workspace.register_action(Self::deploy);
     }
@@ -692,7 +692,7 @@ impl Item for BufferDiagnosticsEditor {
 
     fn added_to_workspace(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -904,7 +904,7 @@ impl Render for BufferDiagnosticsEditor {
                                 .style(ButtonStyle::Transparent)
                                 .tooltip(Tooltip::text("Open File"))
                                 .on_click(cx.listener(|buffer_diagnostics, _, window, cx| {
-                                    if let Some(workspace) = window.root::<Workspace>().flatten() {
+                                    if let Some(workspace) = window.root::<MultiWorkspace>().flatten() {
                                         workspace.update(cx, |workspace, cx| {
                                             workspace
                                                 .open_path(

@@ -5,7 +5,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use settings::{ActiveSettingsProfileName, SettingsStore};
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 pub fn init(cx: &mut App) {
     cx.on_action(|_: &zed_actions::settings_profile_selector::Toggle, cx| {
@@ -16,9 +16,9 @@ pub fn init(cx: &mut App) {
 }
 
 fn toggle_settings_profile_selector(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     workspace.toggle_modal(window, cx, |window, cx| {
         let delegate = SettingsProfileSelectorDelegate::new(cx.entity().downgrade(), window, cx);
@@ -293,7 +293,7 @@ mod tests {
     async fn init_test(
         profiles_json: serde_json::Value,
         cx: &mut TestAppContext,
-    ) -> (Entity<Workspace>, &mut VisualTestContext) {
+    ) -> (Entity<MultiWorkspace>, &mut VisualTestContext) {
         cx.update(|cx| {
             let state = AppState::test(cx);
             let settings_store = SettingsStore::test(cx);
@@ -321,7 +321,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, ["/test".as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         cx.update(|_, cx| {
             assert!(!cx.has_global::<ActiveSettingsProfileName>());
@@ -333,7 +333,7 @@ mod tests {
 
     #[track_caller]
     fn active_settings_profile_picker(
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         cx: &mut VisualTestContext,
     ) -> Entity<Picker<SettingsProfileSelectorDelegate>> {
         workspace.update(cx, |workspace, cx| {

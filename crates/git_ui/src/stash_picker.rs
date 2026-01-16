@@ -14,7 +14,7 @@ use time_format;
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 use crate::commit_view::CommitView;
 use crate::stash_picker;
@@ -30,10 +30,10 @@ actions!(
 );
 
 pub fn open(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     _: &zed_actions::git::ViewStash,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     let repository = workspace.project().read(cx).active_repository(cx);
     let weak_workspace = workspace.weak_handle();
@@ -44,7 +44,7 @@ pub fn open(
 
 pub fn create_embedded(
     repository: Option<Entity<Repository>>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     width: Rems,
     window: &mut Window,
     cx: &mut Context<StashList>,
@@ -62,7 +62,7 @@ pub struct StashList {
 impl StashList {
     fn new(
         repository: Option<Entity<Repository>>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         width: Rems,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -77,7 +77,7 @@ impl StashList {
 
     fn new_inner(
         repository: Option<Entity<Repository>>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         width: Rems,
         embedded: bool,
         window: &mut Window,
@@ -141,7 +141,7 @@ impl StashList {
 
     fn new_embedded(
         repository: Option<Entity<Repository>>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         width: Rems,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -224,7 +224,7 @@ pub struct StashListDelegate {
     matches: Vec<StashEntryMatch>,
     all_stash_entries: Option<Vec<StashEntry>>,
     repo: Option<Entity<Repository>>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     selected_index: usize,
     last_query: String,
     modifiers: Modifiers,
@@ -235,7 +235,7 @@ pub struct StashListDelegate {
 impl StashListDelegate {
     fn new(
         repo: Option<Entity<Repository>>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         _window: &mut Window,
         cx: &mut Context<StashList>,
     ) -> Self {

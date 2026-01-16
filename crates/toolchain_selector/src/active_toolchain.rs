@@ -9,20 +9,20 @@ use language::{Buffer, BufferEvent, LanguageName, Toolchain, ToolchainScope};
 use project::{Project, ProjectPath, Toolchains, WorktreeId, toolchain_store::ToolchainStoreEvent};
 use ui::{Button, ButtonCommon, Clickable, LabelSize, SharedString, Tooltip};
 use util::{maybe, rel_path::RelPath};
-use workspace::{StatusItemView, Workspace, item::ItemHandle};
+use workspace::{StatusItemView, MultiWorkspace, item::ItemHandle};
 
 use crate::ToolchainSelector;
 
 pub struct ActiveToolchain {
     active_toolchain: Option<Toolchain>,
     term: SharedString,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     active_buffer: Option<(WorktreeId, WeakEntity<Buffer>, Subscription)>,
     _update_toolchain_task: Task<Option<()>>,
 }
 
 impl ActiveToolchain {
-    pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(workspace: &MultiWorkspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
         if let Some(store) = workspace.project().read(cx).toolchain_store() {
             cx.subscribe_in(
                 &store,
@@ -137,7 +137,7 @@ impl ActiveToolchain {
     }
 
     fn active_toolchain(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         worktree_id: WorktreeId,
         relative_path: Arc<RelPath>,
         language_name: LanguageName,

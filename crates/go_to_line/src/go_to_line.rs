@@ -322,7 +322,7 @@ mod tests {
     use serde_json::json;
     use std::{num::NonZeroU32, sync::Arc, time::Duration};
     use util::{path, rel_path::rel_path};
-    use workspace::{AppState, Workspace};
+    use workspace::{AppState, MultiWorkspace};
 
     #[gpui::test]
     async fn test_go_to_line_view_row_highlights(cx: &mut TestAppContext) {
@@ -352,7 +352,7 @@ mod tests {
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -449,7 +449,7 @@ mod tests {
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         workspace.update_in(cx, |workspace, window, cx| {
             let cursor_position = cx.new(|_| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
@@ -534,7 +534,7 @@ mod tests {
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         workspace.update_in(cx, |workspace, window, cx| {
             let cursor_position = cx.new(|_| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
@@ -612,7 +612,7 @@ mod tests {
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         workspace.update_in(cx, |workspace, window, cx| {
             let cursor_position = cx.new(|_| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
@@ -673,7 +673,7 @@ mod tests {
     }
 
     fn current_position(
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         cx: &mut VisualTestContext,
     ) -> UserCaretPosition {
         workspace.update(cx, |workspace, cx| {
@@ -698,7 +698,7 @@ mod tests {
     fn go_to_point(
         new_point: UserCaretPosition,
         expected_placeholder: UserCaretPosition,
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         cx: &mut VisualTestContext,
     ) {
         let go_to_line_view = open_go_to_line_view(workspace, cx);
@@ -720,7 +720,7 @@ mod tests {
     }
 
     fn open_go_to_line_view(
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         cx: &mut VisualTestContext,
     ) -> Entity<GoToLine> {
         cx.dispatch_action(editor::actions::ToggleGoToLine);
@@ -788,7 +788,7 @@ mod tests {
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -845,7 +845,7 @@ mod tests {
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -900,7 +900,7 @@ mod tests {
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()

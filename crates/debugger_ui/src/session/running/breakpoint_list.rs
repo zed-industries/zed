@@ -28,7 +28,7 @@ use ui::{
     ScrollAxes, StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
 };
 use util::rel_path::RelPath;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
 
 actions!(
@@ -47,7 +47,7 @@ pub(crate) enum SelectedBreakpointKind {
     Data,
 }
 pub(crate) struct BreakpointList {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     breakpoint_store: Entity<BreakpointStore>,
     dap_store: Entity<DapStore>,
     worktree_store: Entity<WorktreeStore>,
@@ -78,7 +78,7 @@ enum ActiveBreakpointStripMode {
 impl BreakpointList {
     pub(crate) fn new(
         session: Option<Entity<Session>>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         project: &Entity<Project>,
         window: &mut Window,
         cx: &mut App,

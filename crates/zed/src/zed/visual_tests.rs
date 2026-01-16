@@ -71,7 +71,7 @@ pub fn init_visual_test(cx: &mut VisualTestAppContext) -> Arc<AppState> {
 pub async fn open_test_workspace(
     app_state: Arc<AppState>,
     cx: &mut VisualTestAppContext,
-) -> Result<WindowHandle<workspace::Workspace>> {
+) -> Result<WindowHandle<workspace::MultiWorkspace>> {
     let window_size = size(px(1280.0), px(800.0));
 
     let project = cx.update(|cx| {
@@ -88,7 +88,7 @@ pub async fn open_test_workspace(
     });
 
     let window = cx.open_offscreen_window(window_size, |window, cx| {
-        cx.new(|cx| workspace::Workspace::new(None, project.clone(), app_state.clone(), window, cx))
+        cx.new(|cx| workspace::MultiWorkspace::new(None, project.clone(), app_state.clone(), window, cx))
     })?;
 
     cx.run_until_parked();

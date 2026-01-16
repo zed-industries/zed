@@ -10,7 +10,7 @@ use assistant_slash_command::{
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use ui::prelude::*;
-use workspace::{Workspace, dock::Panel};
+use workspace::{MultiWorkspace, dock::Panel};
 
 use assistant_slash_command::create_label_for_command;
 
@@ -53,7 +53,7 @@ impl SlashCommand for TerminalSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakEntity<Workspace>>,
+        _workspace: Option<WeakEntity<MultiWorkspace>>,
         _window: &mut Window,
         _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -65,7 +65,7 @@ impl SlashCommand for TerminalSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _: &mut Window,
         cx: &mut App,
@@ -109,7 +109,7 @@ impl SlashCommand for TerminalSlashCommand {
 }
 
 fn resolve_active_terminal(
-    workspace: &Entity<Workspace>,
+    workspace: &Entity<MultiWorkspace>,
     cx: &mut App,
 ) -> Option<Entity<TerminalView>> {
     if let Some(terminal_view) = workspace

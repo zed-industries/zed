@@ -31,7 +31,7 @@ use workspace::{
     ActivatePaneUp, ActivatePreviousPane, DraggedSelection, DraggedTab, ItemId, MoveItemToPane,
     MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, Pane,
     PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown,
-    SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
+    SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, MultiWorkspace,
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
     move_active_item, move_item, pane,
@@ -54,7 +54,7 @@ actions!(
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
-        |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
+        |workspace: &mut MultiWorkspace, _window, _: &mut Context<MultiWorkspace>| {
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
@@ -78,7 +78,7 @@ pub struct TerminalPanel {
     pub(crate) active_pane: Entity<Pane>,
     pub(crate) center: PaneGroup,
     fs: Arc<dyn Fs>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     pub(crate) width: Option<Pixels>,
     pub(crate) height: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
@@ -90,7 +90,7 @@ pub struct TerminalPanel {
 }
 
 impl TerminalPanel {
-    pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(workspace: &MultiWorkspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let project = workspace.project();
         let pane = new_terminal_pane(workspace.weak_handle(), project.clone(), false, window, cx);
         let center = PaneGroup::new(pane.clone());
@@ -225,7 +225,7 @@ impl TerminalPanel {
         });
     }
 
-    fn serialization_key(workspace: &Workspace) -> Option<String> {
+    fn serialization_key(workspace: &MultiWorkspace) -> Option<String> {
         workspace
             .database_id()
             .map(|id| i64::from(id).to_string())
@@ -234,7 +234,7 @@ impl TerminalPanel {
     }
 
     pub async fn load(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         mut cx: AsyncWindowContext,
     ) -> Result<Entity<Self>> {
         let mut terminal_panel = None;
@@ -513,10 +513,10 @@ impl TerminalPanel {
     }
 
     pub fn open_terminal(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         action: &workspace::OpenTerminal,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
             return;
@@ -643,10 +643,10 @@ impl TerminalPanel {
 
     /// Create a new Terminal in the current working directory or the user's home directory
     fn new_terminal(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         action: &workspace::NewTerminal,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
             return;
@@ -724,9 +724,9 @@ impl TerminalPanel {
     }
 
     pub fn add_center_terminal(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
         create_terminal: impl FnOnce(
             &mut Project,
             &mut Context<Project>,
@@ -1146,12 +1146,12 @@ pub fn prepare_task_for_spawn(
     }
 }
 
-fn is_enabled_in_workspace(workspace: &Workspace, cx: &App) -> bool {
+fn is_enabled_in_workspace(workspace: &MultiWorkspace, cx: &App) -> bool {
     workspace.project().read(cx).supports_terminal(cx)
 }
 
 pub fn new_terminal_pane(
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     project: Entity<Project>,
     zoomed: bool,
     window: &mut Window,
@@ -1851,7 +1851,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         let (window_handle, terminal_panel) = workspace
             .update(cx, |workspace, window, cx| {
@@ -1936,7 +1936,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         let (window_handle, terminal_panel) = workspace
             .update(cx, |workspace, window, cx| {
@@ -1979,7 +1979,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let workspace = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         let (window_handle, terminal_panel) = workspace
             .update(cx, |workspace, window, cx| {

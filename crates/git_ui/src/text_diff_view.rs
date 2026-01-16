@@ -22,7 +22,7 @@ use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
 use util::paths::PathExt;
 
 use workspace::{
-    Item, ItemHandle as _, ItemNavHistory, Workspace,
+    Item, ItemHandle as _, ItemNavHistory, MultiWorkspace,
     item::{ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
@@ -40,7 +40,7 @@ const RECALCULATE_DIFF_DEBOUNCE: Duration = Duration::from_millis(250);
 impl TextDiffView {
     pub fn open(
         diff_data: &DiffClipboardWithSelectionData,
-        workspace: &Workspace,
+        workspace: &MultiWorkspace,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Task<Result<Entity<Self>>>> {
@@ -379,7 +379,7 @@ impl Item for TextDiffView {
 
     fn added_to_workspace(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -676,7 +676,7 @@ mod tests {
         let project = Project::test(fs, [project_root.as_ref()], cx).await;
 
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let buffer = project
             .update(cx, |project, cx| project.open_local_buffer(file_path, cx))

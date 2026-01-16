@@ -27,7 +27,7 @@ use terminal_view::TerminalView;
 use ui::prelude::*;
 use util::ResultExt;
 use uuid::Uuid;
-use workspace::{Toast, Workspace, notifications::NotificationId};
+use workspace::{Toast, MultiWorkspace, notifications::NotificationId};
 
 pub fn init(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>, cx: &mut App) {
     cx.set_global(TerminalInlineAssistant::new(fs, prompt_builder));
@@ -60,7 +60,7 @@ impl TerminalInlineAssistant {
     pub fn assist(
         &mut self,
         terminal_view: &Entity<TerminalView>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
@@ -406,7 +406,7 @@ struct TerminalInlineAssist {
     terminal: WeakEntity<TerminalView>,
     prompt_editor: Option<Entity<PromptEditor<TerminalCodegen>>>,
     codegen: Entity<TerminalCodegen>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -415,7 +415,7 @@ impl TerminalInlineAssist {
         assist_id: TerminalInlineAssistId,
         terminal: &Entity<TerminalView>,
         prompt_editor: Entity<PromptEditor<TerminalCodegen>>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {

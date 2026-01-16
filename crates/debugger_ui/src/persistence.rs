@@ -7,7 +7,7 @@ use project::Project;
 use serde::{Deserialize, Serialize};
 use ui::{App, SharedString};
 use util::ResultExt;
-use workspace::{Member, Pane, PaneAxis, Workspace};
+use workspace::{Member, Pane, PaneAxis, MultiWorkspace};
 
 use crate::session::running::{
     self, DebugTerminal, RunningState, SubView, breakpoint_list::BreakpointList, console::Console,
@@ -202,7 +202,7 @@ pub(crate) async fn get_serialized_layout(
 pub(crate) fn deserialize_pane_layout(
     serialized: SerializedPaneLayout,
     should_invert: bool,
-    workspace: &WeakEntity<Workspace>,
+    workspace: &WeakEntity<MultiWorkspace>,
     project: &Entity<Project>,
     stack_frame_list: &Entity<StackFrameList>,
     variable_list: &Entity<VariableList>,

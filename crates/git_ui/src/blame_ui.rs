@@ -14,7 +14,7 @@ use settings::Settings as _;
 use theme::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{ContextMenu, CopyButton, Divider, prelude::*, tooltip_container};
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
 
@@ -31,7 +31,7 @@ impl BlameRenderer for GitBlameRenderer {
         blame_entry: BlameEntry,
         details: Option<ParsedCommitMessage>,
         repository: Entity<Repository>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         editor: Entity<Editor>,
         ix: usize,
         sha_color: Hsla,
@@ -170,7 +170,7 @@ impl BlameRenderer for GitBlameRenderer {
         details: Option<ParsedCommitMessage>,
         markdown: Entity<Markdown>,
         repository: Entity<Repository>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
@@ -352,7 +352,7 @@ impl BlameRenderer for GitBlameRenderer {
         &self,
         blame_entry: BlameEntry,
         repository: Entity<Repository>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut App,
     ) {

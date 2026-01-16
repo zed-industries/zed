@@ -7,7 +7,7 @@ use gpui::{
 };
 use ui::{ButtonLike, CommonAnimationExt, ConfiguredApiCard, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
-use workspace::{Toast, Workspace, notifications::NotificationId};
+use workspace::{Toast, MultiWorkspace, notifications::NotificationId};
 
 const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
 const ERROR_LABEL: &str =
@@ -34,7 +34,7 @@ pub fn initiate_sign_out(window: &mut Window, cx: &mut App) {
                 cx.update(|window, cx| copilot_toast(Some("Signed out of Copilot"), window, cx))
             }
             Err(err) => cx.update(|window, cx| {
-                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                if let Some(workspace) = window.root::<MultiWorkspace>().flatten() {
                     workspace.update(cx, |workspace, cx| {
                         workspace.show_error(&err, cx);
                     })
@@ -84,7 +84,7 @@ fn open_copilot_code_verification_window(copilot: &Entity<Copilot>, window: &Win
 fn copilot_toast(message: Option<&'static str>, window: &Window, cx: &mut App) {
     const NOTIFICATION_ID: NotificationId = NotificationId::unique::<CopilotStatusToast>();
 
-    let Some(workspace) = window.root::<Workspace>().flatten() else {
+    let Some(workspace) = window.root::<MultiWorkspace>().flatten() else {
         return;
     };
 

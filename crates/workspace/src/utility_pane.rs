@@ -8,7 +8,7 @@ use ui::{
 };
 
 use crate::{
-    DockPosition, Workspace,
+    DockPosition, MultiWorkspace,
     dock::{ClosePane, MinimizePane, UtilityPane, UtilityPaneHandle},
 };
 
@@ -50,7 +50,7 @@ pub fn utility_slot_for_dock_position(position: DockPosition) -> UtilityPaneSlot
     }
 }
 
-impl Workspace {
+impl MultiWorkspace {
     pub fn utility_pane(&self, slot: UtilityPaneSlot) -> Option<&dyn UtilityPaneHandle> {
         match slot {
             UtilityPaneSlot::Left => self
@@ -189,7 +189,7 @@ impl Workspace {
 
 #[derive(IntoElement)]
 pub struct UtilityPaneFrame {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     slot: UtilityPaneSlot,
     handle: Box<dyn UtilityPaneHandle>,
 }
@@ -198,7 +198,7 @@ impl UtilityPaneFrame {
     pub fn new(
         slot: UtilityPaneSlot,
         handle: Box<dyn UtilityPaneHandle>,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Self {
         let workspace = cx.weak_entity();
         Self {

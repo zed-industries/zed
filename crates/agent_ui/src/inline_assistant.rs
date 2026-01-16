@@ -52,7 +52,7 @@ use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::{OffsetRangeExt, ToPoint as _};
 use ui::prelude::*;
 use util::{RangeExt, ResultExt, maybe};
-use workspace::{ItemHandle, Toast, Workspace, dock::Panel, notifications::NotificationId};
+use workspace::{ItemHandle, Toast, MultiWorkspace, dock::Panel, notifications::NotificationId};
 use zed_actions::agent::OpenSettings;
 
 pub fn init(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>, cx: &mut App) {
@@ -68,7 +68,7 @@ pub fn init(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>, cx: &mut App) {
     })
     .detach();
 
-    cx.observe_new(|_workspace: &mut Workspace, window, cx| {
+    cx.observe_new(|_workspace: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
             return;
         };
@@ -120,7 +120,7 @@ impl InlineAssistant {
 
     pub fn register_workspace(
         &mut self,
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -170,7 +170,7 @@ impl InlineAssistant {
 
     fn handle_workspace_event(
         &mut self,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         event: &workspace::Event,
         window: &mut Window,
         cx: &mut App,
@@ -198,7 +198,7 @@ impl InlineAssistant {
 
     fn register_workspace_item(
         &mut self,
-        workspace: &Entity<Workspace>,
+        workspace: &Entity<MultiWorkspace>,
         item: &dyn ItemHandle,
         window: &mut Window,
         cx: &mut App,
@@ -235,10 +235,10 @@ impl InlineAssistant {
     }
 
     pub fn inline_assist(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         action: &zed_actions::assistant::InlineAssist,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         if !AgentSettings::get_global(cx).enabled(cx) {
             return;
@@ -268,7 +268,7 @@ impl InlineAssistant {
         let history = agent_panel.history().downgrade();
 
         let handle_assist =
-            |window: &mut Window, cx: &mut Context<Workspace>| match inline_assist_target {
+            |window: &mut Window, cx: &mut Context<MultiWorkspace>| match inline_assist_target {
                 InlineAssistTarget::Editor(active_editor) => {
                     InlineAssistant::update_global(cx, |assistant, cx| {
                         assistant.assist(
@@ -470,7 +470,7 @@ impl InlineAssistant {
     fn batch_assist(
         &mut self,
         editor: &Entity<Editor>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
@@ -609,7 +609,7 @@ impl InlineAssistant {
     pub fn assist(
         &mut self,
         editor: &Entity<Editor>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
@@ -655,7 +655,7 @@ impl InlineAssistant {
         initial_prompt: String,
         initial_transaction_id: Option<TransactionId>,
         focus: bool,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         history: WeakEntity<AcpThreadHistory>,
@@ -1549,7 +1549,7 @@ impl InlineAssistant {
     }
 
     fn resolve_inline_assist_target(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         agent_panel: Option<Entity<AgentPanel>>,
         window: &mut Window,
         cx: &mut App,
@@ -1737,7 +1737,7 @@ pub struct InlineAssist {
     decorations: Option<InlineAssistDecorations>,
     codegen: Entity<BufferCodegen>,
     _subscriptions: Vec<Subscription>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
 }
 
 impl InlineAssist {
@@ -1751,7 +1751,7 @@ impl InlineAssist {
         end_block_id: CustomBlockId,
         range: Range<Anchor>,
         codegen: Entity<BufferCodegen>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
@@ -1873,7 +1873,7 @@ struct InlineAssistDecorations {
 
 struct AssistantCodeActionProvider {
     editor: WeakEntity<Editor>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
 }
 
 const ASSISTANT_CODE_ACTION_PROVIDER_ID: &str = "assistant";
@@ -2050,7 +2050,7 @@ pub mod test {
     use prompt_store::PromptBuilder;
     use smol::stream::StreamExt as _;
     use util::test::marked_text_ranges;
-    use workspace::Workspace;
+    use workspace::MultiWorkspace;
 
     use crate::InlineAssistant;
 
@@ -2117,7 +2117,7 @@ pub mod test {
         // Create workspace with window
         let (workspace, cx) = cx.add_window_view(|window, cx| {
             window.activate_window();
-            Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+            MultiWorkspace::new(None, project.clone(), app_state.clone(), window, cx)
         });
 
         setup(cx);

@@ -19,7 +19,7 @@ use util::{
     maybe,
     paths::{PathStyle, compare_paths},
 };
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 pub(crate) struct OpenPathPrompt;
 
@@ -185,9 +185,9 @@ struct CandidateInfo {
 
 impl OpenPathPrompt {
     pub(crate) fn register(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _window: Option<&mut Window>,
-        _: &mut Context<Workspace>,
+        _: &mut Context<MultiWorkspace>,
     ) {
         workspace.set_prompt_for_open_path(Box::new(|workspace, lister, window, cx| {
             let (tx, rx) = futures::channel::oneshot::channel();
@@ -197,9 +197,9 @@ impl OpenPathPrompt {
     }
 
     pub(crate) fn register_new_path(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _window: Option<&mut Window>,
-        _: &mut Context<Workspace>,
+        _: &mut Context<MultiWorkspace>,
     ) {
         workspace.set_prompt_for_new_path(Box::new(|workspace, lister, window, cx| {
             let (tx, rx) = futures::channel::oneshot::channel();
@@ -209,12 +209,12 @@ impl OpenPathPrompt {
     }
 
     fn prompt_for_open_path(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         lister: DirectoryLister,
         creating_path: bool,
         tx: oneshot::Sender<Option<Vec<PathBuf>>>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate = OpenPathDelegate::new(tx, lister.clone(), creating_path, cx);

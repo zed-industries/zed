@@ -13,7 +13,7 @@ use gpui::{
 };
 use util::ResultExt;
 use workspace::{
-    Workspace,
+    MultiWorkspace,
     ui::{
         ActiveTheme, Button, ButtonCommon, ButtonStyle, Checkbox, Clickable, Divider,
         ScrollableHandle as _, ToggleState, Tooltip, WithScrollbar, h_flex, v_flex,
@@ -22,11 +22,11 @@ use workspace::{
 use zed_actions::OpenPerformanceProfiler;
 
 pub fn init(startup_time: Instant, cx: &mut App) {
-    cx.observe_new(move |workspace: &mut workspace::Workspace, _, _| {
+    cx.observe_new(move |workspace: &mut workspace::MultiWorkspace, _, _| {
         workspace.register_action(move |workspace, _: &OpenPerformanceProfiler, window, cx| {
             let window_handle = window
                 .window_handle()
-                .downcast::<Workspace>()
+                .downcast::<MultiWorkspace>()
                 .expect("Workspaces are root Windows");
             open_performance_profiler(startup_time, workspace, window_handle, cx);
         });
@@ -36,8 +36,8 @@ pub fn init(startup_time: Instant, cx: &mut App) {
 
 fn open_performance_profiler(
     startup_time: Instant,
-    _workspace: &mut workspace::Workspace,
-    workspace_handle: WindowHandle<Workspace>,
+    _workspace: &mut workspace::MultiWorkspace,
+    workspace_handle: WindowHandle<MultiWorkspace>,
     cx: &mut App,
 ) {
     let existing_window = cx
@@ -97,14 +97,14 @@ pub struct ProfilerWindow {
     include_self_timings: ToggleState,
     autoscroll: bool,
     scroll_handle: UniformListScrollHandle,
-    workspace: Option<WindowHandle<Workspace>>,
+    workspace: Option<WindowHandle<MultiWorkspace>>,
     _refresh: Option<Task<()>>,
 }
 
 impl ProfilerWindow {
     pub fn new(
         startup_time: Instant,
-        workspace_handle: Option<WindowHandle<Workspace>>,
+        workspace_handle: Option<WindowHandle<MultiWorkspace>>,
         cx: &mut App,
     ) -> Entity<Self> {
         let entity = cx.new(|cx| ProfilerWindow {

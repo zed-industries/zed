@@ -10,14 +10,14 @@ use project::project_settings::{GoToDiagnosticSeverityFilter, ProjectSettings};
 use settings::Settings;
 use ui::{Button, ButtonLike, Color, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
 use util::ResultExt;
-use workspace::{StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
+use workspace::{StatusItemView, ToolbarItemEvent, MultiWorkspace, item::ItemHandle};
 
 use crate::{Deploy, IncludeWarnings, ProjectDiagnosticsEditor};
 
 /// The status bar item that displays diagnostic counts.
 pub struct DiagnosticIndicator {
     summary: project::DiagnosticSummary,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     current_diagnostic: Option<Diagnostic>,
     active_editor: Option<WeakEntity<Editor>>,
     _observe_active_editor: Option<Subscription>,
@@ -112,7 +112,7 @@ impl Render for DiagnosticIndicator {
 }
 
 impl DiagnosticIndicator {
-    pub fn new(workspace: &Workspace, cx: &mut Context<Self>) -> Self {
+    pub fn new(workspace: &MultiWorkspace, cx: &mut Context<Self>) -> Self {
         let project = workspace.project();
         cx.subscribe(project, |this, project, event, cx| match event {
             project::Event::DiskBasedDiagnosticsStarted { .. } => {

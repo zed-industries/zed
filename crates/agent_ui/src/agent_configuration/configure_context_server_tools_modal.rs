@@ -5,7 +5,7 @@ use gpui::{
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle, Window, prelude::*,
 };
 use ui::{Divider, DividerColor, Modal, ModalHeader, WithScrollbar, prelude::*};
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 pub struct ConfigureContextServerToolsModal {
     context_server_id: ContextServerId,
@@ -34,9 +34,9 @@ impl ConfigureContextServerToolsModal {
     pub fn toggle(
         context_server_id: ContextServerId,
         context_server_registry: Entity<ContextServerRegistry>,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) {
         workspace.toggle_modal(window, cx, |window, cx| {
             Self::new(context_server_id, context_server_registry, window, cx)

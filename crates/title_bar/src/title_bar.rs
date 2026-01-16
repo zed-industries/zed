@@ -44,7 +44,7 @@ use ui::{
     PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use util::ResultExt;
-use workspace::{SwitchProject, ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
+use workspace::{SwitchProject, ToggleWorktreeSecurity, MultiWorkspace, notifications::NotifyResultExt};
 use zed_actions::OpenRemote;
 
 pub use onboarding_banner::restore_banner;
@@ -71,7 +71,7 @@ actions!(
 pub fn init(cx: &mut App) {
     SystemWindowTabs::init(cx);
 
-    cx.observe_new(|workspace: &mut Workspace, window, cx| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
             return;
         };
@@ -143,7 +143,7 @@ pub struct TitleBar {
     project: Entity<Project>,
     user_store: Entity<UserStore>,
     client: Arc<Client>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     application_menu: Option<Entity<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
     banner: Entity<OnboardingBanner>,
@@ -265,7 +265,7 @@ impl Render for TitleBar {
 impl TitleBar {
     pub fn new(
         id: impl Into<ElementId>,
-        workspace: &Workspace,
+        workspace: &MultiWorkspace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {

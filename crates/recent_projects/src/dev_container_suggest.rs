@@ -4,7 +4,7 @@ use project::{Project, WorktreeId};
 use std::sync::LazyLock;
 use ui::prelude::*;
 use util::rel_path::RelPath;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 use workspace::notifications::NotificationId;
 use workspace::notifications::simple_message_notification::MessageNotification;
 use worktree::UpdatedEntriesSet;
@@ -26,7 +26,7 @@ pub fn suggest_on_worktree_updated(
     updated_entries: &UpdatedEntriesSet,
     project: &gpui::Entity<Project>,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     let devcontainer_updated = updated_entries
         .iter()

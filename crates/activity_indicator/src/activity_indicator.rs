@@ -27,7 +27,7 @@ use ui::{
     prelude::*,
 };
 use util::truncate_and_trailoff;
-use workspace::{StatusItemView, Workspace, item::ItemHandle};
+use workspace::{StatusItemView, MultiWorkspace, item::ItemHandle};
 
 const GIT_OPERATION_DELAY: Duration = Duration::from_millis(0);
 
@@ -76,10 +76,10 @@ struct Content {
 
 impl ActivityIndicator {
     pub fn new(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         languages: Arc<LanguageRegistry>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Entity<ActivityIndicator> {
         let project = workspace.project().clone();
         let auto_updater = AutoUpdater::get(cx);

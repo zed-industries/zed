@@ -15,7 +15,7 @@ use db::{
     sqlez_macros::sql,
 };
 use workspace::{
-    ItemHandle, ItemId, Member, Pane, PaneAxis, PaneGroup, SerializableItem as _, Workspace,
+    ItemHandle, ItemId, Member, Pane, PaneAxis, PaneGroup, SerializableItem as _, MultiWorkspace,
     WorkspaceDb, WorkspaceId,
 };
 
@@ -88,7 +88,7 @@ fn serialize_pane(pane: &Entity<Pane>, active: bool, cx: &mut App) -> Serialized
 }
 
 pub(crate) fn deserialize_terminal_panel(
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     project: Entity<Project>,
     database_id: WorkspaceId,
     serialized_panel: SerializedTerminalPanel,
@@ -168,7 +168,7 @@ fn populate_pane_items(
 
 #[async_recursion(?Send)]
 async fn deserialize_pane_group(
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     project: Entity<Project>,
     panel: Entity<TerminalPanel>,
     workspace_id: WorkspaceId,
@@ -286,7 +286,7 @@ async fn deserialize_pane_group(
 fn deserialize_terminal_views(
     workspace_id: WorkspaceId,
     project: Entity<Project>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     item_ids: &[u64],
     cx: &mut AsyncWindowContext,
 ) -> impl Future<Output = Vec<Entity<TerminalView>>> + use<> {

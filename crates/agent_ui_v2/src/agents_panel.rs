@@ -19,7 +19,7 @@ use std::sync::Arc;
 use ui::{App, Context, IconName, IntoElement, ParentElement, Render, Styled, Window};
 use util::ResultExt;
 use workspace::{
-    Panel, Workspace,
+    Panel, MultiWorkspace,
     dock::{ClosePane, DockPosition, PanelEvent, UtilityPane},
     utility_pane::{UtilityPaneSlot, utility_slot_for_dock_position},
 };
@@ -46,7 +46,7 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _, _| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleAgentsPanel, window, cx| {
             workspace.toggle_panel_focus::<AgentsPanel>(window, cx);
         });
@@ -56,7 +56,7 @@ pub fn init(cx: &mut App) {
 
 pub struct AgentsPanel {
     focus_handle: gpui::FocusHandle,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     project: Entity<Project>,
     agent_thread_pane: Option<Entity<AgentThreadPane>>,
     history: Entity<AcpThreadHistory>,
@@ -71,7 +71,7 @@ pub struct AgentsPanel {
 
 impl AgentsPanel {
     pub fn load(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>, anyhow::Error>> {
         cx.spawn(async move |cx| {
@@ -115,7 +115,7 @@ impl AgentsPanel {
     }
 
     fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         fs: Arc<dyn Fs>,
         project: Entity<Project>,
         prompt_store: Option<Entity<PromptStore>>,

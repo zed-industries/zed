@@ -3,7 +3,7 @@ use project::image_store::{ImageFormat, ImageMetadata};
 use settings::Settings;
 use ui::prelude::*;
 use util::size::format_file_size;
-use workspace::{ItemHandle, StatusItemView, Workspace};
+use workspace::{ItemHandle, StatusItemView, MultiWorkspace};
 
 use crate::{ImageFileSizeUnit, ImageView, ImageViewerSettings};
 
@@ -14,7 +14,7 @@ pub struct ImageInfo {
 }
 
 impl ImageInfo {
-    pub fn new(_workspace: &Workspace) -> Self {
+    pub fn new(_workspace: &MultiWorkspace) -> Self {
         Self {
             metadata: None,
             _observe_active_image: None,

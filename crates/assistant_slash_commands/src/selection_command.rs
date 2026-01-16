@@ -12,7 +12,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use ui::IconName;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 use crate::file_command::codeblock_fence_for_path;
 
@@ -51,7 +51,7 @@ impl SlashCommand for SelectionCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakEntity<Workspace>>,
+        _workspace: Option<WeakEntity<MultiWorkspace>>,
         _window: &mut Window,
         _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -63,7 +63,7 @@ impl SlashCommand for SelectionCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _window: &mut Window,
         cx: &mut App,

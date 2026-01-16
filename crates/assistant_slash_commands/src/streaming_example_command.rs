@@ -13,7 +13,7 @@ use gpui::{Task, WeakEntity};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use smol::stream::StreamExt;
 use ui::prelude::*;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 pub struct StreamingExampleSlashCommandFeatureFlag;
 
@@ -44,7 +44,7 @@ impl SlashCommand for StreamingExampleSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakEntity<Workspace>>,
+        _workspace: Option<WeakEntity<MultiWorkspace>>,
         _window: &mut Window,
         _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
@@ -56,7 +56,7 @@ impl SlashCommand for StreamingExampleSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakEntity<Workspace>,
+        _workspace: WeakEntity<MultiWorkspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _: &mut Window,
         cx: &mut App,

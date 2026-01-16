@@ -48,7 +48,7 @@ use util::{
     rel_path::RelPath,
 };
 use workspace::{
-    ModalView, OpenOptions, OpenVisible, SplitDirection, Workspace, item::PreviewTabsSettings,
+    ModalView, OpenOptions, OpenVisible, SplitDirection, MultiWorkspace, item::PreviewTabsSettings,
     notifications::NotifyResultExt, pane,
 };
 
@@ -98,9 +98,9 @@ pub fn init(cx: &mut App) {
 
 impl FileFinder {
     fn register(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _window: Option<&mut Window>,
-        _: &mut Context<Workspace>,
+        _: &mut Context<MultiWorkspace>,
     ) {
         workspace.register_action(
             |workspace, action: &workspace::ToggleFileFinder, window, cx| {
@@ -120,10 +120,10 @@ impl FileFinder {
     }
 
     fn open(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         separate_history: bool,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Task<()> {
         let project = workspace.project().read(cx);
         let fs = project.fs();
@@ -392,7 +392,7 @@ impl Render for FileFinder {
 
 pub struct FileFinderDelegate {
     file_finder: WeakEntity<FileFinder>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     project: Entity<Project>,
     search_count: usize,
     latest_search_id: usize,
@@ -826,7 +826,7 @@ impl FileSearchQuery {
 impl FileFinderDelegate {
     fn new(
         file_finder: WeakEntity<FileFinder>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         project: Entity<Project>,
         currently_opened_path: Option<FoundPath>,
         history_items: Vec<FoundPath>,
@@ -1464,10 +1464,10 @@ impl PickerDelegate for FileFinderDelegate {
         {
             let open_task = workspace.update(cx, |workspace, cx| {
                 let split_or_open =
-                    |workspace: &mut Workspace,
+                    |workspace: &mut MultiWorkspace,
                      project_path,
                      window: &mut Window,
-                     cx: &mut Context<Workspace>| {
+                     cx: &mut Context<MultiWorkspace>| {
                         let allow_preview =
                             PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
                         if secondary {

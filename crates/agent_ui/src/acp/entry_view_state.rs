@@ -17,12 +17,12 @@ use settings::Settings as _;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
 use ui::{Context, TextSize};
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 
 pub struct EntryViewState {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     project: WeakEntity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
     history: WeakEntity<AcpThreadHistory>,
@@ -35,7 +35,7 @@ pub struct EntryViewState {
 
 impl EntryViewState {
     pub fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
         history: WeakEntity<AcpThreadHistory>,
@@ -332,7 +332,7 @@ impl Entry {
 }
 
 fn create_terminal(
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     project: WeakEntity<Project>,
     terminal: Entity<acp_thread::Terminal>,
     window: &mut Window,
@@ -418,7 +418,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
-    use workspace::Workspace;
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     async fn test_diff_sync(cx: &mut TestAppContext) {
@@ -434,7 +434,7 @@ mod tests {
         let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
 
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let tool_call = acp::ToolCall::new("tool", "Tool call")
             .status(acp::ToolCallStatus::InProgress)

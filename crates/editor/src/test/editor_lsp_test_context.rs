@@ -22,14 +22,14 @@ use language::{
 use lsp::{notification, request};
 use project::Project;
 use smol::stream::StreamExt;
-use workspace::{AppState, Workspace, WorkspaceHandle};
+use workspace::{AppState, MultiWorkspace, WorkspaceHandle};
 
 use super::editor_test_context::{AssertionContextManager, EditorTestContext};
 
 pub struct EditorLspTestContext {
     pub cx: EditorTestContext,
     pub lsp: lsp::FakeLanguageServer,
-    pub workspace: Entity<Workspace>,
+    pub workspace: Entity<MultiWorkspace>,
     pub buffer_lsp_url: lsp::Uri,
 }
 
@@ -95,7 +95,7 @@ impl EditorLspTestContext {
             )
             .await;
 
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let workspace = window.root(cx).unwrap();
 
@@ -461,7 +461,7 @@ impl EditorLspTestContext {
 
     pub fn update_workspace<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> T,
+        F: FnOnce(&mut MultiWorkspace, &mut Window, &mut Context<MultiWorkspace>) -> T,
     {
         self.workspace.update_in(&mut self.cx.cx, update)
     }

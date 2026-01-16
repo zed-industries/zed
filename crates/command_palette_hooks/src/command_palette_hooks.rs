@@ -7,7 +7,7 @@ use std::{any::TypeId, rc::Rc};
 use collections::HashSet;
 use derive_more::{Deref, DerefMut};
 use gpui::{Action, App, BorrowAppContext, Global, Task, WeakEntity};
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 /// Initializes the command palette hooks.
 pub fn init(cx: &mut App) {
@@ -116,7 +116,7 @@ pub struct CommandInterceptResult {
 /// An interceptor for the command palette.
 #[derive(Clone)]
 pub struct GlobalCommandPaletteInterceptor(
-    Rc<dyn Fn(&str, WeakEntity<Workspace>, &mut App) -> Task<CommandInterceptResult>>,
+    Rc<dyn Fn(&str, WeakEntity<MultiWorkspace>, &mut App) -> Task<CommandInterceptResult>>,
 );
 
 impl Global for GlobalCommandPaletteInterceptor {}
@@ -127,7 +127,7 @@ impl GlobalCommandPaletteInterceptor {
     /// This will override the previous interceptor, if it exists.
     pub fn set(
         cx: &mut App,
-        interceptor: impl Fn(&str, WeakEntity<Workspace>, &mut App) -> Task<CommandInterceptResult>
+        interceptor: impl Fn(&str, WeakEntity<MultiWorkspace>, &mut App) -> Task<CommandInterceptResult>
         + 'static,
     ) {
         cx.set_global(Self(Rc::new(interceptor)));
@@ -143,7 +143,7 @@ impl GlobalCommandPaletteInterceptor {
     /// Intercepts the given query from the command palette.
     pub fn intercept(
         query: &str,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         cx: &mut App,
     ) -> Option<Task<CommandInterceptResult>> {
         let interceptor = cx.try_global::<Self>()?;

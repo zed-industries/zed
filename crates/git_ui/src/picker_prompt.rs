@@ -11,7 +11,7 @@ use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 pub struct PickerPrompt {
     pub picker: Entity<Picker<PickerPromptDelegate>>,
@@ -22,7 +22,7 @@ pub struct PickerPrompt {
 pub fn prompt(
     prompt: &str,
     options: Vec<SharedString>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     window: &mut Window,
     cx: &mut App,
 ) -> Task<Option<usize>> {

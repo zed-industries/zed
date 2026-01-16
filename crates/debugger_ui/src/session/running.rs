@@ -60,7 +60,7 @@ use util::ResultExt;
 use variable_list::VariableList;
 use workspace::{
     ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, SplitDirection,
-    Workspace, item::TabContentParams, move_item, pane::Event,
+    MultiWorkspace, item::TabContentParams, move_item, pane::Event,
 };
 
 static PROCESS_ID_PLACEHOLDER: LazyLock<String> =
@@ -71,7 +71,7 @@ pub struct RunningState {
     thread_id: Option<ThreadId>,
     focus_handle: FocusHandle,
     _remote_id: Option<ViewId>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     session_id: SessionId,
     variable_list: Entity<variable_list::VariableList>,
     _subscriptions: Vec<Subscription>,
@@ -305,7 +305,7 @@ impl Render for SubView {
 }
 
 pub(crate) fn new_debugger_pane(
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     project: Entity<Project>,
     window: &mut Window,
     cx: &mut Context<RunningState>,
@@ -727,7 +727,7 @@ impl RunningState {
     pub(crate) fn new(
         session: Entity<Session>,
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         parent_terminal: Option<Entity<DebugTerminal>>,
         serialized_pane_layout: Option<SerializedLayout>,
         dock_axis: Axis,
@@ -1791,7 +1791,7 @@ impl RunningState {
 
     fn default_pane_layout(
         project: Entity<Project>,
-        workspace: &WeakEntity<Workspace>,
+        workspace: &WeakEntity<MultiWorkspace>,
         stack_frame_list: &Entity<StackFrameList>,
         variable_list: &Entity<VariableList>,
         console: &Entity<Console>,

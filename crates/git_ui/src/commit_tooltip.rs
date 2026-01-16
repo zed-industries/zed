@@ -15,7 +15,7 @@ use std::hash::Hash;
 use theme::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{Avatar, CopyButton, Divider, prelude::*, tooltip_container};
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 #[derive(Clone, Debug)]
 pub struct CommitDetails {
@@ -126,7 +126,7 @@ pub struct CommitTooltip {
     scroll_handle: ScrollHandle,
     markdown: Entity<Markdown>,
     repository: Entity<Repository>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
 }
 
 impl CommitTooltip {
@@ -134,7 +134,7 @@ impl CommitTooltip {
         blame: &BlameEntry,
         details: Option<ParsedCommitMessage>,
         repository: Entity<Repository>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         cx: &mut Context<Self>,
     ) -> Self {
         let commit_time = blame
@@ -163,7 +163,7 @@ impl CommitTooltip {
     pub fn new(
         commit: CommitDetails,
         repository: Entity<Repository>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         cx: &mut Context<Self>,
     ) -> Self {
         let markdown = cx.new(|cx| {

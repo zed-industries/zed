@@ -30,7 +30,7 @@ use ui::{
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
-    Workspace,
+    MultiWorkspace,
     item::{Item, ItemEvent},
 };
 use zed_actions::ExtensionCategoryFilter;
@@ -49,7 +49,7 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(move |workspace: &mut Workspace, window, cx| {
+    cx.observe_new(move |workspace: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
             return;
         };
@@ -294,7 +294,7 @@ struct ExtensionCardButtons {
 }
 
 pub struct ExtensionsPage {
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     list: UniformListScrollHandle,
     is_fetching_extensions: bool,
     fetch_failed: bool,
@@ -312,11 +312,11 @@ pub struct ExtensionsPage {
 
 impl ExtensionsPage {
     pub fn new(
-        workspace: &Workspace,
+        workspace: &MultiWorkspace,
         provides_filter: Option<ExtensionProvides>,
         focus_extension_id: Option<&str>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let store = ExtensionStore::global(cx);
@@ -382,7 +382,7 @@ impl ExtensionsPage {
 
     fn on_extension_installed(
         &mut self,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         extension_id: &str,
         window: &mut Window,
         cx: &mut Context<Self>,

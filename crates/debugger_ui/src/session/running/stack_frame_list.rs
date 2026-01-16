@@ -21,7 +21,7 @@ use project::debugger::breakpoint_store::ActiveStackFrame;
 use project::debugger::session::{Session, SessionEvent, StackFrame, ThreadStatus};
 use project::{ProjectItem, ProjectPath};
 use ui::{Tooltip, WithScrollbar, prelude::*};
-use workspace::{ItemHandle, Workspace, WorkspaceId};
+use workspace::{ItemHandle, MultiWorkspace, WorkspaceId};
 
 use super::RunningState;
 
@@ -73,7 +73,7 @@ pub struct StackFrameList {
     session: Entity<Session>,
     state: WeakEntity<RunningState>,
     entries: Vec<StackFrameEntry>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     selected_ix: Option<usize>,
     opened_stack_frame_id: Option<StackFrameId>,
     list_state: ListState,
@@ -93,7 +93,7 @@ pub enum StackFrameEntry {
 
 impl StackFrameList {
     pub fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         session: Entity<Session>,
         state: WeakEntity<RunningState>,
         window: &mut Window,

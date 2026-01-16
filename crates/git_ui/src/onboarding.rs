@@ -3,7 +3,7 @@ use gpui::{
     svg,
 };
 use ui::{TintColor, prelude::*};
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 use crate::git_panel::GitPanel;
 
@@ -19,11 +19,11 @@ macro_rules! git_onboarding_event {
 /// Introduces user to the Git Panel and overall improved Git support
 pub struct GitOnboardingModal {
     focus_handle: FocusHandle,
-    workspace: Entity<Workspace>,
+    workspace: Entity<MultiWorkspace>,
 }
 
 impl GitOnboardingModal {
-    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    pub fn toggle(workspace: &mut MultiWorkspace, window: &mut Window, cx: &mut Context<MultiWorkspace>) {
         let workspace_entity = cx.entity();
         workspace.toggle_modal(window, cx, |_window, cx| Self {
             workspace: workspace_entity,

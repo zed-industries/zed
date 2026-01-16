@@ -9,7 +9,7 @@ use settings::{BaseKeymap, Settings, update_settings_file};
 use std::sync::Arc;
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{ModalView, Workspace, ui::HighlightedLabel};
+use workspace::{ModalView, MultiWorkspace, ui::HighlightedLabel};
 
 actions!(
     zed,
@@ -20,17 +20,17 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new(|workspace: &mut MultiWorkspace, _window, _cx| {
         workspace.register_action(toggle);
     })
     .detach();
 }
 
 pub fn toggle(
-    workspace: &mut Workspace,
+    workspace: &mut MultiWorkspace,
     _: &ToggleBaseKeymapSelector,
     window: &mut Window,
-    cx: &mut Context<Workspace>,
+    cx: &mut Context<MultiWorkspace>,
 ) {
     let fs = workspace.app_state().fs.clone();
     workspace.toggle_modal(window, cx, |window, cx| {

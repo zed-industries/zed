@@ -14,7 +14,7 @@ use std::sync::Arc;
 use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
 use ui::{Context, Tooltip, prelude::*};
 use ui::{ListItem, ListItemSpacing};
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 use crate::debugger_panel::DebugPanel;
 
@@ -35,13 +35,13 @@ pub(crate) struct AttachModalDelegate {
     matches: Vec<StringMatch>,
     placeholder_text: Arc<str>,
     pub(crate) intent: ModalIntent,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     candidates: Arc<[Candidate]>,
 }
 
 impl AttachModalDelegate {
     fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         intent: ModalIntent,
         candidates: Arc<[Candidate]>,
     ) -> Self {
@@ -64,7 +64,7 @@ pub struct AttachModal {
 impl AttachModal {
     pub(crate) fn new(
         intent: ModalIntent,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         project: Entity<Project>,
         modal: bool,
         window: &mut Window,
@@ -90,7 +90,7 @@ impl AttachModal {
     }
 
     pub(super) fn with_processes(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         processes: Arc<[Candidate]>,
         modal: bool,
         intent: ModalIntent,

@@ -15,7 +15,7 @@ use project::{Project, ProjectPath};
 use ui::{ActiveTheme as _, Context, ParentElement as _, Styled as _, div};
 use util::ResultExt as _;
 use workspace::{
-    Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
+    Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, MultiWorkspace,
     item::{BreadcrumbText, ItemEvent, SaveOptions},
     searchable::SearchableItemHandle,
 };
@@ -26,7 +26,7 @@ use anyhow::Result;
 pub(crate) struct StackTraceView {
     editor: Entity<Editor>,
     multibuffer: Entity<MultiBuffer>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     project: Entity<Project>,
     stack_frame_list: Entity<StackFrameList>,
     selected_stack_frame_id: Option<StackFrameId>,
@@ -38,7 +38,7 @@ pub(crate) struct StackTraceView {
 
 impl StackTraceView {
     pub(crate) fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         project: Entity<Project>,
         stack_frame_list: Entity<StackFrameList>,
         window: &mut Window,
@@ -442,7 +442,7 @@ impl Item for StackTraceView {
 
     fn added_to_workspace(
         &mut self,
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

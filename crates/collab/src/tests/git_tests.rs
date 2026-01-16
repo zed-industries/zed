@@ -7,7 +7,7 @@ use gpui::{TestAppContext, VisualTestContext};
 use project::ProjectPath;
 use serde_json::json;
 use util::{path, rel_path::rel_path};
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 //
 use crate::tests::TestServer;
@@ -58,7 +58,7 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
     cx_b.update(git_ui::init);
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
     let workspace_b = cx_b.add_window(|window, cx| {
-        Workspace::new(
+        MultiWorkspace::new(
             None,
             project_b.clone(),
             client_b.app_state.clone(),

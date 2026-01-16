@@ -24,7 +24,7 @@ use ui::prelude::*;
 use util::ResultExt;
 use workspace::{CollaboratorId, item::TabContentParams};
 use workspace::{
-    ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
+    ItemNavHistory, Pane, SaveIntent, Toast, ViewId, MultiWorkspace, WorkspaceId,
     item::{FollowableItem, Item, ItemEvent},
     searchable::SearchableItemHandle,
 };
@@ -44,7 +44,7 @@ pub fn init(cx: &mut App) {
 
 pub struct ChannelView {
     pub editor: Entity<Editor>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     project: Entity<Project>,
     channel_store: Entity<ChannelStore>,
     channel_buffer: Entity<ChannelBuffer>,
@@ -57,7 +57,7 @@ impl ChannelView {
     pub fn open(
         channel_id: ChannelId,
         link_position: Option<String>,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
@@ -91,7 +91,7 @@ impl ChannelView {
         channel_id: ChannelId,
         link_position: Option<String>,
         pane: Entity<Pane>,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
@@ -148,7 +148,7 @@ impl ChannelView {
 
     pub fn load(
         channel_id: ChannelId,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
@@ -192,7 +192,7 @@ impl ChannelView {
 
     pub fn new(
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         channel_store: Entity<ChannelStore>,
         channel_buffer: Entity<ChannelBuffer>,
         window: &mut Window,
@@ -584,7 +584,7 @@ impl FollowableItem for ChannelView {
     }
 
     fn from_state_proto(
-        workspace: Entity<workspace::Workspace>,
+        workspace: Entity<workspace::MultiWorkspace>,
         remote_id: workspace::ViewId,
         state: &mut Option<proto::view::Variant>,
         window: &mut Window,

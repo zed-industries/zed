@@ -5,7 +5,7 @@ use menu::SelectPrevious;
 use project::{Project, ProjectPath};
 use serde_json::json;
 use util::{path, rel_path::rel_path};
-use workspace::{ActivatePreviousItem, AppState, Workspace};
+use workspace::{ActivatePreviousItem, AppState, MultiWorkspace};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -34,7 +34,7 @@ async fn test_open_with_prev_tab_selected_and_cycle_on_toggle_action(
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
     let (workspace, cx) =
-        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
     let tab_1 = open_buffer("1.txt", &workspace, cx).await;
     let tab_2 = open_buffer("2.txt", &workspace, cx).await;
@@ -90,7 +90,7 @@ async fn test_open_with_last_tab_selected(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
     let (workspace, cx) =
-        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
     let tab_1 = open_buffer("1.txt", &workspace, cx).await;
     let tab_2 = open_buffer("2.txt", &workspace, cx).await;
@@ -124,7 +124,7 @@ async fn test_open_item_on_modifiers_release(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
     let (workspace, cx) =
-        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
     let tab_1 = open_buffer("1.txt", &workspace, cx).await;
     let tab_2 = open_buffer("2.txt", &workspace, cx).await;
@@ -152,7 +152,7 @@ async fn test_open_on_empty_pane(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
     let (workspace, cx) =
-        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
     cx.simulate_modifiers_change(Modifiers::control());
     let tab_switcher = open_tab_switcher(false, &workspace, cx);
@@ -175,7 +175,7 @@ async fn test_open_with_single_item(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
     let (workspace, cx) =
-        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
     let tab = open_buffer("1.txt", &workspace, cx).await;
 
@@ -205,7 +205,7 @@ async fn test_close_selected_item(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
     let (workspace, cx) =
-        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
     let tab_1 = open_buffer("1.txt", &workspace, cx).await;
     let tab_3 = open_buffer("3.txt", &workspace, cx).await;
@@ -262,7 +262,7 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
 #[track_caller]
 fn open_tab_switcher(
     select_last: bool,
-    workspace: &Entity<Workspace>,
+    workspace: &Entity<MultiWorkspace>,
     cx: &mut VisualTestContext,
 ) -> Entity<Picker<TabSwitcherDelegate>> {
     cx.dispatch_action(Toggle { select_last });
@@ -271,7 +271,7 @@ fn open_tab_switcher(
 
 #[track_caller]
 fn get_active_tab_switcher(
-    workspace: &Entity<Workspace>,
+    workspace: &Entity<MultiWorkspace>,
     cx: &mut VisualTestContext,
 ) -> Entity<Picker<TabSwitcherDelegate>> {
     workspace.update(cx, |workspace, cx| {
@@ -286,7 +286,7 @@ fn get_active_tab_switcher(
 
 async fn open_buffer(
     file_path: &str,
-    workspace: &Entity<Workspace>,
+    workspace: &Entity<MultiWorkspace>,
     cx: &mut gpui::VisualTestContext,
 ) -> Box<dyn ItemHandle> {
     let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
@@ -335,7 +335,7 @@ fn assert_match_at_position(
 }
 
 #[track_caller]
-fn assert_tab_switcher_is_closed(workspace: Entity<Workspace>, cx: &mut VisualTestContext) {
+fn assert_tab_switcher_is_closed(workspace: Entity<MultiWorkspace>, cx: &mut VisualTestContext) {
     workspace.update(cx, |workspace, cx| {
         assert!(
             workspace.active_modal::<TabSwitcher>(cx).is_none(),

@@ -9,12 +9,12 @@ use std::{sync::LazyLock, time::Duration};
 use util::ResultExt;
 use which_key_modal::WhichKeyModal;
 use which_key_settings::WhichKeySettings;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 pub fn init(cx: &mut App) {
     WhichKeySettings::register(cx);
 
-    cx.observe_new(|_: &mut Workspace, window, cx| {
+    cx.observe_new(|_: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
             return;
         };

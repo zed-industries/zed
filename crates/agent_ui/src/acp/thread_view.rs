@@ -56,7 +56,7 @@ use ui::{
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
-use workspace::{CollaboratorId, NewTerminal, Toast, Workspace, notifications::NotificationId};
+use workspace::{CollaboratorId, NewTerminal, Toast, MultiWorkspace, notifications::NotificationId};
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
@@ -311,7 +311,7 @@ impl DiffStats {
 pub struct AcpThreadView {
     agent: Rc<dyn AgentServer>,
     agent_server_store: Entity<AgentServerStore>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     project: Entity<Project>,
     thread_state: ThreadState,
     permission_dropdown_handle: PopoverMenuHandle<ContextMenu>,
@@ -412,7 +412,7 @@ impl AcpThreadView {
         agent: Rc<dyn AgentServer>,
         resume_thread: Option<AgentSessionInfo>,
         summarize_thread: Option<AgentSessionInfo>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
@@ -598,7 +598,7 @@ impl AcpThreadView {
     fn initial_state(
         agent: Rc<dyn AgentServer>,
         resume_thread: Option<AgentSessionInfo>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         project: Entity<Project>,
         track_load_event: bool,
         window: &mut Window,
@@ -969,7 +969,7 @@ impl AcpThreadView {
         }
     }
 
-    pub fn workspace(&self) -> &WeakEntity<Workspace> {
+    pub fn workspace(&self) -> &WeakEntity<MultiWorkspace> {
         &self.workspace
     }
 
@@ -2220,7 +2220,7 @@ impl AcpThreadView {
 
     fn spawn_external_agent_login(
         login: task::SpawnInTerminal,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         project: Entity<Project>,
         previous_attempt: bool,
         check_exit_code: bool,
@@ -6581,7 +6581,7 @@ impl AcpThreadView {
 
     fn open_link(
         url: SharedString,
-        workspace: &WeakEntity<Workspace>,
+        workspace: &WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -6764,7 +6764,7 @@ impl AcpThreadView {
 
     pub fn open_thread_as_markdown(
         &self,
-        workspace: Entity<Workspace>,
+        workspace: Entity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
@@ -8505,7 +8505,7 @@ pub(crate) mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         // Create history without an initial session list - it will be set after connection
@@ -8798,7 +8798,7 @@ pub(crate) mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
@@ -9090,7 +9090,7 @@ pub(crate) mod tests {
         .await;
         let project = Project::test(fs, [Path::new("/project")], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));

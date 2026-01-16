@@ -4,7 +4,7 @@ use gpui::{
     linear_color_stop, linear_gradient,
 };
 use ui::{TintColor, Vector, VectorName, prelude::*};
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 use crate::agent_panel::{AgentPanel, AgentType};
 
@@ -19,11 +19,11 @@ macro_rules! claude_code_onboarding_event {
 
 pub struct ClaudeCodeOnboardingModal {
     focus_handle: FocusHandle,
-    workspace: Entity<Workspace>,
+    workspace: Entity<MultiWorkspace>,
 }
 
 impl ClaudeCodeOnboardingModal {
-    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    pub fn toggle(workspace: &mut MultiWorkspace, window: &mut Window, cx: &mut Context<MultiWorkspace>) {
         let workspace_entity = cx.entity();
         workspace.toggle_modal(window, cx, |_window, cx| Self {
             workspace: workspace_entity,

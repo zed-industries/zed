@@ -13,7 +13,7 @@ use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use theme::ThemeSettings;
 use ui::prelude::*;
 use workspace::item::ItemHandle;
-use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace};
+use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, MultiWorkspace};
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum MigrationType {
@@ -54,7 +54,7 @@ struct GlobalMigrationNotification(Entity<MigrationNotification>);
 impl Global for GlobalMigrationNotification {}
 
 impl MigrationBanner {
-    pub fn new(_: &Workspace, cx: &mut Context<Self>) -> Self {
+    pub fn new(_: &MultiWorkspace, cx: &mut Context<Self>) -> Self {
         if let Some(notifier) = MigrationNotification::try_global(cx) {
             cx.subscribe(
                 &notifier,

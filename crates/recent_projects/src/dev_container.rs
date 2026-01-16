@@ -7,7 +7,7 @@ use node_runtime::NodeRuntime;
 use serde::Deserialize;
 use settings::DevContainerConnection;
 use smol::fs;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 use crate::remote_connections::Connection;
 
@@ -263,7 +263,7 @@ async fn get_project_name(
 }
 
 fn project_directory(cx: &mut AsyncWindowContext) -> Option<Arc<Path>> {
-    let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
+    let Some(workspace) = cx.window_handle().downcast::<MultiWorkspace>() else {
         return None;
     };
 

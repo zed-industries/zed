@@ -17,7 +17,7 @@ use serde_json::json;
 use settings::SettingsStore;
 use text::{Point, ToPoint};
 use util::{path, rel_path::rel_path, test::sample_text};
-use workspace::{CollaboratorId, SplitDirection, Workspace, item::ItemHandle as _};
+use workspace::{CollaboratorId, SplitDirection, MultiWorkspace, item::ItemHandle as _};
 
 use super::TestClient;
 
@@ -1555,7 +1555,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
     let mut cx_b2 = VisualTestContext::from_window(window_b_project_a, cx_b);
 
     let workspace_b_project_a = window_b_project_a
-        .downcast::<Workspace>()
+        .downcast::<MultiWorkspace>()
         .unwrap()
         .root(cx_b)
         .unwrap();
@@ -1657,7 +1657,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
         .unwrap();
     let cx_a2 = &mut VisualTestContext::from_window(window_a_project_b, cx_a);
     let workspace_a_project_b = window_a_project_b
-        .downcast::<Workspace>()
+        .downcast::<MultiWorkspace>()
         .unwrap()
         .root(cx_a)
         .unwrap();
@@ -1937,7 +1937,7 @@ fn followers_by_leader(project_id: u64, cx: &TestAppContext) -> Vec<(PeerId, Vec
     })
 }
 
-fn pane_summaries(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> Vec<PaneSummary> {
+fn pane_summaries(workspace: &Entity<MultiWorkspace>, cx: &mut VisualTestContext) -> Vec<PaneSummary> {
     workspace.update(cx, |workspace, cx| {
         let active_pane = workspace.active_pane();
         workspace
@@ -2149,7 +2149,7 @@ pub(crate) async fn join_channel(
 }
 
 async fn share_workspace(
-    workspace: &Entity<Workspace>,
+    workspace: &Entity<MultiWorkspace>,
     cx: &mut VisualTestContext,
 ) -> anyhow::Result<u64> {
     let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());

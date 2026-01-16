@@ -17,7 +17,7 @@ use ui::{
 };
 use workspace::{
     Event as WorkspaceEvent, SplitDirection, ToolbarItemEvent, ToolbarItemLocation,
-    ToolbarItemView, Workspace,
+    ToolbarItemView, MultiWorkspace,
     item::{Item, ItemHandle},
 };
 
@@ -44,7 +44,7 @@ pub fn init(cx: &mut App) {
         this.hide_action_types(&syntax_tree_actions);
     });
 
-    cx.observe_new(move |workspace: &mut Workspace, _, _| {
+    cx.observe_new(move |workspace: &mut MultiWorkspace, _, _| {
         workspace.register_action(move |workspace, _: &OpenSyntaxTreeView, window, cx| {
             CommandPaletteFilter::update_global(cx, |this, _| {
                 this.show_action_types(&syntax_tree_actions);
@@ -89,7 +89,7 @@ pub fn init(cx: &mut App) {
 }
 
 pub struct SyntaxTreeView {
-    workspace_handle: WeakEntity<Workspace>,
+    workspace_handle: WeakEntity<MultiWorkspace>,
     editor: Option<EditorState>,
     list_scroll_handle: UniformListScrollHandle,
     /// The last active editor in the workspace. Note that this is specifically not the
@@ -128,7 +128,7 @@ struct BufferState {
 
 impl SyntaxTreeView {
     pub fn new(
-        workspace_handle: WeakEntity<Workspace>,
+        workspace_handle: WeakEntity<MultiWorkspace>,
         active_item: Option<Box<dyn ItemHandle>>,
         window: &mut Window,
         cx: &mut Context<Self>,

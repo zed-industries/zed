@@ -26,7 +26,7 @@ use ui::{
     NavigableEntry, prelude::*,
 };
 use util::{ResultExt, maybe, paths::PathStyle, rel_path::RelPath};
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 actions!(
     toolchain,
@@ -557,9 +557,9 @@ impl RenderOnce for State {
 }
 impl ToolchainSelector {
     fn register(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         _window: Option<&mut Window>,
-        _: &mut Context<Workspace>,
+        _: &mut Context<MultiWorkspace>,
     ) {
         workspace.register_action(move |workspace, _: &Select, window, cx| {
             Self::toggle(workspace, window, cx);
@@ -577,9 +577,9 @@ impl ToolchainSelector {
     }
 
     fn toggle(
-        workspace: &mut Workspace,
+        workspace: &mut MultiWorkspace,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut Context<MultiWorkspace>,
     ) -> Option<()> {
         let (_, buffer, _) = workspace
             .active_item(cx)?
@@ -635,7 +635,7 @@ impl ToolchainSelector {
     }
 
     fn new(
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         project: Entity<Project>,
         active_toolchain: Option<Toolchain>,
         worktree_id: WorktreeId,
@@ -753,7 +753,7 @@ pub struct ToolchainSelectorDelegate {
     candidates: Arc<[(Toolchain, Option<ToolchainScope>)]>,
     matches: Vec<StringMatch>,
     selected_index: usize,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<MultiWorkspace>,
     worktree_id: WorktreeId,
     worktree_abs_path_root: Arc<Path>,
     relative_path: Arc<RelPath>,
@@ -768,7 +768,7 @@ impl ToolchainSelectorDelegate {
     fn new(
         active_toolchain: Option<Toolchain>,
         toolchain_selector: WeakEntity<ToolchainSelector>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<MultiWorkspace>,
         worktree_id: WorktreeId,
         worktree_abs_path_root: Arc<Path>,
         project: Entity<Project>,
