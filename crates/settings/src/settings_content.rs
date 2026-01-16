@@ -523,6 +523,22 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub tree_view: Option<bool>,
+
+    /// Whether to show the commit history panel in the git panel
+    ///
+    /// Default: true
+    pub show_commit_history: Option<bool>,
+
+    /// Default height of the commit history panel in pixels.
+    ///
+    /// Default: 150
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub commit_history_height: Option<f32>,
+
+    /// Number of commits to load per page in the commit history panel.
+    ///
+    /// Default: 20
+    pub commit_history_page_size: Option<usize>,
 }
 
 #[derive(

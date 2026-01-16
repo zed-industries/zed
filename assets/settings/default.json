@@ -12,9 +12,9 @@
   "theme": {
     "mode": "system",
     "light": "One Light",
-    "dark": "One Dark",
+    "dark": "VSCode Dark Modern",
   },
-  "icon_theme": "Zed (Default)",
+  "icon_theme": "Material Icon Theme",
   // The name of a base set of key bindings to use.
   // This setting can take six values, each named after another
   // text editor:
@@ -44,7 +44,7 @@
     // "calt": false
   },
   // The default font size for text in the editor
-  "buffer_font_size": 15,
+  "buffer_font_size": 16,
   // The weight of the editor font in standard CSS units from 100 to 900.
   "buffer_font_weight": 400,
   // Set the buffer's line height.
@@ -74,7 +74,7 @@
   // The weight of the UI font in standard CSS units from 100 to 900.
   "ui_font_weight": 400,
   // The default font size for text in the UI
-  "ui_font_size": 16,
+  "ui_font_size": 18,
   // The default font size for agent responses in the agent panel. Falls back to the UI font size if unset.
   "agent_ui_font_size": null,
   // The default font size for user messages in the agent panel.
@@ -501,7 +501,7 @@
     //    "always"
     // 4. Never show the scrollbar:
     //    "never"
-    "show": "auto",
+    "show": "always",
     // Whether to show cursor positions in the scrollbar.
     "cursors": true,
     // Whether to show git diff indicators in the scrollbar.
@@ -537,7 +537,7 @@
     //    "always"
     // 3. Never show the minimap:
     //    "never" (default)
-    "show": "never",
+    "show": "always",
     // Where to show the minimap in the editor.
     // This setting can take two values:
     // 1. Show the minimap on the focused editor only:
@@ -611,7 +611,7 @@
     // 1. "disabled"
     // 2. "fixed"
     // 3. "indent_aware"
-    "coloring": "fixed",
+    "coloring": "indent_aware",
     // Determines how indent guide backgrounds are colored.
     // This setting can take the following two values:
     //
@@ -629,11 +629,11 @@
   "horizontal_scroll_margin": 5,
   // Scroll sensitivity multiplier. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling.
-  "scroll_sensitivity": 1.0,
+  "scroll_sensitivity": 0.5,
   // Scroll sensitivity multiplier for fast scrolling. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling. Fast scrolling
   // happens when a user holds the alt or option key while scrolling.
-  "fast_scroll_sensitivity": 4.0,
+  "fast_scroll_sensitivity": 2.0,
   "sticky_scroll": {
     // Whether to stick scopes to the top of the editor.
     "enabled": false,
@@ -673,7 +673,7 @@
   // Inlay hint related settings
   "inlay_hints": {
     // Global switch to toggle hints on and off, switched off by default.
-    "enabled": false,
+    "enabled": true,
     // Toggle certain types of hints on and off, all switched on by default.
     "show_type_hints": true,
     "show_parameter_hints": true,
@@ -894,6 +894,18 @@
       // Default: inherits editor scrollbar settings
       // "show": null
     },
+    // Whether to show the commit history panel in the git panel
+    //
+    // Default: true
+    "show_commit_history": true,
+    // Default height of the commit history panel in pixels.
+    //
+    // Default: 150
+    "commit_history_height": 150,
+    // Number of commits to load per page in the commit history panel.
+    //
+    // Default: 20
+    "commit_history_page_size": 20,
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
@@ -1168,7 +1180,7 @@
   //     "autosave": "on_focus_change",
   // 4. Save when idle for a certain amount of time:
   //     "autosave": { "after_delay": {"milliseconds": 500} },
-  "autosave": "off",
+  "autosave": { "after_delay": {"milliseconds": 1000} },
   // Maximum number of tabs per pane. Unset for unlimited.
   "max_tabs": null,
   // Settings related to the editor's tab bar.
@@ -1339,15 +1351,15 @@
   //      "soft_wrap": "preferred_line_length",
   // 4. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
   //      "soft_wrap": "bounded",
-  "soft_wrap": "none",
+  "soft_wrap": "editor_width",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
-  "preferred_line_length": 80,
+  "preferred_line_length": 200,
   // Whether to indent lines using tab characters, as opposed to multiple
   // spaces.
   "hard_tabs": false,
   // How many columns a tab should occupy.
-  "tab_size": 4,
+  "tab_size": 2,
   // What debuggers are preferred by default for all languages.
   "debuggers": [],
   // Whether to enable word diff highlighting in the editor.
@@ -1580,6 +1592,8 @@
     "line_endings_button": false,
     // Control when to show the active encoding in the status bar.
     "active_encoding_button": "non_utf8",
+    // Whether to show the system stats button in the status bar.
+    "system_stats_button": true,
   },
   // Settings specific to the terminal
   "terminal": {
@@ -1631,7 +1645,7 @@
     //         "blinking": "terminal_controlled",
     //  3. Always blink the cursor, ignoring the terminal mode
     //         "blinking": "on",
-    "blinking": "terminal_controlled",
+    "blinking": "on",
     // Default cursor shape for the terminal.
     //  1. A block that surrounds the following character
     //     "block"
@@ -1664,7 +1678,7 @@
     "option_as_meta": false,
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
-    "copy_on_select": false,
+    "copy_on_select": true,
     // Whether to keep the text selection after copying it to the clipboard.
     "keep_selection_on_copy": true,
     // Whether to show the terminal button in the status bar
@@ -2206,7 +2220,7 @@
     // language and MCP servers are downloaded and started automatically.
     //
     // Default: false
-    "trust_all_worktrees": false,
+    "trust_all_worktrees": true,
   },
   // Zed's Prettier integration settings.
   // Allows to enable/disable formatting with Prettier

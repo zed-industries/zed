@@ -1090,6 +1090,31 @@ impl GitStore {
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 
+    pub fn branch_history(
+        &self,
+        repo: &Entity<Repository>,
+        branch_name: Option<String>,
+        cx: &mut App,
+    ) -> Task<Result<git::repository::BranchHistory>> {
+        let rx = repo.update(cx, |repo, _| repo.branch_history(branch_name));
+
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+    }
+
+    pub fn branch_history_paginated(
+        &self,
+        repo: &Entity<Repository>,
+        branch_name: Option<String>,
+        skip: usize,
+        limit: Option<usize>,
+        cx: &mut App,
+    ) -> Task<Result<git::repository::BranchHistory>> {
+        let rx =
+            repo.update(cx, |repo, _| repo.branch_history_paginated(branch_name, skip, limit));
+
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+    }
+
     pub fn get_permalink_to_line(
         &self,
         buffer: &Entity<Buffer>,
@@ -4181,6 +4206,33 @@ impl Repository {
                             .collect(),
                         path: RepoPath::from_proto(&response.path)?,
                     })
+                }
+            }
+        })
+    }
+
+    pub fn branch_history(
+        &mut self,
+        branch_name: Option<String>,
+    ) -> oneshot::Receiver<Result<git::repository::BranchHistory>> {
+        self.branch_history_paginated(branch_name, 0, None)
+    }
+
+    pub fn branch_history_paginated(
+        &mut self,
+        branch_name: Option<String>,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> oneshot::Receiver<Result<git::repository::BranchHistory>> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend
+                        .branch_history_paginated(branch_name, skip, limit)
+                        .await
+                }
+                RepositoryState::Remote(_) => {
+                    bail!("branch_history is not yet supported for remote repositories")
                 }
             }
         })

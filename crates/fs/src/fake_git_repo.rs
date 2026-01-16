@@ -495,6 +495,21 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
+    fn branch_history_paginated(
+        &self,
+        branch_name: Option<String>,
+        _skip: usize,
+        _limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<git::repository::BranchHistory>> {
+        async move {
+            Ok(git::repository::BranchHistory {
+                entries: Vec::new(),
+                branch_name,
+            })
+        }
+        .boxed()
+    }
+
     fn stage_paths(
         &self,
         paths: Vec<RepoPath>,

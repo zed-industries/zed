@@ -238,6 +238,12 @@ pub struct FileHistory {
     pub path: RepoPath,
 }
 
+#[derive(Debug, Clone)]
+pub struct BranchHistory {
+    pub entries: Vec<FileHistoryEntry>,
+    pub branch_name: Option<String>,
+}
+
 #[derive(Debug)]
 pub struct CommitDiff {
     pub files: Vec<CommitFile>,
@@ -515,6 +521,16 @@ pub trait GitRepository: Send + Sync {
         skip: usize,
         limit: Option<usize>,
     ) -> BoxFuture<'_, Result<FileHistory>>;
+
+    fn branch_history(&self, branch_name: Option<String>) -> BoxFuture<'_, Result<BranchHistory>> {
+        self.branch_history_paginated(branch_name, 0, None)
+    }
+    fn branch_history_paginated(
+        &self,
+        branch_name: Option<String>,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<BranchHistory>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
@@ -1655,6 +1671,94 @@ impl GitRepository for RealGitRepository {
                 }
 
                 Ok(FileHistory { entries, path })
+            })
+            .boxed()
+    }
+
+    fn branch_history_paginated(
+        &self,
+        branch_name: Option<String>,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<BranchHistory>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+                let commit_delimiter =
+                    concat!("<<COMMIT_END-", "3f8a9c2e-7d4b-4e1a-9f6c-8b5d2a1e4c3f>>",);
+
+                let format_string = format!(
+                    "--pretty=format:%H%x00%s%x00%B%x00%at%x00%an%x00%ae{}",
+                    commit_delimiter
+                );
+
+                let mut args = vec!["--no-optional-locks", "log", &format_string];
+
+                let skip_str;
+                let limit_str;
+                if skip > 0 {
+                    skip_str = skip.to_string();
+                    args.push("--skip");
+                    args.push(&skip_str);
+                }
+                if let Some(n) = limit {
+                    limit_str = n.to_string();
+                    args.push("-n");
+                    args.push(&limit_str);
+                }
+
+                let branch_ref;
+                if let Some(ref name) = branch_name {
+                    branch_ref = name.clone();
+                    args.push(&branch_ref);
+                }
+
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(&args)
+                    .output()
+                    .await?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    bail!("git log failed: {stderr}");
+                }
+
+                let stdout = std::str::from_utf8(&output.stdout)?;
+                let mut entries = Vec::new();
+
+                for commit_block in stdout.split(commit_delimiter) {
+                    let commit_block = commit_block.trim();
+                    if commit_block.is_empty() {
+                        continue;
+                    }
+
+                    let fields: Vec<&str> = commit_block.split('\0').collect();
+                    if fields.len() >= 6 {
+                        let sha = fields[0].trim().to_string().into();
+                        let subject = fields[1].trim().to_string().into();
+                        let message = fields[2].trim().to_string().into();
+                        let commit_timestamp = fields[3].trim().parse().unwrap_or(0);
+                        let author_name = fields[4].trim().to_string().into();
+                        let author_email = fields[5].trim().to_string().into();
+
+                        entries.push(FileHistoryEntry {
+                            sha,
+                            subject,
+                            message,
+                            commit_timestamp,
+                            author_name,
+                            author_email,
+                        });
+                    }
+                }
+
+                Ok(BranchHistory {
+                    entries,
+                    branch_name,
+                })
             })
             .boxed()
     }

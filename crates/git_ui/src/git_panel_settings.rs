@@ -25,6 +25,9 @@ pub struct GitPanelSettings {
     pub sort_by_path: bool,
     pub collapse_untracked_diff: bool,
     pub tree_view: bool,
+    pub show_commit_history: bool,
+    pub commit_history_height: Pixels,
+    pub commit_history_page_size: usize,
 }
 
 impl ScrollbarVisibility for GitPanelSettings {
@@ -58,6 +61,9 @@ impl Settings for GitPanelSettings {
             sort_by_path: git_panel.sort_by_path.unwrap(),
             collapse_untracked_diff: git_panel.collapse_untracked_diff.unwrap(),
             tree_view: git_panel.tree_view.unwrap(),
+            show_commit_history: git_panel.show_commit_history.unwrap(),
+            commit_history_height: px(git_panel.commit_history_height.unwrap()),
+            commit_history_page_size: git_panel.commit_history_page_size.unwrap(),
         }
     }
 }

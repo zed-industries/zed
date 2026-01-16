@@ -23,8 +23,8 @@ use editor::{
 use futures::StreamExt as _;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
-    Branch, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions, GitCommitter,
-    PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
+    Branch, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions, FileHistoryEntry,
+    GitCommitter, PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
     UpstreamTrackingStatus, get_git_committer,
 };
 use git::stash::GitStash;
@@ -35,8 +35,8 @@ use git::{
     StashApply, StashPop, TrashUntrackedFiles, UnstageAll,
 };
 use gpui::{
-    Action, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, Corner, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton, MouseDownEvent, Point,
+    Action, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, Corner, DismissEvent, DragMoveEvent,
+    Entity, EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton, MouseDownEvent, Point,
     PromptLevel, ScrollStrategy, Subscription, Task, UniformListScrollHandle, WeakEntity, actions,
     anchored, deferred, point, size, uniform_list,
 };
@@ -576,6 +576,23 @@ impl TruncatedPatch {
     }
 }
 
+struct CommitHistoryState {
+    entries: Vec<FileHistoryEntry>,
+    loading_more: bool,
+    has_more: bool,
+    selected_entry: Option<usize>,
+    scroll_handle: UniformListScrollHandle,
+}
+
+#[derive(Clone)]
+struct DraggedCommitHistoryResize;
+
+impl gpui::Render for DraggedCommitHistoryResize {
+    fn render(&mut self, _window: &mut Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+}
+
 pub struct GitPanel {
     pub(crate) active_repository: Option<Entity<Repository>>,
     pub(crate) commit_editor: Entity<Editor>,
@@ -617,6 +634,10 @@ pub struct GitPanel {
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
     _settings_subscription: Subscription,
+    commit_history: Option<CommitHistoryState>,
+    commit_history_height: Option<Pixels>,
+    commit_history_drag_start_height: Option<Pixels>,
+    commit_history_drag_start_y: Option<Pixels>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -720,6 +741,7 @@ impl GitPanel {
                     GitStoreEvent::ActiveRepositoryChanged(_) => {
                         this.active_repository = this.project.read(cx).active_repository(cx);
                         this.schedule_update(window, cx);
+                        this.refresh_commit_history(window, cx);
                     }
                     GitStoreEvent::RepositoryUpdated(
                         _,
@@ -731,6 +753,7 @@ impl GitPanel {
                     | GitStoreEvent::RepositoryAdded
                     | GitStoreEvent::RepositoryRemoved(_) => {
                         this.schedule_update(window, cx);
+                        this.refresh_commit_history(window, cx);
                     }
                     GitStoreEvent::IndexWriteError(error) => {
                         this.workspace
@@ -786,9 +809,14 @@ impl GitPanel {
                 bulk_staging: None,
                 stash_entries: Default::default(),
                 _settings_subscription,
+                commit_history: None,
+                commit_history_height: None,
+                commit_history_drag_start_height: None,
+                commit_history_drag_start_y: None,
             };
 
             this.schedule_update(window, cx);
+            this.refresh_commit_history(window, cx);
             this
         })
     }
@@ -4325,6 +4353,313 @@ impl GitPanel {
         Some(footer)
     }
 
+    fn refresh_commit_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.as_ref() else {
+            self.commit_history = None;
+            cx.notify();
+            return;
+        };
+
+        let page_size = GitPanelSettings::get_global(cx).commit_history_page_size;
+        let rx = repo.update(cx, |repo, _| repo.branch_history_paginated(None, 0, Some(page_size)));
+
+        let this = cx.weak_entity();
+        window
+            .spawn(cx, async move |cx| {
+                let result = rx.await;
+                this.update(cx, |this, cx| {
+                    match result {
+                        Ok(Ok(branch_history)) => {
+                            let has_more = branch_history.entries.len() >= page_size;
+                            this.commit_history = Some(CommitHistoryState {
+                                entries: branch_history.entries,
+                                loading_more: false,
+                                has_more,
+                                selected_entry: None,
+                                scroll_handle: UniformListScrollHandle::new(),
+                            });
+                        }
+                        Ok(Err(_)) | Err(_) => {
+                            this.commit_history = None;
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+    }
+
+    fn load_more_commits(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(history) = &mut self.commit_history else {
+            return;
+        };
+        if history.loading_more || !history.has_more {
+            return;
+        }
+
+        let Some(repo) = self.active_repository.as_ref() else {
+            return;
+        };
+
+        history.loading_more = true;
+        cx.notify();
+
+        let skip = history.entries.len();
+        let page_size = GitPanelSettings::get_global(cx).commit_history_page_size;
+        let rx =
+            repo.update(cx, |repo, _| repo.branch_history_paginated(None, skip, Some(page_size)));
+
+        let this = cx.weak_entity();
+        window
+            .spawn(cx, async move |cx| {
+                let result = rx.await;
+                this.update(cx, |this, cx| {
+                    if let Some(history) = &mut this.commit_history {
+                        history.loading_more = false;
+                        match result {
+                            Ok(Ok(more_history)) => {
+                                history.has_more = more_history.entries.len() >= page_size;
+                                history.entries.extend(more_history.entries);
+                            }
+                            Ok(Err(_)) | Err(_) => {
+                                history.has_more = false;
+                            }
+                        }
+                        cx.notify();
+                    }
+                })
+                .ok();
+            })
+            .detach();
+    }
+
+    fn render_commit_history_panel(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        let settings = GitPanelSettings::get_global(cx);
+        if !settings.show_commit_history {
+            return None;
+        }
+
+        let history = self.commit_history.as_ref()?;
+        let entry_count = history.entries.len();
+
+        if entry_count == 0 && !history.loading_more {
+            return None;
+        }
+        let height = self.commit_history_height.unwrap_or(settings.commit_history_height);
+
+        let view = cx.weak_entity();
+        let scroll_handle = history.scroll_handle.clone();
+        let has_more = history.has_more;
+        let loading_more = history.loading_more;
+
+        let panel = v_flex()
+            .id("commit-history-panel")
+            .flex_none()
+            .h(height)
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().panel_background)
+            .on_drag_move(cx.listener(
+                |this, e: &DragMoveEvent<DraggedCommitHistoryResize>, _, cx| {
+                    let settings = GitPanelSettings::get_global(cx);
+                    let start_height = *this
+                        .commit_history_drag_start_height
+                        .get_or_insert_with(|| {
+                            this.commit_history_height.unwrap_or(settings.commit_history_height)
+                        });
+                    let start_y = *this
+                        .commit_history_drag_start_y
+                        .get_or_insert(e.event.position.y);
+                    let delta_y = e.event.position.y - start_y;
+                    let new_height = (start_height - delta_y).max(px(50.)).min(px(500.));
+                    this.commit_history_height = Some(new_height);
+                    cx.notify();
+                },
+            ))
+            .child(
+                div()
+                    .id("commit-history-resize-handle")
+                    .h(px(6.))
+                    .w_full()
+                    .cursor_row_resize()
+                    .on_drag(DraggedCommitHistoryResize, |_, _, _, cx| {
+                        cx.stop_propagation();
+                        cx.new(|_| DraggedCommitHistoryResize)
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _: &MouseDownEvent, _, _cx| {
+                            this.commit_history_drag_start_height = None;
+                            this.commit_history_drag_start_y = None;
+                        }),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, e: &gpui::MouseUpEvent, _, cx| {
+                            this.commit_history_drag_start_height = None;
+                            this.commit_history_drag_start_y = None;
+                            if e.click_count == 2 {
+                                this.commit_history_height = None;
+                                cx.notify();
+                            }
+                        }),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .px_2()
+                    .py_1()
+                    .justify_between()
+                    .child(
+                        Label::new("Recent Commits")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .when(loading_more, |this| {
+                        this.child(
+                            Label::new("Loading...")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                    }),
+            )
+            .child(
+                v_flex()
+                    .flex_1()
+                    .overflow_hidden()
+                    .child({
+                        uniform_list(
+                            "commit-history-list",
+                            entry_count,
+                            move |range, window, cx| {
+                                let Some(view) = view.upgrade() else {
+                                    return Vec::new();
+                                };
+                                view.update(cx, |this, cx| {
+                                    if range.end >= entry_count.saturating_sub(5)
+                                        && has_more
+                                        && !loading_more
+                                    {
+                                        this.load_more_commits(window, cx);
+                                    }
+
+                                    let mut items = Vec::with_capacity(range.end - range.start);
+                                    for ix in range {
+                                        if let Some(history) = &this.commit_history {
+                                            if let Some(entry) = history.entries.get(ix) {
+                                                items.push(
+                                                    this.render_commit_history_entry(
+                                                        ix, entry, window, cx,
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                    }
+                                    items
+                                })
+                            },
+                        )
+                        .flex_1()
+                        .size_full()
+                        .track_scroll(&scroll_handle)
+                    })
+                    .vertical_scrollbar_for(&scroll_handle, window, cx),
+            );
+
+        Some(panel)
+    }
+
+    fn render_commit_history_entry(
+        &self,
+        ix: usize,
+        entry: &FileHistoryEntry,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let short_sha = if entry.sha.len() >= 7 {
+            entry.sha[..7].to_string()
+        } else {
+            entry.sha.to_string()
+        };
+
+        let commit_time = time::OffsetDateTime::from_unix_timestamp(entry.commit_timestamp)
+            .unwrap_or_else(|_| time::OffsetDateTime::UNIX_EPOCH);
+        let relative_timestamp = time_format::format_localized_timestamp(
+            commit_time,
+            time::OffsetDateTime::now_utc(),
+            time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC),
+            time_format::TimestampFormat::Relative,
+        );
+
+        let selected = self
+            .commit_history
+            .as_ref()
+            .is_some_and(|h| h.selected_entry == Some(ix));
+
+        let sha = entry.sha.clone();
+        let workspace = self.workspace.clone();
+        let repo = self.active_repository.clone();
+
+        ui::ListItem::new(("commit-history", ix))
+            .toggle_state(selected)
+            .child(
+                h_flex()
+                    .h(px(28.))
+                    .w_full()
+                    .px_2()
+                    .gap_2()
+                    .child(
+                        Label::new(short_sha)
+                            .size(LabelSize::Small)
+                            .color(Color::Accent)
+                            .buffer_font(cx),
+                    )
+                    .child(
+                        h_flex()
+                            .min_w_0()
+                            .flex_1()
+                            .gap_1()
+                            .child(
+                                Label::new(entry.subject.clone())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Default)
+                                    .truncate(),
+                            ),
+                    )
+                    .child(
+                        div().flex_none().child(
+                            Label::new(relative_timestamp)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                    ),
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if let Some(history) = &mut this.commit_history {
+                    history.selected_entry = Some(ix);
+                }
+                cx.notify();
+
+                if let Some(repo) = repo.as_ref() {
+                    crate::commit_view::CommitView::open(
+                        sha.to_string(),
+                        repo.downgrade(),
+                        workspace.clone(),
+                        None,
+                        None,
+                        window,
+                        cx,
+                    );
+                }
+            }))
+            .into_any_element()
+    }
+
     fn render_commit_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (can_commit, tooltip) = self.configure_commit_button(cx);
         let title = self.commit_button_title();
@@ -4428,84 +4763,287 @@ impl GitPanel {
             )
     }
 
-    fn render_previous_commit(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+    fn render_previous_commit(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.as_ref()?;
         let branch = active_repository.read(cx).branch.as_ref()?;
-        let commit = branch.most_recent_commit.as_ref()?.clone();
+        let head_commit = branch.most_recent_commit.as_ref()?.clone();
         let workspace = self.workspace.clone();
         let this = cx.entity();
+        let settings = GitPanelSettings::get_global(cx);
+        let has_unstaged = self.has_unstaged_changes();
 
-        Some(
-            h_flex()
-                .p_1p5()
-                .gap_1p5()
-                .justify_between()
-                .border_t_1()
-                .border_color(cx.theme().colors().border.opacity(0.8))
-                .child(
-                    div()
-                        .id("commit-msg-hover")
-                        .px_1()
-                        .cursor_pointer()
-                        .line_clamp(1)
-                        .rounded_sm()
-                        .hover(|s| s.bg(cx.theme().colors().element_hover))
-                        .child(
-                            Label::new(commit.subject.clone())
-                                .size(LabelSize::Small)
-                                .truncate(),
-                        )
-                        .on_click({
-                            let commit = commit.clone();
-                            let repo = active_repository.downgrade();
-                            move |_, window, cx| {
-                                CommitView::open(
-                                    commit.sha.to_string(),
-                                    repo.clone(),
-                                    workspace.clone(),
-                                    None,
-                                    None,
-                                    window,
-                                    cx,
-                                );
-                            }
-                        })
-                        .hoverable_tooltip({
-                            let repo = active_repository.clone();
-                            move |window, cx| {
-                                GitPanelMessageTooltip::new(
-                                    this.clone(),
-                                    commit.sha.clone(),
-                                    repo.clone(),
-                                    window,
-                                    cx,
-                                )
-                                .into()
-                            }
-                        }),
-                )
-                .when(commit.has_parent, |this| {
-                    let has_unstaged = self.has_unstaged_changes();
-                    this.pr_2().child(
-                        panel_icon_button("undo", IconName::Undo)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted)
-                            .tooltip(move |_window, cx| {
-                                Tooltip::with_meta(
-                                    "Uncommit",
-                                    Some(&git::Uncommit),
-                                    if has_unstaged {
-                                        "git reset HEAD^ --soft"
-                                    } else {
-                                        "git reset HEAD^"
-                                    },
-                                    cx,
-                                )
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| this.uncommit(window, cx))),
+        // HEAD commit row (always shown, outside scrollable area)
+        let head_row = h_flex()
+            .px_1p5()
+            .py_0p5()
+            .gap_1()
+            .justify_between()
+            .child(
+                div()
+                    .id("commit-msg-hover-head")
+                    .px_1()
+                    .cursor_pointer()
+                    .line_clamp(1)
+                    .rounded_sm()
+                    .hover(|s| s.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(head_commit.subject.clone())
+                            .size(LabelSize::Small)
+                            .truncate(),
                     )
-                }),
-        )
+                    .on_click({
+                        let commit = head_commit.clone();
+                        let repo = active_repository.downgrade();
+                        let workspace = workspace.clone();
+                        move |_, window, cx| {
+                            CommitView::open(
+                                commit.sha.to_string(),
+                                repo.clone(),
+                                workspace.clone(),
+                                None,
+                                None,
+                                window,
+                                cx,
+                            );
+                        }
+                    })
+                    .hoverable_tooltip({
+                        let repo = active_repository.clone();
+                        let commit = head_commit.clone();
+                        let this = this.clone();
+                        move |window, cx| {
+                            GitPanelMessageTooltip::new(
+                                this.clone(),
+                                commit.sha.clone(),
+                                repo.clone(),
+                                window,
+                                cx,
+                            )
+                            .into()
+                        }
+                    }),
+            )
+            .when(head_commit.has_parent, |el| {
+                el.pr_2().child(
+                    panel_icon_button("undo", IconName::Undo)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .tooltip(move |_window, cx| {
+                            Tooltip::with_meta(
+                                "Uncommit",
+                                Some(&git::Uncommit),
+                                if has_unstaged {
+                                    "git reset HEAD^ --soft"
+                                } else {
+                                    "git reset HEAD^"
+                                },
+                                cx,
+                            )
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| this.uncommit(window, cx))),
+                )
+            });
+
+        // Build the panel - get commits from history
+        let commits: Vec<_> = if settings.show_commit_history {
+            if let Some(history) = &self.commit_history {
+                history.entries.iter().skip(1).cloned().collect()
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
+
+        let height = self.commit_history_height.unwrap_or(settings.commit_history_height);
+        let has_commits = !commits.is_empty();
+
+        let mut panel = v_flex()
+            .border_t_1()
+            .border_color(cx.theme().colors().border.opacity(0.8))
+            .on_drag_move(cx.listener(
+                |this, e: &DragMoveEvent<DraggedCommitHistoryResize>, _, cx| {
+                    let settings = GitPanelSettings::get_global(cx);
+                    let start_height = *this
+                        .commit_history_drag_start_height
+                        .get_or_insert_with(|| {
+                            this.commit_history_height.unwrap_or(settings.commit_history_height)
+                        });
+                    let start_y = *this
+                        .commit_history_drag_start_y
+                        .get_or_insert(e.event.position.y);
+                    let delta_y = start_y - e.event.position.y;
+                    let new_height = (start_height + delta_y).max(px(50.)).min(px(500.));
+                    this.commit_history_height = Some(new_height);
+                    cx.notify();
+                },
+            ))
+            .child(head_row);
+
+        // Add scrollable commit history with resize handle
+        if has_commits {
+            // Resize handle
+            let resize_handle = div()
+                .id("commit-history-resize-handle")
+                .h(px(4.))
+                .w_full()
+                .cursor_row_resize()
+                .on_drag(DraggedCommitHistoryResize, |_, _, _, cx| {
+                    cx.stop_propagation();
+                    cx.new(|_| DraggedCommitHistoryResize)
+                })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _: &MouseDownEvent, _, _cx| {
+                        this.commit_history_drag_start_height = None;
+                        this.commit_history_drag_start_y = None;
+                    }),
+                )
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, e: &gpui::MouseUpEvent, _, cx| {
+                        this.commit_history_drag_start_height = None;
+                        this.commit_history_drag_start_y = None;
+                        if e.click_count == 2 {
+                            this.commit_history_height = None;
+                            cx.notify();
+                        }
+                    }),
+                );
+
+            panel = panel.child(resize_handle).child(
+                v_flex()
+                    .id("commit-history-scroll")
+                    .max_h(height)
+                    .overflow_y_scroll()
+                    .children(commits.iter().enumerate().map(|(idx, entry)| {
+                        let sha = entry.sha.clone();
+                        let subject = entry.subject.clone();
+                        let repo = active_repository.clone();
+                        let workspace = workspace.clone();
+                        let this = this.clone();
+                        let hover_bg = cx.theme().colors().element_hover;
+
+                        h_flex()
+                            .px_1p5()
+                            .py_0p5()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .id(ElementId::Name(format!("commit-entry-{}", idx).into()))
+                                    .px_1()
+                                    .cursor_pointer()
+                                    .line_clamp(1)
+                                    .rounded_sm()
+                                    .hover(move |s| s.bg(hover_bg))
+                                    .child(
+                                        Label::new(subject).size(LabelSize::Small).truncate(),
+                                    )
+                                    .on_click({
+                                        let sha = sha.clone();
+                                        let repo = repo.downgrade();
+                                        let workspace = workspace.clone();
+                                        move |_, window, cx| {
+                                            CommitView::open(
+                                                sha.to_string(),
+                                                repo.clone(),
+                                                workspace.clone(),
+                                                None,
+                                                None,
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                    })
+                                    .hoverable_tooltip({
+                                        let sha = sha.clone();
+                                        let repo = repo.clone();
+                                        move |window, cx| {
+                                            GitPanelMessageTooltip::new(
+                                                this.clone(),
+                                                sha.clone(),
+                                                repo.clone(),
+                                                window,
+                                                cx,
+                                            )
+                                            .into()
+                                        }
+                                    }),
+                            )
+                    })),
+            );
+        }
+
+        Some(panel)
+    }
+
+    fn render_commit_entry(
+        &self,
+        ix: usize,
+        entry: &FileHistoryEntry,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let Some(active_repository) = &self.active_repository else {
+            return gpui::Empty.into_any_element();
+        };
+
+        let sha = entry.sha.clone();
+        let subject = entry.subject.clone();
+        let repo = active_repository.clone();
+        let workspace = self.workspace.clone();
+        let this = cx.entity();
+        let hover_bg = cx.theme().colors().element_hover;
+
+        h_flex()
+            .px_1p5()
+            .py_0p5()
+            .gap_1()
+            .justify_between()
+            .child(
+                div()
+                    .id(ElementId::Name(format!("commit-entry-{}", ix).into()))
+                    .px_1()
+                    .cursor_pointer()
+                    .line_clamp(1)
+                    .rounded_sm()
+                    .hover(move |s| s.bg(hover_bg))
+                    .child(Label::new(subject).size(LabelSize::Small).truncate())
+                    .on_click({
+                        let sha = sha.clone();
+                        let repo = repo.downgrade();
+                        let workspace = workspace.clone();
+                        move |_, window, cx| {
+                            CommitView::open(
+                                sha.to_string(),
+                                repo.clone(),
+                                workspace.clone(),
+                                None,
+                                None,
+                                window,
+                                cx,
+                            );
+                        }
+                    })
+                    .hoverable_tooltip({
+                        let sha = sha.clone();
+                        let repo = repo.clone();
+                        move |window, cx| {
+                            GitPanelMessageTooltip::new(
+                                this.clone(),
+                                sha.clone(),
+                                repo.clone(),
+                                window,
+                                cx,
+                            )
+                            .into()
+                        }
+                    }),
+            )
+            .into_any_element()
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -5495,7 +6033,7 @@ impl Render for GitPanel {
                         this.child(self.render_pending_amend(cx))
                     })
                     .when(!self.amend_pending, |this| {
-                        this.children(self.render_previous_commit(cx))
+                        this.children(self.render_previous_commit(window, cx))
                     })
                     .into_any_element(),
             )
