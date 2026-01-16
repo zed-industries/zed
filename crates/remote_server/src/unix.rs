@@ -42,9 +42,7 @@ use std::{
     fs::File,
     io::Write,
     mem,
-    ops::ControlFlow,
     path::{Path, PathBuf},
-    process::ExitStatus,
     str::FromStr,
     sync::{Arc, LazyLock},
 };
@@ -371,11 +369,6 @@ pub fn execute_run(
     stderr_socket: PathBuf,
 ) -> Result<()> {
     init_paths()?;
-
-    match daemonize()? {
-        ControlFlow::Break(_) => return Ok(()),
-        ControlFlow::Continue(_) => {}
-    }
 
     let app = gpui::Application::headless();
     let pid = std::process::id();
@@ -794,9 +787,6 @@ pub enum SpawnServerError {
     #[error("failed to launch server process")]
     ProcessStatus(#[source] std::io::Error),
 
-    #[error("failed to launch and detach server process: {status}\n{paths}")]
-    LaunchStatus { status: ExitStatus, paths: String },
-
     #[error("failed to wait for server to be ready to accept connections")]
     Timeout,
 }
@@ -816,6 +806,9 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     let binary_name = std::env::current_exe().map_err(SpawnServerError::CurrentExe)?;
     let mut server_process = new_smol_command(binary_name);
     server_process
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .arg("run")
         .arg("--log-file")
         .arg(&paths.log_file)
@@ -828,20 +821,9 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
         .arg("--stderr-socket")
         .arg(&paths.stderr_socket);
 
-    let status = server_process
-        .status()
-        .await
+    server_process
+        .spawn()
         .map_err(SpawnServerError::ProcessStatus)?;
-
-    if !status.success() {
-        return Err(SpawnServerError::LaunchStatus {
-            status,
-            paths: format!(
-                "log file: {:?}, pid file: {:?}",
-                paths.log_file, paths.pid_file,
-            ),
-        });
-    }
 
     let mut total_time_waited = std::time::Duration::from_secs(0);
     let wait_duration = std::time::Duration::from_millis(20);
@@ -1050,46 +1032,6 @@ fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
                 .ok()
         })
         .or_else(read_proxy_from_env)
-}
-
-fn daemonize() -> Result<ControlFlow<()>> {
-    match fork::fork().map_err(|e| anyhow!("failed to call fork with error code {e}"))? {
-        fork::Fork::Parent(_) => {
-            return Ok(ControlFlow::Break(()));
-        }
-        fork::Fork::Child => {}
-    }
-
-    // Once we've detached from the parent, we want to close stdout/stderr/stdin
-    // so that the outer SSH process is not attached to us in any way anymore.
-    unsafe { redirect_standard_streams() }?;
-
-    Ok(ControlFlow::Continue(()))
-}
-
-unsafe fn redirect_standard_streams() -> Result<()> {
-    let devnull_fd = unsafe { libc::open(b"/dev/null\0" as *const [u8; 10] as _, libc::O_RDWR) };
-    anyhow::ensure!(devnull_fd != -1, "failed to open /dev/null");
-
-    let process_stdio = |name, fd| {
-        let reopened_fd = unsafe { libc::dup2(devnull_fd, fd) };
-        anyhow::ensure!(
-            reopened_fd != -1,
-            format!("failed to redirect {} to /dev/null", name)
-        );
-        Ok(())
-    };
-
-    process_stdio("stdin", libc::STDIN_FILENO)?;
-    process_stdio("stdout", libc::STDOUT_FILENO)?;
-    process_stdio("stderr", libc::STDERR_FILENO)?;
-
-    anyhow::ensure!(
-        unsafe { libc::close(devnull_fd) != -1 },
-        "failed to close /dev/null fd after redirecting"
-    );
-
-    Ok(())
 }
 
 fn cleanup_old_binaries() -> Result<()> {
