@@ -367,7 +367,8 @@ impl MacTextSystemState {
             )?
             .into();
 
-        // Add 3% of font size as padding, clamped between 1 and 5 pixels.
+        // Add 3% of font size as padding, clamped between 1 and 5 pixels
+        // to avoid clipping of anti-aliased edges.
         let pad = ((params.font_size.0 * 0.03 * params.scale_factor).ceil() as i32).clamp(1, 5);
         bounds.origin.x -= DevicePixels(pad);
         bounds.size.width += DevicePixels(pad);
