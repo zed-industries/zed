@@ -2,8 +2,7 @@ use anyhow::Result;
 use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::predict_edits_v3::{
-    self, PredictEditsV3Request, PredictEditsV3Response, RawCompletionRequest,
-    RawCompletionResponse,
+    PredictEditsV3Request, PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
 };
 use cloud_llm_client::{
     EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason, EditPredictionRejection,
@@ -226,8 +225,6 @@ pub struct EditPredictionFinishedDebugEvent {
     pub position: Anchor,
     pub model_output: Option<String>,
 }
-
-pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
 
 const USER_ACTION_HISTORY_SIZE: usize = 16;
 

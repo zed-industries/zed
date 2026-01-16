@@ -3248,6 +3248,7 @@ name = "codestral"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "edit_prediction",
  "edit_prediction_context",
  "edit_prediction_types",
  "futures 0.3.31",
