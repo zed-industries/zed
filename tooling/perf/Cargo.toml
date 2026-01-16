@@ -1,0 +1,32 @@
+[package]
+name = "perf"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+license = "Apache-2.0"
+description = "A tool for measuring Zed test performance, with too many Clippy lints"
+
+[lib]
+
+# Some personal lint preferences :3
+[lints.rust]
+missing_docs = "warn"
+
+[lints.clippy]
+needless_continue = "allow" # For a convenience macro
+all = "warn"
+pedantic = "warn"
+style = "warn"
+missing_docs_in_private_items = "warn"
+as_underscore = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny" # This covers `expect` also, since we deny `allow`
+let_underscore_must_use = "forbid"
+undocumented_unsafe_blocks = "forbid"
+missing_safety_doc = "forbid"
+disallowed_methods = { level = "allow", priority = 1}
+
+[dependencies]
+collections.workspace = true
+serde.workspace = true
+serde_json.workspace = true
