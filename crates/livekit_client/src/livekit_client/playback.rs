@@ -553,9 +553,9 @@ pub fn play_remote_video_track(
     track: &crate::RemoteVideoTrack,
     executor: &BackgroundExecutor,
 ) -> impl Stream<Item = RemoteVideoFrame> + use<> {
-    let executor = executor.clone();
     #[cfg(target_os = "macos")]
     {
+        _ = executor;
         let mut pool = None;
         let most_recent_frame_size = (0, 0);
         NativeVideoStream::new(track.0.rtc_track()).filter_map(move |frame| {
@@ -565,7 +565,7 @@ pub fn play_remote_video_track(
                 pool = create_buffer_pool(frame.buffer.width(), frame.buffer.height()).log_err();
             }
             let pool = pool.clone();
-            executor.spawn(async move {
+            async move {
                 if frame.buffer.width() < 10 && frame.buffer.height() < 10 {
                     // when the remote stops sharing, we get an 8x8 black image.
                     // In a lil bit, the unpublish will come through and close the view,
@@ -574,11 +574,12 @@ pub fn play_remote_video_track(
                 }
 
                 video_frame_buffer_from_webrtc(pool?, frame.buffer)
-            })
+            }
         })
     }
     #[cfg(not(target_os = "macos"))]
     {
+        let executor = executor.clone();
         NativeVideoStream::new(track.0.rtc_track()).filter_map(move |frame| {
             executor.spawn(async move { video_frame_buffer_from_webrtc(frame.buffer) })
         })
