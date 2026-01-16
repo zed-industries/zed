@@ -151,11 +151,15 @@ impl RenderOnce for TabBar {
             .when(
                 !self.end_children.is_empty() || !self.pre_end_children.is_empty(),
                 |this| {
+                    let has_pre_end_children = !self.pre_end_children.is_empty();
                     this.child(
                         h_flex()
                             .flex_none()
                             .gap(DynamicSpacing::Base04.rems(cx))
-                            .px(DynamicSpacing::Base06.rems(cx))
+                            .when(has_pre_end_children, |this| {
+                                this.pl(DynamicSpacing::Base06.rems(cx))
+                            })
+                            .pr(DynamicSpacing::Base06.rems(cx))
                             .children(self.pre_end_children)
                             .border_color(cx.theme().colors().border)
                             .border_b_1()
