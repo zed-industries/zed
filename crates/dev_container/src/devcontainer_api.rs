@@ -68,7 +68,8 @@ impl Display for DevContainerError {
                 DevContainerError::DevContainerTemplateApplyFailed(message) => {
                     format!("DevContainer template apply failed with error: {}", message)
                 }
-                DevContainerError::DevContainerNotFound => "TODO what".to_string(),
+                DevContainerError::DevContainerNotFound =>
+                    "No valid dev container definition found in project".to_string(),
                 DevContainerError::DevContainerParseFailed =>
                     "Failed to parse file .devcontainer/devcontainer.json".to_string(),
                 DevContainerError::NodeRuntimeNotAvailable =>
@@ -390,13 +391,13 @@ async fn devcontainer_read_configuration(
                     String::from_utf8_lossy(&output.stderr)
                 );
                 log::error!("{}", &message);
-                Err(DevContainerError::DevContainerUpFailed(message))
+                Err(DevContainerError::DevContainerNotFound)
             }
         }
         Err(e) => {
             let message = format!("Error running devcontainer read-configuration: {:?}", e);
             log::error!("{}", &message);
-            Err(DevContainerError::DevContainerUpFailed(message))
+            Err(DevContainerError::DevContainerNotFound)
         }
     }
 }
