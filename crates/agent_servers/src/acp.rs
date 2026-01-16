@@ -339,6 +339,53 @@ impl Drop for AcpConnection {
     }
 }
 
+fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpServer> {
+    let context_server_store = project.read(cx).context_server_store().read(cx);
+    let is_local = project.read(cx).is_local();
+    context_server_store
+        .configured_server_ids()
+        .iter()
+        .filter_map(|id| {
+            let configuration = context_server_store.configuration_for_server(id)?;
+            match &*configuration {
+                project::context_server_store::ContextServerConfiguration::Custom {
+                    command,
+                    remote,
+                    ..
+                }
+                | project::context_server_store::ContextServerConfiguration::Extension {
+                    command,
+                    remote,
+                    ..
+                } if is_local || *remote => Some(acp::McpServer::Stdio(
+                    acp::McpServerStdio::new(id.0.to_string(), &command.path)
+                        .args(command.args.clone())
+                        .env(if let Some(env) = command.env.as_ref() {
+                            env.iter()
+                                .map(|(name, value)| acp::EnvVariable::new(name, value))
+                                .collect()
+                        } else {
+                            vec![]
+                        }),
+                )),
+                project::context_server_store::ContextServerConfiguration::Http {
+                    url,
+                    headers,
+                    timeout: _,
+                } => Some(acp::McpServer::Http(
+                    acp::McpServerHttp::new(id.0.to_string(), url.to_string()).headers(
+                        headers
+                            .iter()
+                            .map(|(name, value)| acp::HttpHeader::new(name, value))
+                            .collect(),
+                    ),
+                )),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 impl AgentConnection for AcpConnection {
     fn telemetry_id(&self) -> SharedString {
         self.telemetry_id.clone()
@@ -357,50 +404,7 @@ impl AgentConnection for AcpConnection {
         let default_model = self.default_model.clone();
         let default_config_options = self.default_config_options.clone();
         let cwd = cwd.to_path_buf();
-        let context_server_store = project.read(cx).context_server_store().read(cx);
-        let is_local = project.read(cx).is_local();
-        let mcp_servers = context_server_store
-            .configured_server_ids()
-            .iter()
-            .filter_map(|id| {
-                let configuration = context_server_store.configuration_for_server(id)?;
-                match &*configuration {
-                    project::context_server_store::ContextServerConfiguration::Custom {
-                        command,
-                        remote,
-                        ..
-                    }
-                    | project::context_server_store::ContextServerConfiguration::Extension {
-                        command,
-                        remote,
-                        ..
-                    } if is_local || *remote => Some(acp::McpServer::Stdio(
-                        acp::McpServerStdio::new(id.0.to_string(), &command.path)
-                            .args(command.args.clone())
-                            .env(if let Some(env) = command.env.as_ref() {
-                                env.iter()
-                                    .map(|(name, value)| acp::EnvVariable::new(name, value))
-                                    .collect()
-                            } else {
-                                vec![]
-                            }),
-                    )),
-                    project::context_server_store::ContextServerConfiguration::Http {
-                        url,
-                        headers,
-                        timeout: _,
-                    } => Some(acp::McpServer::Http(
-                        acp::McpServerHttp::new(id.0.to_string(), url.to_string()).headers(
-                            headers
-                                .iter()
-                                .map(|(name, value)| acp::HttpHeader::new(name, value))
-                                .collect(),
-                        ),
-                    )),
-                    _ => None,
-                }
-            })
-            .collect();
+        let mcp_servers = mcp_servers_for_project(&project, cx);
 
         cx.spawn(async move |cx| {
             let response = conn
@@ -634,6 +638,103 @@ impl AgentConnection for AcpConnection {
             sessions.borrow_mut().insert(session_id, session);
 
             if let Some(session_list) = &self.session_list {
+                session_list.notify_update();
+            }
+
+            Ok(thread)
+        })
+    }
+
+    fn supports_load_session(&self) -> bool {
+        self.agent_capabilities.load_session
+    }
+
+    fn load_session(
+        self: Rc<Self>,
+        session: AgentSessionInfo,
+        project: Entity<Project>,
+        cwd: &Path,
+        cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        if !self.agent_capabilities.load_session {
+            return Task::ready(Err(anyhow!(LoadError::Other(
+                "Loading sessions is not supported by this agent.".into()
+            ))));
+        }
+
+        let conn = self.connection.clone();
+        let sessions = self.sessions.clone();
+        let session_list = self.session_list.clone();
+        let session_id = session.session_id.clone();
+        let cwd = cwd.to_path_buf();
+        let mcp_servers = mcp_servers_for_project(&project, cx);
+        let prompt_capabilities = self.agent_capabilities.prompt_capabilities.clone();
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let thread: Entity<AcpThread> = cx.new(|cx| {
+            AcpThread::new(
+                self.server_name.clone(),
+                self.clone(),
+                project,
+                action_log,
+                session_id.clone(),
+                watch::Receiver::constant(prompt_capabilities),
+                cx,
+            )
+        });
+
+        sessions.borrow_mut().insert(
+            session_id.clone(),
+            AcpSession {
+                thread: thread.downgrade(),
+                suppress_abort_err: false,
+                session_modes: None,
+                models: None,
+                config_options: None,
+            },
+        );
+
+        cx.spawn(async move |cx| {
+            let response = match conn
+                .load_session(acp::LoadSessionRequest::new(session_id.clone(), cwd).mcp_servers(
+                    mcp_servers,
+                ))
+                .await
+            {
+                Ok(response) => response,
+                Err(err) => {
+                    sessions.borrow_mut().remove(&session_id);
+                    return Err(if err.code == acp::ErrorCode::AuthRequired {
+                        let mut error = AuthRequired::new();
+
+                        if err.message != acp::ErrorCode::AuthRequired.to_string() {
+                            error = error.with_description(err.message);
+                        }
+
+                        anyhow!(error)
+                    } else {
+                        anyhow!(err)
+                    });
+                }
+            };
+
+            let use_config_options = cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>());
+
+            let (modes, models, config_options) =
+                if use_config_options && let Some(opts) = response.config_options {
+                    (None, None, Some(Rc::new(RefCell::new(opts))))
+                } else {
+                    let modes = response.modes.map(|modes| Rc::new(RefCell::new(modes)));
+                    let models = response.models.map(|models| Rc::new(RefCell::new(models)));
+                    (modes, models, None)
+                };
+
+            if let Some(session) = sessions.borrow_mut().get_mut(&session_id) {
+                session.session_modes = modes;
+                session.models = models;
+                session.config_options = config_options.map(ConfigOptions::new);
+            }
+
+            if let Some(session_list) = &session_list {
                 session_list.notify_update();
             }
 
