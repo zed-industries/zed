@@ -328,7 +328,8 @@ impl TrustedWorktreesStore {
                             &abs_path.to_string_lossy(),
                             worktree_store.read(cx).path_style()
                         ),
-                        "Cannot trust non-absolute path {abs_path:?}"
+                        "Cannot trust non-absolute path {abs_path:?} on path style {style:?}",
+                        style = worktree_store.read(cx).path_style()
                     );
                     if let Some((worktree_id, is_file)) =
                         find_worktree_in_store(worktree_store.read(cx), abs_path, cx)
