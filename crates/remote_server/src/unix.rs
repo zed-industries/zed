@@ -115,7 +115,14 @@ fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
 
     let old_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        log::error!("Panic occurred: {:?}", info);
+        let message = info.payload_as_str().unwrap_or("Box<Any>").to_owned();
+        let location = info
+            .location()
+            .map_or_else(|| "<unknown>".to_owned(), |location| location.to_string());
+        let current_thread = std::thread::current();
+        let thread_name = current_thread.name().unwrap_or("<unnamed>");
+
+        log::error!("thread '{thread_name}' panicked at {location}:\n{message}...");
         old_hook(info);
     }));
     env_logger::Builder::new()
