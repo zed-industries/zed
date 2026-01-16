@@ -129,6 +129,8 @@ actions!(
         ClearMessageQueue,
         /// Opens the permission granularity dropdown for the current tool call.
         OpenPermissionDropdown,
+        /// Navigates back to the parent thread when viewing a subagent.
+        NavigateToParentThread,
     ]
 );
 

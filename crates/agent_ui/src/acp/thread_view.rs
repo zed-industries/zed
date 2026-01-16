@@ -70,14 +70,21 @@ use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
-    CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread,
-    OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage,
-    SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage, ToggleProfileSelector,
+    CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow, KeepAll,
+    NavigateToParentThread, NewThread, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
+    RemoveFirstQueuedMessage, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
+    ToggleProfileSelector,
 };
 
 const MAX_COLLAPSED_LINES: usize = 3;
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
 const TOKEN_THRESHOLD: u64 = 250;
+
+struct SubagentBreadcrumb {
+    thread: Entity<AcpThread>,
+    title: SharedString,
+    _subscription: Subscription,
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ThreadFeedback {
@@ -339,6 +346,9 @@ pub struct AcpThreadView {
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     expanded_subagents: HashSet<acp::SessionId>,
     subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
+    /// Navigation stack for viewing nested subagents.
+    /// Empty = viewing root thread, non-empty = last item is current view.
+    subagent_navigation_stack: Vec<SubagentBreadcrumb>,
     edits_expanded: bool,
     plan_expanded: bool,
     queue_expanded: bool,
@@ -524,6 +534,7 @@ impl AcpThreadView {
             expanded_thinking_blocks: HashSet::default(),
             expanded_subagents: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
+            subagent_navigation_stack: Vec::new(),
             editing_message: None,
             edits_expanded: false,
             plan_expanded: false,
@@ -571,6 +582,7 @@ impl AcpThreadView {
         self.available_commands.replace(vec![]);
         self.new_server_version_available.take();
         self.recent_history_entries.clear();
+        self.subagent_navigation_stack.clear();
         self.turn_tokens = None;
         self.last_turn_tokens = None;
         self.turn_started_at = None;
@@ -981,6 +993,82 @@ impl AcpThreadView {
             ThreadState::Unauthenticated { .. }
             | ThreadState::Loading { .. }
             | ThreadState::LoadError { .. } => None,
+        }
+    }
+
+    /// Returns the thread that should be displayed.
+    /// If viewing a subagent, returns the subagent's thread.
+    /// Otherwise, returns the root thread.
+    fn displayed_thread(&self) -> Option<&Entity<AcpThread>> {
+        if let Some(breadcrumb) = self.subagent_navigation_stack.last() {
+            Some(&breadcrumb.thread)
+        } else {
+            self.thread()
+        }
+    }
+
+    /// Returns true if currently viewing a subagent thread (not the root thread).
+    fn is_viewing_subagent(&self) -> bool {
+        !self.subagent_navigation_stack.is_empty()
+    }
+
+    /// Navigates into a subagent thread, pushing it onto the navigation stack.
+    fn navigate_to_subagent(
+        &mut self,
+        subagent_thread: Entity<AcpThread>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let title = subagent_thread.read(cx).title();
+        let entry_count = subagent_thread.read(cx).entries().len();
+
+        let subscription = cx.subscribe(&subagent_thread, |this, _, event, cx| match event {
+            AcpThreadEvent::TitleUpdated => {
+                cx.notify();
+            }
+            AcpThreadEvent::NewEntry | AcpThreadEvent::EntryUpdated(_) => {
+                this.sync_list_state_with_displayed_thread(cx);
+                cx.notify();
+            }
+            _ => {}
+        });
+
+        self.subagent_navigation_stack.push(SubagentBreadcrumb {
+            thread: subagent_thread,
+            title,
+            _subscription: subscription,
+        });
+
+        self.list_state.reset(entry_count);
+        cx.notify();
+    }
+
+    /// Navigates back to the parent thread by popping the navigation stack.
+    fn navigate_to_parent(&mut self, cx: &mut Context<Self>) {
+        if !self.subagent_navigation_stack.is_empty() {
+            self.subagent_navigation_stack.pop();
+            self.sync_list_state_with_displayed_thread(cx);
+            cx.notify();
+        }
+    }
+
+    /// Navigates to a specific ancestor in the navigation stack.
+    /// depth 0 = root thread, depth 1 = first subagent, etc.
+    fn navigate_to_ancestor(&mut self, depth: usize, cx: &mut Context<Self>) {
+        if depth == 0 {
+            self.subagent_navigation_stack.clear();
+        } else {
+            self.subagent_navigation_stack.truncate(depth);
+        }
+        self.sync_list_state_with_displayed_thread(cx);
+        cx.notify();
+    }
+
+    /// Syncs the list_state item count with the currently displayed thread's entry count.
+    fn sync_list_state_with_displayed_thread(&mut self, cx: &App) {
+        if let Some(thread) = self.displayed_thread() {
+            let entry_count = thread.read(cx).entries().len();
+            self.list_state.reset(entry_count);
         }
     }
 
@@ -3529,6 +3617,121 @@ impl AcpThreadView {
         }
     }
 
+    fn render_subagent_breadcrumbs(
+        &self,
+        _window: &mut Window,
+        cx: &Context<Self>,
+    ) -> Option<impl IntoElement> {
+        if self.subagent_navigation_stack.is_empty() {
+            return None;
+        }
+
+        let root_thread = self.thread()?;
+        let root_title = root_thread.read(cx).title();
+        let root_is_generating = root_thread.read(cx).status() == ThreadStatus::Generating;
+        let root_has_error = self.thread_error.is_some();
+
+        let focus_handle = self.focus_handle.clone();
+
+        let root_status_icon = if root_is_generating {
+            SpinnerLabel::new()
+                .size(LabelSize::Small)
+                .into_any_element()
+        } else if root_has_error {
+            Icon::new(IconName::XCircle)
+                .color(Color::Error)
+                .size(IconSize::Small)
+                .into_any_element()
+        } else {
+            Icon::new(IconName::Check)
+                .color(Color::Success)
+                .size(IconSize::Small)
+                .into_any_element()
+        };
+
+        Some(
+            v_flex()
+                .w_full()
+                .child(
+                    h_flex()
+                        .id("subagent-breadcrumb-root")
+                        .w_full()
+                        .h(px(32.0))
+                        .px_2()
+                        .gap_1()
+                        .bg(cx.theme().colors().tab_bar_background)
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border)
+                        .cursor_pointer()
+                        .child(root_status_icon)
+                        .child(Label::new(root_title).size(LabelSize::Small))
+                        .child(div().flex_1())
+                        .child(KeyBinding::for_action_in(
+                            &NavigateToParentThread,
+                            &focus_handle,
+                            cx,
+                        ))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.navigate_to_ancestor(0, cx);
+                        })),
+                )
+                .children(
+                    self.subagent_navigation_stack
+                        .iter()
+                        .enumerate()
+                        .take(self.subagent_navigation_stack.len().saturating_sub(1))
+                        .map(|(i, breadcrumb)| {
+                            let depth = i + 1;
+                            h_flex()
+                                .id(SharedString::from(format!("subagent-breadcrumb-{}", depth)))
+                                .w_full()
+                                .h(px(28.0))
+                                .px_2()
+                                .gap_1()
+                                .bg(cx.theme().colors().surface_background)
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border)
+                                .cursor_pointer()
+                                .child(
+                                    Icon::new(IconName::ArrowRight)
+                                        .color(Color::Muted)
+                                        .size(IconSize::XSmall),
+                                )
+                                .child(Label::new(breadcrumb.title.clone()).size(LabelSize::Small))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.navigate_to_ancestor(depth, cx);
+                                }))
+                        }),
+                )
+                .when_some(self.subagent_navigation_stack.last(), |this, current| {
+                    let thread = current.thread.read(cx);
+                    let is_running = thread.status() == ThreadStatus::Generating;
+
+                    this.child(
+                        h_flex()
+                            .w_full()
+                            .h(px(32.0))
+                            .px_2()
+                            .gap_1()
+                            .bg(cx.theme().colors().surface_background)
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border)
+                            .child(if is_running {
+                                SpinnerLabel::new()
+                                    .size(LabelSize::Small)
+                                    .into_any_element()
+                            } else {
+                                Icon::new(IconName::Check)
+                                    .color(Color::Success)
+                                    .size(IconSize::Small)
+                                    .into_any_element()
+                            })
+                            .child(Label::new(current.title.clone()).size(LabelSize::Small)),
+                    )
+                }),
+        )
+    }
+
     fn render_subagent_tool_call(
         &self,
         entry_ix: usize,
@@ -3542,10 +3745,7 @@ impl AcpThreadView {
             .filter_map(|c| c.subagent_thread().cloned())
             .collect();
 
-        let tool_call_in_progress = matches!(
-            tool_call.status,
-            ToolCallStatus::Pending | ToolCallStatus::InProgress
-        );
+        let tool_call_status = tool_call.status.clone();
 
         v_flex().ml_5().mr_5().my_1p5().gap_1().children(
             subagent_threads
@@ -3556,7 +3756,7 @@ impl AcpThreadView {
                         entry_ix,
                         context_ix,
                         &thread,
-                        tool_call_in_progress,
+                        &tool_call_status,
                         window,
                         cx,
                     )
@@ -3569,7 +3769,7 @@ impl AcpThreadView {
         entry_ix: usize,
         context_ix: usize,
         thread: &Entity<AcpThread>,
-        tool_call_in_progress: bool,
+        tool_call_status: &ToolCallStatus,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -3583,7 +3783,14 @@ impl AcpThreadView {
         let files_changed = changed_buffers.len();
         let diff_stats = DiffStats::all_files(&changed_buffers, cx);
 
-        let is_running = tool_call_in_progress;
+        let is_running = matches!(
+            tool_call_status,
+            ToolCallStatus::Pending | ToolCallStatus::InProgress
+        );
+        let is_failed = matches!(
+            tool_call_status,
+            ToolCallStatus::Failed | ToolCallStatus::Rejected | ToolCallStatus::Canceled
+        );
 
         let card_header_id =
             SharedString::from(format!("subagent-header-{}-{}", entry_ix, context_ix));
@@ -3592,6 +3799,11 @@ impl AcpThreadView {
         let icon = h_flex().w_4().justify_center().child(if is_running {
             SpinnerLabel::new()
                 .size(LabelSize::Small)
+                .into_any_element()
+        } else if is_failed {
+            Icon::new(IconName::XCircle)
+                .size(IconSize::Small)
+                .color(Color::Error)
                 .into_any_element()
         } else {
             Icon::new(IconName::Check)
@@ -3646,26 +3858,48 @@ impl AcpThreadView {
                             }),
                     )
                     .child(
-                        Disclosure::new(
-                            SharedString::from(format!(
-                                "subagent-disclosure-inner-{}-{}",
-                                entry_ix, context_ix
-                            )),
-                            is_expanded,
-                        )
-                        .opened_icon(IconName::ChevronUp)
-                        .closed_icon(IconName::ChevronDown)
-                        .visible_on_hover(card_header_id)
-                        .on_click(cx.listener({
-                            move |this, _, _, cx| {
-                                if this.expanded_subagents.contains(&session_id) {
-                                    this.expanded_subagents.remove(&session_id);
-                                } else {
-                                    this.expanded_subagents.insert(session_id.clone());
-                                }
-                                cx.notify();
-                            }
-                        })),
+                        h_flex()
+                            .gap_0p5()
+                            .child(
+                                IconButton::new(
+                                    SharedString::from(format!(
+                                        "expand-subagent-{}-{}",
+                                        entry_ix, context_ix
+                                    )),
+                                    IconName::Maximize,
+                                )
+                                .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::text("Expand Subagent"))
+                                .visible_on_hover(card_header_id.clone())
+                                .on_click(cx.listener({
+                                    let thread = thread.clone();
+                                    move |this, _, window, cx| {
+                                        this.navigate_to_subagent(thread.clone(), window, cx);
+                                    }
+                                })),
+                            )
+                            .child(
+                                Disclosure::new(
+                                    SharedString::from(format!(
+                                        "subagent-disclosure-inner-{}-{}",
+                                        entry_ix, context_ix
+                                    )),
+                                    is_expanded,
+                                )
+                                .opened_icon(IconName::ChevronUp)
+                                .closed_icon(IconName::ChevronDown)
+                                .visible_on_hover(card_header_id)
+                                .on_click(cx.listener({
+                                    move |this, _, _, cx| {
+                                        if this.expanded_subagents.contains(&session_id) {
+                                            this.expanded_subagents.remove(&session_id);
+                                        } else {
+                                            this.expanded_subagents.insert(session_id.clone());
+                                        }
+                                        cx.notify();
+                                    }
+                                })),
+                            ),
                     ),
             )
             .when(is_expanded, |this| {
@@ -7911,6 +8145,23 @@ impl AcpThreadView {
         self.expanded_subagents.insert(session_id);
         cx.notify();
     }
+
+    /// Navigates into a subagent thread, displaying it as the active thread.
+    /// This is primarily useful for visual testing.
+    pub fn navigate_into_subagent(
+        &mut self,
+        subagent_thread: Entity<AcpThread>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigate_to_subagent(subagent_thread, window, cx);
+    }
+
+    /// Returns true if currently viewing a subagent (not the root thread).
+    /// This is primarily useful for visual testing.
+    pub fn viewing_subagent(&self) -> bool {
+        self.is_viewing_subagent()
+    }
 }
 
 impl Render for AcpThreadView {
@@ -7922,6 +8173,9 @@ impl Render for AcpThreadView {
             .key_context("AcpThread")
             .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
                 this.cancel_generation(cx);
+            }))
+            .on_action(cx.listener(|this, _: &NavigateToParentThread, _, cx| {
+                this.navigate_to_parent(cx);
             }))
             .on_action(cx.listener(Self::keep_all))
             .on_action(cx.listener(Self::reject_all))
@@ -8034,6 +8288,7 @@ impl Render for AcpThreadView {
             }))
             .track_focus(&self.focus_handle)
             .bg(cx.theme().colors().panel_background)
+            .children(self.render_subagent_breadcrumbs(window, cx))
             .child(match &self.thread_state {
                 ThreadState::Unauthenticated {
                     connection,
@@ -8071,10 +8326,12 @@ impl Render for AcpThreadView {
                             list(
                                 self.list_state.clone(),
                                 cx.processor(|this, index: usize, window, cx| {
-                                    let Some((entry, len)) = this.thread().and_then(|thread| {
-                                        let entries = &thread.read(cx).entries();
-                                        Some((entries.get(index)?, entries.len()))
-                                    }) else {
+                                    let Some((entry, len)) =
+                                        this.displayed_thread().and_then(|thread| {
+                                            let entries = &thread.read(cx).entries();
+                                            Some((entries.get(index)?, entries.len()))
+                                        })
+                                    else {
                                         return Empty.into_any();
                                     };
                                     this.render_entry(index, len, entry, window, cx)
@@ -8115,7 +8372,9 @@ impl Render for AcpThreadView {
                 self.render_token_limit_callout(cx)
                     .map(|token_limit_callout| token_limit_callout.into_any_element()),
             )
-            .child(self.render_message_editor(window, cx))
+            .when(!self.is_viewing_subagent(), |this| {
+                this.child(self.render_message_editor(window, cx))
+            })
     }
 }
 
