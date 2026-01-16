@@ -729,9 +729,13 @@ impl BlockMap {
                 new_transforms.push(transform.clone(), ());
                 cursor.next();
 
-                // Preserve below blocks at end of edit
+                // Preserve below blocks at start of edit
                 while let Some(transform) = cursor.item() {
-                    if transform.block.as_ref().is_some_and(|b| b.place_below()) {
+                    if transform
+                        .block
+                        .as_ref()
+                        .is_some_and(|b| b.place_below() || matches!(b, Block::Spacer { .. }))
+                    {
                         new_transforms.push(transform.clone(), ());
                         cursor.next();
                     } else {
