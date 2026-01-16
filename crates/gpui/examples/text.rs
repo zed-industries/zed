@@ -236,6 +236,7 @@ impl RenderOnce for CharacterGrid {
 
 struct TextExample {
     next_id: usize,
+    font_family: SharedString,
 }
 
 impl TextExample {
@@ -243,7 +244,26 @@ impl TextExample {
         self.next_id += 1;
         self.next_id
     }
+
+    fn button(
+        text: &str,
+        cx: &mut Context<Self>,
+        on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+    ) -> impl IntoElement {
+        div()
+            .id(text.to_string())
+            .flex_none()
+            .child(text.to_string())
+            .bg(gpui::black())
+            .text_color(gpui::white())
+            .active(|this| this.opacity(0.8))
+            .px_3()
+            .py_1()
+            .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
+    }
 }
+
+const FONT_FAMILIES: [&str; 2] = [".ZedMono", ".SystemUIFont"];
 
 impl Render for TextExample {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -263,8 +283,26 @@ impl Render for TextExample {
         let step_up_6 = step_up_5 * type_scale;
 
         div()
-            .font_family(".ZedMono")
+            .font_family(self.font_family.clone())
             .size_full()
+            .child(
+                div()
+                    .bg(gpui::white())
+                    .border_b_1()
+                    .border_color(gpui::black())
+                    .p_3()
+                    .flex()
+                    .child(Self::button(&self.font_family, cx, |this, cx| {
+                        let new_family = FONT_FAMILIES
+                            .iter()
+                            .position(|f| *f == this.font_family.as_str())
+                            .map(|idx| FONT_FAMILIES[(idx + 1) % FONT_FAMILIES.len()])
+                            .unwrap_or(FONT_FAMILIES[0]);
+
+                        this.font_family = SharedString::new(new_family);
+                        cx.notify();
+                    })),
+            )
             .child(
                 div()
                     .id("text-example")
@@ -331,7 +369,12 @@ fn main() {
                     ))),
                     ..Default::default()
                 },
-                |_window, cx| cx.new(|_cx| TextExample { next_id: 0 }),
+                |_window, cx| {
+                    cx.new(|_cx| TextExample {
+                        next_id: 0,
+                        font_family: ".ZedMono".into(),
+                    })
+                },
             )
             .unwrap();
 
