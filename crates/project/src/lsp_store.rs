@@ -13377,7 +13377,7 @@ fn lsp_workspace_diagnostics_refresh(
                 };
 
                 progress_rx.try_recv().ok();
-                // Clamp timeout duration at a minimum of 120ms to mitigate infinite loops from re-trying connections.
+                // Clamp timeout duration at a minimum of [`DEFAULT_LSP_REQUEST_TIMEOUT`] to mitigate useless loops from re-trying connections with smaller timeouts from project settings.
                 // This allows users to increase the duration if need be
                 let timer = server.request_timer(Some(DEFAULT_LSP_REQUEST_TIMEOUT)).fuse();
                 let progress = pin!(progress_rx.recv().fuse());

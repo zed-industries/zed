@@ -1396,7 +1396,7 @@ impl LanguageServer {
         executor: BackgroundExecutor,
         request_timeout: Duration,
     ) -> impl Future<Output = String> {
-        if request_timeout == Duration::MAX || request_timeout == Default::default() {
+        if request_timeout == Duration::MAX || request_timeout == Duration::ZERO {
             return Either::Left(future::pending::<String>());
         }
 
@@ -1408,7 +1408,7 @@ impl LanguageServer {
     }
 
     /// Obtain a request timer for the LSP.
-    /// Accepts an optional minimum timeout duration to use.
+    /// If specified, runs no less than `min_timeout`.
     pub fn request_timer(&self, min_timeout: Option<Duration>) -> impl Future<Output = String> {
         let timeout = if let Some(min_timeout) = min_timeout
             && self.request_timeout != Duration::ZERO

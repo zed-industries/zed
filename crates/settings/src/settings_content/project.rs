@@ -190,7 +190,7 @@ pub struct GlobalLspSettingsContent {
     /// Default: `true`
     pub button: Option<bool>,
     /// The maximum amount of time to wait for responses from language servers, in seconds.
-    /// Ignored if set to `0`.
+    /// A value of `0` will result in no timeout being applied (causing all LSP responses to wait indefinitely until completed).
     ///
     /// Default: `120`
     pub request_timeout: Option<u64>,
