@@ -241,8 +241,16 @@ impl PickerDelegate for TemplatePickerDelegate {
             .iter()
             .enumerate()
             .filter(|(_, template_entry)| {
-                template_entry.template.id.contains(&query)
-                    || template_entry.template.name.contains(&query)
+                template_entry
+                    .template
+                    .id
+                    .to_lowercase()
+                    .contains(&query.to_lowercase())
+                    || template_entry
+                        .template
+                        .name
+                        .to_lowercase()
+                        .contains(&query.to_lowercase())
             })
             .map(|(ix, _)| ix)
             .collect();
@@ -410,8 +418,16 @@ impl PickerDelegate for FeaturePickerDelegate {
             .iter()
             .enumerate()
             .filter(|(_, feature_entry)| {
-                feature_entry.feature.id.contains(&query)
-                    || feature_entry.feature.name.contains(&query)
+                feature_entry
+                    .feature
+                    .id
+                    .to_lowercase()
+                    .contains(&query.to_lowercase())
+                    || feature_entry
+                        .feature
+                        .name
+                        .to_lowercase()
+                        .contains(&query.to_lowercase())
             })
             .map(|(ix, _)| ix)
             .collect();
