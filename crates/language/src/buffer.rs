@@ -4444,7 +4444,7 @@ impl BufferSnapshot {
                 continue;
             }
 
-            let mut all_brackets = Vec::new();
+            let mut all_brackets: Vec<(BracketMatch<usize>, bool)> = Vec::new();
             let mut opens = Vec::new();
             let mut color_pairs = Vec::new();
 
@@ -4463,6 +4463,9 @@ impl BufferSnapshot {
                 .map(|grammar| grammar.brackets_config.as_ref().unwrap())
                 .collect::<Vec<_>>();
 
+            // Group matches by open range so we can either trust grammar output
+            // or repair it by picking a single closest close per open.
+            let mut open_to_close_ranges = BTreeMap::new();
             while let Some(mat) = matches.peek() {
                 let mut open = None;
                 let mut close = None;
@@ -4488,26 +4491,130 @@ impl BufferSnapshot {
                     continue;
                 }
 
-                let index = all_brackets.len();
-                all_brackets.push(BracketMatch {
-                    open_range: open_range.clone(),
-                    close_range: close_range.clone(),
-                    newline_only: pattern.newline_only,
-                    syntax_layer_depth,
-                    color_index: None,
-                });
+                open_to_close_ranges
+                    .entry((open_range.start, open_range.end))
+                    .or_insert_with(BTreeMap::new)
+                    .insert(
+                        (close_range.start, close_range.end),
+                        BracketMatch {
+                            open_range: open_range.clone(),
+                            close_range: close_range.clone(),
+                            syntax_layer_depth,
+                            newline_only: pattern.newline_only,
+                            color_index: None,
+                        },
+                    );
 
-                // Certain languages have "brackets" that are not brackets, e.g. tags. and such
-                // bracket will match the entire tag with all text inside.
-                // For now, avoid highlighting any pair that has more than single char in each bracket.
-                // We need to  colorize `<Element/>` bracket pairs, so cannot make this check stricter.
-                let should_color =
-                    !pattern.rainbow_exclude && (open_range.len() == 1 || close_range.len() == 1);
-                if should_color {
-                    opens.push(open_range.clone());
-                    color_pairs.push((open_range, close_range, index));
-                }
+                all_brackets.push((
+                    BracketMatch {
+                        open_range,
+                        close_range,
+                        syntax_layer_depth,
+                        newline_only: pattern.newline_only,
+                        color_index: None,
+                    },
+                    pattern.rainbow_exclude,
+                ));
             }
+
+            let has_bogus_matches = open_to_close_ranges
+                .iter()
+                .any(|(_, end_ranges)| end_ranges.len() > 1);
+            if has_bogus_matches {
+                // Grammar is producing bogus matches where one open is paired with multiple
+                // closes. Build a valid stack by walking through positions in order.
+                // For each close, we know the expected open_len from tree-sitter matches.
+
+                // Map each close to its expected open length (for inferring opens)
+                let close_to_open_len: HashMap<(usize, usize), usize> = all_brackets
+                    .iter()
+                    .map(|(m, _)| ((m.close_range.start, m.close_range.end), m.open_range.len()))
+                    .collect();
+
+                // Collect unique opens and closes within this chunk
+                let mut unique_opens: HashSet<(usize, usize)> = all_brackets
+                    .iter()
+                    .map(|(m, _)| (m.open_range.start, m.open_range.end))
+                    .filter(|(start, _)| chunk_range.contains(start))
+                    .collect();
+
+                let mut unique_closes: Vec<(usize, usize)> = all_brackets
+                    .iter()
+                    .map(|(m, _)| (m.close_range.start, m.close_range.end))
+                    .filter(|(start, _)| chunk_range.contains(start))
+                    .collect();
+                unique_closes.sort();
+                unique_closes.dedup();
+
+                // Build valid pairs by walking through closes in order
+                let mut unique_opens_vec: Vec<_> = unique_opens.iter().copied().collect();
+                unique_opens_vec.sort();
+
+                let mut valid_pairs: HashSet<((usize, usize), (usize, usize))> = HashSet::default();
+                let mut open_stack: Vec<(usize, usize)> = Vec::new();
+                let mut open_idx = 0;
+
+                for close in &unique_closes {
+                    // Push all opens before this close onto stack
+                    while open_idx < unique_opens_vec.len()
+                        && unique_opens_vec[open_idx].0 < close.0
+                    {
+                        open_stack.push(unique_opens_vec[open_idx]);
+                        open_idx += 1;
+                    }
+
+                    // Try to match with most recent open
+                    if let Some(open) = open_stack.pop() {
+                        valid_pairs.insert((open, *close));
+                    } else if let Some(&open_len) = close_to_open_len.get(close) {
+                        // No open on stack - infer one based on expected open_len
+                        if close.0 >= open_len {
+                            let inferred = (close.0 - open_len, close.0);
+                            unique_opens.insert(inferred);
+                            valid_pairs.insert((inferred, *close));
+                            all_brackets.push((
+                                BracketMatch {
+                                    open_range: inferred.0..inferred.1,
+                                    close_range: close.0..close.1,
+                                    newline_only: false,
+                                    syntax_layer_depth: 0,
+                                    color_index: None,
+                                },
+                                false,
+                            ));
+                        }
+                    }
+                }
+
+                all_brackets.retain(|(m, _)| {
+                    let open = (m.open_range.start, m.open_range.end);
+                    let close = (m.close_range.start, m.close_range.end);
+                    valid_pairs.contains(&(open, close))
+                });
+            }
+
+            let mut all_brackets = all_brackets
+                .into_iter()
+                .enumerate()
+                .map(|(index, (bracket_match, rainbow_exclude))| {
+                    // Certain languages have "brackets" that are not brackets, e.g. tags. and such
+                    // bracket will match the entire tag with all text inside.
+                    // For now, avoid highlighting any pair that has more than single char in each bracket.
+                    // We need to  colorize `<Element/>` bracket pairs, so cannot make this check stricter.
+                    let should_color = !rainbow_exclude
+                        && (bracket_match.open_range.len() == 1
+                            || bracket_match.close_range.len() == 1);
+                    if should_color {
+                        opens.push(bracket_match.open_range.clone());
+                        color_pairs.push((
+                            bracket_match.open_range.clone(),
+                            bracket_match.close_range.clone(),
+                            index,
+                        ));
+                    }
+                    bracket_match
+                })
+                .collect::<Vec<_>>();
 
             opens.sort_by_key(|r| (r.start, r.end));
             opens.dedup_by(|a, b| a.start == b.start && a.end == b.end);
