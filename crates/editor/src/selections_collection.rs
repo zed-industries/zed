@@ -666,6 +666,14 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             self.disjoint
                 .iter()
                 .filter(|selection| {
+                    // Also remove selections with unresolvable anchors, which can happen
+                    // when excerpts are removed during set_excerpts_for_path.
+                    if !self.snapshot.can_resolve(&selection.start)
+                        || !self.snapshot.can_resolve(&selection.end)
+                    {
+                        changed = true;
+                        return false;
+                    }
                     if let Some(selection_buffer_id) =
                         self.snapshot.buffer_id_for_anchor(selection.start)
                     {
@@ -673,7 +681,8 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
                         changed |= should_remove;
                         !should_remove
                     } else {
-                        true
+                        changed = true;
+                        false
                     }
                 })
                 .cloned()

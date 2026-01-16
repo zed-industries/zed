@@ -2339,9 +2339,7 @@ fn run_agent_thread_view_test(
     }
 }
 
-// =============================================================================
 // Terminal Cursor Visual Tests
-// =============================================================================
 //
 // Tests for terminal cursor visibility in the agent panel's terminal tool view.
 // These tests verify that:
