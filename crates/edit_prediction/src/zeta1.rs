@@ -1,23 +1,28 @@
 use std::{fmt::Write, ops::Range, path::Path, sync::Arc, time::Instant};
 
 use crate::{
-    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
-    EditPredictionStartedDebugEvent, EditPredictionStore, ZedUpdateRequiredError,
+    CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
+    EditPredictionModel2, EditPredictionModelInput, EditPredictionStartedDebugEvent,
+    EditPredictionStore, UserActionRecord, ZedUpdateRequiredError,
     cursor_excerpt::{editable_and_context_ranges_for_cursor_position, guess_token_count},
     prediction::EditPredictionResult,
 };
 use anyhow::{Context as _, Result};
+use client::Client;
 use cloud_llm_client::{
-    PredictEditsBody, PredictEditsGitInfo, PredictEditsRequestTrigger, PredictEditsResponse,
+    EditPredictionRejection, PredictEditsBody, PredictEditsGitInfo, PredictEditsRequestTrigger,
+    PredictEditsResponse,
 };
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task};
+use futures::channel::mpsc;
+use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, http_client::Url};
 use language::{
     Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToOffset, ToPoint as _, text_diff,
 };
-use project::{Project, ProjectPath};
+use language_model::LlmApiToken;
+use project::Project;
 use release_channel::AppVersion;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
-use zeta_prompt::{Event, ZetaPromptInput};
+use zeta_prompt::{Event, RelatedFile, ZetaPromptInput};
 
 const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
 const START_OF_FILE_MARKER: &str = "<|start_of_file|>";
@@ -28,8 +33,91 @@ pub(crate) const MAX_CONTEXT_TOKENS: usize = 150;
 pub(crate) const MAX_REWRITE_TOKENS: usize = 350;
 pub(crate) const MAX_EVENT_TOKENS: usize = 500;
 
+pub struct Zeta1Model {
+    client: Arc<Client>,
+    llm_token: LlmApiToken,
+    custom_predict_edits_url: Option<Arc<Url>>,
+    reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
+}
+
+impl Zeta1Model {
+    pub fn new(
+        client: Arc<Client>,
+        llm_token: LlmApiToken,
+        custom_predict_edits_url: Option<Arc<Url>>,
+        reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
+    ) -> Self {
+        Self {
+            client,
+            llm_token,
+            custom_predict_edits_url,
+            reject_predictions_tx,
+        }
+    }
+}
+
+impl EditPredictionModel2 for Zeta1Model {
+    fn requires_edit_history(&self) -> bool {
+        true
+    }
+
+    fn is_enabled(&self, _cx: &App) -> bool {
+        true
+    }
+
+    fn request_prediction(
+        &self,
+        project: Entity<Project>,
+        active_buffer: Entity<Buffer>,
+        position: Anchor,
+        _context: Arc<[RelatedFile]>,
+        events: Vec<Arc<Event>>,
+        _user_actions: Vec<UserActionRecord>,
+        can_collect_example: bool,
+        cx: &mut App,
+    ) -> Task<Result<Option<EditPredictionResult>>> {
+        let snapshot = active_buffer.read(cx).snapshot();
+
+        let inputs = EditPredictionModelInput {
+            project,
+            buffer: active_buffer,
+            snapshot,
+            position,
+            events,
+            related_files: vec![],
+            recent_paths: std::collections::VecDeque::new(),
+            trigger: PredictEditsRequestTrigger::Other,
+            diagnostic_search_range: Point::new(0, 0)..Point::new(0, 0),
+            debug_tx: None,
+            user_actions: vec![],
+        };
+
+        request_prediction_with_zeta1(
+            inputs,
+            can_collect_example,
+            self.client.clone(),
+            self.llm_token.clone(),
+            self.custom_predict_edits_url.clone(),
+            cx,
+        )
+    }
+
+    fn report_rejected_prediction(&self, rejection: EditPredictionRejection) {
+        self.reject_predictions_tx.unbounded_send(rejection).ok();
+    }
+
+    fn report_accepted_prediction(&self, prediction: CurrentEditPrediction, cx: &mut App) {
+        edit_prediction_accepted(
+            &self.client,
+            &self.llm_token,
+            self.custom_predict_edits_url.as_ref(),
+            prediction,
+            cx,
+        );
+    }
+}
+
 pub(crate) fn request_prediction_with_zeta1(
-    store: &mut EditPredictionStore,
     EditPredictionModelInput {
         project,
         buffer,
@@ -40,23 +128,23 @@ pub(crate) fn request_prediction_with_zeta1(
         debug_tx,
         ..
     }: EditPredictionModelInput,
-    cx: &mut Context<EditPredictionStore>,
+    can_collect_example: bool,
+    client: Arc<Client>,
+    llm_token: LlmApiToken,
+    custom_predict_edits_url: Option<Arc<Url>>,
+    cx: &mut App,
 ) -> Task<Result<Option<EditPredictionResult>>> {
     let buffer_snapshotted_at = Instant::now();
-    let client = store.client.clone();
-    let llm_token = store.llm_token.clone();
     let app_version = AppVersion::global(cx);
 
-    let (git_info, can_collect_file) = if let Some(file) = snapshot.file() {
-        let can_collect_file = store.can_collect_file(&project, file, cx);
-        let git_info = if can_collect_file {
-            git_info_for_file(&project, &ProjectPath::from_file(file.as_ref(), cx), cx)
-        } else {
-            None
-        };
-        (git_info, can_collect_file)
+    let git_info = if can_collect_example && let Some(file) = snapshot.file() {
+        git_info_for_file(
+            &project,
+            &project::ProjectPath::from_file(file.as_ref(), cx),
+            cx,
+        )
     } else {
-        (None, false)
+        None
     };
 
     let full_path: Arc<Path> = snapshot
@@ -78,7 +166,7 @@ pub(crate) fn request_prediction_with_zeta1(
         cx,
     );
 
-    let (uri, require_auth) = match &store.custom_predict_edits_url {
+    let (uri, require_auth) = match &custom_predict_edits_url {
         Some(custom_url) => (custom_url.clone(), false),
         None => {
             match client
@@ -91,7 +179,7 @@ pub(crate) fn request_prediction_with_zeta1(
         }
     };
 
-    cx.spawn(async move |this, cx| {
+    cx.spawn(async move |cx| {
         let GatherContextOutput {
             mut body,
             context_range,
@@ -101,10 +189,7 @@ pub(crate) fn request_prediction_with_zeta1(
         let done_gathering_context_at = Instant::now();
 
         let included_events = &events[events.len() - included_events_count..events.len()];
-        body.can_collect_data = can_collect_file
-            && this
-                .read_with(cx, |this, cx| this.can_collect_events(included_events, cx))
-                .unwrap_or(false);
+        body.can_collect_data = can_collect_example;
         if body.can_collect_data {
             body.git_info = git_info;
         }
@@ -156,16 +241,11 @@ pub(crate) fn request_prediction_with_zeta1(
                 .ok();
         }
 
-        let (response, usage) = match response {
+        let (response, _usage) = match response {
             Ok(response) => response,
             Err(err) => {
                 if err.is::<ZedUpdateRequiredError>() {
                     cx.update(|cx| {
-                        this.update(cx, |ep_store, _cx| {
-                            ep_store.update_required = true;
-                        })
-                        .ok();
-
                         let error_message: SharedString = err.to_string().into();
                         show_app_notification(
                             NotificationId::unique::<ZedUpdateRequiredError>(),
@@ -186,15 +266,6 @@ pub(crate) fn request_prediction_with_zeta1(
 
         let received_response_at = Instant::now();
         log::debug!("completion response: {}", &response.output_excerpt);
-
-        if let Some(usage) = usage {
-            this.update(cx, |this, cx| {
-                this.user_store.update(cx, |user_store, cx| {
-                    user_store.update_edit_prediction_usage(usage, cx);
-                });
-            })
-            .ok();
-        }
 
         if let Some(debug_tx) = &debug_tx {
             debug_tx
@@ -238,6 +309,56 @@ pub(crate) fn request_prediction_with_zeta1(
 
         edit_prediction.map(Some)
     })
+}
+
+pub(crate) fn edit_prediction_accepted(
+    client: &Arc<Client>,
+    llm_token: &LlmApiToken,
+    custom_predict_edits_url: Option<&Arc<Url>>,
+    current_prediction: CurrentEditPrediction,
+    cx: &App,
+) {
+    let custom_accept_url = std::env::var("ZED_ACCEPT_PREDICTION_URL").ok();
+    if custom_predict_edits_url.is_some() && custom_accept_url.is_none() {
+        return;
+    }
+
+    let request_id = current_prediction.prediction.id.to_string();
+    let require_auth = custom_accept_url.is_none();
+    let client = client.clone();
+    let llm_token = llm_token.clone();
+    let app_version = AppVersion::global(cx);
+
+    cx.background_spawn(async move {
+        let url = if let Some(accept_edits_url) = custom_accept_url {
+            Url::parse(&accept_edits_url)?
+        } else {
+            client
+                .http_client()
+                .build_zed_llm_url("/predict_edits/accept", &[])?
+        };
+
+        let response = EditPredictionStore::send_api_request::<()>(
+            move |builder| {
+                let req = builder.uri(url.as_ref()).body(
+                    serde_json::to_string(&cloud_llm_client::AcceptEditPredictionBody {
+                        request_id: request_id.clone(),
+                    })?
+                    .into(),
+                );
+                Ok(req?)
+            },
+            client,
+            llm_token,
+            app_version,
+            require_auth,
+        )
+        .await;
+
+        response?;
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 fn process_completion_response(
@@ -383,12 +504,11 @@ fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b:
 
 fn git_info_for_file(
     project: &Entity<Project>,
-    project_path: &ProjectPath,
+    path: &project::ProjectPath,
     cx: &App,
 ) -> Option<PredictEditsGitInfo> {
     let git_store = project.read(cx).git_store().read(cx);
-    if let Some((repository, _repo_path)) =
-        git_store.repository_and_path_for_project_path(project_path, cx)
+    if let Some((repository, _repo_path)) = git_store.repository_and_path_for_project_path(path, cx)
     {
         let repository = repository.read(cx);
         let head_sha = repository

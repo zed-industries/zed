@@ -1,7 +1,8 @@
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPrediction, EditPredictionFinishedDebugEvent,
-    EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
-    EditPredictionStore, UserActionRecord, UserActionType, prediction::EditPredictionResult,
+    EditPredictionId, EditPredictionModel2, EditPredictionModelInput,
+    EditPredictionStartedDebugEvent, EditPredictionStore, UserActionRecord, UserActionType,
+    prediction::EditPredictionResult,
 };
 use anyhow::{Result, bail};
 use client::Client;
@@ -14,6 +15,7 @@ use gpui::{
 use language::{Anchor, Buffer, BufferSnapshot, Point, ToOffset as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use lsp::DiagnosticSeverity;
+use project::Project;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Write as _},
@@ -22,6 +24,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
+use zeta_prompt::RelatedFile;
 
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 const SWEEP_METRICS_URL: &str = "https://backend.app.sweep.dev/backend/track_autocomplete_metrics";
@@ -38,7 +41,89 @@ impl SweepAi {
             debug_info: debug_info(cx),
         }
     }
+}
 
+pub struct SweepModel {
+    sweep_ai: SweepAi,
+    client: Arc<Client>,
+}
+
+impl SweepModel {
+    pub fn new(sweep_ai: SweepAi, client: Arc<Client>) -> Self {
+        Self { sweep_ai, client }
+    }
+}
+
+impl EditPredictionModel2 for SweepModel {
+    fn requires_context(&self) -> bool {
+        true
+    }
+
+    fn requires_edit_history(&self) -> bool {
+        true
+    }
+
+    fn requires_user_actions(&self) -> bool {
+        true
+    }
+
+    fn is_enabled(&self, cx: &App) -> bool {
+        self.sweep_ai
+            .api_token
+            .read(cx)
+            .key(&SWEEP_CREDENTIALS_URL)
+            .is_some()
+    }
+
+    fn request_prediction(
+        &self,
+        project: Entity<Project>,
+        active_buffer: Entity<Buffer>,
+        position: language::Anchor,
+        context: Arc<[RelatedFile]>,
+        events: Vec<Arc<zeta_prompt::Event>>,
+        user_actions: Vec<UserActionRecord>,
+        _can_collect_example: bool,
+        cx: &mut App,
+    ) -> Task<Result<Option<EditPredictionResult>>> {
+        let snapshot = active_buffer.read(cx).snapshot();
+        let recent_paths = std::collections::VecDeque::new();
+
+        let inputs = EditPredictionModelInput {
+            project,
+            buffer: active_buffer,
+            snapshot,
+            position,
+            events,
+            related_files: context.to_vec(),
+            recent_paths,
+            trigger: cloud_llm_client::PredictEditsRequestTrigger::Other,
+            diagnostic_search_range: language::Point::new(0, 0)..language::Point::new(0, 0),
+            debug_tx: None,
+            user_actions,
+        };
+
+        self.sweep_ai.request_prediction_with_sweep(inputs, cx)
+    }
+
+    fn report_accepted_prediction(&self, current_prediction: CurrentEditPrediction, cx: &mut App) {
+        edit_prediction_accepted_impl(&self.sweep_ai, &self.client, current_prediction, cx);
+    }
+
+    fn report_shown_prediction(&self, prediction: &CurrentEditPrediction, cx: &mut App) {
+        if let Some(display_type) = prediction.shown_with {
+            edit_prediction_shown(
+                &self.sweep_ai,
+                self.client.clone(),
+                &prediction.prediction,
+                display_type,
+                cx,
+            );
+        }
+    }
+}
+
+impl SweepAi {
     pub fn request_prediction_with_sweep(
         &self,
         inputs: EditPredictionModelInput,
@@ -549,28 +634,32 @@ fn send_autocomplete_metrics_request(
     .detach_and_log_err(cx);
 }
 
+#[allow(dead_code)]
 pub(crate) fn edit_prediction_accepted(
     store: &EditPredictionStore,
     current_prediction: CurrentEditPrediction,
     cx: &App,
 ) {
-    let Some(api_token) = store
-        .sweep_ai
-        .api_token
-        .read(cx)
-        .key(&SWEEP_CREDENTIALS_URL)
-    else {
+    edit_prediction_accepted_impl(&store.sweep_ai, &store.client, current_prediction, cx);
+}
+
+fn edit_prediction_accepted_impl(
+    sweep_ai: &SweepAi,
+    client: &Arc<Client>,
+    current_prediction: CurrentEditPrediction,
+    cx: &App,
+) {
+    let Some(api_token) = sweep_ai.api_token.read(cx).key(&SWEEP_CREDENTIALS_URL) else {
         return;
     };
-    let debug_info = store.sweep_ai.debug_info.clone();
+    let debug_info = sweep_ai.debug_info.clone();
 
     let prediction = current_prediction.prediction;
 
     let (additions, deletions) = compute_edit_metrics(&prediction.edits, &prediction.snapshot);
     let autocomplete_id = prediction.id.to_string();
 
-    let device_id = store
-        .client
+    let device_id = client
         .user_id()
         .as_ref()
         .map(ToString::to_string)
@@ -596,7 +685,7 @@ pub(crate) fn edit_prediction_accepted(
         privacy_mode_enabled: false,
     };
 
-    send_autocomplete_metrics_request(cx, store.client.clone(), api_token, request_body);
+    send_autocomplete_metrics_request(cx, client.clone(), api_token, request_body);
 }
 
 pub fn edit_prediction_shown(

@@ -4,6 +4,7 @@ use collections::HashMap;
 use copilot::CopilotEditPredictionDelegate;
 use edit_prediction::{
     MercuryFeatureFlag, SweepFeatureFlag, ZedEditPredictionDelegate, Zeta2FeatureFlag,
+    mercury::MercuryModel, sweep_ai::SweepModel, zeta1::Zeta1Model, zeta2::Zeta2Model,
 };
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt;
@@ -203,29 +204,45 @@ fn assign_edit_prediction_provider(
                 && buffer.read(cx).file().is_some()
             {
                 let has_model = ep_store.update(cx, |ep_store, cx| {
-                    let model = if let EditPredictionProvider::Experimental(name) = value {
-                        if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
-                            && cx.has_flag::<SweepFeatureFlag>()
-                        {
-                            edit_prediction::EditPredictionModel::Sweep
-                        } else if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME
-                            && cx.has_flag::<Zeta2FeatureFlag>()
-                        {
-                            edit_prediction::EditPredictionModel::Zeta2 {
-                                version: Default::default(),
+                    let model: Box<dyn edit_prediction::EditPredictionModel2> =
+                        if let EditPredictionProvider::Experimental(name) = value {
+                            if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
+                                && cx.has_flag::<SweepFeatureFlag>()
+                            {
+                                Box::new(SweepModel::new(
+                                    edit_prediction::sweep_ai::SweepAi::new(cx),
+                                    client.clone(),
+                                ))
+                            } else if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME
+                                && cx.has_flag::<Zeta2FeatureFlag>()
+                            {
+                                Box::new(Zeta2Model::new(
+                                    client.clone(),
+                                    ep_store.llm_token().clone(),
+                                    user_store.clone(),
+                                    ep_store.custom_predict_edits_url(),
+                                    ep_store.reject_predictions_tx(),
+                                    Default::default(),
+                                ))
+                            } else if name == EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME
+                                && cx.has_flag::<MercuryFeatureFlag>()
+                            {
+                                Box::new(MercuryModel::new(edit_prediction::mercury::Mercury::new(
+                                    cx,
+                                )))
+                            } else {
+                                return false;
                             }
-                        } else if name == EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME
-                            && cx.has_flag::<MercuryFeatureFlag>()
-                        {
-                            edit_prediction::EditPredictionModel::Mercury
+                        } else if user_store.read(cx).current_user().is_some() {
+                            Box::new(Zeta1Model::new(
+                                client.clone(),
+                                ep_store.llm_token().clone(),
+                                ep_store.custom_predict_edits_url(),
+                                ep_store.reject_predictions_tx(),
+                            ))
                         } else {
                             return false;
-                        }
-                    } else if user_store.read(cx).current_user().is_some() {
-                        edit_prediction::EditPredictionModel::Zeta1
-                    } else {
-                        return false;
-                    };
+                        };
 
                     ep_store.set_edit_prediction_model(model);
                     ep_store.register_buffer(buffer, project, cx);

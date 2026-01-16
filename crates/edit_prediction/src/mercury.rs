@@ -1,7 +1,7 @@
 use crate::{
-    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
-    EditPredictionStartedDebugEvent, open_ai_response::text_from_response,
-    prediction::EditPredictionResult,
+    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModel2,
+    EditPredictionModelInput, EditPredictionStartedDebugEvent, UserActionRecord,
+    open_ai_response::text_from_response, prediction::EditPredictionResult,
 };
 use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
@@ -9,10 +9,11 @@ use gpui::{
     App, AppContext as _, Entity, Global, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
-use language::{OffsetRangeExt as _, ToOffset, ToPoint as _};
+use language::{Buffer, OffsetRangeExt as _, ToOffset, ToPoint as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
+use project::Project;
 use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
-use zeta_prompt::ZetaPromptInput;
+use zeta_prompt::{RelatedFile, ZetaPromptInput};
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
 const MAX_REWRITE_TOKENS: usize = 150;
@@ -28,12 +29,63 @@ impl Mercury {
             api_token: mercury_api_token(cx),
         }
     }
+}
 
+pub struct MercuryModel {
+    mercury: Mercury,
+}
+
+impl MercuryModel {
+    pub fn new(mercury: Mercury) -> Self {
+        Self { mercury }
+    }
+}
+
+impl EditPredictionModel2 for MercuryModel {
+    fn requires_context(&self) -> bool {
+        true
+    }
+
+    fn requires_edit_history(&self) -> bool {
+        true
+    }
+
+    fn is_enabled(&self, cx: &App) -> bool {
+        self.mercury
+            .api_token
+            .read(cx)
+            .key(&MERCURY_CREDENTIALS_URL)
+            .is_some()
+    }
+
+    fn request_prediction(
+        &self,
+        _project: Entity<Project>,
+        active_buffer: Entity<Buffer>,
+        position: language::Anchor,
+        context: Arc<[RelatedFile]>,
+        events: Vec<Arc<zeta_prompt::Event>>,
+        _user_actions: Vec<UserActionRecord>,
+        _can_collect_example: bool,
+        cx: &mut App,
+    ) -> Task<Result<Option<EditPredictionResult>>> {
+        self.mercury.request_prediction_impl(
+            active_buffer,
+            position,
+            context.to_vec(),
+            events,
+            None,
+            cx,
+        )
+    }
+}
+
+impl Mercury {
+    #[allow(dead_code)]
     pub(crate) fn request_prediction(
         &self,
         EditPredictionModelInput {
             buffer,
-            snapshot,
             position,
             events,
             related_files,
@@ -42,6 +94,19 @@ impl Mercury {
         }: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
+        self.request_prediction_impl(buffer, position, related_files, events, debug_tx, cx)
+    }
+
+    fn request_prediction_impl(
+        &self,
+        buffer: Entity<Buffer>,
+        position: language::Anchor,
+        related_files: Vec<RelatedFile>,
+        events: Vec<Arc<zeta_prompt::Event>>,
+        debug_tx: Option<futures::channel::mpsc::UnboundedSender<DebugEvent>>,
+        cx: &mut App,
+    ) -> Task<Result<Option<EditPredictionResult>>> {
+        let snapshot = buffer.read(cx).snapshot();
         self.api_token.update(cx, |key_state, cx| {
             _ = key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, cx);
         });
