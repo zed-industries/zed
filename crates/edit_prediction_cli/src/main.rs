@@ -30,6 +30,7 @@ use std::fmt::Display;
 use std::fs::{File, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::sync::Mutex;
 use std::{path::PathBuf, sync::Arc};
 
 use crate::distill::run_distill;
@@ -496,7 +497,7 @@ fn main() {
 
         cx.spawn(async move |cx| {
             let result = async {
-                let mut examples = load_examples(
+                let examples = load_examples(
                     app_state.client.http_client(),
                     &args,
                     output.as_ref(),
@@ -536,22 +537,30 @@ fn main() {
                         None
                     };
 
-                let mut grouped_examples = group_examples_by_repo(&mut examples);
-                let example_batches = grouped_examples.chunks_mut(args.max_parallelism);
+                let grouped_examples = Mutex::new(group_examples_by_repo(examples));
 
-                for example_batch in example_batches {
-                    let futures = example_batch.into_iter().map(|repo_examples| async {
-                        for example in repo_examples.iter_mut() {
+                let mut tasks = Vec::new();
+                for _ in 0..args.max_parallelism {
+                    tasks.push(async {
+                        let Some(repo_examples) = grouped_examples.lock().unwrap().pop_front()
+                        else {
+                            return;
+                        };
+                        for mut example in repo_examples {
                             let result = async {
                                 match &command {
                                     Command::ParseExample => {}
                                     Command::LoadProject => {
-                                        run_load_project(example, app_state.clone(), cx.clone())
-                                            .await?;
+                                        run_load_project(
+                                            &mut example,
+                                            app_state.clone(),
+                                            cx.clone(),
+                                        )
+                                        .await?;
                                     }
                                     Command::Context => {
                                         run_context_retrieval(
-                                            example,
+                                            &mut example,
                                             app_state.clone(),
                                             cx.clone(),
                                         )
@@ -559,7 +568,7 @@ fn main() {
                                     }
                                     Command::FormatPrompt(args) => {
                                         run_format_prompt(
-                                            example,
+                                            &mut example,
                                             args,
                                             app_state.clone(),
                                             cx.clone(),
@@ -568,7 +577,7 @@ fn main() {
                                     }
                                     Command::Predict(args) => {
                                         run_prediction(
-                                            example,
+                                            &mut example,
                                             args,
                                             app_state.clone(),
                                             cx.clone(),
@@ -576,11 +585,16 @@ fn main() {
                                         .await?;
                                     }
                                     Command::Distill => {
-                                        run_distill(example).await?;
+                                        run_distill(&mut example).await?;
                                     }
                                     Command::Score(args) | Command::Eval(args) => {
-                                        run_scoring(example, &args, app_state.clone(), cx.clone())
-                                            .await?;
+                                        run_scoring(
+                                            &mut example,
+                                            &args,
+                                            app_state.clone(),
+                                            cx.clone(),
+                                        )
+                                        .await?;
                                     }
                                     Command::Clean
                                     | Command::Synthesize(_)
@@ -600,7 +614,7 @@ fn main() {
                                     &command,
                                     &app_state,
                                     failfast_on_single_example,
-                                    example,
+                                    &example,
                                 )
                                 .await;
                                 true
@@ -611,7 +625,7 @@ fn main() {
                             let should_write = !failed || args.failed == FailedHandling::Keep;
                             if should_write {
                                 if let Some(ref mut sender) = output_sender.clone() {
-                                    let line = serde_json::to_string(example).unwrap();
+                                    let line = serde_json::to_string(&example).unwrap();
                                     sender
                                         .send(line)
                                         .await
@@ -619,14 +633,14 @@ fn main() {
                                 } else if args.output.is_none()
                                     && !matches!(command, Command::Eval(_))
                                 {
-                                    let line = serde_json::to_string(example).unwrap();
+                                    let line = serde_json::to_string(&example).unwrap();
                                     println!("{}", line);
                                 }
                             }
                         }
                     });
-                    futures::future::join_all(futures).await;
                 }
+                futures::future::join_all(tasks).await;
 
                 Progress::global().finalize();
 
@@ -638,7 +652,7 @@ fn main() {
                 }
 
                 match &command {
-                    Command::Eval(_) => score::print_report(&examples),
+                    Command::Eval(_) => score::print_report(&*grouped_examples.lock().unwrap()),
                     _ => (),
                 };
 

@@ -9,7 +9,7 @@ use crate::{
 use anyhow::Context as _;
 use edit_prediction::udiff::apply_diff_to_string;
 use gpui::AsyncApp;
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 pub async fn run_scoring(
     example: &mut Example,
@@ -56,7 +56,7 @@ pub async fn run_scoring(
     Ok(())
 }
 
-pub fn print_report(examples: &[Example]) {
+pub fn print_report(examples: &VecDeque<Vec<Example>>) {
     eprintln!(
         "──────────────────────────────────────────────────────────────────────────────────────"
     );
@@ -67,7 +67,7 @@ pub fn print_report(examples: &[Example]) {
 
     let mut all_delta_chr_f_scores = Vec::new();
 
-    for example in examples {
+    for example in examples.iter().flatten() {
         for score in example.score.iter() {
             eprintln!(
                 "{:<50} {:>9.2}",
