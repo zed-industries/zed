@@ -108,17 +108,6 @@ impl LaneState {
         }
     }
 
-    fn is_parent_commit(&self, other: &Oid, is_original: bool) -> bool {
-        match self {
-            LaneState::Empty => false,
-            LaneState::Active {
-                parent,
-                destination_column,
-                ..
-            } => parent == other && destination_column.is_none_or(|_| !is_original),
-        }
-    }
-
     fn is_empty(&self) -> bool {
         match self {
             LaneState::Empty => true,
@@ -212,6 +201,7 @@ struct CommitLineKey {
 pub struct GitGraph {
     lane_states: SmallVec<[LaneState; 8]>,
     lane_colors: HashMap<ActiveLaneIdx, BranchColor>,
+    parent_to_lane: HashMap<Oid, SmallVec<[(usize, Option<usize>); 1]>>,
     next_color: BranchColor,
     accent_colors_count: usize,
     pub commits: Vec<Rc<CommitEntry>>,
@@ -227,6 +217,7 @@ impl GitGraph {
         GitGraph {
             lane_states: SmallVec::default(),
             lane_colors: HashMap::default(),
+            parent_to_lane: HashMap::default(),
             next_color: BranchColor(0),
             accent_colors_count,
             commits: Vec::default(),
@@ -241,6 +232,7 @@ impl GitGraph {
     pub fn clear(&mut self) {
         self.lane_states.clear();
         self.lane_colors.clear();
+        self.parent_to_lane.clear();
         self.commits.clear();
         self.lines.clear();
         self.active_commit_lines.clear();
@@ -273,24 +265,26 @@ impl GitGraph {
         for commit in commits.into_iter() {
             let commit_row = self.commits.len();
 
-            let commit_lane = self
-                .lane_states
-                .iter()
-                .position(|lane: &LaneState| lane.is_parent_commit(&commit.sha, true));
+            let commit_lane = self.parent_to_lane.get(&commit.sha).and_then(|lanes| {
+                lanes.iter().find_map(|(lane_idx, dest)| {
+                    if dest.is_none() {
+                        Some(*lane_idx)
+                    } else {
+                        None
+                    }
+                })
+            });
 
             if commit_lane.is_some() {
-                self.lane_states
-                    .iter_mut()
-                    .enumerate()
-                    .filter_map(|(column, state)| {
-                        state
-                            .is_parent_commit(&commit.sha, false)
-                            .then(|| state.to_commit_lines(commit_row, column))
-                            .flatten()
-                    })
-                    .for_each(|commit_line| {
-                        self.lines.push(Rc::new(commit_line));
-                    });
+                if let Some(lanes) = self.parent_to_lane.remove(&commit.sha) {
+                    for (column, _) in lanes {
+                        if let Some(commit_line) =
+                            self.lane_states[column].to_commit_lines(commit_row, column)
+                        {
+                            self.lines.push(Rc::new(commit_line));
+                        }
+                    }
+                }
             }
 
             let commit_lane = commit_lane.unwrap_or_else(|| self.first_empty_lane_idx());
@@ -301,34 +295,30 @@ impl GitGraph {
                 .iter()
                 .enumerate()
                 .for_each(|(parent_idx, parent)| {
-                    let parent_lane =
-                        self.lane_states
-                            .iter()
-                            .enumerate()
-                            .find_map(|(lane_idx, lane_state)| match lane_state {
-                                LaneState::Active {
-                                    parent: parent_sha,
-                                    destination_column,
-                                    ..
-                                } if parent_sha == parent => {
-                                    let final_destination = destination_column.unwrap_or(lane_idx);
-                                    Some((final_destination, parent_sha))
-                                }
-                                _ => None,
-                            });
+                    let parent_lane = self.parent_to_lane.get(parent).and_then(|lanes| {
+                        lanes.iter().find_map(|(lane_idx, dest)| {
+                            let final_destination = dest.unwrap_or(*lane_idx);
+                            Some(final_destination)
+                        })
+                    });
 
-                    if let Some((parent_lane, parent_sha)) = parent_lane
+                    if let Some(parent_lane) = parent_lane
                         && parent_lane != commit_lane
                     {
                         self.lane_states[commit_lane] = LaneState::Active {
                             child: commit.sha,
-                            parent: *parent_sha,
+                            parent: *parent,
                             color: commit_color,
                             starting_row: commit_row,
                             starting_col: commit_lane,
                             destination_column: Some(parent_lane),
                             segments: smallvec![CommitLineSegment::Straight { to_row: usize::MAX }],
                         };
+
+                        self.parent_to_lane
+                            .entry(*parent)
+                            .or_default()
+                            .push((commit_lane, Some(parent_lane)));
                     } else if parent_idx == 0 {
                         self.lane_states[commit_lane] = LaneState::Active {
                             parent: *parent,
@@ -339,6 +329,11 @@ impl GitGraph {
                             destination_column: None,
                             segments: smallvec![CommitLineSegment::Straight { to_row: usize::MAX }],
                         };
+
+                        self.parent_to_lane
+                            .entry(*parent)
+                            .or_default()
+                            .push((commit_lane, None));
                     } else {
                         let parent_lane = self.first_empty_lane_idx();
                         let parent_color = self.get_lane_color(parent_lane);
@@ -356,6 +351,11 @@ impl GitGraph {
                                 curve_kind: CurveKind::Merge,
                             },],
                         };
+
+                        self.parent_to_lane
+                            .entry(*parent)
+                            .or_default()
+                            .push((parent_lane, None));
                     }
                 });
 
