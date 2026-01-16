@@ -423,7 +423,7 @@ fn main() {
                 HashMap::default()
             }
         };
-        trusted_worktrees::init(db_trusted_paths, None, None, cx);
+        trusted_worktrees::init(db_trusted_paths, cx);
         menu::init();
         zed_actions::init();
 
