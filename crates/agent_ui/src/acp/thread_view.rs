@@ -57,7 +57,9 @@ use ui::{
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
-use workspace::{CollaboratorId, NewTerminal, Toast, Workspace, notifications::NotificationId};
+use workspace::{
+    CollaboratorId, NewTerminal, OpenOptions, Toast, Workspace, notifications::NotificationId,
+};
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
@@ -7491,39 +7493,101 @@ impl AcpThreadView {
             )
     }
 
-    fn render_command_load_errors(&self, cx: &mut Context<Self>) -> Option<Callout> {
+    fn render_command_load_errors(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         if self.command_load_errors_dismissed || self.command_load_errors.is_empty() {
             return None;
         }
 
         let error_count = self.command_load_errors.len();
         let title = if error_count == 1 {
-            "Failed to load slash command".to_string()
+            "Failed to load slash command"
         } else {
-            format!("Failed to load {} slash commands", error_count)
+            "Failed to load slash commands"
         };
 
-        let description = self
-            .command_load_errors
-            .iter()
-            .map(|error| format!("• {}: {}", error.path.display(), error.message))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let workspace = self.workspace.clone();
 
         Some(
-            Callout::new()
-                .severity(Severity::Warning)
-                .icon(IconName::Warning)
-                .title(title)
-                .description(description)
-                .dismiss_action(
-                    IconButton::new("dismiss-command-errors", IconName::Close)
-                        .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text("Dismiss"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.clear_command_load_errors(cx);
-                        })),
-                ),
+            v_flex()
+                .w_full()
+                .p_2()
+                .gap_1()
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().surface_background)
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::Warning)
+                                        .size(IconSize::Small)
+                                        .color(Color::Warning),
+                                )
+                                .child(
+                                    Label::new(title)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Warning),
+                                ),
+                        )
+                        .child(
+                            IconButton::new("dismiss-command-errors", IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text("Dismiss"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.clear_command_load_errors(cx);
+                                })),
+                        ),
+                )
+                .children(self.command_load_errors.iter().enumerate().map({
+                    move |(i, error)| {
+                        let path = error.path.clone();
+                        let workspace = workspace.clone();
+                        let file_name = error
+                            .path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| error.path.display().to_string());
+
+                        h_flex()
+                            .id(ElementId::Name(format!("command-error-{i}").into()))
+                            .gap_1()
+                            .px_1()
+                            .py_0p5()
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .hover(|style| style.bg(cx.theme().colors().element_hover))
+                            .tooltip(Tooltip::text(format!(
+                                "Click to open {}\n\n{}",
+                                error.path.display(),
+                                error.message
+                            )))
+                            .on_click({
+                                move |_, window, cx| {
+                                    if let Some(workspace) = workspace.upgrade() {
+                                        workspace.update(cx, |workspace, cx| {
+                                            workspace
+                                                .open_abs_path(
+                                                    path.clone(),
+                                                    OpenOptions::default(),
+                                                    window,
+                                                    cx,
+                                                )
+                                                .detach_and_log_err(cx);
+                                        });
+                                    }
+                                }
+                            })
+                            .child(
+                                Label::new(format!("• {}: {}", file_name, error.message))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                    }
+                })),
         )
     }
 
