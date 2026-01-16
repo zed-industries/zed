@@ -310,7 +310,10 @@ pub struct Repository {
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
     pub initial_graph_data: HashMap<
         (LogOrder, LogSource),
-        Shared<Task<Result<Arc<Vec<Arc<InitialGraphCommitData>>>, SharedString>>>,
+        (
+            Task<Result<(), SharedString>>,
+            Vec<Arc<InitialGraphCommitData>>,
+        ),
     >,
     graph_commit_data_handler: GraphCommitHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
@@ -4217,38 +4220,71 @@ impl Repository {
         })
     }
 
-    // todo! This function should cache the args and futures
-    pub fn initial_graph_data(
+    pub fn graph_data(
         &mut self,
         log_source: LogSource,
         log_order: LogOrder,
-        cx: &mut App,
-    ) -> Shared<Task<Result<Arc<Vec<Arc<InitialGraphCommitData>>>, SharedString>>> {
-        self.initial_graph_data
-            .entry((log_order.clone(), log_source.clone()))
+        range: Range<usize>,
+        cx: &mut Context<Self>,
+    ) -> &[Arc<InitialGraphCommitData>] {
+        let initial_commit_data = self
+            .initial_graph_data
+            .entry((log_order, log_source.clone()))
             .or_insert_with(|| {
                 let state = self.repository_state.clone();
-                cx.spawn(async move |cx| match state.await {
-                    Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => {
-                        cx.background_executor()
-                            .spawn(async move {
-                                Ok(Arc::new(
+                (
+                    cx.spawn(async move |repository, cx| {
+                        let result = match state {
+                            Ok(RepositoryState::Local(LocalRepositoryState {
+                                backend, ..
+                            })) => {
+                                let (request_tx, request_rx) =
+                                    smol::channel::unbounded::<Vec<Arc<InitialGraphCommitData>>>();
+
+                                let task = cx.background_executor().spawn(async move {
                                     backend
-                                        .initial_graph_data(log_source, log_order)
+                                        .initial_graph_data(log_source, log_order, request_tx)
                                         .await
-                                        .map_err(|err| SharedString::from(err.to_string()))?,
-                                ))
-                            })
-                            .await
-                    }
-                    Ok(RepositoryState::Remote(_)) => {
-                        Err("Git graph is not supported for collab yet".into())
-                    }
-                    Err(e) => Err(SharedString::from(e)),
-                })
-                .shared()
+                                        .map_err(|err| SharedString::from(err.to_string()));
+                                });
+
+                                while let Ok(initial_graph_commit_data) = request_rx.recv().await {
+                                    repository.update(cx, |repository, cx| {
+                                        let graph_data = repository
+                                            .initial_graph_data
+                                            .get_mut(&(log_order, log_source))
+                                            .as_mut()
+                                            .map(|(_, graph_data)| graph_data);
+                                        debug_assert!(
+                                            graph_data.is_some(),
+                                            "This task should be dropped if data doesn't exist"
+                                        );
+
+                                        if let Some(graph_data) = graph_data {
+                                            graph_data.extend(initial_graph_commit_data);
+                                        }
+                                    });
+                                }
+
+                                task.await;
+
+                                Ok(())
+                            }
+                            Ok(RepositoryState::Remote(_)) => {
+                                Err("Git graph is not supported for collab yet".into())
+                            }
+                            Err(e) => Err(SharedString::from(e)),
+                        };
+
+                        Ok(())
+                    }),
+                    vec![],
+                )
             })
-            .clone()
+            .1;
+
+        &initial_commit_data
+            [range.start..range.end.min(initial_commit_data.len().saturating_sub(1))]
     }
 
     pub fn fetch_commit_data(&mut self, sha: Oid, cx: &mut Context<Self>) -> &CommitDataState {

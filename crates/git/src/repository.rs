@@ -15,6 +15,7 @@ use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use smallvec::SmallVec;
+use smol::channel::Sender;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use text::LineEnding;
 
@@ -528,7 +529,7 @@ impl Drop for GitExcludeOverride {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Copy)]
 pub enum LogOrder {
     #[default]
     DateOrder,
@@ -804,7 +805,8 @@ pub trait GitRepository: Send + Sync {
         &self,
         log_source: LogSource,
         log_order: LogOrder,
-    ) -> BoxFuture<'_, Result<Vec<Arc<InitialGraphCommitData>>>>;
+        request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
+    ) -> BoxFuture<'_, Result<()>>;
 
     fn rev_list_count(&self, source: LogSource) -> BoxFuture<'_, Result<usize>>;
 
@@ -2558,7 +2560,8 @@ impl GitRepository for RealGitRepository {
         &self,
         log_source: LogSource,
         log_order: LogOrder,
-    ) -> BoxFuture<'_, Result<Vec<Arc<InitialGraphCommitData>>>> {
+        request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
+    ) -> BoxFuture<'_, Result<()>> {
         let git_binary_path = self.any_git_binary_path.clone();
         let working_directory = self.working_directory();
         let executor = self.executor.clone();
@@ -2567,17 +2570,47 @@ impl GitRepository for RealGitRepository {
             let working_directory = working_directory?;
             let git = GitBinary::new(git_binary_path, working_directory, executor);
 
-            // Format: SHA PARENTS\x00REF_NAMES
+            // Format: SHA PARENTS\x00REF_NAMES todo! make sure this is still true
             // Using \x00 as separator since ref names can contain spaces
-            let args = [
+            let mut command = git.build_command([
                 "log",
                 "--format=%H %P%x00%D",
                 log_order.as_arg(),
                 log_source.get_arg(),
-            ];
+            ]);
+            command.stdout(Stdio::piped());
+            command.stderr(Stdio::null());
 
-            let output = git.run(&args).await?;
-            Ok(parse_initial_graph_output(&output))
+            let mut child = command.spawn()?;
+            let stdout = child.stdout.take().context("failed to get stdout")?;
+            let mut reader = BufReader::new(stdout);
+
+            let mut line_buffer = String::new();
+            let mut lines: Vec<String> = Vec::with_capacity(GRAPH_CHUNK_SIZE);
+
+            loop {
+                line_buffer.clear();
+                let bytes_read = reader.read_line(&mut line_buffer).await?;
+
+                if bytes_read == 0 {
+                    if !lines.is_empty() {
+                        let commits = parse_initial_graph_output(lines.iter().map(|s| s.as_str()));
+                        request_tx.send(commits).await.ok();
+                    }
+                    break;
+                }
+
+                lines.push(std::mem::take(&mut line_buffer));
+
+                if lines.len() >= GRAPH_CHUNK_SIZE {
+                    let commits = parse_initial_graph_output(lines.iter().map(|s| s.as_str()));
+                    request_tx.send(commits).await.ok();
+                    lines.clear();
+                }
+            }
+
+            child.status().await?;
+            Ok(())
         }
         .boxed()
     }
@@ -2710,9 +2743,10 @@ async fn read_single_commit_response(
         .ok_or_else(|| anyhow!("failed to parse commit {}", sha))
 }
 
-fn parse_initial_graph_output(output: &str) -> Vec<Arc<InitialGraphCommitData>> {
-    output
-        .lines()
+fn parse_initial_graph_output<'a>(
+    lines: impl Iterator<Item = &'a str>,
+) -> Vec<Arc<InitialGraphCommitData>> {
+    lines
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
             // Format: "SHA PARENT1 PARENT2...\x00REF1, REF2, ..."

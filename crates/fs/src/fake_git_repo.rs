@@ -19,10 +19,9 @@ use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task, TaskLabel};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
-use smol::future::FutureExt as _;
+use smol::{channel::Sender, future::FutureExt as _};
 use std::{
     path::PathBuf,
-    rc::Rc,
     sync::{Arc, LazyLock},
 };
 use text::LineEnding;
@@ -744,8 +743,9 @@ impl GitRepository for FakeGitRepository {
         &self,
         _log_source: LogSource,
         _log_order: LogOrder,
-    ) -> BoxFuture<'_, Result<Vec<Arc<InitialGraphCommitData>>>> {
-        async { Ok(Vec::new()) }.boxed()
+        _request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        async { Ok(()) }.boxed()
     }
 
     fn rev_list_count(&self, _source: LogSource) -> BoxFuture<'_, Result<usize>> {
