@@ -923,9 +923,13 @@ impl SettingsStore {
                     store.set_configs(root_id, directory_path, editorconfig_contents)
                 })?;
             }
-            (LocalSettingsPath::OutsideWorktree(_), _, _) => {
-                // Only supported by editor config at the moment
-                unreachable!()
+            (LocalSettingsPath::OutsideWorktree(path), kind, _) => {
+                log::error!(
+                    "OutsideWorktree path {:?} with kind {:?} is only supported by editorconfig",
+                    path,
+                    kind
+                );
+                return Ok(());
             }
         }
         if let LocalSettingsPath::InWorktree(directory_path) = &path {

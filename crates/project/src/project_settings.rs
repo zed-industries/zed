@@ -1276,9 +1276,13 @@ impl SettingsObserver {
                 (directory, LocalSettingsKind::Editorconfig) => {
                     apply_local_settings(worktree_id, directory.clone(), kind, &file_content, cx);
                 }
-                (LocalSettingsPath::OutsideWorktree(_), _) => {
-                    // Only supported by editor config at the moment
-                    unreachable!()
+                (LocalSettingsPath::OutsideWorktree(path), kind) => {
+                    log::error!(
+                        "OutsideWorktree path {:?} with kind {:?} is only supported by editorconfig",
+                        path,
+                        kind
+                    );
+                    continue;
                 }
             };
 
