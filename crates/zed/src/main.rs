@@ -628,6 +628,7 @@ fn main() {
         agent_ui_v2::agents_panel::init(cx);
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
+        dev_container::init(cx);
 
         load_embedded_fonts(cx);
 

@@ -4882,6 +4882,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 
 [[package]]
+name = "dev_container"
+version = "0.1.0"
+dependencies = [
+ "futures 0.3.31",
+ "gpui",
+ "http 1.3.1",
+ "http_client",
+ "log",
+ "menu",
+ "node_runtime",
+ "paths",
+ "picker",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "diagnostics"
 version = "0.1.0"
 dependencies = [
@@ -13320,6 +13342,7 @@ dependencies = [
  "auto_update",
  "dap",
  "db",
+ "dev_container",
  "editor",
  "extension",
  "extension_host",
@@ -20796,6 +20819,7 @@ dependencies = [
  "debug_adapter_extension",
  "debugger_tools",
  "debugger_ui",
+ "dev_container",
  "diagnostics",
  "edit_prediction",
  "edit_prediction_ui",
