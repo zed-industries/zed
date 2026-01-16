@@ -12,8 +12,8 @@ use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
 
 use agent_client_protocol as acp;
 use agent_settings::{
-    AgentProfileId, AgentProfileSettings, AgentSettings, CompletionMode,
-    SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
+    AgentProfileId, AgentProfileSettings, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT,
+    SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -32,12 +32,11 @@ use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelExt,
-    LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage,
-    ZED_CLOUD_PROVIDER_ID,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
+    LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
 use prompt_store::ProjectContext;
@@ -691,7 +690,6 @@ pub struct Thread {
     summary: Option<SharedString>,
     messages: Vec<Message>,
     user_store: Entity<UserStore>,
-    completion_mode: CompletionMode,
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
@@ -753,7 +751,6 @@ impl Thread {
             summary: None,
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
-            completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             running_turn: None,
             pending_message: None,
             tools: BTreeMap::default(),
@@ -806,7 +803,6 @@ impl Thread {
             summary: None,
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
-            completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             running_turn: None,
             pending_message: None,
             tools: parent_tools,
@@ -1003,7 +999,6 @@ impl Thread {
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
             user_store: project.read(cx).user_store(),
-            completion_mode: db_thread.completion_mode.unwrap_or_default(),
             running_turn: None,
             pending_message: None,
             tools: BTreeMap::default(),
@@ -1042,7 +1037,6 @@ impl Thread {
                 provider: model.provider_id().to_string(),
                 model: model.name().0.to_string(),
             }),
-            completion_mode: Some(self.completion_mode),
             profile: Some(self.profile_id.clone()),
             imported: self.imported,
         };
@@ -1112,20 +1106,6 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         self.summarization_model = model;
-        cx.notify()
-    }
-
-    pub fn completion_mode(&self) -> CompletionMode {
-        self.completion_mode
-    }
-
-    pub fn set_completion_mode(&mut self, mode: CompletionMode, cx: &mut Context<Self>) {
-        let old_usage = self.latest_token_usage();
-        self.completion_mode = mode;
-        let new_usage = self.latest_token_usage();
-        if old_usage != new_usage {
-            cx.emit(TokenUsageUpdated(new_usage));
-        }
         cx.notify()
     }
 
@@ -1285,7 +1265,7 @@ impl Thread {
         let usage = self.latest_request_token_usage()?;
         let model = self.model.clone()?;
         Some(acp_thread::TokenUsage {
-            max_tokens: model.max_token_count_for_mode(self.completion_mode.into()),
+            max_tokens: model.max_token_count(),
             used_tokens: usage.total_tokens(),
             input_tokens: usage.input_tokens,
             output_tokens: usage.output_tokens,
@@ -2175,7 +2155,6 @@ impl Thread {
 
         log::debug!("Building completion request");
         log::debug!("Completion intent: {:?}", completion_intent);
-        log::debug!("Completion mode: {:?}", self.completion_mode);
 
         let available_tools: Vec<_> = self
             .running_turn
@@ -2191,7 +2170,6 @@ impl Thread {
             thread_id: Some(self.id.to_string()),
             prompt_id: Some(self.prompt_id.to_string()),
             intent: Some(completion_intent),
-            mode: Some(self.completion_mode.into()),
             messages,
             tools,
             tool_choice: None,

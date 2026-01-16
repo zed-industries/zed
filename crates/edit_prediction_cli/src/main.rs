@@ -195,8 +195,8 @@ enum PredictionProvider {
     Mercury,
     Zeta1,
     Zeta2(ZetaVersion),
-    Teacher,
-    TeacherNonBatching,
+    Teacher(ZetaVersion),
+    TeacherNonBatching(ZetaVersion),
 }
 
 impl Default for PredictionProvider {
@@ -212,8 +212,10 @@ impl std::fmt::Display for PredictionProvider {
             PredictionProvider::Mercury => write!(f, "mercury"),
             PredictionProvider::Zeta1 => write!(f, "zeta1"),
             PredictionProvider::Zeta2(version) => write!(f, "zeta2:{version}"),
-            PredictionProvider::Teacher => write!(f, "teacher"),
-            PredictionProvider::TeacherNonBatching => write!(f, "teacher-non-batching"),
+            PredictionProvider::Teacher(version) => write!(f, "teacher:{version}"),
+            PredictionProvider::TeacherNonBatching(version) => {
+                write!(f, "teacher-non-batching:{version}")
+            }
         }
     }
 }
@@ -221,29 +223,31 @@ impl std::fmt::Display for PredictionProvider {
 impl std::str::FromStr for PredictionProvider {
     type Err = anyhow::Error;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(mut s: &str) -> Result<Self, Self::Err> {
+        let mut version = ZetaVersion::default();
+        if let Some((first, second)) = s.split_once(':') {
+            version = ZetaVersion::parse(second)?;
+            s = first;
+        }
+
         let s_lower = s.to_lowercase();
         match s_lower.as_str() {
             "sweep" => Ok(PredictionProvider::Sweep),
             "mercury" => Ok(PredictionProvider::Mercury),
             "zeta1" => Ok(PredictionProvider::Zeta1),
-            // Handle both old format "zeta2" and new format with version
-            "zeta2" => Ok(PredictionProvider::Zeta2(ZetaVersion::default())),
-            "teacher" => Ok(PredictionProvider::Teacher),
+            "zeta2" => Ok(PredictionProvider::Zeta2(version)),
+            "teacher" => Ok(PredictionProvider::Teacher(version)),
             "teacher-non-batching" | "teacher_non_batching" | "teachernonbatching" => {
-                Ok(PredictionProvider::TeacherNonBatching)
+                Ok(PredictionProvider::TeacherNonBatching(version))
             }
-            _ if s_lower.starts_with("zeta2:") => {
-                let version_str = &s[6..];
-                let version = ZetaVersion::parse(version_str)?;
-                Ok(PredictionProvider::Zeta2(version))
-            }
-            _ => anyhow::bail!(
-                "unknown provider `{s}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher-non-batching\n\
+            _ => {
+                anyhow::bail!(
+                    "unknown provider `{s}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher-non-batching\n\
                  For zeta2, you can optionally specify a version like `zeta2:ordered` or `zeta2:V0113_Ordered`.\n\
                  Available zeta versions:\n{}",
-                ZetaVersion::options_as_string()
-            ),
+                    ZetaVersion::options_as_string()
+                )
+            }
         }
     }
 }

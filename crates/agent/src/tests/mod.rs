@@ -2858,7 +2858,6 @@ async fn test_send_no_retry_on_success(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
@@ -2902,7 +2901,6 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
@@ -2967,7 +2965,6 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
 
     let events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.add_tool(EchoTool);
             thread.send(UserMessageId::new(), ["Call the echo tool!"], cx)
         })
@@ -3048,7 +3045,6 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
