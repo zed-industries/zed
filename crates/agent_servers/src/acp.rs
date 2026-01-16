@@ -645,8 +645,8 @@ impl AgentConnection for AcpConnection {
         })
     }
 
-    fn supports_load_session(&self) -> bool {
-        self.agent_capabilities.load_session
+    fn supports_load_session(&self, cx: &App) -> bool {
+        cx.has_flag::<AcpBetaFeatureFlag>() && self.agent_capabilities.load_session
     }
 
     fn load_session(
@@ -656,7 +656,7 @@ impl AgentConnection for AcpConnection {
         cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
-        if !self.agent_capabilities.load_session {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() || !self.agent_capabilities.load_session {
             return Task::ready(Err(anyhow!(LoadError::Other(
                 "Loading sessions is not supported by this agent.".into()
             ))));
@@ -676,7 +676,7 @@ impl AgentConnection for AcpConnection {
                 self.clone(),
                 project,
                 action_log,
-                session_id.clone(),
+                session.session_id.clone(),
                 watch::Receiver::constant(prompt_capabilities),
                 cx,
             )
@@ -695,9 +695,9 @@ impl AgentConnection for AcpConnection {
 
         cx.spawn(async move |cx| {
             let response = match conn
-                .load_session(acp::LoadSessionRequest::new(session_id.clone(), cwd).mcp_servers(
-                    mcp_servers,
-                ))
+                .load_session(
+                    acp::LoadSessionRequest::new(session_id.clone(), cwd).mcp_servers(mcp_servers),
+                )
                 .await
             {
                 Ok(response) => response,

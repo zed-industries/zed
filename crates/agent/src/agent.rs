@@ -1220,7 +1220,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         })
     }
 
-    fn supports_load_session(&self) -> bool {
+    fn supports_load_session(&self, _cx: &App) -> bool {
         true
     }
 
