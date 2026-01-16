@@ -37,7 +37,7 @@ use workspace::Workspace;
 use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{env, mem};
 use util::{RangeExt as _, ResultExt as _};
@@ -101,9 +101,6 @@ pub struct MercuryFeatureFlag;
 impl FeatureFlag for MercuryFeatureFlag {
     const NAME: &str = "mercury";
 }
-
-pub(crate) static EDIT_PREDICTIONS_MODEL_ID: LazyLock<Option<String>> =
-    LazyLock::new(|| env::var("ZED_ZETA_MODEL").ok());
 
 pub struct Zeta2FeatureFlag;
 

@@ -1,8 +1,8 @@
 use crate::prediction::EditPredictionResult;
 use crate::{
-    CurrentEditPrediction, DebugEvent, EDIT_PREDICTIONS_MODEL_ID, EditPredictionFinishedDebugEvent,
-    EditPredictionId, EditPredictionModel2, EditPredictionModelInput,
-    EditPredictionStartedDebugEvent, ZedUpdateRequiredError, zeta_api,
+    CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
+    EditPredictionModel2, EditPredictionModelInput, EditPredictionStartedDebugEvent,
+    ZedUpdateRequiredError, zeta_api,
 };
 use anyhow::{Result, anyhow};
 use client::{Client, EditPredictionUsage, UserStore};
@@ -137,7 +137,7 @@ impl EditPredictionModel2 for Zeta2Model {
                 let (request_id, output_text, usage) = if let Some(custom_url) = custom_url {
                     let prompt = format_zeta_prompt(&prompt_input, zeta_version);
                     let request = RawCompletionRequest {
-                        model: EDIT_PREDICTIONS_MODEL_ID.clone().unwrap_or_default(),
+                        model: zeta_api::RAW_MODEL_ID.clone().unwrap_or_default(),
                         prompt,
                         temperature: None,
                         stop: vec![],

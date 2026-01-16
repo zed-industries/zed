@@ -9,11 +9,13 @@ use gpui::http_client::{self, AsyncBody, Method, Url};
 use language_model::LlmApiToken;
 use semver::Version;
 use serde::de::DeserializeOwned;
-use std::sync::Arc;
+use std::env;
+use std::sync::{Arc, LazyLock};
 use thiserror::Error;
 use zeta_prompt::{ZetaPromptInput, ZetaVersion};
 
-use crate::EDIT_PREDICTIONS_MODEL_ID;
+pub(crate) static RAW_MODEL_ID: LazyLock<Option<String>> =
+    LazyLock::new(|| env::var("ZED_ZETA_MODEL").ok());
 
 pub const ZED_VERSION_HEADER_NAME: &str = cloud_llm_client::ZED_VERSION_HEADER_NAME;
 
@@ -68,7 +70,7 @@ pub async fn send_v3_request(
 
     let request = PredictEditsV3Request {
         input,
-        model: EDIT_PREDICTIONS_MODEL_ID.clone(),
+        model: RAW_MODEL_ID.clone(),
         prompt_version,
     };
 
