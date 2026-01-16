@@ -5215,6 +5215,551 @@ async fn test_nested_subagent_serialization(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_diff_content_reconstruction(cx: &mut TestAppContext) {
+    // This test verifies that Diff content can be serialized and reconstructed
+    // as a viewable diff in the UI.
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+    let serialized = acp_thread::SerializedAcpThread {
+        title: "Diff Test".to_string(),
+        session_id: "diff-session".to_string(),
+        entries: vec![
+            acp_thread::SerializedAgentThreadEntry::UserMessage {
+                id: Some("msg-1".to_string()),
+                content: "Edit the file".to_string(),
+                indented: false,
+            },
+            acp_thread::SerializedAgentThreadEntry::ToolCall {
+                id: "edit-1".to_string(),
+                tool_name: Some("edit_file".to_string()),
+                label: "Editing src/main.rs".to_string(),
+                kind: acp_thread::SerializedToolKind::Edit,
+                status: acp_thread::SerializedToolCallStatus::Completed,
+                content: vec![acp_thread::SerializedToolCallContent::Diff {
+                    path: "src/main.rs".to_string(),
+                    old_text: Some("fn main() {\n    println!(\"Hello\");\n}".to_string()),
+                    new_text: "fn main() {\n    println!(\"Hello, World!\");\n}".to_string(),
+                }],
+                raw_input: Some(json!({"path": "src/main.rs"})),
+                raw_output: None,
+            },
+        ],
+    };
+
+    // Serialize to JSON and back
+    let json = serde_json::to_string(&serialized).unwrap();
+    let restored: acp_thread::SerializedAcpThread = serde_json::from_str(&json).unwrap();
+
+    // Verify diff content was preserved
+    match &restored.entries[1] {
+        acp_thread::SerializedAgentThreadEntry::ToolCall { content, .. } => match &content[0] {
+            acp_thread::SerializedToolCallContent::Diff {
+                path,
+                old_text,
+                new_text,
+            } => {
+                assert_eq!(path, "src/main.rs");
+                assert!(old_text.as_ref().unwrap().contains("Hello"));
+                assert!(new_text.contains("Hello, World!"));
+            }
+            _ => panic!("Expected Diff content"),
+        },
+        _ => panic!("Expected ToolCall entry"),
+    }
+
+    // Reconstruct the thread
+    let action_log = cx.new(|_| ActionLog::new(project.clone()));
+    let reconstructed = cx.new(|cx| {
+        acp_thread::AcpThread::from_serialized(restored, project.clone(), action_log, cx)
+    });
+
+    // Verify the reconstructed thread has a Diff content
+    reconstructed.read_with(cx, |thread, cx| {
+        assert_eq!(thread.entries().len(), 2);
+
+        if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = &thread.entries()[1] {
+            assert_eq!(tool_call.content.len(), 1);
+            // The diff should be reconstructed as a Diff variant
+            match &tool_call.content[0] {
+                acp_thread::ToolCallContent::Diff(diff_entity) => {
+                    let diff = diff_entity.read(cx);
+                    // Verify the diff has the expected base text
+                    assert!(diff.base_text().contains("Hello"));
+                }
+                _ => panic!(
+                    "Expected Diff content, got {:?}",
+                    std::mem::discriminant(&tool_call.content[0])
+                ),
+            }
+        } else {
+            panic!("Expected ToolCall entry");
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_terminal_content_reconstruction(cx: &mut TestAppContext) {
+    // This test verifies that Terminal content is serialized and reconstructed
+    // as markdown (since terminals cannot be fully reconstructed).
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+    let serialized = acp_thread::SerializedAcpThread {
+        title: "Terminal Test".to_string(),
+        session_id: "terminal-session".to_string(),
+        entries: vec![acp_thread::SerializedAgentThreadEntry::ToolCall {
+            id: "terminal-1".to_string(),
+            tool_name: Some("terminal".to_string()),
+            label: "Running ls -la".to_string(),
+            kind: acp_thread::SerializedToolKind::Execute,
+            status: acp_thread::SerializedToolCallStatus::Completed,
+            content: vec![acp_thread::SerializedToolCallContent::Terminal {
+                id: "term-abc123".to_string(),
+                command: "ls -la".to_string(),
+                output: "total 42\ndrwxr-xr-x  5 user  staff  160 Jan  1 12:00 .\n".to_string(),
+            }],
+            raw_input: Some(json!({"command": "ls -la"})),
+            raw_output: None,
+        }],
+    };
+
+    // Serialize to JSON and back
+    let json = serde_json::to_string(&serialized).unwrap();
+    let restored: acp_thread::SerializedAcpThread = serde_json::from_str(&json).unwrap();
+
+    // Verify terminal content was preserved in serialized form
+    match &restored.entries[0] {
+        acp_thread::SerializedAgentThreadEntry::ToolCall { content, .. } => match &content[0] {
+            acp_thread::SerializedToolCallContent::Terminal {
+                id,
+                command,
+                output,
+            } => {
+                assert_eq!(id, "term-abc123");
+                assert_eq!(command, "ls -la");
+                assert!(output.contains("total 42"));
+            }
+            _ => panic!("Expected Terminal content"),
+        },
+        _ => panic!("Expected ToolCall entry"),
+    }
+
+    // Reconstruct the thread
+    let action_log = cx.new(|_| ActionLog::new(project.clone()));
+    let reconstructed = cx.new(|cx| {
+        acp_thread::AcpThread::from_serialized(restored, project.clone(), action_log, cx)
+    });
+
+    // Verify the reconstructed thread has the terminal content as markdown
+    reconstructed.read_with(cx, |thread, cx| {
+        assert_eq!(thread.entries().len(), 1);
+
+        if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = &thread.entries()[0] {
+            assert_eq!(tool_call.content.len(), 1);
+            // Terminal content is converted to markdown during reconstruction
+            match &tool_call.content[0] {
+                acp_thread::ToolCallContent::ContentBlock(block) => {
+                    let markdown = block.to_markdown(cx);
+                    assert!(
+                        markdown.contains("ls -la"),
+                        "Should contain command: {}",
+                        markdown
+                    );
+                    assert!(
+                        markdown.contains("total 42"),
+                        "Should contain output: {}",
+                        markdown
+                    );
+                }
+                _ => panic!("Expected ContentBlock for reconstructed terminal"),
+            }
+        } else {
+            panic!("Expected ToolCall entry");
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_thought_chunk_reconstruction(cx: &mut TestAppContext) {
+    // This test verifies that Thought chunks in assistant messages are properly
+    // serialized and reconstructed.
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+    let serialized = acp_thread::SerializedAcpThread {
+        title: "Thought Test".to_string(),
+        session_id: "thought-session".to_string(),
+        entries: vec![acp_thread::SerializedAgentThreadEntry::AssistantMessage {
+            chunks: vec![
+                acp_thread::SerializedAssistantChunk::Thought {
+                    markdown: "Let me think about this problem carefully...".to_string(),
+                },
+                acp_thread::SerializedAssistantChunk::Message {
+                    markdown: "Based on my analysis, here's the answer.".to_string(),
+                },
+            ],
+            indented: false,
+        }],
+    };
+
+    // Serialize to JSON and back
+    let json = serde_json::to_string(&serialized).unwrap();
+    let restored: acp_thread::SerializedAcpThread = serde_json::from_str(&json).unwrap();
+
+    // Verify chunks were preserved
+    match &restored.entries[0] {
+        acp_thread::SerializedAgentThreadEntry::AssistantMessage { chunks, .. } => {
+            assert_eq!(chunks.len(), 2);
+            match &chunks[0] {
+                acp_thread::SerializedAssistantChunk::Thought { markdown } => {
+                    assert!(markdown.contains("think about this"));
+                }
+                _ => panic!("Expected Thought chunk"),
+            }
+            match &chunks[1] {
+                acp_thread::SerializedAssistantChunk::Message { markdown } => {
+                    assert!(markdown.contains("here's the answer"));
+                }
+                _ => panic!("Expected Message chunk"),
+            }
+        }
+        _ => panic!("Expected AssistantMessage entry"),
+    }
+
+    // Reconstruct the thread
+    let action_log = cx.new(|_| ActionLog::new(project.clone()));
+    let reconstructed = cx.new(|cx| {
+        acp_thread::AcpThread::from_serialized(restored, project.clone(), action_log, cx)
+    });
+
+    // Verify the reconstructed thread has both chunk types
+    reconstructed.read_with(cx, |thread, cx| {
+        assert_eq!(thread.entries().len(), 1);
+
+        if let acp_thread::AgentThreadEntry::AssistantMessage(msg) = &thread.entries()[0] {
+            assert_eq!(msg.chunks.len(), 2);
+
+            // Check first chunk is a Thought
+            match &msg.chunks[0] {
+                acp_thread::AssistantMessageChunk::Thought { block } => {
+                    let markdown = block.to_markdown(cx);
+                    assert!(
+                        markdown.contains("think about this"),
+                        "Thought content: {}",
+                        markdown
+                    );
+                }
+                _ => panic!("Expected Thought chunk"),
+            }
+
+            // Check second chunk is a Message
+            match &msg.chunks[1] {
+                acp_thread::AssistantMessageChunk::Message { block } => {
+                    let markdown = block.to_markdown(cx);
+                    assert!(
+                        markdown.contains("here's the answer"),
+                        "Message content: {}",
+                        markdown
+                    );
+                }
+                _ => panic!("Expected Message chunk"),
+            }
+        } else {
+            panic!("Expected AssistantMessage entry");
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_user_message_id_preservation(cx: &mut TestAppContext) {
+    // This test verifies that user message IDs are preserved through serialization.
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+    let serialized = acp_thread::SerializedAcpThread {
+        title: "ID Test".to_string(),
+        session_id: "id-session".to_string(),
+        entries: vec![
+            acp_thread::SerializedAgentThreadEntry::UserMessage {
+                id: Some("user-msg-12345".to_string()),
+                content: "Message with ID".to_string(),
+                indented: false,
+            },
+            acp_thread::SerializedAgentThreadEntry::UserMessage {
+                id: None,
+                content: "Message without ID".to_string(),
+                indented: true,
+            },
+        ],
+    };
+
+    // Serialize to JSON and back
+    let json = serde_json::to_string(&serialized).unwrap();
+    let restored: acp_thread::SerializedAcpThread = serde_json::from_str(&json).unwrap();
+
+    // Verify IDs were preserved in serialized form
+    match &restored.entries[0] {
+        acp_thread::SerializedAgentThreadEntry::UserMessage { id, .. } => {
+            assert_eq!(id.as_deref(), Some("user-msg-12345"));
+        }
+        _ => panic!("Expected UserMessage"),
+    }
+    match &restored.entries[1] {
+        acp_thread::SerializedAgentThreadEntry::UserMessage { id, .. } => {
+            assert!(id.is_none());
+        }
+        _ => panic!("Expected UserMessage"),
+    }
+
+    // Reconstruct the thread
+    let action_log = cx.new(|_| ActionLog::new(project.clone()));
+    let reconstructed = cx.new(|cx| {
+        acp_thread::AcpThread::from_serialized(restored, project.clone(), action_log, cx)
+    });
+
+    // Verify the reconstructed thread preserves IDs
+    reconstructed.read_with(cx, |thread, _cx| {
+        assert_eq!(thread.entries().len(), 2);
+
+        if let acp_thread::AgentThreadEntry::UserMessage(msg) = &thread.entries()[0] {
+            assert!(
+                msg.id.is_some(),
+                "First message should have an ID after reconstruction"
+            );
+            assert_eq!(msg.id.as_ref().unwrap().to_string(), "user-msg-12345");
+            assert!(!msg.indented);
+        } else {
+            panic!("Expected UserMessage entry");
+        }
+
+        if let acp_thread::AgentThreadEntry::UserMessage(msg) = &thread.entries()[1] {
+            assert!(
+                msg.id.is_none(),
+                "Second message should not have an ID after reconstruction"
+            );
+            assert!(msg.indented);
+        } else {
+            panic!("Expected UserMessage entry");
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_status_preservation_in_reconstruction(cx: &mut TestAppContext) {
+    // This test verifies that tool call statuses are properly preserved,
+    // with WaitingForConfirmation and InProgress mapping to InProgress.
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+    let test_cases = vec![
+        (
+            acp_thread::SerializedToolCallStatus::Pending,
+            acp_thread::ToolCallStatus::Pending,
+        ),
+        (
+            acp_thread::SerializedToolCallStatus::InProgress,
+            acp_thread::ToolCallStatus::InProgress,
+        ),
+        (
+            acp_thread::SerializedToolCallStatus::WaitingForConfirmation,
+            acp_thread::ToolCallStatus::InProgress, // Maps to InProgress
+        ),
+        (
+            acp_thread::SerializedToolCallStatus::Completed,
+            acp_thread::ToolCallStatus::Completed,
+        ),
+        (
+            acp_thread::SerializedToolCallStatus::Failed,
+            acp_thread::ToolCallStatus::Failed,
+        ),
+        (
+            acp_thread::SerializedToolCallStatus::Rejected,
+            acp_thread::ToolCallStatus::Rejected,
+        ),
+        (
+            acp_thread::SerializedToolCallStatus::Canceled,
+            acp_thread::ToolCallStatus::Canceled,
+        ),
+    ];
+
+    for (serialized_status, expected_status) in test_cases {
+        let status_name = format!("{:?}", serialized_status);
+        let serialized = acp_thread::SerializedAcpThread {
+            title: format!("Status Test - {}", status_name),
+            session_id: "status-session".to_string(),
+            entries: vec![acp_thread::SerializedAgentThreadEntry::ToolCall {
+                id: "tool-1".to_string(),
+                tool_name: Some("test_tool".to_string()),
+                label: "Test tool".to_string(),
+                kind: acp_thread::SerializedToolKind::Other,
+                status: serialized_status,
+                content: vec![],
+                raw_input: None,
+                raw_output: None,
+            }],
+        };
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let reconstructed = cx.new(|cx| {
+            acp_thread::AcpThread::from_serialized(serialized, project.clone(), action_log, cx)
+        });
+
+        reconstructed.read_with(cx, |thread, _cx| {
+            if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = &thread.entries()[0] {
+                assert_eq!(
+                    std::mem::discriminant(&tool_call.status),
+                    std::mem::discriminant(&expected_status),
+                    "Status {} should map to {:?}",
+                    status_name,
+                    expected_status
+                );
+            } else {
+                panic!("Expected ToolCall entry for status {}", status_name);
+            }
+        });
+    }
+}
+
+#[gpui::test]
+async fn test_subagent_end_to_end_with_serialization(cx: &mut TestAppContext) {
+    // This test extends the existing end-to-end test to verify that the
+    // subagent output includes properly serialized thread data.
+    init_test(cx);
+    always_allow_tools(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+    let fake_model = model.as_fake();
+
+    let parent = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project.clone(),
+            project_context.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        );
+        thread.add_tool(EchoTool);
+        thread
+    });
+
+    let mut parent_tools: std::collections::BTreeMap<
+        gpui::SharedString,
+        Arc<dyn crate::AnyAgentTool>,
+    > = std::collections::BTreeMap::new();
+    parent_tools.insert("echo".into(), EchoTool.erase());
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(SubagentTool::new(
+        parent.downgrade(),
+        project.clone(),
+        project_context,
+        context_server_registry,
+        Templates::new(),
+        0,
+        parent_tools,
+    ));
+
+    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            SubagentToolInput {
+                subagents: vec![crate::SubagentConfig {
+                    label: "Research task".to_string(),
+                    task_prompt: "Find all TODOs".to_string(),
+                    summary_prompt: "Summarize findings".to_string(),
+                    context_low_prompt: "Wrap up".to_string(),
+                    timeout_ms: None,
+                    allowed_tools: None,
+                }],
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    cx.run_until_parked();
+
+    // Send completion for task
+    fake_model.send_last_completion_stream_text_chunk("I found 3 TODOs.");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // Send completion for summary
+    fake_model.send_last_completion_stream_text_chunk("Summary: 3 TODOs found.");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let result = task.await;
+    assert!(result.is_ok(), "subagent tool should complete successfully");
+
+    let output = result.unwrap();
+
+    // Verify the summary is present
+    assert!(
+        output.summary.contains("TODO") || output.summary.contains("Summary"),
+        "Summary should contain expected content: {}",
+        output.summary
+    );
+
+    // Verify subagent thread data was captured
+    assert_eq!(
+        output.subagent_threads.len(),
+        1,
+        "Should have one subagent thread"
+    );
+    assert_eq!(output.subagent_threads[0].label, "Research task");
+
+    // Verify the serialized thread has entries
+    let thread_data = &output.subagent_threads[0].thread;
+    assert!(
+        !thread_data.entries.is_empty(),
+        "Serialized thread should have entries"
+    );
+
+    // Verify we can serialize and deserialize the output
+    let json = serde_json::to_string(&output).unwrap();
+    let restored: crate::SubagentOutput = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored.subagent_threads.len(), 1);
+    assert_eq!(
+        restored.subagent_threads[0].thread.entries.len(),
+        thread_data.entries.len()
+    );
+}
+
+#[gpui::test]
 async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
     init_test(cx);
 

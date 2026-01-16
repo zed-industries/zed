@@ -238,11 +238,11 @@ impl AgentThreadEntry {
     ) -> Option<Self> {
         match entry {
             SerializedAgentThreadEntry::UserMessage {
-                id: _,
+                id,
                 content,
                 indented,
             } => Some(Self::UserMessage(UserMessage {
-                id: None,
+                id: id.map(UserMessageId::from_string),
                 content: ContentBlock::new(content.into(), language_registry, path_style, cx),
                 chunks: Vec::new(),
                 checkpoint: None,

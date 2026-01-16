@@ -25,6 +25,10 @@ impl UserMessageId {
     pub fn new() -> Self {
         Self(Uuid::new_v4().to_string().into())
     }
+
+    pub fn from_string(s: String) -> Self {
+        Self(s.into())
+    }
 }
 
 impl std::fmt::Display for UserMessageId {
