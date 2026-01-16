@@ -112,10 +112,12 @@ pub async fn apply_diff(
                 };
 
                 buffer.read_with(cx, |buffer, _| {
-                    edits.extend(
-                        resolve_hunk_edits_in_buffer(hunk, buffer, ranges.as_slice(), status)
-                            .with_context(|| format!("Diff:\n{diff_str}"))?,
-                    );
+                    edits.extend(resolve_hunk_edits_in_buffer(
+                        hunk,
+                        buffer,
+                        ranges.as_slice(),
+                        status,
+                    )?);
                     anyhow::Ok(())
                 })?;
             }
@@ -648,11 +650,7 @@ fn resolve_hunk_edits_in_buffer(
         })
         .ok_or_else(|| {
             if candidates.is_empty() {
-                anyhow!(
-                    "Failed to match context:\n\n```\n{}```\n\nBuffer contents:\n\n```\n{}```",
-                    hunk.context,
-                    buffer.text()
-                )
+                anyhow!("Failed to match context:\n\n```\n{}```\n", hunk.context,)
             } else {
                 anyhow!("Context is not unique enough:\n{}", hunk.context)
             }
