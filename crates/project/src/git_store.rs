@@ -4227,46 +4227,56 @@ impl Repository {
         range: Range<usize>,
         cx: &mut Context<Self>,
     ) -> &[Arc<InitialGraphCommitData>] {
-        let initial_commit_data = self
+        let initial_commit_data = &self
             .initial_graph_data
             .entry((log_order, log_source.clone()))
             .or_insert_with(|| {
                 let state = self.repository_state.clone();
+                let log_source = log_source.clone();
                 (
                     cx.spawn(async move |repository, cx| {
-                        let result = match state {
+                        let state = state.await;
+                        match state {
                             Ok(RepositoryState::Local(LocalRepositoryState {
                                 backend, ..
                             })) => {
                                 let (request_tx, request_rx) =
                                     smol::channel::unbounded::<Vec<Arc<InitialGraphCommitData>>>();
 
-                                let task = cx.background_executor().spawn(async move {
-                                    backend
-                                        .initial_graph_data(log_source, log_order, request_tx)
-                                        .await
-                                        .map_err(|err| SharedString::from(err.to_string()));
+                                let task = cx.background_executor().spawn({
+                                    let log_source = log_source.clone();
+                                    async move {
+                                        backend
+                                            .initial_graph_data(log_source, log_order, request_tx)
+                                            .await
+                                            .map_err(|err| SharedString::from(err.to_string()))
+                                    }
                                 });
 
-                                while let Ok(initial_graph_commit_data) = request_rx.recv().await {
-                                    repository.update(cx, |repository, cx| {
-                                        let graph_data = repository
-                                            .initial_graph_data
-                                            .get_mut(&(log_order, log_source))
-                                            .as_mut()
-                                            .map(|(_, graph_data)| graph_data);
-                                        debug_assert!(
-                                            graph_data.is_some(),
-                                            "This task should be dropped if data doesn't exist"
-                                        );
+                                let graph_data_key = (log_order, log_source.clone());
 
-                                        if let Some(graph_data) = graph_data {
-                                            graph_data.extend(initial_graph_commit_data);
-                                        }
-                                    });
+                                while let Ok(initial_graph_commit_data) = request_rx.recv().await {
+                                    repository
+                                        .update(cx, |repository, cx| {
+                                            let graph_data = repository
+                                                .initial_graph_data
+                                                .get_mut(&graph_data_key)
+                                                .map(|(_, graph_data)| graph_data);
+                                            debug_assert!(
+                                                graph_data.is_some(),
+                                                "This task should be dropped if data doesn't exist"
+                                            );
+
+                                            if let Some(graph_data) = graph_data {
+                                                graph_data.extend(initial_graph_commit_data);
+                                                // todo! emit an event here for git graph
+                                            }
+                                            cx.notify();
+                                        })
+                                        .ok();
                                 }
 
-                                task.await;
+                                task.await?;
 
                                 Ok(())
                             }
@@ -4274,9 +4284,7 @@ impl Repository {
                                 Err("Git graph is not supported for collab yet".into())
                             }
                             Err(e) => Err(SharedString::from(e)),
-                        };
-
-                        Ok(())
+                        }
                     }),
                     vec![],
                 )
