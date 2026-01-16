@@ -551,9 +551,11 @@ impl LanguageServerState {
                                     .gap_1()
                                     .child(
                                         Label::new(path.clone())
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                            .truncate(),
                                     )
+                                    .tooltip(Tooltip::text(path.clone()))
                                     .into_any_element()
                             })
                         });
