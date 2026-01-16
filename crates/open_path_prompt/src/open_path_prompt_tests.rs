@@ -19,6 +19,8 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
         .insert_tree(
             path!("/root"),
             json!({
+                ".a1": ".A1",
+                ".b1": ".B1",
                 "a1": "A1",
                 "a2": "A2",
                 "a3": "A3",
@@ -94,6 +96,33 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
     let query = path!("/root/dir2/di");
     insert_query(query, &picker, cx).await;
     assert_eq!(collect_match_candidates(&picker, cx), vec!["dir3", "dir4"]);
+
+    // Show candidates for the query ".".
+    let query = path!("/root/.");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(collect_match_candidates(&picker, cx), vec![".a1", ".b1"]);
+
+    // Show candidates for the query ".a".
+    let query = path!("/root/.a");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(collect_match_candidates(&picker, cx), vec![".a1"]);
+
+    // Show candidates for the query "./".
+    // Should show current directory and contents.
+    let query = path!("/root/./");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        vec![expected_separator, "a1", "a2", "a3", "dir1", "dir2"]
+    );
+
+    // Show candidates for the query "../". Show parent contents.
+    let query = path!("/root/dir1/../");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        vec![expected_separator, "a1", "a2", "a3", "dir1", "dir2"]
+    );
 }
 
 #[gpui::test]
