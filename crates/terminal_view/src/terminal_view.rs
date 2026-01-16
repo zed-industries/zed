@@ -185,6 +185,20 @@ pub const TERMINAL_TAB_COLORS: &[(&str, Hsla)] = &[
     ("White", Hsla { h: 0.0, s: 0.0, l: 0.5, a: 1.0 }),
 ];
 
+/// Preset colors for terminal tab text (brighter, more saturated for visibility).
+pub const TERMINAL_TAB_TEXT_COLORS: &[(&str, Hsla)] = &[
+    ("Red", Hsla { h: 0.0, s: 0.8, l: 0.6, a: 1.0 }),
+    ("Orange", Hsla { h: 0.083, s: 0.9, l: 0.6, a: 1.0 }),
+    ("Yellow", Hsla { h: 0.15, s: 0.9, l: 0.6, a: 1.0 }),
+    ("Green", Hsla { h: 0.333, s: 0.7, l: 0.55, a: 1.0 }),
+    ("Cyan", Hsla { h: 0.5, s: 0.8, l: 0.6, a: 1.0 }),
+    ("Blue", Hsla { h: 0.583, s: 0.8, l: 0.65, a: 1.0 }),
+    ("Purple", Hsla { h: 0.75, s: 0.7, l: 0.65, a: 1.0 }),
+    ("Pink", Hsla { h: 0.917, s: 0.7, l: 0.7, a: 1.0 }),
+    ("Gray", Hsla { h: 0.0, s: 0.0, l: 0.6, a: 1.0 }),
+    ("White", Hsla { h: 0.0, s: 0.0, l: 1.0, a: 1.0 }),
+];
+
 struct RenameTerminalModal {
     current_title: SharedString,
     editor: Entity<Editor>,
@@ -576,6 +590,14 @@ impl TerminalView {
                     menu.separator()
                         .action("Clear Color", Box::new(ClearTerminalTabColor))
                 })
+                .submenu("Text Color", |menu, _, _| {
+                    let mut menu = menu;
+                    for (name, color) in TERMINAL_TAB_TEXT_COLORS {
+                        menu = menu.action(*name, Box::new(SetTerminalTabTextColor(*color)));
+                    }
+                    menu.separator()
+                        .action("Clear Color", Box::new(ClearTerminalTabTextColor))
+                })
                 .when(assistant_enabled, |menu| {
                     menu.separator()
                         .action("Inline Assist", Box::new(InlineAssist::default()))
@@ -714,6 +736,28 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         self.terminal.update(cx, |term, _| term.set_tab_color(None));
+        cx.notify();
+    }
+
+    fn set_tab_text_color(
+        &mut self,
+        action: &SetTerminalTabTextColor,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.terminal
+            .update(cx, |term, _| term.set_tab_text_color(Some(action.0)));
+        cx.notify();
+    }
+
+    fn clear_tab_text_color(
+        &mut self,
+        _: &ClearTerminalTabTextColor,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.terminal
+            .update(cx, |term, _| term.set_tab_text_color(None));
         cx.notify();
     }
 
@@ -1324,6 +1368,8 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::rename_terminal))
             .on_action(cx.listener(TerminalView::set_tab_color))
             .on_action(cx.listener(TerminalView::clear_tab_color))
+            .on_action(cx.listener(TerminalView::set_tab_text_color))
+            .on_action(cx.listener(TerminalView::clear_tab_text_color))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Right,
@@ -1417,6 +1463,7 @@ impl Item for TerminalView {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
         let has_custom_bg = terminal.tab_color().is_some();
+        let custom_text_color = terminal.tab_text_color();
 
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
@@ -1465,7 +1512,11 @@ impl Item for TerminalView {
                         )
                     }),
             )
-            .child(Label::new(title).color(if has_custom_bg {
+            .child(Label::new(title).color(if let Some(text_color) = custom_text_color {
+                // Custom text color with alpha adjustment for inactive tabs
+                let alpha = if params.selected { 1.0 } else { 0.8 };
+                Color::Custom(Hsla { a: alpha, ..text_color })
+            } else if has_custom_bg {
                 // White text for custom backgrounds: full white when selected, 80% when not
                 let lightness = if params.selected { 1.0 } else { 0.8 };
                 Color::Custom(Hsla { h: 0.0, s: 0.0, l: lightness, a: 1.0 })

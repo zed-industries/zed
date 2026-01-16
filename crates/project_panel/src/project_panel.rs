@@ -57,10 +57,10 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing,
-    ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
-    v_flex,
+    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconButton, IconButtonShape, IconDecoration,
+    IconDecorationKind, IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize,
+    ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tab,
+    Tooltip, WithScrollbar, prelude::*, v_flex,
 };
 use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths, rel_path::RelPath};
 use workspace::{
@@ -125,6 +125,8 @@ pub struct ProjectPanel {
     marked_entries: Vec<SelectedEntry>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     filename_editor: Entity<Editor>,
+    filter_editor: Entity<Editor>,
+    _filter_subscription: Subscription,
     clipboard: Option<ClipboardEntry>,
     _dragged_entry_destination: Option<Arc<Path>>,
     workspace: WeakEntity<Workspace>,
@@ -770,6 +772,21 @@ impl ProjectPanel {
             })
             .detach();
 
+            let filter_editor = cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text("Filter files…", window, cx);
+                editor
+            });
+            let filter_subscription = cx.subscribe_in(
+                &filter_editor,
+                window,
+                |panel: &mut Self, _, event, window, cx| {
+                    if let EditorEvent::BufferEdited = event {
+                        panel.update_visible_entries(None, false, false, window, cx);
+                    }
+                },
+            );
+
             let mut project_panel_settings = *ProjectPanelSettings::get_global(cx);
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let new_settings = *ProjectPanelSettings::get_global(cx);
@@ -809,6 +826,8 @@ impl ProjectPanel {
                 marked_entries: Default::default(),
                 context_menu: None,
                 filename_editor,
+                filter_editor,
+                _filter_subscription: filter_subscription,
                 clipboard: None,
                 _dragged_entry_destination: None,
                 workspace: workspace.weak_handle(),
@@ -3497,6 +3516,8 @@ impl ProjectPanel {
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
         let hide_hidden = settings.hide_hidden;
+        let filter_query = self.filter_editor.read(cx).text(cx).to_lowercase();
+        let has_filter = !filter_query.is_empty();
 
         let visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
@@ -3589,8 +3610,16 @@ impl ProjectPanel {
                                 }
                             }
                             auto_folded_ancestors.clear();
+                            let matches_filter = !has_filter
+                                || !entry.is_file()
+                                || entry
+                                    .path
+                                    .file_name()
+                                    .map(|n| n.to_lowercase().contains(&filter_query))
+                                    .unwrap_or(false);
                             if (!hide_gitignore || !entry.is_ignored)
                                 && (!hide_hidden || !entry.is_hidden)
+                                && matches_filter
                             {
                                 visible_worktree_entries.push(entry.to_owned());
                             }
@@ -4564,6 +4593,41 @@ impl ProjectPanel {
         }
 
         false
+    }
+
+    fn render_filter_header(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let query = self.filter_editor.read(cx).text(cx);
+        let has_query = !query.is_empty();
+
+        h_flex()
+            .p_2()
+            .h(Tab::container_height(cx))
+            .justify_between()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::MagnifyingGlass)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(self.filter_editor.clone()),
+            )
+            .when(has_query, |this| {
+                this.child(
+                    IconButton::new("clear_filter", IconName::Close)
+                        .shape(IconButtonShape::Square)
+                        .tooltip(Tooltip::text("Clear Filter"))
+                        .on_click(cx.listener(|panel, _, window, cx| {
+                            panel.filter_editor.update(cx, |editor, cx| {
+                                editor.set_text("", window, cx);
+                            });
+                        })),
+                )
+            })
     }
 
     fn render_entry(
@@ -5638,6 +5702,7 @@ fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -
 impl Render for ProjectPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_worktree = !self.state.visible_entries.is_empty();
+        let filter_header = self.render_filter_header(cx);
         let project = self.project.read(cx);
         let panel_settings = ProjectPanelSettings::get_global(cx);
         let indent_size = panel_settings.indent_size;
@@ -5801,6 +5866,7 @@ impl Render for ProjectPanel {
                 .track_focus(&self.focus_handle(cx))
                 .child(
                     v_flex()
+                        .child(filter_header)
                         .child(
                             uniform_list("entries", item_count, {
                                 cx.processor(|this, range: Range<usize>, window, cx| {

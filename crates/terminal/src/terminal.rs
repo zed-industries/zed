@@ -379,6 +379,7 @@ impl TerminalBuilder {
             term_config: config,
             title_override: None,
             tab_color: None,
+            tab_text_color: None,
             events: VecDeque::with_capacity(10),
             last_content: Default::default(),
             last_mouse: None,
@@ -604,6 +605,7 @@ impl TerminalBuilder {
                 term_config: config,
                 title_override: terminal_title_override,
                 tab_color: None,
+                tab_text_color: None,
                 events: VecDeque::with_capacity(10), //Should never get this high.
                 last_content: Default::default(),
                 last_mouse: None,
@@ -845,6 +847,7 @@ pub struct Terminal {
     pub breadcrumb_text: String,
     title_override: Option<String>,
     tab_color: Option<Hsla>,
+    tab_text_color: Option<Hsla>,
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
@@ -2154,6 +2157,14 @@ impl Terminal {
 
     pub fn set_tab_color(&mut self, color: Option<Hsla>) {
         self.tab_color = color;
+    }
+
+    pub fn tab_text_color(&self) -> Option<Hsla> {
+        self.tab_text_color
+    }
+
+    pub fn set_tab_text_color(&mut self, color: Option<Hsla>) {
+        self.tab_text_color = color;
     }
 
     pub fn kill_active_task(&mut self) {
