@@ -42,6 +42,7 @@ members = [
     "crates/component_preview",
     "crates/context_server",
     "crates/copilot",
+    "crates/copilot_chat",
     "crates/crashes",
     "crates/credentials_provider",
     "crates/dap",
@@ -152,6 +153,7 @@ members = [
     "crates/search",
     "crates/session",
     "crates/settings",
+    "crates/settings_content",
     "crates/settings_json",
     "crates/settings_macros",
     "crates/settings_profile_selector",
@@ -280,6 +282,8 @@ component = { path = "crates/component" }
 component_preview  = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
 copilot = { path = "crates/copilot" }
+copilot_chat = { path = "crates/copilot_chat" }
+copilot_ui = { path = "crates/copilot_ui" }
 crashes = { path = "crates/crashes" }
 credentials_provider = { path = "crates/credentials_provider" }
 crossbeam = "0.8.4"
@@ -380,9 +384,11 @@ rodio = { git = "https://github.com/RustAudio/rodio", rev ="e2074c6c2acf07b57cf7
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
+scheduler = { path = "crates/scheduler" }
 search = { path = "crates/search" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
+settings_content = { path = "crates/settings_content" }
 settings_json = { path = "crates/settings_json" }
 settings_macros = { path = "crates/settings_macros" }
 settings_ui = { path = "crates/settings_ui" }

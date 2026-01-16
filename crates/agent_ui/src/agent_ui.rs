@@ -119,18 +119,44 @@ actions!(
         ResetTrialEndUpsell,
         /// Continues the current thread.
         ContinueThread,
-        /// Continues the thread with burn mode enabled.
-        ContinueWithBurnMode,
-        /// Toggles burn mode for faster responses.
-        ToggleBurnMode,
-        /// Queues a message to be sent when generation completes.
-        QueueMessage,
+        /// Interrupts the current generation and sends the message immediately.
+        SendImmediately,
         /// Sends the next queued message immediately.
         SendNextQueuedMessage,
+        /// Removes the first message from the queue (the next one to be sent).
+        RemoveFirstQueuedMessage,
         /// Clears all messages from the queue.
         ClearMessageQueue,
+        /// Opens the permission granularity dropdown for the current tool call.
+        OpenPermissionDropdown,
     ]
 );
+
+/// Action to authorize a tool call with a specific permission option.
+/// This is used by the permission granularity dropdown to authorize tool calls.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorizeToolCall {
+    /// The tool call ID to authorize.
+    pub tool_call_id: String,
+    /// The permission option ID to use.
+    pub option_id: String,
+    /// The kind of permission option (serialized as string).
+    pub option_kind: String,
+}
+
+/// Action to select a permission granularity option from the dropdown.
+/// This updates the selected granularity without triggering authorization.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct SelectPermissionGranularity {
+    /// The tool call ID for which to select the granularity.
+    pub tool_call_id: String,
+    /// The index of the selected granularity option.
+    pub index: usize,
+}
 
 /// Creates a new conversation thread, optionally based on an existing thread.
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -432,7 +458,7 @@ fn register_slash_commands(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
+    use agent_settings::{AgentProfileId, AgentSettings};
     use command_palette_hooks::CommandPaletteFilter;
     use editor::actions::AcceptEditPrediction;
     use gpui::{BorrowAppContext, TestAppContext, px};
@@ -475,7 +501,6 @@ mod tests {
             play_sound_when_agent_done: false,
             single_file_review: false,
             model_parameters: vec![],
-            preferred_completion_mode: CompletionMode::Normal,
             enable_feedback: false,
             expand_edit_card: true,
             expand_terminal_card: true,

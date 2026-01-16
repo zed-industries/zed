@@ -329,6 +329,10 @@ impl LanguageModel for OpenAiLanguageModel {
         }
     }
 
+    fn supports_split_token_display(&self) -> bool {
+        true
+    }
+
     fn telemetry_id(&self) -> String {
         format!("openai/{}", self.model.id())
     }
@@ -534,7 +538,6 @@ pub fn into_open_ai_response(
         thread_id,
         prompt_id: _,
         intent: _,
-        mode: _,
         messages,
         tools,
         tool_choice,
@@ -1402,7 +1405,6 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
-            mode: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::Text("message".into())],
@@ -1419,8 +1421,8 @@ mod tests {
         // Validate that all models are supported by tiktoken-rs
         for model in Model::iter() {
             let count = cx
-                .executor()
-                .block(count_open_ai_tokens(
+                .foreground_executor()
+                .block_on(count_open_ai_tokens(
                     request.clone(),
                     model,
                     &cx.app.borrow(),
@@ -1509,7 +1511,6 @@ mod tests {
             thread_id: Some("thread-123".into()),
             prompt_id: None,
             intent: None,
-            mode: None,
             messages: vec![
                 LanguageModelRequestMessage {
                     role: Role::System,

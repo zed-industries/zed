@@ -382,6 +382,8 @@ impl EditorElement {
         register_action(editor, window, Editor::select_next_syntax_node);
         register_action(editor, window, Editor::select_prev_syntax_node);
         register_action(editor, window, Editor::unwrap_syntax_node);
+        register_action(editor, window, Editor::move_to_start_of_larger_syntax_node);
+        register_action(editor, window, Editor::move_to_end_of_larger_syntax_node);
         register_action(editor, window, Editor::select_enclosing_symbol);
         register_action(editor, window, Editor::move_to_enclosing_bracket);
         register_action(editor, window, Editor::undo_selection);
@@ -502,6 +504,12 @@ impl EditorElement {
         register_action(editor, window, Editor::unstage_and_next);
         register_action(editor, window, Editor::expand_all_diff_hunks);
         register_action(editor, window, Editor::collapse_all_diff_hunks);
+        register_action(editor, window, Editor::toggle_review_comments_expanded);
+        register_action(editor, window, Editor::submit_diff_review_comment_action);
+        register_action(editor, window, Editor::edit_review_comment);
+        register_action(editor, window, Editor::delete_review_comment);
+        register_action(editor, window, Editor::confirm_edit_review_comment_action);
+        register_action(editor, window, Editor::cancel_edit_review_comment_action);
         register_action(editor, window, Editor::go_to_previous_change);
         register_action(editor, window, Editor::go_to_next_change);
         register_action(editor, window, Editor::go_to_prev_reference);
@@ -3031,7 +3039,6 @@ impl EditorElement {
         scroll_position: gpui::Point<ScrollOffset>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
-        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         snapshot: &EditorSnapshot,
         breakpoints: HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         row_infos: &[RowInfo],
@@ -3073,7 +3080,6 @@ impl EditorElement {
                         gutter_dimensions,
                         scroll_position,
                         gutter_hitbox,
-                        display_hunks,
                         window,
                         cx,
                     );
@@ -3088,7 +3094,7 @@ impl EditorElement {
         range: Range<DisplayRow>,
         row_infos: &[RowInfo],
         cx: &App,
-    ) -> Option<DisplayRow> {
+    ) -> Option<(DisplayRow, Option<u32>)> {
         if !cx.has_flag::<DiffReviewFeatureFlag>() {
             return None;
         }
@@ -3104,27 +3110,25 @@ impl EditorElement {
         }
 
         let display_row = indicator.display_row;
+        let row_index = (display_row.0.saturating_sub(range.start.0)) as usize;
 
-        // Don't show on rows with expand excerpt buttons
-        if row_infos
-            .get((display_row.0.saturating_sub(range.start.0)) as usize)
-            .is_some_and(|row_info| row_info.expand_info.is_some())
-        {
+        let row_info = row_infos.get(row_index);
+        if row_info.is_some_and(|row_info| row_info.expand_info.is_some()) {
             return None;
         }
 
-        Some(display_row)
-    }
+        let buffer_id = row_info.and_then(|info| info.buffer_id);
+        if buffer_id.is_none() {
+            return None;
+        }
 
-    fn diff_review_button() -> AnyElement {
-        IconButton::new("diff_review_button", ui::IconName::Plus)
-            .icon_size(ui::IconSize::XSmall)
-            .size(ui::ButtonSize::None)
-            .icon_color(ui::Color::Default)
-            .style(ui::ButtonStyle::Filled)
-            .layer(ui::ElevationIndex::Surface)
-            .tooltip(Tooltip::text("Add Review"))
-            .into_any_element()
+        let editor = self.editor.read(cx);
+        if buffer_id.is_some_and(|buffer_id| editor.is_buffer_folded(buffer_id, cx)) {
+            return None;
+        }
+
+        let buffer_row = row_info.and_then(|info| info.buffer_row);
+        Some((display_row, buffer_row))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3136,7 +3140,6 @@ impl EditorElement {
         scroll_position: gpui::Point<ScrollOffset>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
-        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         snapshot: &EditorSnapshot,
         breakpoints: &mut HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         window: &mut Window,
@@ -3229,7 +3232,6 @@ impl EditorElement {
                         gutter_dimensions,
                         scroll_position,
                         gutter_hitbox,
-                        display_hunks,
                         window,
                         cx,
                     );
@@ -3298,14 +3300,13 @@ impl EditorElement {
                     || gutter_dimensions.right_padding == px(0.);
 
                 let width = if is_wide {
-                    available_width - px(2.)
+                    available_width - px(5.)
                 } else {
-                    available_width + em_width - px(2.)
+                    available_width + em_width - px(5.)
                 };
 
                 let toggle = IconButton::new(("expand", ix), icon_name)
                     .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
-                    .selected_icon_color(Color::Custom(cx.theme().colors().editor_foreground))
                     .icon_size(IconSize::Custom(rems(editor_font_size / window.rem_size())))
                     .width(width)
                     .on_click(move |_, window, cx| {
@@ -4386,6 +4387,7 @@ impl EditorElement {
                                         window.dispatch_action(
                                             OpenTerminal {
                                                 working_directory: parent_abs_path.clone(),
+                                                local: false,
                                             }
                                             .boxed_clone(),
                                             cx,
@@ -8371,7 +8373,6 @@ fn prepaint_gutter_button(
     gutter_dimensions: &GutterDimensions,
     scroll_position: gpui::Point<ScrollOffset>,
     gutter_hitbox: &Hitbox,
-    display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -8380,28 +8381,12 @@ fn prepaint_gutter_button(
         AvailableSpace::Definite(line_height),
     );
     let indicator_size = button.layout_as_root(available_space, window, cx);
+    let git_gutter_width = EditorElement::gutter_strip_width(line_height)
+        + gutter_dimensions
+            .git_blame_entries_width
+            .unwrap_or_default();
 
-    let blame_width = gutter_dimensions.git_blame_entries_width;
-    let gutter_width = display_hunks
-        .binary_search_by(|(hunk, _)| match hunk {
-            DisplayDiffHunk::Folded { display_row } => display_row.cmp(&row),
-            DisplayDiffHunk::Unfolded {
-                display_row_range, ..
-            } => {
-                if display_row_range.end <= row {
-                    Ordering::Less
-                } else if display_row_range.start > row {
-                    Ordering::Greater
-                } else {
-                    Ordering::Equal
-                }
-            }
-        })
-        .ok()
-        .and_then(|ix| Some(display_hunks[ix].1.as_ref()?.size.width));
-    let left_offset = blame_width.max(gutter_width).unwrap_or_default();
-
-    let x = left_offset;
+    let x = git_gutter_width + px(2.);
 
     let mut y =
         Pixels::from((row.as_f64() - scroll_position.y) * ScrollPixelOffset::from(line_height));
@@ -10448,7 +10433,6 @@ impl Element for EditorElement {
                             scroll_position,
                             &gutter_dimensions,
                             &gutter_hitbox,
-                            &display_hunks,
                             &snapshot,
                             &mut breakpoint_rows,
                             window,
@@ -10468,7 +10452,6 @@ impl Element for EditorElement {
                             scroll_position,
                             &gutter_dimensions,
                             &gutter_hitbox,
-                            &display_hunks,
                             &snapshot,
                             breakpoint_rows,
                             &row_infos,
@@ -10479,17 +10462,51 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
+                    let git_gutter_width = Self::gutter_strip_width(line_height)
+                        + gutter_dimensions
+                            .git_blame_entries_width
+                            .unwrap_or_default();
+                    let available_width = gutter_dimensions.left_padding - git_gutter_width;
+
+                    let max_line_number_length = self
+                        .editor
+                        .read(cx)
+                        .buffer()
+                        .read(cx)
+                        .snapshot(cx)
+                        .widest_line_number()
+                        .ilog10()
+                        + 1;
+
                     let diff_review_button = self
                         .should_render_diff_review_button(start_row..end_row, &row_infos, cx)
-                        .map(|display_row| {
+                        .map(|(display_row, buffer_row)| {
+                            let is_wide = max_line_number_length
+                                >= EditorSettings::get_global(cx).gutter.min_line_number_digits
+                                    as u32
+                                && buffer_row.is_some_and(|row| {
+                                    (row + 1).ilog10() + 1 == max_line_number_length
+                                })
+                                || gutter_dimensions.right_padding == px(0.);
+
+                            let button_width = if is_wide {
+                                available_width - px(6.)
+                            } else {
+                                available_width + em_width - px(6.)
+                            };
+
+                            let button = self.editor.update(cx, |editor, cx| {
+                                editor
+                                    .render_diff_review_button(display_row, button_width, cx)
+                                    .into_any_element()
+                            });
                             prepaint_gutter_button(
-                                Self::diff_review_button(),
+                                button,
                                 display_row,
                                 line_height,
                                 &gutter_dimensions,
                                 scroll_position,
                                 &gutter_hitbox,
-                                &display_hunks,
                                 window,
                                 cx,
                             )
@@ -12024,6 +12041,8 @@ mod tests {
     #[gpui::test]
     async fn test_soft_wrap_editor_width_auto_height_editor(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
+        // Ensure wrap completes synchronously by giving block_with_timeout enough ticks
+        cx.dispatcher.scheduler().set_timeout_ticks(1000..=1000);
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&"a ".to_string().repeat(100), cx);
@@ -12061,6 +12080,8 @@ mod tests {
     #[gpui::test]
     async fn test_soft_wrap_editor_width_full_editor(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
+        // Ensure wrap completes synchronously by giving block_with_timeout enough ticks
+        cx.dispatcher.scheduler().set_timeout_ticks(1000..=1000);
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&"a ".to_string().repeat(100), cx);

@@ -27,7 +27,7 @@ pub trait MergeFrom {
 }
 
 macro_rules! merge_from_overwrites {
-    ($($type:ty),+) => {
+    ($($type:ty),+ $(,)?) => {
         $(
             impl MergeFrom for $type {
                 fn merge_from(&mut self, other: &Self) {
@@ -54,12 +54,8 @@ merge_from_overwrites!(
     std::num::NonZeroU32,
     String,
     std::sync::Arc<str>,
-    gpui::SharedString,
     std::path::PathBuf,
     std::sync::Arc<std::path::Path>,
-    gpui::Modifiers,
-    gpui::FontFeatures,
-    gpui::FontWeight
 );
 
 impl<T: Clone + MergeFrom> MergeFrom for Option<T> {
@@ -67,6 +63,7 @@ impl<T: Clone + MergeFrom> MergeFrom for Option<T> {
         let Some(other) = other else {
             return;
         };
+
         if let Some(this) = self {
             this.merge_from(other);
         } else {
@@ -94,11 +91,11 @@ where
     V: Clone + MergeFrom,
 {
     fn merge_from(&mut self, other: &Self) {
-        for (k, v) in other {
-            if let Some(existing) = self.get_mut(k) {
-                existing.merge_from(v);
+        for (key, value) in other {
+            if let Some(existing) = self.get_mut(key) {
+                existing.merge_from(value);
             } else {
-                self.insert(k.clone(), v.clone());
+                self.insert(key.clone(), value.clone());
             }
         }
     }
@@ -110,11 +107,11 @@ where
     V: Clone + MergeFrom,
 {
     fn merge_from(&mut self, other: &Self) {
-        for (k, v) in other {
-            if let Some(existing) = self.get_mut(k) {
-                existing.merge_from(v);
+        for (key, value) in other {
+            if let Some(existing) = self.get_mut(key) {
+                existing.merge_from(value);
             } else {
-                self.insert(k.clone(), v.clone());
+                self.insert(key.clone(), value.clone());
             }
         }
     }
@@ -123,15 +120,14 @@ where
 impl<K, V> MergeFrom for collections::IndexMap<K, V>
 where
     K: std::hash::Hash + Eq + Clone,
-    // Q: ?Sized + std::hash::Hash + collections::Equivalent<K> + Eq,
     V: Clone + MergeFrom,
 {
     fn merge_from(&mut self, other: &Self) {
-        for (k, v) in other {
-            if let Some(existing) = self.get_mut(k) {
-                existing.merge_from(v);
+        for (key, value) in other {
+            if let Some(existing) = self.get_mut(key) {
+                existing.merge_from(value);
             } else {
-                self.insert(k.clone(), v.clone());
+                self.insert(key.clone(), value.clone());
             }
         }
     }
@@ -163,11 +159,11 @@ impl MergeFrom for serde_json::Value {
     fn merge_from(&mut self, other: &Self) {
         match (self, other) {
             (serde_json::Value::Object(this), serde_json::Value::Object(other)) => {
-                for (k, v) in other {
-                    if let Some(existing) = this.get_mut(k) {
-                        existing.merge_from(v);
+                for (key, value) in other {
+                    if let Some(existing) = this.get_mut(key) {
+                        existing.merge_from(value);
                     } else {
-                        this.insert(k.clone(), v.clone());
+                        this.insert(key.clone(), value.clone());
                     }
                 }
             }

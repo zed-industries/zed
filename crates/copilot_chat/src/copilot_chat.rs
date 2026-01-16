@@ -1,3 +1,5 @@
+pub mod responses;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -16,7 +18,6 @@ use itertools::Itertools;
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
 
-use crate::copilot_responses as responses;
 use settings::watch_config_dir;
 
 pub const COPILOT_OAUTH_ENV_VAR: &str = "GH_COPILOT_TOKEN";

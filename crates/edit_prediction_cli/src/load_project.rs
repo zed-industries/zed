@@ -1,17 +1,17 @@
 use crate::{
-    example::{Example, ExampleBuffer, ExampleState},
+    example::{Example, ExamplePromptInputs, ExampleState},
     git,
     headless::EpAppState,
     progress::{InfoStyle, Progress, Step, StepProgress},
 };
 use anyhow::{Context as _, Result};
-use edit_prediction::udiff::{OpenedBuffers, refresh_worktree_entries};
 use edit_prediction::{
-    EditPredictionStore, cursor_excerpt::editable_and_context_ranges_for_cursor_position, zeta2,
+    EditPredictionStore,
+    udiff::{OpenedBuffers, refresh_worktree_entries, strip_diff_path_prefix},
 };
 use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity};
-use language::{Anchor, Buffer, LanguageNotFound, OffsetRangeExt as _, ToOffset, ToPoint};
+use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
 use project::Project;
 use project::buffer_store::BufferStoreEvent;
 use std::{fs, path::PathBuf, sync::Arc};
@@ -38,29 +38,37 @@ pub async fn run_load_project(
     buffer
         .read_with(&cx, |buffer, _| buffer.parsing_idle())
         .await;
-    let (example_buffer, language_name) = buffer.read_with(&cx, |buffer, _cx| {
+
+    let ep_store = cx
+        .update(|cx| EditPredictionStore::try_global(cx))
+        .context("EditPredictionStore not initialized")?;
+
+    let edit_history = ep_store.update(&mut cx, |store, cx| {
+        store
+            .edit_history_for_project(&project, cx)
+            .into_iter()
+            .map(|e| e.event)
+            .collect()
+    });
+
+    let (prompt_inputs, language_name) = buffer.read_with(&cx, |buffer, _cx| {
         let cursor_point = cursor_position.to_point(&buffer);
-        let snapshot = buffer.snapshot();
-        let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
-            cursor_point,
-            &snapshot,
-            zeta2::MAX_EDITABLE_TOKENS,
-            zeta2::MAX_CONTEXT_TOKENS,
-        );
-        let editable_range = editable_range.to_offset(&snapshot);
-        let context_range = context_range.to_offset(&snapshot);
         let language_name = buffer
             .language()
             .map(|l| l.name().to_string())
             .unwrap_or_else(|| "Unknown".to_string());
         (
-            ExampleBuffer {
+            ExamplePromptInputs {
                 content: buffer.text(),
                 cursor_row: cursor_point.row,
                 cursor_column: cursor_point.column,
                 cursor_offset: cursor_position.to_offset(&buffer),
-                context_range,
-                editable_range,
+                edit_history,
+                related_files: example
+                    .prompt_inputs
+                    .take()
+                    .map(|inputs| inputs.related_files)
+                    .unwrap_or_default(),
             },
             language_name,
         )
@@ -68,7 +76,7 @@ pub async fn run_load_project(
 
     progress.set_info(language_name, InfoStyle::Normal);
 
-    example.buffer = Some(example_buffer);
+    example.prompt_inputs = Some(prompt_inputs);
     example.state = Some(ExampleState {
         buffer,
         project,
@@ -96,8 +104,16 @@ async fn cursor_position(
     }
 
     let cursor_path_str = example.spec.cursor_path.to_string_lossy();
+    // Also try cursor path with first component stripped - old examples may have
+    // paths like "zed/crates/foo.rs" instead of "crates/foo.rs".
+    let cursor_path_without_prefix: PathBuf =
+        example.spec.cursor_path.components().skip(1).collect();
+    let cursor_path_without_prefix_str = cursor_path_without_prefix.to_string_lossy();
+
     // We try open_buffers first because the file might be new and not saved to disk
-    let cursor_buffer = if let Some(buffer) = open_buffers.get(&cursor_path_str) {
+    let cursor_buffer = if let Some(buffer) = open_buffers.get(cursor_path_str.as_ref()) {
+        buffer.clone()
+    } else if let Some(buffer) = open_buffers.get(cursor_path_without_prefix_str.as_ref()) {
         buffer.clone()
     } else {
         // Since the worktree scanner is disabled, manually refresh entries for the cursor path.
@@ -107,7 +123,9 @@ async fn cursor_position(
 
         let cursor_path = project
             .read_with(cx, |project, cx| {
-                project.find_project_path(&example.spec.cursor_path, cx)
+                project
+                    .find_project_path(&example.spec.cursor_path, cx)
+                    .or_else(|| project.find_project_path(&cursor_path_without_prefix, cx))
             })
             .with_context(|| {
                 format!(
@@ -267,9 +285,13 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
     }
     drop(repo_lock);
 
-    // Apply the uncommitted diff for this example.
     if !example.spec.uncommitted_diff.is_empty() {
         step_progress.set_substatus("applying diff");
+
+        // old examples had full paths in the uncommitted diff.
+        let uncommitted_diff =
+            strip_diff_path_prefix(&example.spec.uncommitted_diff, &repo_name.name);
+
         let mut apply_process = smol::process::Command::new("git")
             .current_dir(&worktree_path)
             .args(&["apply", "-"])
@@ -277,9 +299,7 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
             .spawn()?;
 
         let mut stdin = apply_process.stdin.take().context("Failed to get stdin")?;
-        stdin
-            .write_all(example.spec.uncommitted_diff.as_bytes())
-            .await?;
+        stdin.write_all(uncommitted_diff.as_bytes()).await?;
         stdin.close().await?;
         drop(stdin);
 
