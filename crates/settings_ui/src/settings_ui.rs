@@ -765,6 +765,13 @@ impl std::fmt::Debug for SettingsPageItem {
 }
 
 impl SettingsPageItem {
+    fn header_text(&self) -> Option<&'static str> {
+        match self {
+            SettingsPageItem::SectionHeader(header) => Some(header),
+            _ => None,
+        }
+    }
+
     fn render(
         &self,
         settings_window: &SettingsWindow,
@@ -901,19 +908,15 @@ impl SettingsPageItem {
                             .on_click({
                                 let sub_page_link = sub_page_link.clone();
                                 cx.listener(move |this, _, window, cx| {
-                                    let mut section_index = item_index;
-                                    let current_page = this.current_page();
+                                    let header_text = this
+                                        .current_page()
+                                        .items
+                                        .iter()
+                                        .take(item_index)
+                                        .rev()
+                                        .find_map(|item| item.header_text());
 
-                                    while !matches!(
-                                        current_page.items[section_index],
-                                        SettingsPageItem::SectionHeader(_)
-                                    ) {
-                                        section_index -= 1;
-                                    }
-
-                                    let SettingsPageItem::SectionHeader(header) =
-                                        current_page.items[section_index]
-                                    else {
+                                    let Some(header) = header_text else {
                                         unreachable!(
                                             "All items always have a section header above them"
                                         )
@@ -2767,7 +2770,9 @@ impl SettingsWindow {
             .child(Label::new(last))
     }
 
-    fn render_empty_state(&self, search_query: SharedString) -> impl IntoElement {
+    fn render_no_results(&self, cx: &App) -> impl IntoElement {
+        let search_query = self.search_bar.read(cx).text(cx);
+
         v_flex()
             .size_full()
             .items_center()
@@ -2775,28 +2780,25 @@ impl SettingsWindow {
             .gap_1()
             .child(Label::new("No Results"))
             .child(
-                Label::new(search_query)
+                Label::new(format!("No settings match \"{}\"", search_query))
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
     }
 
-    fn render_page_items(
+    fn render_current_page_items(
         &mut self,
-        page_index: usize,
         _window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
+        let current_page_index = self.current_page_index();
         let mut page_content = v_flex().id("settings-ui-page").size_full();
 
         let has_active_search = !self.search_bar.read(cx).is_empty(cx);
         let has_no_results = self.visible_page_items().next().is_none() && has_active_search;
 
         if has_no_results {
-            let search_query = self.search_bar.read(cx).text(cx);
-            page_content = page_content.child(
-                self.render_empty_state(format!("No settings match \"{}\"", search_query).into()),
-            )
+            page_content = page_content.child(self.render_no_results(cx))
         } else {
             let last_non_header_index = self
                 .visible_page_items()
@@ -2839,8 +2841,9 @@ impl SettingsWindow {
 
                     let is_last = Some(actual_item_index) == last_non_header_index;
 
-                    let item_focus_handle =
-                        this.content_handles[page_index][actual_item_index].focus_handle(cx);
+                    let item_focus_handle = this.content_handles[current_page_index]
+                        [actual_item_index]
+                        .focus_handle(cx);
 
                     v_flex()
                         .id(("settings-page-item", actual_item_index))
@@ -2866,7 +2869,6 @@ impl SettingsWindow {
     fn render_sub_page_items<'a, Items>(
         &self,
         items: Items,
-        page_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement
@@ -2878,13 +2880,12 @@ impl SettingsWindow {
             .size_full()
             .overflow_y_scroll()
             .track_scroll(&self.sub_page_scroll_handle);
-        self.render_sub_page_items_in(page_content, items, page_index, window, cx)
+        self.render_sub_page_items_in(page_content, items, window, cx)
     }
 
     fn render_sub_page_items_section<'a, Items>(
         &self,
         items: Items,
-        page_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement
@@ -2892,14 +2893,13 @@ impl SettingsWindow {
         Items: Iterator<Item = (usize, &'a SettingsPageItem)>,
     {
         let page_content = v_flex().id("settings-ui-sub-page-section").size_full();
-        self.render_sub_page_items_in(page_content, items, page_index, window, cx)
+        self.render_sub_page_items_in(page_content, items, window, cx)
     }
 
     fn render_sub_page_items_in<'a, Items>(
         &self,
-        mut page_content: Stateful<Div>,
+        page_content: Stateful<Div>,
         items: Items,
-        page_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement
@@ -2908,16 +2908,12 @@ impl SettingsWindow {
     {
         let items: Vec<_> = items.collect();
         let items_len = items.len();
-        let mut section_header = None;
 
         let has_active_search = !self.search_bar.read(cx).is_empty(cx);
         let has_no_results = items_len == 0 && has_active_search;
 
         if has_no_results {
-            let search_query = self.search_bar.read(cx).text(cx);
-            page_content = page_content.child(
-                self.render_empty_state(format!("No settings match \"{}\"", search_query).into()),
-            )
+            page_content.child(self.render_no_results(cx))
         } else {
             let last_non_header_index = items
                 .iter()
@@ -2932,7 +2928,7 @@ impl SettingsWindow {
                 .find(|entry| entry.is_root && entry.page_index == self.current_page_index())
                 .map(|entry| entry.title);
 
-            page_content = page_content
+            page_content
                 .when(sub_page_stack().is_empty(), |this| {
                     this.when_some(root_nav_label, |this, title| {
                         this.child(Label::new(title).size(LabelSize::Large).mt_2().mb_3())
@@ -2940,27 +2936,17 @@ impl SettingsWindow {
                 })
                 .children(items.clone().into_iter().enumerate().map(
                     |(index, (actual_item_index, item))| {
-                        let no_bottom_border = items
-                            .get(index + 1)
-                            .map(|(_, next_item)| {
+                        let no_bottom_border =
+                            items.get(index + 1).is_some_and(|(_, next_item)| {
                                 matches!(next_item, SettingsPageItem::SectionHeader(_))
-                            })
-                            .unwrap_or(false);
+                            });
+
                         let is_last = Some(index) == last_non_header_index;
 
-                        if let SettingsPageItem::SectionHeader(header) = item {
-                            section_header = Some(*header);
-                        }
                         v_flex()
                             .w_full()
                             .min_w_0()
                             .id(("settings-page-item", actual_item_index))
-                            .when_some(page_index, |element, page_index| {
-                                element.track_focus(
-                                    &self.content_handles[page_index][actual_item_index]
-                                        .focus_handle(cx),
-                                )
-                            })
                             .child(item.render(
                                 self,
                                 actual_item_index,
@@ -2971,7 +2957,6 @@ impl SettingsWindow {
                     },
                 ))
         }
-        page_content
     }
 
     fn render_page(
@@ -2986,7 +2971,7 @@ impl SettingsWindow {
             page_header = self.render_files_header(window, cx).into_any_element();
 
             page_content = self
-                .render_page_items(self.current_page_index(), window, cx)
+                .render_current_page_items(window, cx)
                 .into_any_element();
         } else {
             page_header = h_flex()

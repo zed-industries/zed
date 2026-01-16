@@ -2928,7 +2928,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                             non_editor_language_settings_data(),
                             edit_prediction_language_settings_section()
                         );
-                        this.render_sub_page_items(items.iter().enumerate(), None, window, cx)
+                        this.render_sub_page_items(items.iter().enumerate(), window, cx)
                             .into_any_element()
                     }),
                 })

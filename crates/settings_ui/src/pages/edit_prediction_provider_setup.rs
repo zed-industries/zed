@@ -82,7 +82,6 @@ impl Render for EditPredictionSetupPage {
                         settings_window
                             .render_sub_page_items_section(
                                 codestral_settings.iter().enumerate(),
-                                None,
                                 window,
                                 cx,
                             )
