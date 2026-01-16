@@ -358,7 +358,7 @@ pub fn render_resize_handles(
                     .id(current_idx)
                     .relative()
                     .top_0()
-                    .w_px()
+                    .w(px(1.1))
                     .h_full()
                     .bg(handle_color);
 
