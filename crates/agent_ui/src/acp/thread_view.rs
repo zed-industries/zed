@@ -651,28 +651,25 @@ impl AcpThreadView {
             }
 
             let result = if let Some(resume) = resume_thread.clone() {
-                if connection.supports_load_session() {
-                    let session_cwd = resume
-                        .cwd
-                        .clone()
-                        .unwrap_or_else(|| fallback_cwd.as_ref().to_path_buf());
-                    cx.update(|_, cx| {
+                cx.update(|_, cx| {
+                    if connection.supports_load_session(cx) {
+                        let session_cwd = resume
+                            .cwd
+                            .clone()
+                            .unwrap_or_else(|| fallback_cwd.as_ref().to_path_buf());
                         connection.clone().load_session(
                             resume,
                             project.clone(),
                             session_cwd.as_path(),
                             cx,
                         )
-                    })
-                    .log_err()
-                } else {
-                    cx.update(|_, _| {
+                    } else {
                         Task::ready(Err(anyhow!(LoadError::Other(
                             "Loading sessions is not supported by this agent.".into()
                         ))))
-                    })
-                    .log_err()
-                }
+                    }
+                })
+                .log_err()
             } else {
                 cx.update(|_, cx| {
                     connection
@@ -723,7 +720,7 @@ impl AcpThreadView {
 
                         let connection = thread.read(cx).connection().clone();
                         let session_id = thread.read(cx).session_id().clone();
-                        let session_list = if connection.supports_load_session() {
+                        let session_list = if connection.supports_load_session(cx) {
                             connection.session_list(cx)
                         } else {
                             None
@@ -6673,7 +6670,7 @@ impl AcpThreadView {
                 MentionUri::Thread { id, name } => {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
-                            panel.load_agent_thread(
+                            panel.open_thread(
                                 AgentSessionInfo {
                                     session_id: id,
                                     cwd: None,

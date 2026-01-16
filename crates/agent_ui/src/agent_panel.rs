@@ -553,13 +553,7 @@ impl AgentPanel {
             window,
             |this, _, event, window, cx| match event {
                 ThreadHistoryEvent::Open(thread) => {
-                    this.external_thread(
-                        Some(crate::ExternalAgent::NativeAgent),
-                        Some(thread.clone()),
-                        None,
-                        window,
-                        cx,
-                    );
+                    this.load_agent_thread(thread.clone(), window, cx);
                 }
             },
         )
@@ -1390,13 +1384,7 @@ impl AgentPanel {
                             let entry = entry.clone();
                             panel
                                 .update(cx, move |this, cx| {
-                                    this.external_thread(
-                                        Some(ExternalAgent::NativeAgent),
-                                        Some(entry.clone()),
-                                        None,
-                                        window,
-                                        cx,
-                                    );
+                                    this.load_agent_thread(entry.clone(), window, cx);
                                 })
                                 .ok();
                         }
@@ -1448,6 +1436,17 @@ impl AgentPanel {
 
     pub fn selected_agent(&self) -> AgentType {
         self.selected_agent.clone()
+    }
+
+    fn selected_external_agent(&self) -> Option<ExternalAgent> {
+        match &self.selected_agent {
+            AgentType::NativeAgent => Some(ExternalAgent::NativeAgent),
+            AgentType::Gemini => Some(ExternalAgent::Gemini),
+            AgentType::ClaudeCode => Some(ExternalAgent::ClaudeCode),
+            AgentType::Codex => Some(ExternalAgent::Codex),
+            AgentType::Custom { name } => Some(ExternalAgent::Custom { name: name.clone() }),
+            AgentType::TextThread => None,
+        }
     }
 
     fn sync_agent_servers_from_extensions(&mut self, cx: &mut Context<Self>) {
@@ -1527,13 +1526,10 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.external_thread(
-            Some(ExternalAgent::NativeAgent),
-            Some(thread),
-            None,
-            window,
-            cx,
-        );
+        let Some(agent) = self.selected_external_agent() else {
+            return;
+        };
+        self.external_thread(Some(agent), Some(thread), None, window, cx);
     }
 
     fn _external_thread(

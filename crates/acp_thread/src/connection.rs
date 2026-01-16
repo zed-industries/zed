@@ -38,7 +38,7 @@ pub trait AgentConnection {
     ) -> Task<Result<Entity<AcpThread>>>;
 
     /// Whether this agent supports loading existing sessions.
-    fn supports_load_session(&self) -> bool {
+    fn supports_load_session(&self, _cx: &App) -> bool {
         false
     }
 
