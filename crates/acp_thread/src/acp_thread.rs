@@ -60,11 +60,6 @@ use ui::App;
 use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
 
-/// Global used during reconstruction to provide project access.
-/// This is a workaround since we need project access in nested contexts.
-struct ReconstructionProject(Entity<Project>);
-impl gpui::Global for ReconstructionProject {}
-
 /// A no-op connection used for reconstructed threads that are display-only.
 struct NoOpConnection;
 
@@ -236,6 +231,7 @@ impl AgentThreadEntry {
     /// Reconstruct an entry from serialized data.
     pub fn from_serialized(
         entry: SerializedAgentThreadEntry,
+        project: &Entity<Project>,
         language_registry: &Arc<LanguageRegistry>,
         path_style: PathStyle,
         cx: &mut App,
@@ -291,7 +287,13 @@ impl AgentThreadEntry {
                     content: content
                         .into_iter()
                         .filter_map(|c| {
-                            ToolCallContent::from_serialized(c, language_registry, path_style, cx)
+                            ToolCallContent::from_serialized(
+                                c,
+                                project,
+                                language_registry,
+                                path_style,
+                                cx,
+                            )
                         })
                         .collect(),
                     status: status.into(),
@@ -996,6 +998,7 @@ impl ToolCallContent {
     /// Reconstruct content from serialized data.
     pub fn from_serialized(
         content: SerializedToolCallContent,
+        project: &Entity<Project>,
         language_registry: &Arc<LanguageRegistry>,
         path_style: PathStyle,
         cx: &mut App,
@@ -1026,12 +1029,9 @@ impl ToolCallContent {
                 )))
             }
             SerializedToolCallContent::SubagentThread(thread) => {
-                let project = cx
-                    .try_global::<ReconstructionProject>()
-                    .map(|p| p.0.clone())?;
                 let action_log = cx.new(|_| ActionLog::new(project.clone()));
                 Some(Self::SubagentThread(cx.new(|cx| {
-                    AcpThread::from_serialized(*thread, project, action_log, cx)
+                    AcpThread::from_serialized(*thread, project.clone(), action_log, cx)
                 })))
             }
         }
@@ -1481,14 +1481,17 @@ impl AcpThread {
         let language_registry = project.read(cx).languages().clone();
         let path_style = project.read(cx).path_style(cx);
 
-        // Set global for nested subagent reconstruction
-        cx.set_global(ReconstructionProject(project.clone()));
-
         let entries = data
             .entries
             .into_iter()
             .filter_map(|entry| {
-                AgentThreadEntry::from_serialized(entry, &language_registry, path_style, cx)
+                AgentThreadEntry::from_serialized(
+                    entry,
+                    &project,
+                    &language_registry,
+                    path_style,
+                    cx,
+                )
             })
             .collect();
 
