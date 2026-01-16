@@ -1,7 +1,9 @@
 use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
-    Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
+    Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId,
+    item::ItemHandle,
     path_list::PathList,
+    workspace_file::{WorkspaceFileKind, WorkspaceFileSource},
 };
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
@@ -18,6 +20,7 @@ use remote::RemoteConnectionOptions;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
 };
 use util::ResultExt;
@@ -37,7 +40,14 @@ pub(crate) enum RemoteConnectionKind {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum SerializedWorkspaceLocation {
+    /// Local workspace identified by folder paths
     Local,
+    /// Local workspace opened from a workspace file (.code-workspace, etc.)
+    LocalFromFile {
+        workspace_file_path: PathBuf,
+        workspace_file_kind: String,
+    },
+    /// Remote workspace (SSH, WSL, Docker)
     Remote(RemoteConnectionOptions),
 }
 
@@ -45,6 +55,36 @@ impl SerializedWorkspaceLocation {
     /// Get sorted paths
     pub fn sorted_paths(&self) -> Arc<Vec<PathBuf>> {
         unimplemented!()
+    }
+
+    /// Returns the workspace file source if this location was opened from a workspace file
+    pub fn workspace_file_source(&self) -> Option<WorkspaceFileSource> {
+        match self {
+            Self::LocalFromFile {
+                workspace_file_path,
+                workspace_file_kind,
+            } => WorkspaceFileKind::from_str(workspace_file_kind)
+                .ok()
+                .map(|kind| WorkspaceFileSource {
+                    path: workspace_file_path.clone(),
+                    kind,
+                }),
+            _ => None,
+        }
+    }
+
+    /// Returns the display name for this location (workspace file name if from file)
+    pub fn display_name(&self) -> Option<String> {
+        match self {
+            Self::LocalFromFile {
+                workspace_file_path,
+                ..
+            } => workspace_file_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string()),
+            _ => None,
+        }
     }
 }
 
