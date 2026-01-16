@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use gpui::{
     App, Bounds, Context, Hsla, IntoElement, PathBuilder, Pixels, Styled, Window, canvas, point, px,
 };
@@ -75,6 +77,8 @@ pub fn render_graph(graph: &GitGraph, cx: &mut Context<GitGraph>) -> impl IntoEl
         })
         .cloned()
         .collect();
+
+    let mut lines: BTreeMap<usize, Vec<_>> = BTreeMap::new();
 
     canvas(
         move |_bounds, _window, _cx| {},
@@ -234,8 +238,20 @@ pub fn render_graph(graph: &GitGraph, cx: &mut Context<GitGraph>) -> impl IntoEl
                     }
 
                     builder.close();
-                    if let Ok(path) = builder.build() {
-                        window.paint_path(path, line_color);
+                    lines.entry(line.color_idx).or_default().push(builder);
+                }
+
+                for (color_idx, builders) in lines {
+                    let line_color = accent_colors.color_for_index(color_idx as u32);
+
+                    for builder in builders {
+                        if let Ok(path) = builder.build() {
+                            // we paint each color on it's own layer to stop overlapping lines
+                            // of different colors changing the color of a line
+                            window.paint_layer(bounds, |window| {
+                                window.paint_path(path, line_color);
+                            });
+                        }
                     }
                 }
             })
