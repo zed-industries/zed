@@ -356,17 +356,19 @@ impl MacTextSystemState {
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let font = &self.fonts[params.font_id.0];
+        let scale = Transform2F::from_scale(params.scale_factor);
         let mut bounds: Bounds<DevicePixels> = font
             .raster_bounds(
                 params.glyph_id.0,
                 params.font_size.into(),
-                Transform2F::from_scale(params.scale_factor),
+                scale,
                 HintingOptions::None,
                 font_kit::canvas::RasterizationOptions::GrayscaleAa,
             )?
             .into();
 
         // Adjust to avoid glyph clippe
+        // Ref: https://github.com/Aloxaf/silicon/blob/adf96cb7a79f90f038c2ef6a219e4579b3d445fd/src/font.rs#L371
         let metrics = font.metrics();
         let glyph_width = (font.advance(params.font_id.0 as u32).unwrap().x()
             / metrics.units_per_em as f32
