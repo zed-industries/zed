@@ -13677,6 +13677,7 @@ dependencies = [
  "log",
  "lsp",
  "minidumper",
+ "net",
  "node_runtime",
  "paths",
  "pretty_assertions",

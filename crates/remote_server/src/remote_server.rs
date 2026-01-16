@@ -1,6 +1,5 @@
 mod headless_project;
 
-#[cfg(not(windows))]
 pub mod unix;
 
 #[cfg(test)]
@@ -34,7 +33,6 @@ pub enum Commands {
     Version,
 }
 
-#[cfg(not(windows))]
 pub fn run(command: Commands) -> anyhow::Result<()> {
     use anyhow::Context;
     use release_channel::{RELEASE_CHANNEL, ReleaseChannel};

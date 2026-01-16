@@ -33,9 +33,10 @@ use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
 
+use net::async_net::{UnixListener, UnixStream};
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
-use smol::{net::unix::UnixListener, stream::StreamExt as _};
+use smol::stream::StreamExt as _;
 use std::{
     env,
     ffi::OsStr,
@@ -236,18 +237,17 @@ fn start_server(
     .detach();
 
     cx.spawn(async move |cx| {
-        let mut stdin_incoming = listeners.stdin.incoming();
-        let mut stdout_incoming = listeners.stdout.incoming();
-        let mut stderr_incoming = listeners.stderr.incoming();
-
         loop {
-            let streams = futures::future::join3(stdin_incoming.next(), stdout_incoming.next(), stderr_incoming.next());
+            let streams = futures::future::join3(
+                listeners.stdin.accept(),
+                listeners.stdout.accept(),
+                listeners.stderr.accept(),
+            );
 
             log::info!("accepting new connections");
             let result = select! {
                 streams = streams.fuse() => {
-                    let (Some(Ok(stdin_stream)), Some(Ok(stdout_stream)), Some(Ok(stderr_stream))) = streams else {
-                        log::error!("failed to accept new connections");
+                    let (Ok((stdin_stream, _)), Ok((stdout_stream, _)), Ok((stderr_stream, _))) = streams else {
                         break;
                     };
                     log::info!("accepted new connections");
@@ -405,13 +405,19 @@ pub fn execute_run(
         .build_global()
         .unwrap();
 
-    let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
-    app.background_executor()
-        .spawn(async {
-            util::load_login_shell_environment().await.log_err();
-            shell_env_loaded_tx.send(()).ok();
-        })
-        .detach();
+    #[cfg(unix)]
+    let shell_env_loaded_rx = {
+        let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
+        app.background_executor()
+            .spawn(async {
+                util::load_login_shell_environment().await.log_err();
+                shell_env_loaded_tx.send(()).ok();
+            })
+            .detach();
+        Some(shell_env_loaded_rx)
+    };
+    #[cfg(windows)]
+    let shell_env_loaded_rx: Option<oneshot::Receiver<()>> = None;
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     let run = move |cx: &mut _| {
@@ -469,11 +475,8 @@ pub fn execute_run(
                 )
             };
 
-            let node_runtime = NodeRuntime::new(
-                http_client.clone(),
-                Some(shell_env_loaded_rx),
-                node_settings_rx,
-            );
+            let node_runtime =
+                NodeRuntime::new(http_client.clone(), shell_env_loaded_rx, node_settings_rx);
 
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
             languages.set_language_server_download_dir(paths::languages_dir().clone());
@@ -653,40 +656,19 @@ pub(crate) fn execute_proxy(
 
     let stdin_task = smol::spawn(async move {
         let stdin = smol::Unblock::new(std::io::stdin());
-        let stream = smol::net::unix::UnixStream::connect(&server_paths.stdin_socket)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to connect to stdin socket {}",
-                    server_paths.stdin_socket.display()
-                )
-            })?;
+        let stream = UnixStream::connect(&server_paths.stdin_socket).await?;
         handle_io(stdin, stream, "stdin").await
     });
 
     let stdout_task: smol::Task<Result<()>> = smol::spawn(async move {
         let stdout = smol::Unblock::new(std::io::stdout());
-        let stream = smol::net::unix::UnixStream::connect(&server_paths.stdout_socket)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to connect to stdout socket {}",
-                    server_paths.stdout_socket.display()
-                )
-            })?;
+        let stream = UnixStream::connect(&server_paths.stdout_socket).await?;
         handle_io(stream, stdout, "stdout").await
     });
 
     let stderr_task: smol::Task<Result<()>> = smol::spawn(async move {
         let mut stderr = smol::Unblock::new(std::io::stderr());
-        let mut stream = smol::net::unix::UnixStream::connect(&server_paths.stderr_socket)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to connect to stderr socket {}",
-                    server_paths.stderr_socket.display()
-                )
-            })?;
+        let mut stream = UnixStream::connect(&server_paths.stderr_socket).await?;
         let mut stderr_buffer = vec![0; 2048];
         loop {
             match stream
