@@ -26,7 +26,6 @@ pub struct GoToLine {
     active_editor: Entity<Editor>,
     current_text: SharedString,
     prev_scroll_position: Option<gpui::Point<ScrollOffset>>,
-    relative: bool,
     current_line: u32,
     _subscriptions: Vec<Subscription>,
 }
@@ -55,7 +54,7 @@ impl GoToLine {
     fn register(editor: &mut Editor, _window: Option<&mut Window>, cx: &mut Context<Editor>) {
         let handle = cx.entity().downgrade();
         editor
-            .register_action(move |action: &editor::actions::ToggleGoToLine, window, cx| {
+            .register_action(move |_: &editor::actions::ToggleGoToLine, window, cx| {
                 let Some(editor_handle) = handle.upgrade() else {
                     return;
                 };
@@ -66,10 +65,9 @@ impl GoToLine {
                 let Some((_, buffer, _)) = editor.active_excerpt(cx) else {
                     return;
                 };
-                let relative = action.relative;
                 workspace.update(cx, |workspace, cx| {
                     workspace.toggle_modal(window, cx, move |window, cx| {
-                        GoToLine::new(editor_handle, buffer, relative, window, cx)
+                        GoToLine::new(editor_handle, buffer, window, cx)
                     });
                 })
             })
@@ -79,7 +77,6 @@ impl GoToLine {
     pub fn new(
         active_editor: Entity<Editor>,
         active_buffer: Entity<Buffer>,
-        relative: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -126,33 +123,27 @@ impl GoToLine {
                     }
                 })
                 .detach();
-            let placeholder = if relative {
-                format!("+/-lines{FILE_ROW_COLUMN_DELIMITER}column")
-            } else {
-                format!("{line}{FILE_ROW_COLUMN_DELIMITER}{column}")
-            };
-            editor.set_placeholder_text(&placeholder, window, cx);
+            editor.set_placeholder_text(
+                &format!("{line}{FILE_ROW_COLUMN_DELIMITER}{column}"),
+                window,
+                cx,
+            );
             editor
         });
         let line_editor_change = cx.subscribe_in(&line_editor, window, Self::on_line_editor_event);
 
-        let current_text = if relative {
-            format!("Current Line: {} (enter relative offset)", line)
-        } else {
-            format!(
-                "Current Line: {} of {} (column {})",
-                line,
-                last_line + 1,
-                column
-            )
-        };
+        let current_text = format!(
+            "Current Line: {} of {} (column {})",
+            line,
+            last_line + 1,
+            column
+        );
 
         Self {
             line_editor,
             active_editor,
             current_text: current_text.into(),
             prev_scroll_position: Some(scroll_position),
-            relative,
             current_line: line,
             _subscriptions: vec![line_editor_change, cx.on_release_in(window, Self::release)],
         }
@@ -221,8 +212,7 @@ impl GoToLine {
         snapshot: &MultiBufferSnapshot,
         cx: &Context<Editor>,
     ) -> Option<Anchor> {
-        let (query_row, query_char) = if self.relative {
-            let offset = self.relative_line_from_query(cx)?;
+        let (query_row, query_char) = if let Some(offset) = self.relative_line_from_query(cx) {
             let target = if offset >= 0 {
                 self.current_line.saturating_add(offset as u32)
             } else {
@@ -266,10 +256,35 @@ impl GoToLine {
     fn relative_line_from_query(&self, cx: &App) -> Option<i32> {
         let input = self.line_editor.read(cx).text(cx);
         let trimmed = input.trim();
-        if let Some(rest) = trimmed.strip_prefix('b').or_else(|| trimmed.strip_prefix('B')) {
-            rest.parse::<u32>().ok().map(|n| -(n as i32))
-        } else {
-            trimmed.parse::<i32>().ok()
+
+        let mut last_direction_char: Option<char> = None;
+        let mut number_start_index = 0;
+
+        for (i, c) in trimmed.char_indices() {
+            match c {
+                '+' | 'f' | 'F' | '-' | 'b' | 'B' => {
+                    last_direction_char = Some(c);
+                    number_start_index = i + c.len_utf8();
+                }
+                _ => break,
+            }
+        }
+
+        let direction = last_direction_char?;
+
+        let number_part = &trimmed[number_start_index..];
+        let line_part = number_part
+            .split(FILE_ROW_COLUMN_DELIMITER)
+            .next()
+            .unwrap_or(number_part)
+            .trim();
+
+        let value = line_part.parse::<u32>().ok()?;
+
+        match direction {
+            '+' | 'f' | 'F' => Some(value as i32),
+            '-' | 'b' | 'B' => Some(-(value as i32)),
+            _ => None,
         }
     }
 
@@ -311,18 +326,13 @@ impl GoToLine {
 
 impl Render for GoToLine {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let help_text = if self.relative {
-            match self.relative_line_from_query(cx) {
-                Some(offset) => {
-                    let target_line = if offset >= 0 {
-                        self.current_line.saturating_add(offset as u32)
-                    } else {
-                        self.current_line.saturating_sub(offset.unsigned_abs())
-                    };
-                    format!("Go to line {target_line} ({offset:+} from current)").into()
-                }
-                None => self.current_text.clone(),
-            }
+        let help_text = if let Some(offset) = self.relative_line_from_query(cx) {
+            let target_line = if offset >= 0 {
+                self.current_line.saturating_add(offset as u32)
+            } else {
+                self.current_line.saturating_sub(offset.unsigned_abs())
+            };
+            format!("Go to line {target_line} ({offset:+} from current)").into()
         } else {
             match self.line_and_char_from_query(cx) {
                 Some((line, Some(character))) => {
@@ -769,7 +779,7 @@ mod tests {
         workspace: &Entity<Workspace>,
         cx: &mut VisualTestContext,
     ) -> Entity<GoToLine> {
-        cx.dispatch_action(editor::actions::ToggleGoToLine::default());
+        cx.dispatch_action(editor::actions::ToggleGoToLine);
         workspace.update(cx, |workspace, cx| {
             workspace.active_modal::<GoToLine>(cx).unwrap()
         })
