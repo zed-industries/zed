@@ -12,8 +12,10 @@ use ui::Button;
 use ui::Clickable;
 use ui::FluentBuilder;
 use ui::KeyBinding;
+use ui::StatefulInteractiveElement;
 use ui::Switch;
 use ui::ToggleState;
+use ui::Tooltip;
 use ui::h_flex;
 use ui::rems_from_px;
 
@@ -41,12 +43,12 @@ use crate::devcontainer_api::apply_dev_container_template;
 pub use devcontainer_api::start_dev_container;
 
 #[derive(PartialEq, Clone, Deserialize, Default, Action)]
-#[action(namespace = containers)]
+#[action(namespace = projects)]
 #[serde(deny_unknown_fields)]
-struct InitDevContainer;
+struct InitializeDevContainer;
 
 pub fn init(cx: &mut App) {
-    cx.on_action(|_: &InitDevContainer, cx| {
+    cx.on_action(|_: &InitializeDevContainer, cx| {
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
             let weak_entity = cx.weak_entity();
             workspace.toggle_modal(window, cx, |window, cx| {
@@ -60,7 +62,8 @@ pub fn init(cx: &mut App) {
 struct TemplateEntry {
     template: DevContainerTemplate,
     options_selected: HashMap<String, String>,
-    next_option: Option<TemplateOptionSelection>,
+    current_option_index: usize,
+    current_option: Option<TemplateOptionSelection>,
     features_selected: HashSet<DevContainerFeature>,
 }
 
@@ -73,6 +76,7 @@ struct FeatureEntry {
 #[derive(Clone)]
 struct TemplateOptionSelection {
     option_name: String,
+    description: String,
     navigable_options: Vec<(String, NavigableEntry)>,
 }
 
@@ -508,6 +512,7 @@ impl DevContainerModal {
     fn render_initial(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let mut view = Navigable::new(
             div()
+                .p_1()
                 .child(
                     div().track_focus(&self.focus_handle).child(
                         ModalHeader::new().child(
@@ -526,11 +531,13 @@ impl DevContainerModal {
                             ListItem::new("li-search-containers")
                                 .inset(true)
                                 .spacing(ui::ListItemSpacing::Sparse)
-                                .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                .start_slot(
+                                    Icon::new(IconName::MagnifyingGlass).color(Color::Muted),
+                                )
                                 .toggle_state(
                                     self.confirm_entry.focus_handle.contains_focused(window, cx),
                                 )
-                                .child(Label::new("Create dev container from template")),
+                                .child(Label::new("Search for Dev Container Templates")),
                         ),
                 )
                 .into_any_element(),
@@ -562,19 +569,28 @@ impl DevContainerModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Some(next_option_entries) = &template_entry.next_option else {
+        let Some(next_option_entries) = &template_entry.current_option else {
             return div().into_any_element();
         };
         let mut view =
             Navigable::new(
                 div()
                     .child(
-                        div().track_focus(&self.focus_handle).child(
-                            ModalHeader::new().child(
-                                Headline::new(&next_option_entries.option_name)
-                                    .size(HeadlineSize::XSmall),
+                        div()
+                            .id("title")
+                            .tooltip(Tooltip::text(next_option_entries.description.clone()))
+                            .track_focus(&self.focus_handle)
+                            .child(
+                                ModalHeader::new()
+                                    .child(
+                                        Headline::new("Template Option: ")
+                                            .size(HeadlineSize::XSmall),
+                                    )
+                                    .child(
+                                        Headline::new(&next_option_entries.option_name)
+                                            .size(HeadlineSize::XSmall),
+                                    ),
                             ),
-                        ),
                     )
                     .child(ListSeparator)
                     .children(next_option_entries.navigable_options.iter().map(
@@ -601,7 +617,6 @@ impl DevContainerModal {
                                     ListItem::new("li-todo")
                                         .inset(true)
                                         .spacing(ui::ListItemSpacing::Sparse)
-                                        .start_slot(Icon::new(IconName::Box))
                                         .toggle_state(
                                             entry.focus_handle.contains_focused(window, cx),
                                         )
@@ -620,7 +635,7 @@ impl DevContainerModal {
                                 ListItem::new("li-goback")
                                     .inset(true)
                                     .spacing(ui::ListItemSpacing::Sparse)
-                                    .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                                    .start_slot(Icon::new(IconName::Return).color(Color::Muted))
                                     .toggle_state(
                                         self.back_entry.focus_handle.contains_focused(window, cx),
                                     )
@@ -874,9 +889,24 @@ impl StatefulModal for DevContainerModal {
                 .detach();
                 Some(DevContainerState::QueryingTemplates)
             }
-            DevContainerMessage::GoBack => match self.state {
+            DevContainerMessage::GoBack => match &self.state {
                 DevContainerState::Initial => Some(DevContainerState::Initial),
                 DevContainerState::QueryingTemplates => Some(DevContainerState::Initial),
+                DevContainerState::UserOptionsSpecifying(template_entry) => {
+                    if template_entry.current_option_index <= 1 {
+                        self.accept_message(DevContainerMessage::SearchTemplates, window, cx);
+                    } else {
+                        let mut template_entry = template_entry.clone();
+                        template_entry.current_option_index =
+                            template_entry.current_option_index.saturating_sub(2);
+                        self.accept_message(
+                            DevContainerMessage::TemplateOptionsSpecified(template_entry),
+                            window,
+                            cx,
+                        );
+                    }
+                    None
+                }
                 _ => Some(DevContainerState::Initial),
             },
             DevContainerMessage::TemplatesRetrieved(items) => {
@@ -885,7 +915,8 @@ impl StatefulModal for DevContainerModal {
                     .map(|item| TemplateEntry {
                         template: item,
                         options_selected: HashMap::new(),
-                        next_option: None,
+                        current_option_index: 0,
+                        current_option: None,
                         features_selected: HashSet::new(),
                     })
                     .collect::<Vec<TemplateEntry>>();
@@ -925,7 +956,9 @@ impl StatefulModal for DevContainerModal {
                     .collect::<Vec<(&String, &TemplateOptions)>>()
                     .clone();
 
-                let Some((first_option_name, first_option)) = options.get(0) else {
+                let Some((first_option_name, first_option)) =
+                    options.get(template_entry.current_option_index)
+                else {
                     return self.accept_message(
                         DevContainerMessage::TemplateOptionsCompleted(template_entry),
                         window,
@@ -939,8 +972,13 @@ impl StatefulModal for DevContainerModal {
                     .map(|option| (option, NavigableEntry::focusable(cx)))
                     .collect();
 
-                template_entry.next_option = Some(TemplateOptionSelection {
+                template_entry.current_option_index += 1;
+                template_entry.current_option = Some(TemplateOptionSelection {
                     option_name: (*first_option_name).clone(),
+                    description: first_option
+                        .description
+                        .clone()
+                        .unwrap_or_else(|| "".to_string()),
                     navigable_options: next_option_entries,
                 });
 
@@ -948,15 +986,21 @@ impl StatefulModal for DevContainerModal {
             }
             DevContainerMessage::TemplateOptionsSpecified(mut template_entry) => {
                 let Some(options) = template_entry.template.clone().options else {
-                    panic!("not ready yet");
+                    return self.accept_message(
+                        DevContainerMessage::TemplateOptionsCompleted(template_entry),
+                        window,
+                        cx,
+                    );
                 };
+
                 let options = options
                     .iter()
-                    // This has to be better, we're iterating over all for no reason. We really just want the first
-                    .filter(|(k, _)| !&template_entry.options_selected.contains_key(*k))
-                    .collect::<Vec<(&String, &TemplateOptions)>>();
+                    .collect::<Vec<(&String, &TemplateOptions)>>()
+                    .clone();
 
-                let Some((next_option_name, next_option)) = options.get(0) else {
+                let Some((next_option_name, next_option)) =
+                    options.get(template_entry.current_option_index)
+                else {
                     return self.accept_message(
                         DevContainerMessage::TemplateOptionsCompleted(template_entry),
                         window,
@@ -970,8 +1014,13 @@ impl StatefulModal for DevContainerModal {
                     .map(|option| (option, NavigableEntry::focusable(cx)))
                     .collect();
 
-                template_entry.next_option = Some(TemplateOptionSelection {
+                template_entry.current_option_index += 1;
+                template_entry.current_option = Some(TemplateOptionSelection {
                     option_name: (*next_option_name).clone(),
+                    description: next_option
+                        .description
+                        .clone()
+                        .unwrap_or_else(|| "".to_string()),
                     navigable_options: next_option_entries,
                 });
 
