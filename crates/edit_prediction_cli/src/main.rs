@@ -652,7 +652,7 @@ fn main() {
                 }
 
                 match &command {
-                    Command::Eval(_) => score::print_report(&*grouped_examples.lock().unwrap()),
+                    Command::Eval(_) => score::print_report(&grouped_examples.lock().unwrap()),
                     _ => (),
                 };
 
