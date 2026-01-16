@@ -262,6 +262,13 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn is_dirty(&self, _: &App) -> bool {
         false
     }
+
+    /// Returns true if this item is a terminal.
+    /// Used to determine which tab bar (top or side) to display the item in.
+    fn is_terminal(&self, _: &App) -> bool {
+        false
+    }
+
     fn capability(&self, _: &App) -> Capability {
         Capability::ReadWrite
     }
@@ -490,6 +497,7 @@ pub trait ItemHandle: 'static + Send {
     fn item_id(&self) -> EntityId;
     fn to_any_view(&self) -> AnyView;
     fn is_dirty(&self, cx: &App) -> bool;
+    fn is_terminal(&self, cx: &App) -> bool;
     fn capability(&self, cx: &App) -> Capability;
     fn toggle_read_only(&self, window: &mut Window, cx: &mut App);
     fn has_deleted_file(&self, cx: &App) -> bool;
@@ -968,6 +976,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn is_dirty(&self, cx: &App) -> bool {
         self.read(cx).is_dirty(cx)
+    }
+
+    fn is_terminal(&self, cx: &App) -> bool {
+        self.read(cx).is_terminal(cx)
     }
 
     fn capability(&self, cx: &App) -> Capability {

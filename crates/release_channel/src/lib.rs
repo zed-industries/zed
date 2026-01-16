@@ -32,6 +32,7 @@ pub fn app_identifier() -> &'static str {
         ReleaseChannel::Nightly => "Zed-Editor-Nightly",
         ReleaseChannel::Preview => "Zed-Editor-Preview",
         ReleaseChannel::Stable => "Zed-Editor-Stable",
+        ReleaseChannel::Pro => "Zed-Editor-Pro",
     }
 }
 
@@ -135,6 +136,11 @@ pub enum ReleaseChannel {
 
     /// The Stable release channel.
     Stable,
+
+    /// The Pro release channel.
+    ///
+    /// Custom build with enhanced features.
+    Pro,
 }
 
 struct GlobalReleaseChannel(ReleaseChannel);
@@ -167,7 +173,7 @@ impl ReleaseChannel {
 
     /// Returns whether we want to poll for updates for this [`ReleaseChannel`]
     pub fn poll_for_updates(&self) -> bool {
-        !matches!(self, ReleaseChannel::Dev)
+        !matches!(self, ReleaseChannel::Dev | ReleaseChannel::Pro)
     }
 
     /// Returns the display name for this [`ReleaseChannel`].
@@ -177,6 +183,7 @@ impl ReleaseChannel {
             ReleaseChannel::Nightly => "Zed Nightly",
             ReleaseChannel::Preview => "Zed Preview",
             ReleaseChannel::Stable => "Zed",
+            ReleaseChannel::Pro => "Zed Pro",
         }
     }
 
@@ -187,6 +194,7 @@ impl ReleaseChannel {
             ReleaseChannel::Nightly => "nightly",
             ReleaseChannel::Preview => "preview",
             ReleaseChannel::Stable => "stable",
+            ReleaseChannel::Pro => "pro",
         }
     }
 
@@ -199,6 +207,7 @@ impl ReleaseChannel {
             ReleaseChannel::Nightly => "dev.zed.Zed-Nightly",
             ReleaseChannel::Preview => "dev.zed.Zed-Preview",
             ReleaseChannel::Stable => "dev.zed.Zed",
+            ReleaseChannel::Pro => "dev.zed.Zed-Pro",
         }
     }
 
@@ -209,6 +218,7 @@ impl ReleaseChannel {
             Self::Nightly => Some("nightly=1"),
             Self::Preview => Some("preview=1"),
             Self::Stable => None,
+            Self::Pro => None,
         }
     }
 }
@@ -226,6 +236,7 @@ impl FromStr for ReleaseChannel {
             "nightly" => ReleaseChannel::Nightly,
             "preview" => ReleaseChannel::Preview,
             "stable" => ReleaseChannel::Stable,
+            "pro" => ReleaseChannel::Pro,
             _ => return Err(InvalidReleaseChannel),
         })
     }

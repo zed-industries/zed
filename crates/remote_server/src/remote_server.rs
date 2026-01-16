@@ -67,7 +67,7 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
         Commands::Version => {
             let release_channel = *RELEASE_CHANNEL;
             match release_channel {
-                ReleaseChannel::Stable | ReleaseChannel::Preview => {
+                ReleaseChannel::Stable | ReleaseChannel::Preview | ReleaseChannel::Pro => {
                     println!("{}", env!("ZED_PKG_VERSION"))
                 }
                 ReleaseChannel::Nightly | ReleaseChannel::Dev => {

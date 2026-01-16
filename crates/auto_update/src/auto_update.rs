@@ -253,7 +253,7 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
 pub fn release_notes_url(cx: &mut App) -> Option<String> {
     let release_channel = ReleaseChannel::try_global(cx)?;
     let url = match release_channel {
-        ReleaseChannel::Stable | ReleaseChannel::Preview => {
+        ReleaseChannel::Stable | ReleaseChannel::Preview | ReleaseChannel::Pro => {
             let auto_updater = AutoUpdater::get(cx)?;
             let auto_updater = auto_updater.read(cx);
             let current_version = &auto_updater.current_version;

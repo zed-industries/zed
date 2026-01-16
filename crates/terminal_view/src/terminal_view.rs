@@ -1409,6 +1409,10 @@ impl Item for TerminalView {
         self.terminal().read(cx).tab_color()
     }
 
+    fn is_terminal(&self, _: &App) -> bool {
+        true
+    }
+
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);

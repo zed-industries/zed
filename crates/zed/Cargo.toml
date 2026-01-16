@@ -283,5 +283,13 @@ osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
 
+[package.metadata.bundle-pro]
+icon = ["resources/app-icon@2x.png", "resources/app-icon.png"]
+identifier = "dev.zed.Zed-Pro"
+name = "Zed Pro"
+osx_minimum_system_version = "10.15.7"
+osx_info_plist_exts = ["resources/info/*"]
+osx_url_schemes = ["zed-pro"]
+
 [package.metadata.cargo-machete]
 ignored = ["profiling", "zstd", "tracing"]

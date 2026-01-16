@@ -3286,13 +3286,24 @@ impl Pane {
                 }
             });
 
-        let mut tab_items = self
+        // When position is Right, filter out terminals (they go to the side tab bar)
+        let tab_bar_position = TabBarSettings::get_global(cx).position;
+        let filter_terminals = tab_bar_position == TabBarPosition::Right;
+
+        // First collect filtered items with their indices and details
+        let tab_details_vec = tab_details(&self.items, window, cx);
+        let filtered_items: Vec<_> = self
             .items
             .iter()
             .enumerate()
-            .zip(tab_details(&self.items, window, cx))
-            .map(|((ix, item), detail)| {
-                self.render_tab(ix, &**item, detail, &focus_handle, window, cx)
+            .filter(|(_, item)| !filter_terminals || !item.is_terminal(cx))
+            .collect();
+
+        let mut tab_items = filtered_items
+            .iter()
+            .map(|(ix, item)| {
+                let detail = tab_details_vec.get(*ix).copied().unwrap_or(0);
+                self.render_tab(*ix, &***item, detail, &focus_handle, window, cx)
             })
             .collect::<Vec<_>>();
         let tab_count = tab_items.len();
@@ -3456,34 +3467,30 @@ impl Pane {
         let width = self.side_tab_bar_width.unwrap_or(settings.default_width);
         let focus_handle = self.focus_handle.clone();
 
-        let tab_details = tab_details(&self.items, window, cx);
-        let tab_items: Vec<_> = self
+        // Filter to only terminal items
+        let terminal_items: Vec<_> = self
             .items
             .iter()
             .enumerate()
-            .zip(tab_details)
-            .map(|((ix, item), detail)| {
-                self.render_side_tab(ix, &**item, detail, &focus_handle, window, cx)
+            .filter(|(_, item)| item.is_terminal(cx))
+            .collect();
+
+        let tab_details = tab_details(&self.items, window, cx);
+        let tab_items: Vec<_> = terminal_items
+            .iter()
+            .map(|(ix, item)| {
+                let detail = tab_details.get(*ix).copied().unwrap_or(0);
+                self.render_side_tab(*ix, &***item, detail, &focus_handle, window, cx)
             })
             .collect();
 
-        // Header with + button
-        let new_button = PopoverMenu::new("side-tab-bar-new-menu")
-            .trigger_with_tooltip(
-                IconButton::new("plus", IconName::Plus)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted),
-                Tooltip::text("New..."),
-            )
-            .anchor(Corner::TopRight)
-            .with_handle(self.new_item_context_menu_handle.clone())
-            .menu(move |window, cx| {
-                Some(ContextMenu::build(window, cx, |menu, _, _| {
-                    menu.action("New File", NewFile.boxed_clone())
-                        .action("Open File", ToggleFileFinder::default().boxed_clone())
-                        .separator()
-                        .action("New Terminal", NewTerminal.boxed_clone())
-                }))
+        // Header with + button for terminals only
+        let new_button = IconButton::new("plus", IconName::Plus)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .tooltip(Tooltip::text("New Terminal"))
+            .on_click(|_, window, cx| {
+                window.dispatch_action(NewTerminal.boxed_clone(), cx);
             });
 
         SideTabBar::new("side_tab_bar")
@@ -3495,7 +3502,7 @@ impl Pane {
                     .justify_between()
                     .items_center()
                     .child(
-                        Label::new("Open Editors")
+                        Label::new("Terminals")
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
@@ -3534,7 +3541,6 @@ impl Pane {
         let item_id = item.item_id();
         let indicator = render_item_indicator(item.boxed_clone(), cx);
         let custom_bg_color = item.tab_background_color(cx);
-        let capability = item.capability(cx);
         let dragged_tab = DraggedTab {
             item: item.boxed_clone(),
             pane: cx.entity(),
@@ -3772,23 +3778,7 @@ impl Pane {
                             })
                         };
 
-                        if capability != Capability::ReadOnly {
-                            let read_only_label = if capability.editable() {
-                                "Make File Read-Only"
-                            } else {
-                                "Make File Editable"
-                            };
-                            menu = menu.separator().entry(
-                                read_only_label,
-                                None,
-                                window.handler_for(&pane, move |pane, window, cx| {
-                                    if let Some(item) = pane.item_for_index(ix) {
-                                        item.toggle_read_only(window, cx);
-                                    }
-                                }),
-                            );
-                        }
-
+                        // Terminals don't need file-related options, so skip to pin_tab_entries
                         if let Some(entry) = single_entry_to_resolve {
                             let project_path = pane
                                 .read(cx)
@@ -4592,6 +4582,10 @@ impl Render for Pane {
                 let tab_bar_position = TabBarSettings::get_global(cx).position;
                 let show_tab_bar = self.active_item().is_some() && display_tab_bar;
 
+                // When position is Right, check if we have any non-terminal items to show in horizontal bar
+                let has_non_terminal_items = tab_bar_position == TabBarPosition::Right
+                    && self.items.iter().any(|item| !item.is_terminal(cx));
+
                 match tab_bar_position {
                     TabBarPosition::Top => {
                         if show_tab_bar {
@@ -4600,13 +4594,22 @@ impl Render for Pane {
                             pane_div
                         }
                     }
-                    TabBarPosition::Right => pane_div,
+                    TabBarPosition::Right => {
+                        // Show horizontal tab bar for non-terminal items
+                        if show_tab_bar && has_non_terminal_items {
+                            pane_div.child((self.render_tab_bar.clone())(self, window, cx))
+                        } else {
+                            pane_div
+                        }
+                    }
                 }
             })
             .child({
                 let tab_bar_position = TabBarSettings::get_global(cx).position;
+                // Show side tab bar only when there are terminal items
+                let has_terminal_items = self.items.iter().any(|item| item.is_terminal(cx));
                 let show_side_tab_bar =
-                    self.active_item().is_some() && display_tab_bar && tab_bar_position == TabBarPosition::Right;
+                    self.active_item().is_some() && display_tab_bar && tab_bar_position == TabBarPosition::Right && has_terminal_items;
                 let has_worktrees = project.read(cx).visible_worktrees(cx).next().is_some();
                 // main content
                 let main_content = div()

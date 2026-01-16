@@ -200,7 +200,7 @@ impl UserSettingsContent {
             ReleaseChannel::Dev => self.dev.as_deref(),
             ReleaseChannel::Nightly => self.nightly.as_deref(),
             ReleaseChannel::Preview => self.preview.as_deref(),
-            ReleaseChannel::Stable => self.stable.as_deref(),
+            ReleaseChannel::Stable | ReleaseChannel::Pro => self.stable.as_deref(),
         }
     }
 

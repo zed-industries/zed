@@ -71,7 +71,7 @@ impl dyn CredentialsProvider {
                 // variable is set, we will use the actual keychain.
                 !*ZED_DEVELOPMENT_USE_KEYCHAIN
             }
-            Some(ReleaseChannel::Nightly | ReleaseChannel::Preview | ReleaseChannel::Stable)
+            Some(ReleaseChannel::Nightly | ReleaseChannel::Preview | ReleaseChannel::Stable | ReleaseChannel::Pro)
             | None => false,
         };
 

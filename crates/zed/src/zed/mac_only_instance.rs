@@ -33,6 +33,7 @@ fn address() -> SocketAddr {
         ReleaseChannel::Preview => 43737 + USER_BLOCK,
         ReleaseChannel::Stable => 43737 + (2 * USER_BLOCK),
         ReleaseChannel::Nightly => 43737 + (3 * USER_BLOCK),
+        ReleaseChannel::Pro => 43737 + (4 * USER_BLOCK),
     };
     let mut user_port = port;
     let mut sys = System::new_all();
@@ -76,6 +77,7 @@ fn instance_handshake() -> &'static str {
         ReleaseChannel::Nightly => "Zed Editor Nightly Instance Running",
         ReleaseChannel::Preview => "Zed Editor Preview Instance Running",
         ReleaseChannel::Stable => "Zed Editor Stable Instance Running",
+        ReleaseChannel::Pro => "Zed Editor Pro Instance Running",
     }
 }
 
