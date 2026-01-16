@@ -5252,7 +5252,7 @@ impl ProjectPanel {
                         h_flex().h_6().w_full().child(self.filename_editor.clone())
                     } else {
                         h_flex().h_6().map(|this| {
-                            self.render_path_details(
+                            self.render_entry_path(
                                 this,
                                 entry_id,
                                 file_name,
@@ -5307,7 +5307,7 @@ impl ProjectPanel {
             })
     }
 
-    fn render_path_details(
+    fn render_entry_path(
         &self,
         parent: Div,
         entry_id: ProjectEntryId,
@@ -5336,7 +5336,7 @@ impl ProjectPanel {
                 .fold(parent, |parent, (index, component)| {
                     parent
                         .when(index != 0, |this| {
-                            self.render_path_details_separator(
+                            self.render_entry_path_separator(
                                 this,
                                 entry_id,
                                 index,
@@ -5463,7 +5463,7 @@ impl ProjectPanel {
         }
     }
 
-    fn render_path_details_separator(
+    fn render_entry_path_separator(
         &self,
         parent: Div,
         entry_id: ProjectEntryId,
