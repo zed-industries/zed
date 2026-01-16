@@ -1120,7 +1120,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                 insert_text_mode: None,
                                 confirm: Some(Arc::new({
                                     let source = source.clone();
-                                    let is_error = is_error;
                                     move |intent, _window, cx| {
                                         // Don't confirm errored commands
                                         if is_error {
