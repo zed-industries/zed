@@ -42,7 +42,6 @@ impl From<settings::WslConnection> for WslConnectionOptions {
     }
 }
 
-
 #[derive(Debug)]
 pub(crate) struct WslRemoteConnection {
     remote_binary_path: Option<Arc<RelPath>>,
