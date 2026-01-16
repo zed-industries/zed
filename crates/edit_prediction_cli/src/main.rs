@@ -542,99 +542,101 @@ fn main() {
                 let mut tasks = Vec::new();
                 for _ in 0..args.max_parallelism {
                     tasks.push(async {
-                        let Some(repo_examples) = grouped_examples.lock().unwrap().pop_front()
-                        else {
-                            return;
-                        };
-                        for mut example in repo_examples {
-                            let result = async {
-                                match &command {
-                                    Command::ParseExample => {}
-                                    Command::LoadProject => {
-                                        run_load_project(
-                                            &mut example,
-                                            app_state.clone(),
-                                            cx.clone(),
-                                        )
-                                        .await?;
-                                    }
-                                    Command::Context => {
-                                        run_context_retrieval(
-                                            &mut example,
-                                            app_state.clone(),
-                                            cx.clone(),
-                                        )
-                                        .await?;
-                                    }
-                                    Command::FormatPrompt(args) => {
-                                        run_format_prompt(
-                                            &mut example,
-                                            args,
-                                            app_state.clone(),
-                                            cx.clone(),
-                                        )
-                                        .await?;
-                                    }
-                                    Command::Predict(args) => {
-                                        run_prediction(
-                                            &mut example,
-                                            args,
-                                            app_state.clone(),
-                                            cx.clone(),
-                                        )
-                                        .await?;
-                                    }
-                                    Command::Distill => {
-                                        run_distill(&mut example).await?;
-                                    }
-                                    Command::Score(args) | Command::Eval(args) => {
-                                        run_scoring(
-                                            &mut example,
-                                            &args,
-                                            app_state.clone(),
-                                            cx.clone(),
-                                        )
-                                        .await?;
-                                    }
-                                    Command::Clean
-                                    | Command::Synthesize(_)
-                                    | Command::SplitCommit(_)
-                                    | Command::Split(_) => {
-                                        unreachable!()
-                                    }
-                                }
-                                anyhow::Ok(())
-                            }
-                            .await;
-
-                            let failed = if let Err(error) = result {
-                                handle_error(
-                                    error,
-                                    &args,
-                                    &command,
-                                    &app_state,
-                                    failfast_on_single_example,
-                                    &example,
-                                )
-                                .await;
-                                true
-                            } else {
-                                false
+                        loop {
+                            let Some(repo_examples) = grouped_examples.lock().unwrap().pop_front()
+                            else {
+                                break;
                             };
+                            for mut example in repo_examples {
+                                let result = async {
+                                    match &command {
+                                        Command::ParseExample => {}
+                                        Command::LoadProject => {
+                                            run_load_project(
+                                                &mut example,
+                                                app_state.clone(),
+                                                cx.clone(),
+                                            )
+                                            .await?;
+                                        }
+                                        Command::Context => {
+                                            run_context_retrieval(
+                                                &mut example,
+                                                app_state.clone(),
+                                                cx.clone(),
+                                            )
+                                            .await?;
+                                        }
+                                        Command::FormatPrompt(args) => {
+                                            run_format_prompt(
+                                                &mut example,
+                                                args,
+                                                app_state.clone(),
+                                                cx.clone(),
+                                            )
+                                            .await?;
+                                        }
+                                        Command::Predict(args) => {
+                                            run_prediction(
+                                                &mut example,
+                                                args,
+                                                app_state.clone(),
+                                                cx.clone(),
+                                            )
+                                            .await?;
+                                        }
+                                        Command::Distill => {
+                                            run_distill(&mut example).await?;
+                                        }
+                                        Command::Score(args) | Command::Eval(args) => {
+                                            run_scoring(
+                                                &mut example,
+                                                &args,
+                                                app_state.clone(),
+                                                cx.clone(),
+                                            )
+                                            .await?;
+                                        }
+                                        Command::Clean
+                                        | Command::Synthesize(_)
+                                        | Command::SplitCommit(_)
+                                        | Command::Split(_) => {
+                                            unreachable!()
+                                        }
+                                    }
+                                    anyhow::Ok(())
+                                }
+                                .await;
 
-                            let should_write = !failed || args.failed == FailedHandling::Keep;
-                            if should_write {
-                                if let Some(ref mut sender) = output_sender.clone() {
-                                    let line = serde_json::to_string(&example).unwrap();
-                                    sender
-                                        .send(line)
-                                        .await
-                                        .expect("Failed to send to output writer");
-                                } else if args.output.is_none()
-                                    && !matches!(command, Command::Eval(_))
-                                {
-                                    let line = serde_json::to_string(&example).unwrap();
-                                    println!("{}", line);
+                                let failed = if let Err(error) = result {
+                                    handle_error(
+                                        error,
+                                        &args,
+                                        &command,
+                                        &app_state,
+                                        failfast_on_single_example,
+                                        &example,
+                                    )
+                                    .await;
+                                    true
+                                } else {
+                                    false
+                                };
+
+                                let should_write = !failed || args.failed == FailedHandling::Keep;
+                                if should_write {
+                                    if let Some(ref mut sender) = output_sender.clone() {
+                                        let line = serde_json::to_string(&example).unwrap();
+                                        sender
+                                            .send(line)
+                                            .await
+                                            .expect("Failed to send to output writer");
+                                    } else if args.output.is_none()
+                                        && !matches!(command, Command::Eval(_))
+                                    {
+                                        let line = serde_json::to_string(&example).unwrap();
+                                        println!("{}", line);
+                                    }
                                 }
                             }
                         }
