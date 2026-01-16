@@ -41,7 +41,6 @@ pub struct OpenPathDelegate {
     replace_prompt: Task<()>,
     render_footer:
         Arc<dyn Fn(&mut Window, &mut Context<Picker<Self>>) -> Option<AnyElement> + 'static>,
-    hidden_entries: bool,
 }
 
 impl OpenPathDelegate {
@@ -69,7 +68,6 @@ impl OpenPathDelegate {
             path_style,
             replace_prompt: Task::ready(()),
             render_footer: Arc::new(|_, _| None),
-            hidden_entries: false,
         }
     }
 
@@ -83,10 +81,6 @@ impl OpenPathDelegate {
         self
     }
 
-    pub fn show_hidden(mut self) -> Self {
-        self.hidden_entries = true;
-        self
-    }
     fn get_entry(&self, selected_match_index: usize) -> Option<CandidateInfo> {
         match &self.directory_state {
             DirectoryState::List { entries, .. } => {
@@ -306,10 +300,10 @@ impl PickerDelegate for OpenPathDelegate {
             }
             DirectoryState::None { .. } => Some(lister.list_directory(dir.clone(), cx)),
         };
+
         self.cancel_flag.store(true, atomic::Ordering::Release);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
-        let hidden_entries = self.hidden_entries;
         let parent_path_is_root = self.prompt_root == dir;
         let current_dir = self.current_dir();
         cx.spawn_in(window, async move |this, cx| {
@@ -405,11 +399,13 @@ impl PickerDelegate for OpenPathDelegate {
             let max_id = new_entries
                 .iter()
                 .map(|entry| entry.path.id)
-                .max()
+                //     .max()
+                //     .unwrap_or(0);
+                // if !suffix.starts_with('.') && !hidden_entries {
+                //     new_entries.retain(|entry| !entry.path.string.starts_with('.'));
+                // }
+                .reduce(|acc, id| acc.max(id))
                 .unwrap_or(0);
-            if !suffix.starts_with('.') && !hidden_entries {
-                new_entries.retain(|entry| !entry.path.string.starts_with('.'));
-            }
 
             if suffix.is_empty() {
                 let should_prepend_with_current_dir = this
@@ -442,16 +438,24 @@ impl PickerDelegate for OpenPathDelegate {
                 }
 
                 this.update(cx, |this, cx| {
-                    this.delegate.selected_index = 0;
-                    this.delegate.string_matches = new_entries
+                    let string_matches = new_entries
                         .iter()
-                        .map(|m| StringMatch {
-                            candidate_id: m.path.id,
-                            score: 0.0,
-                            positions: Vec::new(),
-                            string: m.path.string.clone(),
+                        .filter_map(|m| {
+                            if m.path.string.starts_with('.') && m.path.string != current_dir {
+                                None
+                            } else {
+                                Some(StringMatch {
+                                    candidate_id: m.path.id,
+                                    score: 0.0,
+                                    positions: Vec::new(),
+                                    string: m.path.string.clone(),
+                                })
+                            }
                         })
                         .collect();
+
+                    this.delegate.selected_index = 0;
+                    this.delegate.string_matches = string_matches;
                     this.delegate.directory_state =
                         match &this.delegate.directory_state {
                             DirectoryState::None { create: false }
@@ -488,6 +492,10 @@ impl PickerDelegate for OpenPathDelegate {
                 .filter_map(|entry| {
                     if is_create_state && !entry.is_dir && Some(&suffix) == Some(&entry.path.string)
                     {
+                        None
+                    } else if !suffix.is_empty() && entry.path.string == current_dir {
+                        None
+                    } else if !suffix.starts_with('.') && entry.path.string.starts_with('.') {
                         None
                     } else {
                         Some(&entry.path)
