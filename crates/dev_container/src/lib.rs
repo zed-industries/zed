@@ -473,7 +473,7 @@ impl PickerDelegate for FeaturePickerDelegate {
                     feature_entry.feature.id.clone(),
                     feature_entry.toggle_state,
                 ))
-                .child(Label::new(feature_entry.feature.name.clone()))
+                .child(Label::new(feature_entry.feature.name))
                 .into_any_element(),
         )
     }
@@ -1167,7 +1167,7 @@ impl StatefulModal for DevContainerModal {
                     let delegate = FeaturePickerDelegate::new(
                         "Select features to add".to_string(),
                         cx.weak_entity(),
-                        features.clone(),
+                        features,
                         template_entry.clone(),
                         Box::new(|entry, this, window, cx| {
                             this.accept_message(
@@ -1404,7 +1404,7 @@ fn dispatch_apply_templates(
                     .is_dir()
                     .then_some(tree.read(cx))
             });
-            worktree.and_then(|w| Some(w.id()))
+            worktree.map(|w| w.id())
         }) {
             let node_runtime = workspace.read_with(cx, |workspace, _| {
                 workspace.app_state().node_runtime.clone()

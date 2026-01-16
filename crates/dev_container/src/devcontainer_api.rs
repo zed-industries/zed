@@ -177,8 +177,8 @@ pub async fn start_dev_container(
             };
 
             let connection = DevContainerConnection {
-                name: project_name.into(),
-                container_id: container_id.into(),
+                name: project_name,
+                container_id: container_id,
                 use_podman,
             };
 
