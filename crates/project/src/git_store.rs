@@ -4266,8 +4266,9 @@ impl Repository {
             })
             .1;
 
-        let end_index = initial_commit_data.len().saturating_sub(1);
-        &initial_commit_data[range.start.min(end_index)..range.end.min(end_index)]
+        let max_start = initial_commit_data.len().saturating_sub(1);
+        let max_end = initial_commit_data.len();
+        &initial_commit_data[range.start.min(max_start)..range.end.min(max_end)]
     }
 
     async fn local_git_graph_data(
