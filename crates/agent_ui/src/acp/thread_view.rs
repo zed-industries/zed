@@ -5836,16 +5836,43 @@ impl AcpThreadView {
                         let icon_color = if is_next { Color::Accent } else { Color::Muted };
                         let queue_len = self.message_queue.len();
 
-                        let preview = queued
+                        let preview: String = queued
                             .content
                             .iter()
-                            .find_map(|block| match block {
+                            .filter_map(|block| match block {
                                 acp::ContentBlock::Text(text) => {
-                                    text.text.lines().next().map(str::to_owned)
+                                    let first_line = text.text.lines().next()?;
+                                    if first_line.is_empty() {
+                                        None
+                                    } else {
+                                        Some(first_line.to_owned())
+                                    }
+                                }
+                                acp::ContentBlock::Image(_) => Some("@Image".to_owned()),
+                                acp::ContentBlock::Audio(_) => Some("@Audio".to_owned()),
+                                acp::ContentBlock::ResourceLink(link) => {
+                                    let name = link.uri.rsplit('/').next().unwrap_or(&link.uri);
+                                    Some(format!("@{}", name))
+                                }
+                                acp::ContentBlock::Resource(resource) => {
+                                    let uri = match &resource.resource {
+                                        acp::EmbeddedResourceResource::TextResourceContents(r) => {
+                                            Some(&r.uri)
+                                        }
+                                        acp::EmbeddedResourceResource::BlobResourceContents(r) => {
+                                            Some(&r.uri)
+                                        }
+                                        _ => None,
+                                    };
+                                    uri.map(|uri| {
+                                        let name = uri.rsplit('/').next().unwrap_or(uri);
+                                        format!("@{}", name)
+                                    })
                                 }
                                 _ => None,
                             })
-                            .unwrap_or_default();
+                            .collect::<Vec<_>>()
+                            .join("");
 
                         h_flex()
                             .group("queue_entry")
