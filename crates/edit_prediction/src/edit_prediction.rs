@@ -113,14 +113,8 @@ impl FeatureFlag for MercuryFeatureFlag {
     const NAME: &str = "mercury";
 }
 
-static EDIT_PREDICTIONS_MODEL_ID: LazyLock<String> = LazyLock::new(|| {
-    match env::var("ZED_ZETA_MODEL").as_deref() {
-        Ok("zeta2-exp") => "4w5n28vw", // Fine-tuned model @ Baseten
-        Ok(model) => model,
-        Err(_) => "yqvev8r3", // Vanilla qwen3-coder @ Baseten
-    }
-    .to_string()
-});
+static EDIT_PREDICTIONS_MODEL_ID: LazyLock<Option<String>> =
+    LazyLock::new(|| env::var("ZED_ZETA_MODEL").ok());
 
 pub struct Zeta2FeatureFlag;
 
@@ -1933,7 +1927,7 @@ impl EditPredictionStore {
 
         let request = PredictEditsV3Request {
             input,
-            model: None,
+            model: EDIT_PREDICTIONS_MODEL_ID.clone(),
             prompt_version,
         };
 

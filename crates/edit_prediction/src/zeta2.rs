@@ -84,7 +84,7 @@ pub fn request_prediction_with_zeta2(
                 // Use raw endpoint with custom URL
                 let prompt = format_zeta_prompt(&prompt_input, zeta_version);
                 let request = RawCompletionRequest {
-                    model: EDIT_PREDICTIONS_MODEL_ID.clone(),
+                    model: EDIT_PREDICTIONS_MODEL_ID.clone().unwrap_or_default(),
                     prompt,
                     temperature: None,
                     stop: vec![],
