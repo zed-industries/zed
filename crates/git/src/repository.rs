@@ -2600,7 +2600,8 @@ impl GitRepository for RealGitRepository {
                     break;
                 }
 
-                lines.push(std::mem::take(&mut line_buffer));
+                let line = line_buffer.trim_end_matches('\n').to_string();
+                lines.push(line);
 
                 if lines.len() >= GRAPH_CHUNK_SIZE {
                     let commits = parse_initial_graph_output(lines.iter().map(|s| s.as_str()));

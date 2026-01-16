@@ -81,13 +81,31 @@ impl GitGraph {
             .detach();
 
         let git_store = project.read(cx).git_store().clone();
+        let accent_colors = cx.theme().accents();
+        let mut graph = crate::graph::GitGraph::new(accent_colors_count(accent_colors));
+        let log_source = LogSource::default();
+        let log_order = LogOrder::default();
+
         cx.subscribe(&git_store, |this, _, event, cx| match event {
-            GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::BranchChanged, true)
-            | GitStoreEvent::ActiveRepositoryChanged(_) => {
+            GitStoreEvent::RepositoryUpdated(repo_id, RepositoryEvent::BranchChanged, true) => {
+                dbg!(repo_id);
                 // todo! only call load data from render, we should set a bool here
                 // todo! We should check that the repo actually has a change that would affect the graph
                 this.graph.clear();
                 cx.notify();
+            }
+
+            GitStoreEvent::ActiveRepositoryChanged(repo_id) => {
+                dbg!(repo_id, "active changed");
+                this.graph.clear();
+                this._subscriptions.clear();
+                cx.notify();
+
+                if let Some(repository) = this.project.read(cx).active_repository(cx) {
+                    // todo! we can merge the repository event handler with the git store events
+                    this._subscriptions =
+                        vec![cx.subscribe(&repository, Self::on_repository_event)];
+                }
             }
             // todo! active repository has changed we should invalidate the graph state and reset our repo subscription
             _ => {}
@@ -95,26 +113,13 @@ impl GitGraph {
         .detach();
 
         let _subscriptions = if let Some(repository) = project.read(cx).active_repository(cx) {
-            vec![
-                cx.subscribe(&repository, |this, repository, event, cx| match event {
-                    RepositoryEvent::GitGraphCountUpdated(_, commit_count) => {
-                        let old_count = this.graph.commits.len();
+            repository.update(cx, |repository, cx| {
+                let commits =
+                    repository.graph_data(log_source.clone(), log_order, 0..usize::MAX, cx);
+                graph.add_commits(commits);
+            });
 
-                        repository.update(cx, |repository, cx| {
-                            let commits = repository.graph_data(
-                                this.log_source.clone(),
-                                this.log_order,
-                                old_count..*commit_count,
-                                cx,
-                            );
-                            this.graph.add_commits(commits);
-                        });
-
-                        this.graph.max_commit_count = AllCommitCount::Loaded(*commit_count);
-                    }
-                    _ => {}
-                }),
-            ]
+            vec![cx.subscribe(&repository, Self::on_repository_event)]
         } else {
             vec![]
         };
@@ -124,12 +129,11 @@ impl GitGraph {
         let row_height = font_size + px(12.0);
 
         let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
-        let accent_colors = cx.theme().accents();
 
         GitGraph {
             focus_handle,
             project,
-            graph: crate::graph::GitGraph::new(accent_colors_count(accent_colors)),
+            graph,
             loading: true,
             error: None,
             _load_task: None,
@@ -139,9 +143,35 @@ impl GitGraph {
             table_interaction_state,
             selected_entry_idx: None,
             selected_commit_diff: None,
-            log_source: LogSource::default(),
-            log_order: LogOrder::default(),
+            log_source,
+            log_order,
             _subscriptions,
+        }
+    }
+
+    fn on_repository_event(
+        &mut self,
+        repository: Entity<Repository>,
+        event: &RepositoryEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            RepositoryEvent::GitGraphCountUpdated(_, commit_count) => {
+                let old_count = self.graph.commits.len();
+
+                repository.update(cx, |repository, cx| {
+                    let commits = repository.graph_data(
+                        self.log_source.clone(),
+                        self.log_order,
+                        old_count..*commit_count,
+                        cx,
+                    );
+                    self.graph.add_commits(commits);
+                });
+
+                self.graph.max_commit_count = AllCommitCount::Loaded(*commit_count);
+            }
+            _ => {}
         }
     }
 
