@@ -31,7 +31,7 @@ Zed monitors your repository so that changes you make on the command line are in
 
 ### Configuration
 
-You can configure how Zed hard wraps commit messages with the `preferred-line-length` setting of the "Git Commit" language. The default is `72`, but it can be set to any number of characters `0` or more.
+You can configure how Zed hard wraps commit messages with the `preferred_line_length` setting of the "Git Commit" language. The default is `80`, but it can be set to any number of characters `0` or more.
 
 The Git Panel also allows configuring the `soft_wrap` setting to adjust how commit messages display while you are typing them in the Git Panel. The default setting is `editor_width`, however, `none`, `preferred_line_length`, and `bounded` are also options.
 
@@ -40,7 +40,7 @@ The Git Panel also allows configuring the `soft_wrap` setting to adjust how comm
 ```json
 "languages": {
   "Git Commit": {
-    "soft_wrap": "editor_width",
+    "soft_wrap": "preferred_line_length",
     "preferred_line_length": 72
   },
 }
