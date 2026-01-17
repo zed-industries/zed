@@ -8,15 +8,16 @@ use editor::{EditorSettings, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
 use gpui::{
     AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, ObjectFit, ParentElement, Render, Styled, Task, WeakEntity,
-    Window, canvas, div, fill, img, opaque_grey, point, size,
+    InteractiveElement, IntoElement, KeyContext, ParentElement, Render, ScrollHandle,
+    ScrollWheelEvent, Styled, Task, WeakEntity, Window, actions, canvas, div, fill, img,
+    opaque_grey, point, px, size, ObjectFit,
 };
 use language::File as _;
 use persistence::IMAGE_VIEWER;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
 use theme::{Theme, ThemeSettings};
-use ui::prelude::*;
+use ui::{Scrollbars, ScrollAxes, WithScrollbar, prelude::*};
 use util::paths::PathExt;
 use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
@@ -27,10 +28,18 @@ use workspace::{
 pub use crate::image_info::*;
 pub use crate::image_viewer_settings::*;
 
+const MIN_ZOOM: f32 = 0.01;
+const MAX_ZOOM: f32 = 100.0;
+const ZOOM_STEP: f32 = 0.1;
+
+actions!(image_viewer, [ZoomIn, ZoomOut, ResetZoom, ActualSize]);
+
 pub struct ImageView {
     image_item: Entity<ImageItem>,
     project: Entity<Project>,
     focus_handle: FocusHandle,
+    zoom_level: f32,
+    scroll_handle: ScrollHandle,
 }
 
 impl ImageView {
@@ -54,6 +63,8 @@ impl ImageView {
             image_item,
             project,
             focus_handle: cx.focus_handle(),
+            zoom_level: 1.0,
+            scroll_handle: ScrollHandle::new(),
         }
     }
 
@@ -72,6 +83,93 @@ impl ImageView {
             }
             ImageItemEvent::ReloadNeeded => {}
         }
+    }
+
+    fn zoom_in(&mut self, _: &ZoomIn, window: &mut Window, cx: &mut Context<Self>) {
+        let old_zoom = self.zoom_level;
+        let new_zoom = (self.zoom_level + ZOOM_STEP).min(MAX_ZOOM);
+        
+        if old_zoom != new_zoom {
+            self.adjust_zoom_center(old_zoom, new_zoom, window, cx);
+            self.zoom_level = new_zoom;
+            cx.notify();
+        }
+    }
+
+    fn zoom_out(&mut self, _: &ZoomOut, window: &mut Window, cx: &mut Context<Self>) {
+        let old_zoom = self.zoom_level;
+        let new_zoom = (self.zoom_level - ZOOM_STEP).max(MIN_ZOOM);
+        
+        if old_zoom != new_zoom {
+            self.adjust_zoom_center(old_zoom, new_zoom, window, cx);
+            self.zoom_level = new_zoom;
+            cx.notify();
+        }
+    }
+
+    fn reset_zoom(&mut self, _: &ResetZoom, window: &mut Window, cx: &mut Context<Self>) {
+        let viewport_size = self.scroll_handle.bounds().size;
+        let image = self.image_item.read(cx).image.clone();
+        let image_size = image
+            .use_render_image(window, cx)
+            .map(|data| {
+                let size = data.size(0);
+                gpui::size(px(size.width.0 as f32), px(size.height.0 as f32))
+            })
+            .unwrap_or(size(px(0.), px(0.)));
+
+        if viewport_size.width > px(0.)
+            && viewport_size.height > px(0.)
+            && image_size.width > px(0.)
+            && image_size.height > px(0.)
+        {
+            let width_ratio = viewport_size.width / image_size.width;
+            let height_ratio = viewport_size.height / image_size.height;
+            // Zoom to fit: scale down to fit viewport, but don't scale up small images beyond 100%
+            self.zoom_level = width_ratio.min(height_ratio).min(1.0).clamp(MIN_ZOOM, MAX_ZOOM);
+        } else {
+            self.zoom_level = 1.0;
+        }
+
+        self.scroll_handle.set_offset(point(px(0.), px(0.)));
+        cx.notify();
+    }
+
+    fn actual_size(&mut self, _: &ActualSize, _window: &mut Window, cx: &mut Context<Self>) {
+        self.zoom_level = 1.0;
+        self.scroll_handle.set_offset(point(px(0.), px(0.)));
+        cx.notify();
+    }
+
+    fn adjust_zoom_center(
+        &mut self,
+        old_zoom: f32,
+        new_zoom: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let image = self.image_item.read(cx).image.clone();
+        let image_size = image
+            .use_render_image(window, cx)
+            .map(|data| {
+                let size = data.size(0);
+                gpui::size(px(size.width.0 as f32), px(size.height.0 as f32))
+            })
+            .unwrap_or(size(px(0.), px(0.)));
+
+        let scaled_size = size(image_size.width * old_zoom, image_size.height * old_zoom);
+
+        let max_offset = self.scroll_handle.max_offset();
+        let viewport_w = scaled_size.width - max_offset.width;
+        let viewport_h = scaled_size.height - max_offset.height;
+
+        let viewport_center = point(viewport_w / 2.0, viewport_h / 2.0);
+
+        let zoom_factor = new_zoom / old_zoom;
+        let scroll_offset = self.scroll_handle.offset();
+
+        let new_offset = scroll_offset * zoom_factor + viewport_center * (zoom_factor - 1.0);
+        self.scroll_handle.set_offset(new_offset);
     }
 }
 
@@ -191,6 +289,8 @@ impl Item for ImageView {
             image_item: self.image_item.clone(),
             project: self.project.clone(),
             focus_handle: cx.focus_handle(),
+            zoom_level: 1.0,
+            scroll_handle: ScrollHandle::new(),
         })))
     }
 
@@ -303,8 +403,20 @@ impl Focusable for ImageView {
 }
 
 impl Render for ImageView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let image = self.image_item.read(cx).image.clone();
+        let image_size = image
+            .clone()
+            .use_render_image(window, cx)
+            .map(|data| {
+                let size = data.size(0);
+                gpui::size(px(size.width.0 as f32), px(size.height.0 as f32))
+            })
+            .unwrap_or(size(px(0.), px(0.)));
+        let zoom_level = self.zoom_level;
+        let scaled_width = image_size.width * zoom_level;
+        let scaled_height = image_size.height * zoom_level;
+
         let checkered_background =
             |bounds: Bounds<Pixels>, _, window: &mut Window, _cx: &mut App| {
                 let square_size: f32 = 32.0;
@@ -347,37 +459,108 @@ impl Render for ImageView {
                 }
             };
 
-        div().track_focus(&self.focus_handle(cx)).size_full().child(
-            div()
-                .flex()
-                .justify_center()
-                .items_center()
-                .w_full()
-                // TODO: In browser based Tailwind & Flex this would be h-screen and we'd use w-full
-                .h_full()
-                .child(
-                    div()
-                        .relative()
-                        .max_w_full()
-                        .max_h_full()
-                        .child(
-                            canvas(|_, _, _| (), checkered_background)
-                                .border_2()
-                                .border_color(cx.theme().styles.colors.border)
-                                .size_full()
-                                .absolute()
-                                .top_0()
-                                .left_0(),
-                        )
-                        .child(
-                            img(image)
-                                .object_fit(ObjectFit::ScaleDown)
-                                .max_w_full()
-                                .max_h_full()
-                                .id("img"),
-                        ),
-                ),
-        )
+
+
+        let mut key_context = KeyContext::new_with_defaults();
+        key_context.add("ImageView");
+
+        div()
+            .size_full()
+            .relative() // Ensure custom scrollbars anchor to the pane edges
+            .key_context(key_context)
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::zoom_in))
+            .on_action(cx.listener(Self::zoom_out))
+            .on_action(cx.listener(Self::reset_zoom))
+            .on_action(cx.listener(Self::actual_size))
+            .child(
+                div()
+                    .id("image-viewer-scroll-container")
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .overflow_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .on_scroll_wheel(cx.listener(
+                        move |this, event: &ScrollWheelEvent, _window, cx| {
+                            if event.modifiers.secondary() {
+                                let delta = event.delta.pixel_delta(px(1.)).y;
+                                let zoom_delta = if delta > px(0.) {
+                                    ZOOM_STEP
+                                } else if delta < px(0.) {
+                                    -ZOOM_STEP
+                                } else {
+                                    return;
+                                };
+                                
+                                let old_zoom = this.zoom_level;
+                                let new_zoom = (old_zoom + zoom_delta).clamp(MIN_ZOOM, MAX_ZOOM);
+                                
+                                if new_zoom != old_zoom {
+                                    let zoom_factor = new_zoom / old_zoom;
+                                    let mouse_pos = event.position;
+                                    let scroll_offset = this.scroll_handle.offset();
+                                    
+                                    let new_offset = scroll_offset * zoom_factor + mouse_pos * (zoom_factor - 1.0);
+                                    
+                                    this.zoom_level = new_zoom;
+                                    this.scroll_handle.set_offset(new_offset);
+                                    cx.notify();
+                                }
+                                cx.stop_propagation();
+                            }
+                        },
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .min_w_full()
+                            .min_h_full()
+                            .min_w(scaled_width)
+                            .min_h(scaled_height)
+                            .child(div().flex_grow()) // Top spacer
+                            .child(
+                                div()
+                                    .flex()
+                                    .min_w_full()
+                                    .min_w(scaled_width)
+                                    .child(div().flex_grow()) // Left spacer
+                                    .child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .relative()
+                                            .w(scaled_width)
+                                            .h(scaled_height)
+                                            .child(
+                                                canvas(|_, _, _| (), checkered_background)
+                                                    .border_2()
+                                                    .border_color(cx.theme().styles.colors.border)
+                                                    .size_full()
+                                                    .absolute()
+                                                    .top_0()
+                                                    .left_0(),
+                                            )
+                                            .child(
+                                                img(image)
+                                                    .object_fit(ObjectFit::Fill)
+                                                    .size_full()
+                                                    .id("img")
+                                            ),
+                                    )
+                                    .child(div().flex_grow()) // Right spacer
+                            )
+                            .child(div().flex_grow()) // Bottom spacer
+                    )
+            )
+            .custom_scrollbars(
+                Scrollbars::new(ScrollAxes::Both)
+                    .tracked_scroll_handle(&self.scroll_handle),
+                window,
+                cx,
+            )
     }
 }
 
