@@ -683,7 +683,6 @@ impl MetalRenderer {
         self.draw_primitives_to_texture(scene, instance_buffer, drawable.texture(), viewport_size)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     fn draw_primitives_to_texture(
         &mut self,
         scene: &Scene,

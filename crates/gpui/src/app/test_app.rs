@@ -25,13 +25,13 @@
 //! ```
 
 use crate::{
-    app::GpuiMode, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, BackgroundExecutor,
-    BorrowAppContext, Bounds, ClipboardItem, Context, Entity, ForegroundExecutor, Global,
-    InputEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Platform, Point, Render, SceneSnapshot, Size, Task, TestDispatcher, TestPlatform, TextSystem,
-    Window, WindowBounds, WindowHandle, WindowOptions,
+    AnyWindowHandle, App, AppCell, AppContext, AsyncApp, BackgroundExecutor, BorrowAppContext,
+    Bounds, ClipboardItem, Context, Entity, ForegroundExecutor, Global, InputEvent, Keystroke,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform, Point, Render,
+    SceneSnapshot, Size, Task, TestDispatcher, TestPlatform, TextSystem, Window, WindowBounds,
+    WindowHandle, WindowOptions, app::GpuiMode,
 };
-use rand::{rngs::StdRng, SeedableRng};
+use rand::{SeedableRng, rngs::StdRng};
 use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 
 /// A test application context with a clean API.
@@ -450,13 +450,18 @@ impl<V: 'static + Render> TestWindow<V> {
     /// Automatically draws the window after the resize.
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
         let window_id = self.handle.window_id();
-        {
+        // Extract the test window first, then release the app borrow before calling
+        // simulate_resize. This avoids double-borrow because simulate_resize triggers
+        // the resize callback which tries to borrow the app again.
+        let test_window = {
             let mut app = self.app.borrow_mut();
-            if let Some(Some(window)) = app.windows.get_mut(window_id) {
-                if let Some(test_window) = window.platform_window.as_test() {
-                    test_window.simulate_resize(size);
-                }
-            }
+            app.windows
+                .get_mut(window_id)
+                .and_then(|w| w.as_mut())
+                .and_then(|w| w.platform_window.as_test().cloned())
+        };
+        if let Some(mut test_window) = test_window {
+            test_window.simulate_resize(size);
         }
         // Directly notify the window that bounds changed, since the async callback
         // from the platform window may not execute reliably in tests.
@@ -532,7 +537,7 @@ impl<V> Clone for TestWindow<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{div, prelude::*, FocusHandle, Focusable};
+    use crate::{FocusHandle, Focusable, div, prelude::*};
 
     struct Counter {
         count: usize,
