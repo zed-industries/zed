@@ -1,4 +1,4 @@
-use acp_thread::{MentionUri, selection_name};
+use acp_thread::MentionUri;
 use agent::{ThreadStore, outline};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
@@ -406,34 +406,65 @@ impl MentionSet {
         };
 
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+
         let Some(start) = snapshot.as_singleton_anchor(source_range.start) else {
             return;
         };
 
         let offset = start.to_offset(&snapshot);
 
-        for (buffer, selection_range, range_to_fold) in selections {
-            let range = snapshot.anchor_after(offset + range_to_fold.start)
-                ..snapshot.anchor_after(offset + range_to_fold.end);
+        struct SelectionGroup {
+            abs_path: Option<PathBuf>,
+            buffer: Entity<Buffer>,
+            line_ranges: Vec<RangeInclusive<u32>>,
+            texts: Vec<String>,
+            range_to_fold: Range<usize>,
+        }
 
+        let mut groups: HashMap<Option<PathBuf>, SelectionGroup> = HashMap::default();
+
+        for (buffer, selection_range, range_to_fold) in selections.into_iter() {
             let abs_path = buffer
                 .read(cx)
                 .project_path(cx)
                 .and_then(|project_path| project.read(cx).absolute_path(&project_path, cx));
-            let snapshot = buffer.read(cx).snapshot();
 
-            let text = snapshot
+            let buffer_snapshot = buffer.read(cx).snapshot();
+            let text = buffer_snapshot
                 .text_for_range(selection_range.clone())
                 .collect::<String>();
-            let point_range = selection_range.to_point(&snapshot);
+            let point_range = selection_range.to_point(&buffer_snapshot);
             let line_range = point_range.start.row..=point_range.end.row;
 
-            let uri = MentionUri::Selection {
+            let group = groups.entry(abs_path.clone()).or_insert_with(|| SelectionGroup {
                 abs_path: abs_path.clone(),
-                line_range: line_range.clone(),
+                buffer: buffer.clone(),
+                line_ranges: Vec::new(),
+                texts: Vec::new(),
+                range_to_fold: range_to_fold.clone(),
+            });
+            group.line_ranges.push(line_range);
+            group.texts.push(text);
+        }
+
+        for (_, group) in groups.into_iter() {
+            let range_start_offset = offset + group.range_to_fold.start;
+            let range_end_offset = offset + group.range_to_fold.end;
+
+            let range = snapshot.anchor_after(range_start_offset)
+                ..snapshot.anchor_after(range_end_offset);
+
+            let combined_text = group.texts.join("\n");
+
+            let uri = MentionUri::Selection {
+                abs_path: group.abs_path.clone(),
+                line_ranges: group.line_ranges,
+                line_range: None,
             };
+            let crease_name = uri.name();
+
             let crease = crease_for_mention(
-                selection_name(abs_path.as_deref(), &line_range).into(),
+                crease_name.into(),
                 uri.icon_path(cx),
                 range,
                 editor.downgrade(),
@@ -450,8 +481,8 @@ impl MentionSet {
                 (
                     uri,
                     Task::ready(Ok(Mention::Text {
-                        content: text,
-                        tracked_buffers: vec![buffer],
+                        content: combined_text,
+                        tracked_buffers: vec![group.buffer],
                     }))
                     .shared(),
                 ),

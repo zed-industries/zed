@@ -644,7 +644,8 @@ impl MessageEditor {
 
                     let mention_uri = MentionUri::Selection {
                         abs_path: Some(file_path.clone()),
-                        line_range: line_range.clone(),
+                        line_ranges: vec![line_range.clone()],
+                        line_range: Some(line_range.clone()),
                     };
 
                     let mention_text = mention_uri.as_link().to_string();
@@ -882,6 +883,7 @@ impl MessageEditor {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
+
         let Some(completion) =
             PromptCompletionProvider::<Entity<MessageEditor>>::completion_for_action(
                 PromptContextAction::AddSelections,
@@ -896,12 +898,90 @@ impl MessageEditor {
         };
 
         self.editor.update(cx, |message_editor, cx| {
-            message_editor.edit([(cursor_anchor..cursor_anchor, completion.new_text)], cx);
+            message_editor.edit([(cursor_anchor..cursor_anchor, completion.new_text.clone())], cx);
             message_editor.request_autoscroll(Autoscroll::fit(), cx);
         });
+
         if let Some(confirm) = completion.confirm {
             confirm(CompletionIntent::Complete, window, cx);
         }
+    }
+
+    pub fn insert_selections_sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use std::collections::HashMap;
+        const PLACEHOLDER: &str = "selection ";
+
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let workspace_selections = crate::completion_provider::selection_ranges(&workspace, cx);
+        if workspace_selections.is_empty() {
+            return;
+        }
+
+        let (editor_start_anchor, singleton_buffer) = {
+            let editor = self.editor.read(cx);
+            let editor_buffer = editor.buffer().read(cx);
+            let Some(buffer) = editor_buffer.as_singleton() else {
+                return;
+            };
+
+            let anchor = editor_buffer
+                .snapshot(cx)
+                .anchor_before(Point::zero());
+
+            (anchor, buffer.clone())
+        };
+
+        let mut grouped_by_buffer: HashMap<gpui::EntityId, Vec<(Entity<Buffer>, std::ops::Range<text::Anchor>)>> = HashMap::new();
+
+        for (buffer, range) in workspace_selections {
+            let buffer_id = buffer.entity_id();
+            grouped_by_buffer.entry(buffer_id).or_default().push((buffer, range));
+        }
+
+        let num_groups = grouped_by_buffer.len();
+
+        let mut selections_with_ranges: Vec<(Entity<Buffer>, std::ops::Range<text::Anchor>, std::ops::Range<usize>)> = Vec::new();
+        let mut current_offset = 0;
+
+        for (_, group) in grouped_by_buffer {
+            let text_range = current_offset..(current_offset + PLACEHOLDER.len() - 1);
+
+            for (buffer, range) in group {
+                selections_with_ranges.push((buffer, range, text_range.clone()));
+            }
+
+            current_offset += PLACEHOLDER.len();
+        }
+
+        let new_text: String = PLACEHOLDER.repeat(num_groups);
+
+        self.editor.update(cx, |message_editor, cx| {
+            message_editor.edit([(editor_start_anchor..editor_start_anchor, new_text.clone())], cx);
+        });
+
+        let text_anchor = {
+            let editor = self.editor.read(cx);
+            let editor_buffer = editor.buffer().read(cx);
+            let multi_buffer_anchor = editor_buffer.snapshot(cx).anchor_before(Point::zero());
+            let offset = multi_buffer_anchor.to_offset(&editor_buffer.snapshot(cx));
+
+            singleton_buffer.update(cx, |buffer, _cx| {
+                buffer.anchor_before(offset.0.min(buffer.len()))
+            })
+        };
+
+        self.mention_set.update(cx, |store, cx| {
+            store.confirm_mention_for_selection(
+                text_anchor..text_anchor,
+                selections_with_ranges,
+                self.editor.clone(),
+                window,
+                cx,
+            );
+        });
     }
 
     pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {

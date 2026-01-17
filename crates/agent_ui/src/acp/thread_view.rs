@@ -44,7 +44,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
 use terminal_view::terminal_panel::TerminalPanel;
-use text::{Anchor, ToPoint as _};
+use text::{Anchor, OffsetRangeExt, ToPoint as _};
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
     Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, DecoratedIcon,
@@ -1381,17 +1381,24 @@ impl AcpThreadView {
             }
         }
 
+        self.auto_insert_selections_if_needed(window, cx);
         self.send_impl(self.message_editor.clone(), window, cx)
     }
 
     fn interrupt_and_send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(thread) = self.thread() else {
+        if self.thread().is_none() {
             return;
-        };
+        }
 
         if self.is_loading_contents {
             return;
         }
+
+        self.auto_insert_selections_if_needed(window, cx);
+
+        let Some(thread) = self.thread() else {
+            return;
+        };
 
         if thread.read(cx).status() == ThreadStatus::Idle {
             self.send_impl(self.message_editor.clone(), window, cx);
@@ -1622,6 +1629,8 @@ impl AcpThreadView {
             .thread()
             .map(|t| t.read(cx).status() == acp_thread::ThreadStatus::Idle)
             .unwrap_or(true);
+
+        self.auto_insert_selections_if_needed(window, cx);
 
         if is_idle {
             self.send_impl(self.message_editor.clone(), window, cx);
@@ -6089,6 +6098,7 @@ impl AcpThreadView {
                             .gap_1()
                             .children(self.render_token_usage(cx))
                             .children(self.profile_selector.clone())
+                            .children(self.render_selection_indicator(cx))
                             // Either config_options_view OR (mode_selector + model_selector)
                             .children(self.config_options_view.clone())
                             .when(self.config_options_view.is_none(), |this| {
@@ -6127,6 +6137,130 @@ impl AcpThreadView {
         self.as_native_thread(cx)
             .and_then(|thread| thread.read(cx).model())
             .is_some_and(|model| model.supports_split_token_display())
+    }
+
+    fn render_selection_indicator(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let workspace = self.workspace.upgrade()?;
+
+        // First try to get selections
+        let selections = crate::completion_provider::selection_ranges(&workspace, cx);
+
+        let (_file_name, selection_text) = if !selections.is_empty() {
+            // Group selections by buffer
+            use std::collections::HashMap;
+            use std::ops::RangeInclusive;
+            let mut groups: HashMap<gpui::EntityId, Vec<&(Entity<Buffer>, std::ops::Range<text::Anchor>)>> = HashMap::default();
+
+            for selection in &selections {
+                let buffer_id = selection.0.entity_id();
+                groups.entry(buffer_id).or_default().push(selection);
+            }
+
+            // Use the first buffer group
+            let (buffer, ranges): (Entity<Buffer>, Vec<RangeInclusive<u32>>) = if let Some((_, group)) = groups.iter().next() {
+                let buffer = group[0].0.clone();
+                let buffer_read = buffer.read(cx);
+                let snapshot = buffer_read.snapshot();
+
+                let line_ranges: Vec<RangeInclusive<u32>> = group
+                    .iter()
+                    .map(|item| {
+                        let range = &(**item).1;
+                        let point_range = range.to_point(&snapshot);
+                        point_range.start.row..=point_range.end.row
+                    })
+                    .collect();
+
+                (buffer, line_ranges)
+            } else {
+                return None;
+            };
+
+            let buffer_read = buffer.read(cx);
+
+            // Get file name
+            let file_name = buffer_read
+                .file()
+                .and_then(|f| f.path().file_name())
+                .map(|name| name.to_string())
+                .unwrap_or_else(|| "Untitled".to_string());
+
+            // Format line ranges
+            let text = if ranges.len() == 1 {
+                let range = &ranges[0];
+                if range.start() == range.end() {
+                    format!("{}:{}", file_name, range.start() + 1)
+                } else {
+                    format!("{}:{}-{}", file_name, range.start() + 1, range.end() + 1)
+                }
+            } else {
+                // Multiple selections - show comma-separated
+                let lines_str: String = ranges
+                    .iter()
+                    .take(5) // Limit to first 5 for display
+                    .map(|r: &RangeInclusive<u32>| {
+                        if r.start() == r.end() {
+                            format!("{}", r.start() + 1)
+                        } else {
+                            format!("{}-{}", r.start() + 1, r.end() + 1)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                if ranges.len() > 5 {
+                    format!("{} ({}...)", file_name, lines_str)
+                } else {
+                    format!("{} ({})", file_name, lines_str)
+                }
+            };
+
+            (file_name, text)
+        } else {
+            // No selection, just show the active file name
+            let active_editor = workspace
+                .read(cx)
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))?;
+
+            let editor = active_editor.read(cx);
+            let buffer = editor.buffer().read(cx).as_singleton()?;
+            let buffer_read = buffer.read(cx);
+
+            let file_name = buffer_read
+                .file()
+                .and_then(|f| f.path().file_name())
+                .map(|name| name.to_string())
+                .unwrap_or_else(|| "Untitled".to_string());
+
+            (file_name.clone(), file_name)
+        };
+
+        Some(
+            h_flex()
+                .gap_1()
+                .items_center()
+                .child(
+                    div()
+                        .px_1p5()
+                        .py_0p5()
+                        .rounded_md()
+                        .bg(cx.theme().colors().element_background)
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .items_center()
+                                .child(Icon::new(IconName::FileCode).size(IconSize::Small).color(Color::Muted))
+                                .child(
+                                    Label::new(selection_text)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                )
+                        )
+                )
+        )
     }
 
     fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<Div> {
@@ -6632,10 +6766,6 @@ impl AcpThreadView {
                     abs_path: path,
                     line_range,
                     ..
-                }
-                | MentionUri::Selection {
-                    abs_path: Some(path),
-                    line_range,
                 } => {
                     let project = workspace.project();
                     let Some(path) =
@@ -6652,6 +6782,50 @@ impl AcpThreadView {
                             };
                             let range = Point::new(*line_range.start(), 0)
                                 ..Point::new(*line_range.start(), 0);
+                            editor
+                                .update_in(cx, |editor, window, cx| {
+                                    editor.change_selections(
+                                        SelectionEffects::scroll(Autoscroll::center()),
+                                        window,
+                                        cx,
+                                        |s| s.select_ranges(vec![range]),
+                                    );
+                                })
+                                .ok();
+                            anyhow::Ok(())
+                        })
+                        .detach_and_log_err(cx);
+                }
+                MentionUri::Selection {
+                    abs_path: Some(path),
+                    line_ranges,
+                    line_range,
+                    ..
+                } => {
+                    let range_to_use = if !line_ranges.is_empty() {
+                        &line_ranges[0]
+                    } else if let Some(ref r) = line_range {
+                        r
+                    } else {
+                        return;
+                    };
+
+                    let project = workspace.project();
+                    let Some(path) =
+                        project.update(cx, |project, cx| project.find_project_path(path, cx))
+                    else {
+                        return;
+                    };
+
+                    let item = workspace.open_path(path, None, true, window, cx);
+                    let line_range_clone = range_to_use.clone();
+                    window
+                        .spawn(cx, async move |cx| {
+                            let Some(editor) = item.await?.downcast::<Editor>() else {
+                                return Ok(());
+                            };
+                            let range = Point::new(*line_range_clone.start(), 0)
+                                ..Point::new(*line_range_clone.start(), 0);
                             editor
                                 .update_in(cx, |editor, window, cx| {
                                     editor.change_selections(
@@ -7438,6 +7612,26 @@ impl AcpThreadView {
     pub(crate) fn insert_selections(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.active_editor(cx).update(cx, |editor, cx| {
             editor.insert_selections(window, cx);
+        });
+    }
+
+    fn auto_insert_selections_if_needed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let selections = crate::completion_provider::selection_ranges(&workspace, cx);
+
+        if selections.is_empty() {
+            return;
+        }
+
+        self.insert_selections_sync(window, cx);
+    }
+
+    fn insert_selections_sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.message_editor.update(cx, |message_editor, cx| {
+            message_editor.insert_selections_sync(window, cx);
         });
     }
 

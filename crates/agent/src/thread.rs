@@ -276,17 +276,32 @@ impl UserMessage {
                         }
                         MentionUri::Selection {
                             abs_path: path,
+                            line_ranges,
                             line_range,
                             ..
                         } => {
+                            let tag = if !line_ranges.is_empty() {
+                                codeblock_tag_multi(
+                                    path.as_deref().unwrap_or("Untitled".as_ref()),
+                                    line_ranges
+                                )
+                            } else if let Some(range) = line_range {
+                                codeblock_tag(
+                                    path.as_deref().unwrap_or("Untitled".as_ref()),
+                                    Some(range)
+                                )
+                            } else {
+                                codeblock_tag(
+                                    path.as_deref().unwrap_or("Untitled".as_ref()),
+                                    None
+                                )
+                            };
+
                             write!(
                                 &mut selection_context,
                                 "\n{}",
                                 MarkdownCodeBlock {
-                                    tag: &codeblock_tag(
-                                        path.as_deref().unwrap_or("Untitled".as_ref()),
-                                        Some(line_range)
-                                    ),
+                                    tag: &tag,
                                     text: content
                                 }
                             )
@@ -401,6 +416,33 @@ fn codeblock_tag(full_path: &Path, line_range: Option<&RangeInclusive<u32>>) -> 
         } else {
             let _ = write!(result, ":{}-{}", range.start() + 1, range.end() + 1);
         }
+    }
+
+    result
+}
+
+fn codeblock_tag_multi(full_path: &Path, line_ranges: &[RangeInclusive<u32>]) -> String {
+    let mut result = String::new();
+
+    if let Some(extension) = full_path.extension().and_then(|ext| ext.to_str()) {
+        let _ = write!(result, "{} ", extension);
+    }
+
+    let _ = write!(result, "{}", full_path.display());
+
+    if !line_ranges.is_empty() {
+        let _ = write!(result, " (");
+        for (idx, range) in line_ranges.iter().enumerate() {
+            if idx > 0 {
+                let _ = write!(result, ", ");
+            }
+            if range.start() == range.end() {
+                let _ = write!(result, "{}", range.start() + 1);
+            } else {
+                let _ = write!(result, "{}-{}", range.start() + 1, range.end() + 1);
+            }
+        }
+        let _ = write!(result, ")");
     }
 
     result
