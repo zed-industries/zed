@@ -168,6 +168,20 @@ pub trait Extension: Send + Sync + 'static {
         locator_name: String,
         config: SpawnInTerminal,
     ) -> Result<DebugRequest>;
+
+    async fn build_context(
+        &self,
+        language_name: String,
+        location: TaskContextLocation,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Vec<TaskVariable>>;
+
+    async fn associated_tasks(
+        &self,
+        language_name: String,
+        file: Option<TaskContextFile>,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Vec<TaskDefinition>>;
 }
 
 pub fn parse_wasm_extension_version(extension_id: &str, wasm_bytes: &[u8]) -> Result<Version> {

@@ -9,7 +9,7 @@ use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
     DebugTaskDefinition, ExtensionCapability, ExtensionHostProxy, KeyValueStoreDelegate,
     ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol,
-    WorktreeDelegate,
+    TaskContextFile, TaskContextLocation, TaskDefinition, TaskVariable, WorktreeDelegate,
 };
 use fs::{Fs, normalize_path};
 use futures::future::LocalBoxFuture;
@@ -62,7 +62,7 @@ pub struct WasmHost {
     main_thread_message_tx: mpsc::UnboundedSender<MainThreadCall>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct WasmExtension {
     tx: UnboundedSender<ExtensionCall>,
     pub manifest: Arc<ExtensionManifest>,
@@ -488,6 +488,48 @@ impl extension::Extension for WasmExtension {
         })
         .await?
     }
+
+    async fn build_context(
+        &self,
+        language_name: String,
+        location: TaskContextLocation,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Vec<TaskVariable>> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                let variables = extension
+                    .call_build_context(store, &language_name, location.into(), resource)
+                    .await?
+                    .map_err(|err| store.data().extension_error(err))?;
+
+                Ok(variables.into_iter().map(Into::into).collect())
+            }
+            .boxed()
+        })
+        .await?
+    }
+
+    async fn associated_tasks(
+        &self,
+        language_name: String,
+        file: Option<TaskContextFile>,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Vec<TaskDefinition>> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                let tasks = extension
+                    .call_associated_tasks(store, &language_name, file.map(Into::into), resource)
+                    .await?
+                    .map_err(|err| store.data().extension_error(err))?;
+
+                Ok(tasks.into_iter().map(Into::into).collect())
+            }
+            .boxed()
+        })
+        .await?
+    }
 }
 
 pub struct WasmState {
@@ -601,7 +643,7 @@ impl WasmHost {
         wasm_bytes: Vec<u8>,
         manifest: &Arc<ExtensionManifest>,
         cx: &AsyncApp,
-    ) -> Task<Result<WasmExtension>> {
+    ) -> Task<Result<Arc<WasmExtension>>> {
         let this = self.clone();
         let manifest = manifest.clone();
         let executor = cx.background_executor().clone();
@@ -688,13 +730,13 @@ impl WasmHost {
             // calls may invoke wasi functions that require a tokio runtime.
             let task = Arc::new(gpui_tokio::Tokio::spawn(cx, extension_task));
 
-            Ok(WasmExtension {
+            Ok(Arc::new(WasmExtension {
                 manifest,
                 work_dir,
                 tx,
                 zed_api_version,
                 _task: task,
-            })
+            }))
         })
     }
 
@@ -778,7 +820,7 @@ impl WasmExtension {
         manifest: &Arc<ExtensionManifest>,
         wasm_host: Arc<WasmHost>,
         cx: &AsyncApp,
-    ) -> Result<Self> {
+    ) -> Result<Arc<Self>> {
         let path = extension_dir.join("extension.wasm");
 
         let mut wasm_file = wasm_host
