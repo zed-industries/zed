@@ -85,7 +85,7 @@ pub struct CandidateWithRanges {
     close_range: Range<MultiBufferOffset>,
 }
 
-/// Selects text at the same indentation level.
+/// Operates on text within or around parentheses `()`.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -94,7 +94,7 @@ struct Parentheses {
     opening: bool,
 }
 
-/// Selects text at the same indentation level.
+/// Operates on text within or around square brackets `[]`.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -103,7 +103,7 @@ struct SquareBrackets {
     opening: bool,
 }
 
-/// Selects text at the same indentation level.
+/// Operates on text within or around angle brackets `<>`.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -111,7 +111,8 @@ struct AngleBrackets {
     #[serde(default)]
     opening: bool,
 }
-/// Selects text at the same indentation level.
+
+/// Operates on text within or around curly brackets `{}`.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
