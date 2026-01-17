@@ -344,6 +344,7 @@ pub fn generate_evaluation_example_from_ordered_commit(
         tags: vec![],
         reasoning: None,
         uncommitted_diff: String::new(),
+        rejected_patch: None,
     })
 }
 
@@ -1374,6 +1375,7 @@ Date: Mon Jan 1 00:00:00 2024
             tags: vec![],
             reasoning: None,
             uncommitted_diff: String::new(),
+            rejected_patch: None,
         };
 
         let json = serde_json::to_string(&case).unwrap();
