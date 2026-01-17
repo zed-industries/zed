@@ -5,9 +5,6 @@ edition.workspace = true
 publish.workspace = true
 license = "GPL-3.0-or-later"
 
-[package.metadata.cargo-machete]
-ignored = ["virtual_document"]
-
 [lints]
 workspace = true
 
@@ -29,4 +26,3 @@ project.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 util.workspace = true
-virtual_document.workspace = true

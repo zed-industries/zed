@@ -8965,7 +8965,6 @@ dependencies = [
  "serde",
  "serde_json",
  "util",
- "virtual_document",
 ]
 
 [[package]]
