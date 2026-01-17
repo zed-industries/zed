@@ -1,6 +1,8 @@
 mod app_menu;
 mod keyboard;
 mod keystroke;
+mod mouse_stroke;
+mod scroll_stroke;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod linux;
@@ -77,6 +79,8 @@ use uuid::Uuid;
 pub use app_menu::*;
 pub use keyboard::*;
 pub use keystroke::*;
+pub use mouse_stroke::*;
+pub use scroll_stroke::*;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) use linux::*;
