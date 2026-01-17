@@ -285,11 +285,22 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
 
     // Create the worktree for this example if needed.
     step_progress.set_substatus("preparing worktree");
+
+    let mut worktree_exists = false;
     if worktree_path.is_dir() {
-        git::run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
-        git::run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
-        git::run_git(&worktree_path, &["checkout", revision.as_str()]).await?;
-    } else {
+        if git::run_git(&worktree_path, &["clean", "--force", "-d"])
+            .await
+            .is_ok()
+        {
+            git::run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
+            git::run_git(&worktree_path, &["checkout", revision.as_str()]).await?;
+            worktree_exists = true;
+        } else {
+            fs::remove_dir_all(&worktree_path).ok();
+        }
+    }
+
+    if !worktree_exists {
         let worktree_path_string = worktree_path.to_string_lossy();
         let branch_name = example.spec.filename();
         git::run_git(
