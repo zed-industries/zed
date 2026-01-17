@@ -512,7 +512,9 @@ impl BufferDiffInner<Entity<language::Buffer>> {
 
             // Find where this hunk is in the index if it doesn't overlap
             let mut buffer_offset_range = buffer_range.to_offset(buffer);
-            let start_overshoot = buffer_offset_range.start - prev_unstaged_hunk_buffer_end;
+            let start_overshoot = buffer_offset_range
+                .start
+                .saturating_sub(prev_unstaged_hunk_buffer_end);
             let mut index_start = prev_unstaged_hunk_base_text_end + start_overshoot;
 
             loop {
