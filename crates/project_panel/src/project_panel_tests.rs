@@ -542,11 +542,11 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
             "v root1",
+            "      [EDITOR: '']  <== selected",
             "    > .git",
             "    > a",
             "    > b",
             "    > C",
-            "      [EDITOR: '']  <== selected",
             "      .dockerignore",
             "v root2",
             "    > d",
@@ -564,11 +564,11 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
             "v root1",
+            "      [PROCESSING: 'the-new-filename']  <== selected",
             "    > .git",
             "    > a",
             "    > b",
             "    > C",
-            "      [PROCESSING: 'the-new-filename']  <== selected",
             "      .dockerignore",
             "v root2",
             "    > d",
@@ -604,9 +604,9 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             "    > .git",
             "    > a",
             "    v b",
+            "          [EDITOR: '']  <== selected",
             "        > 3",
             "        > 4",
-            "          [EDITOR: '']  <== selected",
             "    > C",
             "      .dockerignore",
             "      the-new-filename",
@@ -976,11 +976,11 @@ async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
             "v root1",
+            "      [EDITOR: '']  <== selected",
             "    > .git",
             "    > a",
             "    > b",
             "    > C",
-            "      [EDITOR: '']  <== selected",
             "      .dockerignore",
             "v root2",
             "    > d",
@@ -999,11 +999,11 @@ async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
             "v root1",
+            "      [PROCESSING: 'bdir1/dir2/the-new-filename']  <== selected",
             "    > .git",
             "    > a",
             "    > b",
             "    > C",
-            "      [PROCESSING: 'bdir1/dir2/the-new-filename']  <== selected",
             "      .dockerignore",
             "v root2",
             "    > d",
@@ -1077,8 +1077,8 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
             "v root1",
-            "    > .git",
             "      [EDITOR: '']  <== selected",
+            "    > .git",
             "      .dockerignore",
         ]
     );
@@ -1095,8 +1095,8 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
             "v root1",
-            "    > .git",
             "      [PROCESSING: 'new_dir']  <== selected",
+            "    > .git",
             "      .dockerignore",
         ]
     );
@@ -6677,8 +6677,8 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
-            "> existing_dir",
             "  [EDITOR: '']  <== selected",
+            "> existing_dir",
             "  existing_file.txt",
         ],
         "Editor should appear at root level when hide_root=true and no selection"

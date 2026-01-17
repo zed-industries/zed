@@ -200,6 +200,7 @@ struct EditState {
     processing_filename: Option<Arc<RelPath>>,
     previously_focused: Option<SelectedEntry>,
     validation_state: ValidationState,
+    temporarily_unfolded: Option<ProjectEntryId>,
 }
 
 impl EditState {
@@ -756,6 +757,13 @@ impl ProjectPanel {
                                     task.detach_and_notify_err(window, cx);
                                 }
                                 None => {
+                                    if let Some(edit_state) = project_panel.state.edit_state.take()
+                                    {
+                                        if let Some(entry_id) = edit_state.temporarily_unfolded {
+                                            project_panel.state.unfolded_dir_ids.remove(&entry_id);
+                                        }
+                                    }
+
                                     project_panel.state.edit_state = None;
                                     project_panel
                                         .update_visible_entries(None, false, false, window, cx);
@@ -1769,6 +1777,7 @@ impl ProjectPanel {
         if refocus {
             window.focus(&self.focus_handle, cx);
         }
+        let temporarily_unfolded = edit_state.temporarily_unfolded;
         edit_state.processing_filename = Some(filename);
         cx.notify();
 
@@ -1783,6 +1792,10 @@ impl ProjectPanel {
                 Err(e) => {
                     project_panel
                         .update_in(cx, |project_panel, window, cx| {
+                            if let Some(entry_id) = &temporarily_unfolded {
+                                project_panel.state.unfolded_dir_ids.remove(&entry_id);
+                            }
+
                             project_panel.marked_entries.clear();
                             project_panel.update_visible_entries(None, false, false, window, cx);
                         })
@@ -1791,6 +1804,10 @@ impl ProjectPanel {
                 }
                 Ok(CreatedEntry::Included(new_entry)) => {
                     project_panel.update_in(cx, |project_panel, window, cx| {
+                        if let Some(entry_id) = &temporarily_unfolded {
+                            project_panel.state.unfolded_dir_ids.remove(&entry_id);
+                        }
+
                         if let Some(selection) = &mut project_panel.state.selection
                             && selection.entry_id == edited_entry_id
                         {
@@ -1812,6 +1829,10 @@ impl ProjectPanel {
                 Ok(CreatedEntry::Excluded { abs_path }) => {
                     if let Some(open_task) = project_panel
                         .update_in(cx, |project_panel, window, cx| {
+                            if let Some(entry_id) = &temporarily_unfolded {
+                                project_panel.state.unfolded_dir_ids.remove(&entry_id);
+                            }
+
                             project_panel.marked_entries.clear();
                             project_panel.update_visible_entries(None, false, false, window, cx);
 
@@ -1866,6 +1887,13 @@ impl ProjectPanel {
         }
 
         let previous_edit_state = self.state.edit_state.take();
+
+        if let Some(ref edit_state) = previous_edit_state {
+            if let Some(entry_id) = &edit_state.temporarily_unfolded {
+                self.state.unfolded_dir_ids.remove(&entry_id);
+            }
+        }
+
         self.update_visible_entries(None, false, false, window, cx);
         self.marked_entries.clear();
 
@@ -1919,6 +1947,12 @@ impl ProjectPanel {
     }
 
     fn add_entry(&mut self, is_dir: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(previous_edit_state) = self.state.edit_state.take() {
+            if let Some(entry_id) = previous_edit_state.temporarily_unfolded {
+                self.state.unfolded_dir_ids.remove(&entry_id);
+            }
+        }
+
         let Some((worktree_id, entry_id)) = self
             .state
             .selection
@@ -1945,6 +1979,16 @@ impl ProjectPanel {
 
         let directory_id;
         let new_entry_id = self.resolve_entry(entry_id);
+
+        let mut temporarily_unfolded = None;
+
+        if new_entry_id != entry_id {
+            if !self.state.unfolded_dir_ids.contains(&new_entry_id) {
+                self.state.unfolded_dir_ids.insert(new_entry_id);
+                temporarily_unfolded = Some(new_entry_id);
+            }
+        }
+
         if let Some((worktree, expanded_dir_ids)) = self
             .project
             .read(cx)
@@ -1987,6 +2031,7 @@ impl ProjectPanel {
             previously_focused: self.state.selection,
             depth: 0,
             validation_state: ValidationState::None,
+            temporarily_unfolded,
         });
         self.filename_editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
@@ -2044,6 +2089,7 @@ impl ProjectPanel {
                     previously_focused: None,
                     depth: 0,
                     validation_state: ValidationState::None,
+                    temporarily_unfolded: None,
                 });
                 let file_name = entry.path.file_name().unwrap_or_default().to_string();
                 let selection = selection.unwrap_or_else(|| {
@@ -6660,6 +6706,16 @@ fn cmp_files_first(a: &Entry, b: &Entry) -> cmp::Ordering {
 
 #[inline]
 fn cmp_with_mode(a: &Entry, b: &Entry, mode: &settings::ProjectPanelSortMode) -> cmp::Ordering {
+    if a.id == NEW_ENTRY_ID || b.id == NEW_ENTRY_ID {
+        if a.path.parent() == b.path.parent() {
+            match (a.id == NEW_ENTRY_ID, b.id == NEW_ENTRY_ID) {
+                (true, false) => return cmp::Ordering::Less,
+                (false, true) => return cmp::Ordering::Greater,
+                _ => {}
+            };
+        }
+    }
+
     match mode {
         settings::ProjectPanelSortMode::DirectoriesFirst => cmp_directories_first(a, b),
         settings::ProjectPanelSortMode::Mixed => cmp_mixed(a, b),
