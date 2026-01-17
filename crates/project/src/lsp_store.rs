@@ -580,15 +580,14 @@ impl LocalLspStore {
 
                 match result {
                     Ok(server) => {
-                        // Register virtual document handlers before marking server as Running
-                        // This prevents race conditions where "Go to Definition" happens before handlers are ready
-                        let _ = LspStore::register_virtual_document_handlers(
+                        LspStore::register_virtual_document_handlers(
                             lsp_store.clone(),
                             adapter.clone(),
                             key.clone(),
                             cx,
                         )
-                        .await;
+                        .await
+                        .log_err();
 
                         lsp_store
                             .update(cx, |lsp_store, cx| {
@@ -3738,6 +3737,27 @@ impl LocalLspStore {
     }
 }
 
+/// Patches the URI in LSP params for virtual buffers.
+///
+/// The `LspCommand` trait's `to_lsp` method generates params based on a file path,
+/// but virtual buffers have URIs (like `jdt://...`) that don't correspond to filesystem paths.
+/// This function patches the generated params by replacing the `textDocument.uri` field
+/// with the actual virtual document URI.
+///
+/// Returns `None` if serialization/deserialization fails.
+fn patch_lsp_params_uri<P: serde::Serialize + serde::de::DeserializeOwned>(
+    params: P,
+    uri: &lsp::Uri,
+) -> Option<P> {
+    let mut value = serde_json::to_value(&params).ok()?;
+    if let Some(text_doc) = value.get_mut("textDocument") {
+        if let Some(uri_field) = text_doc.get_mut("uri") {
+            *uri_field = serde_json::Value::String(uri.to_string());
+        }
+    }
+    serde_json::from_value(value).ok()
+}
+
 fn notify_server_capabilities_updated(server: &LanguageServer, cx: &mut Context<LspStore>) {
     if let Some(capabilities) = serde_json::to_string(&server.capabilities()).ok() {
         cx.emit(LspStoreEvent::LanguageServerUpdate {
@@ -4884,9 +4904,6 @@ impl LspStore {
         };
 
         let lsp_params = if let Some(virtual_uri) = virtual_uri {
-            // For virtual buffers, we have the lsp::Uri directly
-            // Create a temporary PathBuf with a dummy path - we'll override the URI in to_lsp
-            // This is a workaround for the Path-based API
             let dummy_path = PathBuf::from("/virtual");
             match request.to_lsp_params_or_response(
                 &dummy_path,
@@ -4895,23 +4912,9 @@ impl LspStore {
                 cx,
             ) {
                 Ok(LspParamsOrResponse::Params(lsp_params)) => {
-                    // Override the URI in the params with the actual virtual URI
-                    // This is hacky but works because most LSP params have a textDocument field
-                    // We'll need to handle this more gracefully in the future
-                    // For now, serialize, modify, and deserialize
-                    if let Ok(mut value) = serde_json::to_value(&lsp_params) {
-                        if let Some(text_doc) = value.get_mut("textDocument") {
-                            if let Some(uri_field) = text_doc.get_mut("uri") {
-                                *uri_field = serde_json::Value::String(virtual_uri.to_string());
-                            }
-                        }
-                        if let Ok(params) = serde_json::from_value(value) {
-                            LspParamsOrResponse::Params(params)
-                        } else {
-                            return Task::ready(Ok(Default::default()));
-                        }
-                    } else {
-                        return Task::ready(Ok(Default::default()));
+                    match patch_lsp_params_uri(lsp_params, &virtual_uri) {
+                        Some(patched) => LspParamsOrResponse::Params(patched),
+                        None => return Task::ready(Ok(Default::default())),
                     }
                 }
                 Ok(response @ LspParamsOrResponse::Response(_)) => response,
@@ -11917,9 +11920,6 @@ impl LspStore {
         local
             .languages
             .update_lsp_binary_status(adapter.name(), BinaryStatus::None);
-
-        // Note: Virtual document handlers are now registered before this function is called,
-        // in the startup sequence, to prevent race conditions.
 
         if let Some(file_ops_caps) = language_server
             .capabilities()

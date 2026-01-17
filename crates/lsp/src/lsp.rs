@@ -1256,11 +1256,38 @@ impl LanguageServer {
         )
     }
 
+    fn create_response_handler<R>(
+        executor: &BackgroundExecutor,
+        tx: oneshot::Sender<Result<R>>,
+    ) -> ResponseHandler
+    where
+        R: 'static + Send + DeserializeOwned,
+    {
+        let executor = executor.clone();
+        Box::new(move |result| {
+            executor
+                .spawn(async move {
+                    let response = match result {
+                        Ok(response) => match serde_json::from_str(&response) {
+                            Ok(deserialized) => Ok(deserialized),
+                            Err(error) => {
+                                log::error!(
+                                    "failed to deserialize response: {}. response: {:?}",
+                                    error,
+                                    response
+                                );
+                                Err(error).context("failed to deserialize response")
+                            }
+                        },
+                        Err(error) => Err(anyhow!("{}", error.message)),
+                    };
+                    _ = tx.send(response);
+                })
+                .detach();
+        })
+    }
+
     /// Sends a custom LSP request with a dynamic method name.
-    /// This is useful for extensions that need to send non-standard LSP requests.
-    ///
-    /// The `method` parameter accepts any type that can be converted into a `String`,
-    /// avoiding unnecessary allocations when the caller already has a `String`.
     pub fn request_custom<M, P, R>(&self, method: M, params: P) -> impl LspRequestFuture<R>
     where
         M: Into<String>,
@@ -1284,29 +1311,9 @@ impl LanguageServer {
             .as_mut()
             .context("server shut down")
             .map(|handlers| {
-                let executor = self.executor.clone();
                 handlers.insert(
                     RequestId::Int(id),
-                    Box::new(move |result| {
-                        executor
-                            .spawn(async move {
-                                let response = match result {
-                                    Ok(response) => match serde_json::from_str(&response) {
-                                        Ok(deserialized) => Ok(deserialized),
-                                        Err(error) => {
-                                            log::error!(
-                                                "failed to deserialize response: {}. response: {:?}",
-                                                error, response
-                                            );
-                                            Err(error).context("failed to deserialize response")
-                                        }
-                                    },
-                                    Err(error) => Err(anyhow!("{}", error.message)),
-                                };
-                                _ = tx.send(response);
-                            })
-                            .detach();
-                    }),
+                    Self::create_response_handler(&self.executor, tx),
                 );
             });
 
@@ -1374,26 +1381,9 @@ impl LanguageServer {
             .as_mut()
             .context("server shut down")
             .map(|handlers| {
-                let executor = executor.clone();
                 handlers.insert(
                     RequestId::Int(id),
-                    Box::new(move |result| {
-                        executor
-                            .spawn(async move {
-                                let response = match result {
-                                    Ok(response) => match serde_json::from_str(&response) {
-                                        Ok(deserialized) => Ok(deserialized),
-                                        Err(error) => {
-                                            log::error!("failed to deserialize response from language server: {}. response from language server: {:?}", error, response);
-                                            Err(error).context("failed to deserialize response")
-                                        }
-                                    }
-                                    Err(error) => Err(anyhow!("{}", error.message)),
-                                };
-                                _ = tx.send(response);
-                            })
-                            .detach();
-                    }),
+                    Self::create_response_handler(executor, tx),
                 );
             });
 
