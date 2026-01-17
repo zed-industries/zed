@@ -231,7 +231,7 @@ pub struct ScrollManager {
     forbid_vertical_scroll: bool,
     minimap_thumb_state: Option<ScrollbarThumbState>,
     scroll_animation: Option<ScrollAnimation>,
-    scroll_animation_duration: Duration,
+    pub(crate) scroll_animation_duration: Duration,
 }
 
 impl ScrollManager {
@@ -253,7 +253,6 @@ impl ScrollManager {
             forbid_vertical_scroll: false,
             minimap_thumb_state: None,
             scroll_animation: None,
-            // TODO: We are not listening for settings change
             scroll_animation_duration: Duration::from_secs_f32(
                 editor_settings.smooth_scroll.duration,
             ),
