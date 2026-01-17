@@ -2561,3 +2561,95 @@ async fn test_send_keystrokes_underscore_is_literal_46509(cx: &mut gpui::TestApp
 
     cx.assert_state("helˇo", Mode::Normal);
 }
+
+#[gpui::test]
+async fn test_send_keystrokes_no_key_equivalent_mapping_46509(cx: &mut gpui::TestAppContext) {
+    use collections::HashMap;
+    use gpui::{KeybindingKeystroke, Keystroke, PlatformKeyboardMapper};
+
+    // create a mock Danish keyboard mapper
+    // on Danish keyboards, the macOS key equivalents mapping includes: '{' -> 'Æ' and '}' -> 'Ø'
+    // this means the `{` character is produced by the key labeled `Æ` (with shift modifier)
+    struct DanishKeyboardMapper;
+    impl PlatformKeyboardMapper for DanishKeyboardMapper {
+        fn map_key_equivalent(
+            &self,
+            mut keystroke: Keystroke,
+            use_key_equivalents: bool,
+        ) -> KeybindingKeystroke {
+            if use_key_equivalents {
+                if keystroke.key == "{" {
+                    keystroke.key = "Æ".to_string();
+                }
+                if keystroke.key == "}" {
+                    keystroke.key = "Ø".to_string();
+                }
+            }
+            KeybindingKeystroke::from_keystroke(keystroke)
+        }
+
+        fn get_key_equivalents(&self) -> Option<&HashMap<char, char>> {
+            None
+        }
+    }
+
+    let mapper = DanishKeyboardMapper;
+
+    let keystroke_brace = Keystroke::parse("{").unwrap();
+    let mapped_with_bug = mapper.map_key_equivalent(keystroke_brace.clone(), true);
+    assert_eq!(
+        mapped_with_bug.key(),
+        "Æ",
+        "BUG: With use_key_equivalents=true, {{ is mapped to Æ on Danish keyboard"
+    );
+
+    // Fixed behavior, where the literal `{` character is preserved
+    let mapped_fixed = mapper.map_key_equivalent(keystroke_brace.clone(), false);
+    assert_eq!(
+        mapped_fixed.key(),
+        "{",
+        "FIX: With use_key_equivalents=false, {{ stays as {{"
+    );
+
+    // Same applies to }
+    let keystroke_close = Keystroke::parse("}").unwrap();
+    let mapped_close_bug = mapper.map_key_equivalent(keystroke_close.clone(), true);
+    assert_eq!(mapped_close_bug.key(), "Ø");
+    let mapped_close_fixed = mapper.map_key_equivalent(keystroke_close.clone(), false);
+    assert_eq!(mapped_close_fixed.key(), "}");
+
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "g p",
+            workspace::SendKeystrokes("{".to_string()),
+            Some("vim_mode == normal"),
+        )])
+    });
+
+    cx.set_state(
+        indoc! {"
+            first paragraph
+
+            second paragraphˇ
+
+            third paragraph
+        "},
+        Mode::Normal,
+    );
+
+    cx.simulate_keystrokes("g p");
+    cx.run_until_parked();
+
+    cx.assert_state(
+        indoc! {"
+            first paragraph
+            ˇ
+            second paragraph
+
+            third paragraph
+        "},
+        Mode::Normal,
+    );
+}
