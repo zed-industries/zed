@@ -72,7 +72,7 @@ where
         }
     }
 
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.did_seek = false;
         self.at_end = self.tree.is_empty();
         self.stack.truncate(0);

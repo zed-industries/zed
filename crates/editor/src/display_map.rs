@@ -151,9 +151,8 @@ type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHi
 
 #[derive(Debug)]
 pub struct MultiBufferRowMapping {
+    pub first_group_start: Option<MultiBufferPoint>,
     pub boundaries: Vec<(MultiBufferPoint, Range<MultiBufferPoint>)>,
-    pub source_excerpt_end: MultiBufferPoint,
-    pub target_excerpt_end: MultiBufferPoint,
 }
 
 pub type ConvertMultiBufferRows = fn(

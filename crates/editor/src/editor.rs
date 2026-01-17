@@ -21104,7 +21104,7 @@ impl Editor {
             };
 
             let buffer_diff_snapshot = buffer_diff.read(cx).snapshot(cx);
-            let mut translated = buffer_diff_snapshot.rows_to_base_text_rows(
+            let (mut translated, _) = buffer_diff_snapshot.rows_to_base_text_rows(
                 [
                     Point::new(start_row_in_buffer, 0),
                     Point::new(end_row_in_buffer, 0),

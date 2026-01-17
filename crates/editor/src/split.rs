@@ -27,20 +27,21 @@ use crate::{
     display_map::{Companion, MultiBufferRowMapping},
 };
 
-pub(crate) type MultiBufferPointBounds = (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>);
-
 pub(crate) fn convert_lhs_rows_to_rhs(
     lhs_excerpt_to_rhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
     rhs_snapshot: &MultiBufferSnapshot,
     lhs_snapshot: &MultiBufferSnapshot,
-    lhs_bounds: MultiBufferPointBounds,
+    lhs_bounds: (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
 ) -> Vec<MultiBufferRowMapping> {
     convert_rows(
         lhs_excerpt_to_rhs_excerpt,
         lhs_snapshot,
         rhs_snapshot,
         lhs_bounds,
-        |diff, points, buffer| diff.base_text_rows_to_rows(points, buffer).collect(),
+        |diff, points, buffer| {
+            let (points, first_group_start) = diff.base_text_rows_to_rows(points, buffer);
+            (points.collect(), first_group_start)
+        },
     )
 }
 
@@ -48,14 +49,17 @@ pub(crate) fn convert_rhs_rows_to_lhs(
     rhs_excerpt_to_lhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
     lhs_snapshot: &MultiBufferSnapshot,
     rhs_snapshot: &MultiBufferSnapshot,
-    rhs_bounds: MultiBufferPointBounds,
+    rhs_bounds: (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
 ) -> Vec<MultiBufferRowMapping> {
     convert_rows(
         rhs_excerpt_to_lhs_excerpt,
         rhs_snapshot,
         lhs_snapshot,
         rhs_bounds,
-        |diff, points, buffer| diff.rows_to_base_text_rows(points, buffer).collect(),
+        |diff, points, buffer| {
+            let (points, first_group_start) = diff.rows_to_base_text_rows(points, buffer);
+            (points.collect(), first_group_start)
+        },
     )
 }
 
@@ -63,11 +67,15 @@ fn convert_rows<F>(
     excerpt_map: &HashMap<ExcerptId, ExcerptId>,
     source_snapshot: &MultiBufferSnapshot,
     target_snapshot: &MultiBufferSnapshot,
-    source_bounds: MultiBufferPointBounds,
+    source_bounds: (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
     translate_fn: F,
 ) -> Vec<MultiBufferRowMapping>
 where
-    F: Fn(&BufferDiffSnapshot, Vec<Point>, &text::BufferSnapshot) -> Vec<std::ops::Range<Point>>,
+    F: Fn(
+        &BufferDiffSnapshot,
+        Vec<Point>,
+        &text::BufferSnapshot,
+    ) -> (Vec<Range<Point>>, Option<Point>),
 {
     let mut result = Vec::new();
 
@@ -100,7 +108,11 @@ fn convert_excerpt_rows<F>(
     translate_fn: F,
 ) -> Option<MultiBufferRowMapping>
 where
-    F: Fn(&BufferDiffSnapshot, Vec<Point>, &text::BufferSnapshot) -> Vec<Range<Point>>,
+    F: Fn(
+        &BufferDiffSnapshot,
+        Vec<Point>,
+        &text::BufferSnapshot,
+    ) -> (Vec<Range<Point>>, Option<Point>),
 {
     let target_excerpt_id = excerpt_map.get(&source_excerpt_id).copied()?;
     let target_buffer = target_snapshot.buffer_for_excerpt(target_excerpt_id)?;
@@ -122,7 +134,8 @@ where
         input_points.push(local_end);
     }
 
-    let translated_ranges = translate_fn(&diff, input_points.clone(), rhs_buffer);
+    let (translated_ranges, first_group_start) =
+        translate_fn(&diff, input_points.clone(), rhs_buffer);
 
     let source_multibuffer_range = source_snapshot.range_for_excerpt(source_excerpt_id)?;
     let source_excerpt_start_in_multibuffer = source_multibuffer_range.start;
@@ -156,11 +169,14 @@ where
             )
         })
         .collect();
+    let first_group_start = first_group_start.map(|first_group_start| {
+        source_excerpt_start_in_multibuffer
+            + (first_group_start - source_excerpt_start_in_buffer.min(first_group_start))
+    });
 
     Some(MultiBufferRowMapping {
         boundaries,
-        source_excerpt_end: source_multibuffer_range.end,
-        target_excerpt_end: target_multibuffer_range.end,
+        first_group_start,
     })
 }
 
@@ -1132,7 +1148,7 @@ impl SecondaryEditor {
             .into_iter()
             .map(|(_, excerpt_range)| {
                 let point_range_to_base_text_point_range = |range: Range<Point>| {
-                    let mut translated = diff_snapshot.rows_to_base_text_rows(
+                    let (mut translated, _) = diff_snapshot.rows_to_base_text_rows(
                         [Point::new(range.start.row, 0), Point::new(range.end.row, 0)],
                         main_buffer,
                     );
@@ -2804,6 +2820,88 @@ mod tests {
             § spacer
             § spacer"
                 .unindent(),
+            &mut cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_deleting_char_in_added_line(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx).await;
+
+        let base_text = "
+            aaa
+            bbb
+            ccc
+        "
+        .unindent();
+
+        let current_text = "
+            NEW1
+            NEW2
+            ccc
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
+            editor.set_excerpts_for_path(
+                path,
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            NEW1
+            NEW2
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc"
+            .unindent(),
+            &mut cx,
+        );
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(1, 3)..Point::new(1, 4), "")], None, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            NEW1
+            NEW
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc"
+            .unindent(),
             &mut cx,
         );
     }

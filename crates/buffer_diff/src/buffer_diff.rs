@@ -12,26 +12,36 @@ use std::{
     ops::Range,
     sync::{Arc, LazyLock},
 };
-use sum_tree::SumTree;
+use sum_tree::{Item as _, SumTree};
 use text::{
     Anchor, Bias, BufferId, Edit, OffsetRangeExt, Patch, Point, ToOffset as _, ToPoint as _,
 };
 use util::ResultExt;
 
-fn translate_point_through_patch(patch: &Patch<Point>, point: Point) -> Range<Point> {
+fn translate_point_through_patch(patch: &Patch<Point>, point: Point) -> (Range<Point>, Point) {
     let edits = patch.edits();
 
-    for edit in edits {
-        if edit.old.start <= point && point <= edit.old.end {
-            return edit.new.start..edit.new.end;
+    let ix = match edits.binary_search_by(|probe| probe.old.start.cmp(&point)) {
+        Ok(ix) => ix,
+        Err(ix) => {
+            if ix == 0 {
+                return (point..point, point);
+            } else {
+                ix - 1
+            }
         }
-        if edit.old.start > point {
-            break;
-        }
-    }
+    };
 
-    let translated = patch.old_to_new(point);
-    translated..translated
+    if let Some(edit) = edits.get(ix) {
+        if point > edit.old.end {
+            let translated = edit.new.end + (point - edit.old.end);
+            (translated..translated, translated)
+        } else {
+            (edit.new.start..edit.new.end, edit.old.start)
+        }
+    } else {
+        (point..point, point)
+    }
 }
 
 pub static CALCULATE_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
@@ -40,7 +50,6 @@ pub const MAX_WORD_DIFF_LINE_COUNT: usize = 5;
 pub struct BufferDiff {
     pub buffer_id: BufferId,
     inner: BufferDiffInner<Entity<language::Buffer>>,
-    // diff of the index vs head
     secondary_diff: Option<Entity<BufferDiff>>,
 }
 
@@ -378,93 +387,93 @@ impl BufferDiffSnapshot {
         (new_id == old_id && new_version == old_version) || (new_empty && old_empty)
     }
 
+    fn hunk_before_base_text_offset<'a>(
+        &self,
+        target: usize,
+        cursor: &mut sum_tree::Cursor<'a, '_, InternalDiffHunk, DiffHunkSummary>,
+    ) -> Option<&'a InternalDiffHunk> {
+        cursor.seek_forward(&target, Bias::Left);
+        if cursor
+            .item()
+            .is_none_or(|hunk| target < hunk.diff_base_byte_range.start)
+        {
+            cursor.prev();
+        }
+        cursor
+            .item()
+            .filter(|hunk| target >= hunk.diff_base_byte_range.start)
+    }
+
+    fn hunk_before_buffer_anchor<'a>(
+        &self,
+        target: Anchor,
+        cursor: &mut sum_tree::Cursor<'a, '_, InternalDiffHunk, DiffHunkSummary>,
+        buffer: &text::BufferSnapshot,
+    ) -> Option<&'a InternalDiffHunk> {
+        cursor.seek_forward(&target, Bias::Left);
+        if cursor
+            .item()
+            .is_none_or(|hunk| target.cmp(&hunk.buffer_range.start, buffer).is_lt())
+        {
+            cursor.prev();
+        }
+        cursor
+            .item()
+            .filter(|hunk| target.cmp(&hunk.buffer_range.start, buffer).is_ge())
+    }
+
     fn translate_anchor_to_base_text(
         &self,
         anchor: Anchor,
         cursor: &mut sum_tree::Cursor<InternalDiffHunk, DiffHunkSummary>,
-    ) -> Range<Point> {
+    ) -> Range<usize> {
         let original_snapshot = self.original_buffer_snapshot();
-        let base_text = self.base_text();
-        let target_point = anchor.to_point(original_snapshot);
-
-        cursor.seek(&anchor, Bias::Left);
-
-        if cursor.item().is_none_or(|hunk| {
-            hunk.buffer_range
-                .start
-                .cmp(&anchor, original_snapshot)
-                .is_gt()
-        }) {
-            cursor.prev();
+        if !self.inner.base_text_exists {
+            return 0..0;
         }
 
-        if let Some(hunk) = cursor.item()
-            && hunk
-                .buffer_range
-                .start
-                .cmp(&anchor, original_snapshot)
-                .is_le()
-        {
-            let hunk_end = &hunk.buffer_range.end;
-
-            if anchor.cmp(hunk_end, original_snapshot).is_gt() {
+        if let Some(hunk) = self.hunk_before_buffer_anchor(anchor, cursor, original_snapshot) {
+            if anchor
+                .cmp(&hunk.buffer_range.end, original_snapshot)
+                .is_gt()
+            {
                 let base_offset_after_hunk = cursor.end().diff_base_byte_range.end;
-                let buffer_point_after_hunk = hunk_end.to_point(original_snapshot);
-                let relative_point = target_point - buffer_point_after_hunk;
-                let base_point = base_text.offset_to_point(base_offset_after_hunk) + relative_point;
-                base_point..base_point
+                let result = base_offset_after_hunk
+                    + (anchor.to_offset(original_snapshot)
+                        - (&hunk.buffer_range.end).to_offset(original_snapshot));
+                result..result
             } else {
-                let start = base_text.offset_to_point(hunk.diff_base_byte_range.start);
-                let end = base_text.offset_to_point(hunk.diff_base_byte_range.end);
-                start..end
+                hunk.diff_base_byte_range.clone()
             }
-        } else if !self.inner.base_text_exists {
-            let zero = Point::zero();
-            zero..zero
         } else {
-            target_point..target_point
+            let result = anchor.to_offset(original_snapshot);
+            result..result
         }
     }
 
     fn translate_base_offset_to_buffer(
         &self,
         base_offset: usize,
-        base_point: Point,
         cursor: &mut sum_tree::Cursor<InternalDiffHunk, DiffHunkSummary>,
-    ) -> Range<Point> {
+    ) -> Range<Anchor> {
         let original_snapshot = self.original_buffer_snapshot();
-        let base_text = self.base_text();
-
-        cursor.seek(&base_offset, Bias::Left);
-
-        if cursor
-            .item()
-            .is_none_or(|hunk| hunk.diff_base_byte_range.start > base_offset)
-        {
-            cursor.prev();
+        if !self.inner.base_text_exists {
+            return original_snapshot.anchor_before(0)
+                ..original_snapshot.anchor_before(original_snapshot.len());
         }
 
-        if let Some(hunk) = cursor.item()
-            && hunk.diff_base_byte_range.start <= base_offset
-        {
-            let prev_end = cursor.end().diff_base_byte_range.end;
-
-            if base_offset > prev_end {
-                let buffer_point_after_hunk = hunk.buffer_range.end.to_point(original_snapshot);
-                let base_point_after_hunk = base_text.offset_to_point(prev_end);
-                let relative_point = base_point - base_point_after_hunk;
-                let result = buffer_point_after_hunk + relative_point;
+        if let Some(hunk) = self.hunk_before_base_text_offset(base_offset, cursor) {
+            if base_offset > hunk.diff_base_byte_range.end {
+                let buffer_hunk_end = hunk.buffer_range.end.to_offset(original_snapshot);
+                let result = original_snapshot
+                    .anchor_before(buffer_hunk_end + (base_offset - hunk.diff_base_byte_range.end));
                 result..result
             } else {
-                let start = hunk.buffer_range.start.to_point(original_snapshot);
-                let end = hunk.buffer_range.end.to_point(original_snapshot);
-                start..end
+                hunk.buffer_range.clone()
             }
-        } else if !self.inner.base_text_exists {
-            let zero = Point::zero();
-            zero..original_snapshot.max_point()
         } else {
-            base_point..base_point
+            let result = original_snapshot.anchor_before(base_offset);
+            result..result
         }
     }
 
@@ -472,7 +481,7 @@ impl BufferDiffSnapshot {
         &'a self,
         points: impl IntoIterator<Item = Point> + 'a,
         buffer: &'a text::BufferSnapshot,
-    ) -> impl 'a + Iterator<Item = Range<Point>> {
+    ) -> (impl 'a + Iterator<Item = Range<Point>>, Option<Point>) {
         let original_snapshot = self.original_buffer_snapshot();
         let original_version = original_snapshot.version();
 
@@ -489,55 +498,173 @@ impl BufferDiffSnapshot {
             .hunks
             .cursor::<DiffHunkSummary>(original_snapshot);
 
-        points.into_iter().map(move |point| {
-            let original_range = translate_point_through_patch(&patch, point);
+        let mut points = points.into_iter().peekable();
+        let first_group_start = points.peek().map(|point| {
+            if !self.inner.base_text_exists {
+                return Point::zero();
+            }
 
-            let start_anchor = original_snapshot.anchor_before(original_range.start);
-            let end_anchor = original_snapshot.anchor_before(original_range.end);
+            let mut point = *point;
+            loop {
+                if point == Point::zero() {
+                    break;
+                }
+                let (range, group_start) = translate_point_through_patch(&patch, point);
+                let anchor = original_snapshot.anchor_before(range.start);
+                let new_point = if let Some(hunk) =
+                    self.hunk_before_buffer_anchor(anchor, &mut start_cursor, original_snapshot)
+                    && anchor
+                        .cmp(&hunk.buffer_range.end, original_snapshot)
+                        .is_le()
+                {
+                    let hunk_start = hunk.buffer_range.start.to_point(original_snapshot);
 
-            let base_start_range =
-                self.translate_anchor_to_base_text(start_anchor, &mut start_cursor);
-            let base_end_range = self.translate_anchor_to_base_text(end_anchor, &mut end_cursor);
+                    // Fast path: if the hunk precedes any edit, we don't need to go around the loop again.
+                    if patch
+                        .edits()
+                        .first()
+                        .is_none_or(|edit| hunk_start <= edit.new.start)
+                    {
+                        point = hunk_start;
+                        break;
+                    }
 
-            base_start_range.start..base_end_range.end
-        })
+                    patch.invert();
+                    let (range, _) = translate_point_through_patch(&patch, hunk_start);
+                    patch.invert();
+                    range.start
+                } else {
+                    group_start
+                };
+                start_cursor.reset();
+                assert!(new_point <= point);
+                if new_point == point {
+                    break;
+                }
+                point = new_point;
+            }
+            point
+        });
+
+        let iter = points.map(move |point| {
+            let (original_range, _) = translate_point_through_patch(&patch, point);
+            let base_start_range = self.translate_anchor_to_base_text(
+                original_snapshot.anchor_before(original_range.start),
+                &mut start_cursor,
+            );
+            let base_end_range = self.translate_anchor_to_base_text(
+                original_snapshot.anchor_before(original_range.end),
+                &mut end_cursor,
+            );
+            base_start_range.start.to_point(self.base_text())
+                ..base_end_range.end.to_point(self.base_text())
+        });
+        (iter, first_group_start)
     }
 
     pub fn base_text_rows_to_rows<'a>(
         &'a self,
         points: impl IntoIterator<Item = Point> + 'a,
         buffer: &'a text::BufferSnapshot,
-    ) -> impl 'a + Iterator<Item = Range<Point>> {
+    ) -> (impl 'a + Iterator<Item = Range<Point>>, Option<Point>) {
         let original_snapshot = self.original_buffer_snapshot();
         let original_version = original_snapshot.version();
 
         let edits: Vec<Edit<Point>> = buffer.edits_since::<Point>(original_version).collect();
         let patch = Patch::new(edits);
 
-        let mut start_cursor = self
-            .inner
-            .hunks
-            .cursor::<DiffHunkSummary>(original_snapshot);
-        let mut end_cursor = self
+        let mut cursor = self
             .inner
             .hunks
             .cursor::<DiffHunkSummary>(original_snapshot);
 
         let base_text = self.base_text().clone();
-        points.into_iter().map(move |point| {
+        let mut points = points.into_iter().peekable();
+
+        let first_group_start = points.peek().map(|point| {
+            if !self.inner.base_text_exists {
+                return Point::zero();
+            }
+
+            let point = *point;
+            let offset = point.to_offset(self.base_text());
+            let (base_point, mut original_point) = if let Some(hunk) =
+                self.hunk_before_base_text_offset(offset, &mut cursor)
+            {
+                if offset <= hunk.diff_base_byte_range.end {
+                    (
+                        hunk.diff_base_byte_range.start.to_point(self.base_text()),
+                        hunk.buffer_range.start.to_point(original_snapshot),
+                    )
+                } else {
+                    (
+                        point,
+                        hunk.buffer_range.end.to_point(original_snapshot)
+                            + (point - hunk.diff_base_byte_range.end.to_point(self.base_text())),
+                    )
+                }
+            } else {
+                (point, point)
+            };
+
+            // Fast path: if original point precedes any edit, we don't need to loop.
+            if patch
+                .edits()
+                .first()
+                .is_none_or(|edit| original_point <= edit.old.start)
+            {
+                return base_point;
+            }
+
+            loop {
+                if original_point == Point::zero() {
+                    break;
+                }
+
+                let (_, group_start) = translate_point_through_patch(&patch, original_point);
+
+                cursor.reset();
+                let anchor = original_snapshot.anchor_before(group_start);
+                let new_original_point = if let Some(hunk) =
+                    self.hunk_before_buffer_anchor(anchor, &mut cursor, original_snapshot)
+                    && anchor
+                        .cmp(&hunk.buffer_range.end, original_snapshot)
+                        .is_le()
+                {
+                    hunk.buffer_range.start.to_point(original_snapshot)
+                } else {
+                    group_start
+                };
+                assert!(new_original_point <= original_point);
+                if new_original_point == original_point {
+                    break;
+                }
+                original_point = new_original_point;
+            }
+
+            self.translate_anchor_to_base_text(
+                original_snapshot.anchor_before(original_point),
+                &mut cursor,
+            )
+            .start
+            .to_point(self.base_text())
+        });
+
+        let iter = points.map(move |point| {
             let target_offset = base_text.point_to_offset(point);
-
-            let original_start_range =
-                self.translate_base_offset_to_buffer(target_offset, point, &mut start_cursor);
-            let original_end_range =
-                self.translate_base_offset_to_buffer(target_offset, point, &mut end_cursor);
-
-            let current_start_range =
-                translate_point_through_patch(&patch, original_start_range.start);
-            let current_end_range = translate_point_through_patch(&patch, original_end_range.end);
-
+            let original_range = self.translate_base_offset_to_buffer(target_offset, &mut cursor);
+            let (current_start_range, _) = translate_point_through_patch(
+                &patch,
+                original_range.start.to_point(original_snapshot),
+            );
+            let (current_end_range, _) = translate_point_through_patch(
+                &patch,
+                original_range.end.to_point(original_snapshot),
+            );
             current_start_range.start..current_end_range.end
-        })
+        });
+
+        (iter, first_group_start)
     }
 }
 
@@ -2845,7 +2972,7 @@ mod tests {
                 Point::new(row, 0)
             }
         });
-        let actual_ranges: Vec<_> = diff.rows_to_base_text_rows(points, &buffer).collect();
+        let actual_ranges: Vec<_> = diff.rows_to_base_text_rows(points, &buffer).0.collect();
 
         assert_eq!(
             actual_ranges, expected_ranges,
@@ -2887,7 +3014,7 @@ mod tests {
                 Point::new(row, 0)
             }
         });
-        let actual_ranges: Vec<_> = diff.base_text_rows_to_rows(points, &buffer).collect();
+        let actual_ranges: Vec<_> = diff.base_text_rows_to_rows(points, &buffer).0.collect();
 
         assert_eq!(
             actual_ranges, expected_ranges,
@@ -4074,47 +4201,47 @@ mod tests {
 
         assert_eq!(
             translate_point_through_patch(&patch, Point::new(0, 0)),
-            Point::new(0, 0)..Point::new(0, 0)
+            (Point::new(0, 0)..Point::new(0, 0), Point::new(0, 0))
         );
         assert_eq!(
             translate_point_through_patch(&patch, Point::new(1, 0)),
-            Point::new(1, 0)..Point::new(1, 0)
+            (Point::new(1, 0)..Point::new(1, 0), Point::new(1, 0))
         );
 
         assert_eq!(
             translate_point_through_patch(&patch, Point::new(2, 0)),
-            Point::new(2, 0)..Point::new(4, 0)
+            (Point::new(2, 0)..Point::new(4, 0), Point::new(2, 0))
         );
         assert_eq!(
             translate_point_through_patch(&patch, Point::new(3, 0)),
-            Point::new(2, 0)..Point::new(4, 0)
+            (Point::new(2, 0)..Point::new(4, 0), Point::new(2, 0))
         );
         assert_eq!(
             translate_point_through_patch(&patch, Point::new(4, 0)),
-            Point::new(2, 0)..Point::new(4, 0)
+            (Point::new(2, 0)..Point::new(4, 0), Point::new(2, 0))
         );
 
         assert_eq!(
             translate_point_through_patch(&patch, Point::new(5, 0)),
-            Point::new(5, 0)..Point::new(5, 0)
+            (Point::new(5, 0)..Point::new(5, 0), Point::new(5, 0))
         );
         assert_eq!(
             translate_point_through_patch(&patch, Point::new(6, 0)),
-            Point::new(6, 0)..Point::new(6, 0)
+            (Point::new(6, 0)..Point::new(6, 0), Point::new(6, 0))
         );
 
         assert_eq!(
             translate_point_through_patch(&patch, Point::new(7, 0)),
-            Point::new(7, 0)..Point::new(11, 0)
+            (Point::new(7, 0)..Point::new(11, 0), Point::new(7, 0))
         );
         assert_eq!(
             translate_point_through_patch(&patch, Point::new(8, 0)),
-            Point::new(7, 0)..Point::new(11, 0)
+            (Point::new(7, 0)..Point::new(11, 0), Point::new(7, 0))
         );
 
         assert_eq!(
             translate_point_through_patch(&patch, Point::new(9, 0)),
-            Point::new(12, 0)..Point::new(12, 0)
+            (Point::new(12, 0)..Point::new(12, 0), Point::new(12, 0))
         );
 
         let deletion_patch = Patch::new(vec![Edit {
@@ -4124,23 +4251,23 @@ mod tests {
 
         assert_eq!(
             translate_point_through_patch(&deletion_patch, Point::new(4, 0)),
-            Point::new(4, 0)..Point::new(4, 0)
+            (Point::new(4, 0)..Point::new(4, 0), Point::new(4, 0))
         );
         assert_eq!(
             translate_point_through_patch(&deletion_patch, Point::new(5, 0)),
-            Point::new(5, 0)..Point::new(5, 0)
+            (Point::new(5, 0)..Point::new(5, 0), Point::new(5, 0))
         );
         assert_eq!(
             translate_point_through_patch(&deletion_patch, Point::new(7, 0)),
-            Point::new(5, 0)..Point::new(5, 0)
+            (Point::new(5, 0)..Point::new(5, 0), Point::new(5, 0))
         );
         assert_eq!(
             translate_point_through_patch(&deletion_patch, Point::new(10, 0)),
-            Point::new(5, 0)..Point::new(5, 0)
+            (Point::new(5, 0)..Point::new(5, 0), Point::new(5, 0))
         );
         assert_eq!(
             translate_point_through_patch(&deletion_patch, Point::new(11, 0)),
-            Point::new(6, 0)..Point::new(6, 0)
+            (Point::new(6, 0)..Point::new(6, 0), Point::new(6, 0))
         );
 
         let insertion_patch = Patch::new(vec![Edit {
@@ -4150,15 +4277,15 @@ mod tests {
 
         assert_eq!(
             translate_point_through_patch(&insertion_patch, Point::new(4, 0)),
-            Point::new(4, 0)..Point::new(4, 0)
+            (Point::new(4, 0)..Point::new(4, 0), Point::new(4, 0))
         );
         assert_eq!(
             translate_point_through_patch(&insertion_patch, Point::new(5, 0)),
-            Point::new(5, 0)..Point::new(10, 0)
+            (Point::new(5, 0)..Point::new(10, 0), Point::new(5, 0))
         );
         assert_eq!(
             translate_point_through_patch(&insertion_patch, Point::new(6, 0)),
-            Point::new(11, 0)..Point::new(11, 0)
+            (Point::new(11, 0)..Point::new(11, 0), Point::new(11, 0))
         );
     }
 
@@ -4171,16 +4298,6 @@ mod tests {
         let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
         let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
 
-        assert!(
-            !diff_snapshot.inner.base_text_exists,
-            "base_text_exists should be false"
-        );
-        assert_eq!(
-            diff_snapshot.base_text_string().unwrap_or_default(),
-            "",
-            "base text should be empty"
-        );
-
         let points = vec![
             Point::new(0, 0),
             Point::new(1, 0),
@@ -4189,6 +4306,7 @@ mod tests {
         ];
         let base_rows: Vec<_> = diff_snapshot
             .rows_to_base_text_rows(points.clone(), &buffer_snapshot)
+            .0
             .collect();
 
         let zero = Point::new(0, 0);
@@ -4199,9 +4317,8 @@ mod tests {
         );
 
         let base_points = vec![Point::new(0, 0)];
-        let buffer_rows: Vec<_> = diff_snapshot
-            .base_text_rows_to_rows(base_points, &buffer_snapshot)
-            .collect();
+        let (rows_iter, _) = diff_snapshot.base_text_rows_to_rows(base_points, &buffer_snapshot);
+        let buffer_rows: Vec<_> = rows_iter.collect();
 
         let max_point = buffer_snapshot.max_point();
         assert_eq!(
@@ -4209,5 +4326,421 @@ mod tests {
             vec![zero..max_point],
             "base text row 0 should map to entire buffer range"
         );
+    }
+
+    #[gpui::test]
+    async fn test_first_group_start(cx: &mut gpui::TestAppContext) {
+        use unindent::Unindent;
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = base_text.clone();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+            let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+
+            let (_, first_group_start) = diff_snapshot.rows_to_base_text_rows([], &buffer_snapshot);
+            assert_eq!(
+                first_group_start, None,
+                "empty input: group start should be None"
+            );
+
+            let (_, first_group_start) =
+                diff_snapshot.rows_to_base_text_rows([Point::new(1, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(1, 0)),
+                "no hunks: group start should equal input point"
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                XXX
+                ccc
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+            let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+
+            let (_, first_group_start) =
+                diff_snapshot.rows_to_base_text_rows([Point::new(0, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(0, 0)),
+                "point before hunk: group start equals input"
+            );
+
+            let (_, first_group_start) =
+                diff_snapshot.rows_to_base_text_rows([Point::new(1, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(1, 0)),
+                "point inside hunk: group start is hunk start"
+            );
+
+            let (_, first_group_start) =
+                diff_snapshot.rows_to_base_text_rows([Point::new(2, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(1, 0)),
+                "point at hunk end boundary: group start is hunk start (is_le convention)"
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+                ddd
+            "
+            .unindent();
+            let buffer_text = base_text.clone();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..7, "XXX")], None, cx);
+            });
+
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+            let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+
+            let (_, first_group_start) =
+                diff_snapshot.rows_to_base_text_rows([Point::new(1, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(1, 0)),
+                "point inside unsaved edit (no hunk): group start is edit start"
+            );
+
+            let (_, first_group_start) =
+                diff_snapshot.rows_to_base_text_rows([Point::new(2, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(2, 0)),
+                "point after unsaved edit: group start equals input"
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+                ddd
+                eee
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                YYY
+                ccc
+                ddd
+                eee
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(12..15, "ZZZ")], None, cx);
+            });
+
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+            let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+
+            let (_, first_group_start) =
+                diff_snapshot.rows_to_base_text_rows([Point::new(3, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(3, 0)),
+                "point inside unsaved edit after hunk: group start is edit start"
+            );
+
+            let (_, first_group_start) =
+                diff_snapshot.rows_to_base_text_rows([Point::new(1, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(1, 0)),
+                "point inside hunk before edit: group start is hunk start"
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+                ddd
+                eee
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                YYY
+                ccc
+                ddd
+                eee
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..0, "NEW\n")], None, cx);
+            });
+
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+            let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+
+            let (_, first_group_start) =
+                diff_snapshot.rows_to_base_text_rows([Point::new(2, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(2, 0)),
+                "point inside hunk shifted by earlier insert: group start is hunk start in current coords"
+            );
+
+            let (_, first_group_start) =
+                diff_snapshot.rows_to_base_text_rows([Point::new(0, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(0, 0)),
+                "point inside unsaved insert before hunk: group start is edit start"
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+                ddd
+                eee
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                XXX
+                YYY
+                ddd
+                eee
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..7, "INSERTED\n")], None, cx);
+            });
+
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+            let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+
+            let (_, first_group_start) =
+                diff_snapshot.rows_to_base_text_rows([Point::new(2, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(1, 0)),
+                "point inside hunk after unsaved edit within same hunk: iterates back to hunk start"
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = base_text.clone();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+            let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+
+            let (_, first_group_start) = diff_snapshot.base_text_rows_to_rows([], &buffer_snapshot);
+            assert_eq!(
+                first_group_start, None,
+                "reverse: empty input: group start should be None"
+            );
+
+            let (_, first_group_start) =
+                diff_snapshot.base_text_rows_to_rows([Point::new(1, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(1, 0)),
+                "reverse: no hunks: group start should equal input point"
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                XXX
+                ccc
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+            let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+
+            let (_, first_group_start) =
+                diff_snapshot.base_text_rows_to_rows([Point::new(0, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(0, 0)),
+                "reverse: point before hunk: group start equals input"
+            );
+
+            let (_, first_group_start) =
+                diff_snapshot.base_text_rows_to_rows([Point::new(1, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(1, 0)),
+                "reverse: point inside hunk: group start is hunk start"
+            );
+
+            let (_, first_group_start) =
+                diff_snapshot.base_text_rows_to_rows([Point::new(2, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(1, 0)),
+                "reverse: point at hunk end boundary: group start is hunk start (is_le convention)"
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+                ddd
+            "
+            .unindent();
+            let buffer_text = base_text.clone();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..7, "XXX")], None, cx);
+            });
+
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+            let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+
+            let (_, first_group_start) =
+                diff_snapshot.base_text_rows_to_rows([Point::new(1, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(1, 0)),
+                "reverse: point inside unsaved edit (no hunk): group start is edit start"
+            );
+
+            let (_, first_group_start) =
+                diff_snapshot.base_text_rows_to_rows([Point::new(2, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(2, 0)),
+                "reverse: point after unsaved edit: group start equals input"
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+                ddd
+                eee
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                YYY
+                ccc
+                ddd
+                eee
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(12..15, "ZZZ")], None, cx);
+            });
+
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+            let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+
+            let (_, first_group_start) =
+                diff_snapshot.base_text_rows_to_rows([Point::new(3, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(3, 0)),
+                "reverse: point inside unsaved edit after hunk: group start is edit start"
+            );
+
+            let (_, first_group_start) =
+                diff_snapshot.base_text_rows_to_rows([Point::new(1, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(1, 0)),
+                "reverse: point inside hunk before edit: group start is hunk start"
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+                ddd
+                eee
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                XXX
+                YYY
+                ddd
+                eee
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..7, "INSERTED\n")], None, cx);
+            });
+
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+            let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+
+            let (_, first_group_start) =
+                diff_snapshot.base_text_rows_to_rows([Point::new(2, 0)], &buffer_snapshot);
+            assert_eq!(
+                first_group_start,
+                Some(Point::new(1, 0)),
+                "reverse: point inside hunk after unsaved edit within same hunk: iterates back to hunk start"
+            );
+        }
     }
 }

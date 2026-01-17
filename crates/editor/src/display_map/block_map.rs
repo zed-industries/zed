@@ -1099,16 +1099,17 @@ impl BlockMap {
 
         let mut result = Vec::new();
 
-        for row_mapping in row_mappings.into_iter() {
-            let boundaries = &row_mapping.boundaries;
-
-            let Some((first_boundary, first_range)) = boundaries.first() else {
+        for row_mapping in row_mappings {
+            let Some(((_, first_range), first_group_start)) = row_mapping
+                .boundaries
+                .first()
+                .zip(row_mapping.first_group_start)
+            else {
                 continue;
             };
 
-            // FIXME if first_boundary is part of a group we need to walk back to the beginning of the group
             let first_our_wrap = wrap_snapshot
-                .make_wrap_point(*first_boundary, Bias::Left)
+                .make_wrap_point(first_group_start, Bias::Left)
                 .row();
             let companion_start_wrap = companion_snapshot
                 .make_wrap_point(first_range.start, Bias::Left)
@@ -1116,7 +1117,7 @@ impl BlockMap {
 
             let mut delta = companion_start_wrap.0 as i32 - first_our_wrap.0 as i32;
 
-            let mut iter = boundaries.iter().peekable();
+            let mut iter = row_mapping.boundaries.iter().peekable();
             while let Some((boundary, range)) = iter.next() {
                 let mut current_boundary = *boundary;
                 let mut current_range = range.clone();
@@ -1181,7 +1182,7 @@ impl BlockMap {
                 }
             }
 
-            let (last_boundary, last_range) = boundaries.last().cloned().unwrap();
+            let (last_boundary, last_range) = row_mapping.boundaries.last().cloned().unwrap();
             if last_boundary.column > 0 {
                 let (_new_delta, spacer) = determine_spacer(last_boundary, last_range.end, delta);
                 if let Some((wrap_row, height)) = spacer {
