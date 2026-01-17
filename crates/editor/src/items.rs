@@ -1877,13 +1877,12 @@ pub fn entry_diagnostic_aware_icon_decoration_and_color(
 
 pub fn entry_git_aware_label_color(git_status: GitSummary, ignored: bool, selected: bool) -> Color {
     let tracked = git_status.index + git_status.worktree;
-    if tracked.modified > 0 {
-        Color::Modified
-    }
-    else if tracked.added > 0 || git_status.untracked > 0 {
-        Color::Created
-    } else if git_status.conflict > 0 {
+    if git_status.conflict > 0 {
         Color::Conflict
+    } else if tracked.modified > 0 {
+        Color::Modified
+    } else if tracked.added > 0 || git_status.untracked > 0 {
+        Color::Created
     } else if ignored {
         Color::Ignored
     } else {
