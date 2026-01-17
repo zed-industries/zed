@@ -5,8 +5,8 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
     KeyContext, Keymap, MacDispatcher, MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu,
     PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task, WindowAppearance,
-    WindowParams, platform::mac::pasteboard::Pasteboard,
+    PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task, ThermalState,
+    WindowAppearance, WindowParams, platform::mac::pasteboard::Pasteboard,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -144,6 +144,11 @@ unsafe fn build_classes() {
                 on_keyboard_layout_change as extern "C" fn(&mut Object, Sel, id),
             );
 
+            decl.add_method(
+                sel!(onThermalStateChange:),
+                on_thermal_state_change as extern "C" fn(&mut Object, Sel, id),
+            );
+
             decl.register()
         }
     }
@@ -161,6 +166,7 @@ pub(crate) struct MacPlatformState {
     find_pasteboard: Pasteboard,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
+    on_thermal_state_change: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
@@ -204,6 +210,7 @@ impl MacPlatform {
             finish_launching: None,
             dock_menu: None,
             on_keyboard_layout_change: None,
+            on_thermal_state_change: None,
             menus: None,
             keyboard_mapper,
         }))
@@ -877,6 +884,24 @@ impl Platform for MacPlatform {
         self.0.lock().validate_menu_command = Some(callback);
     }
 
+    fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().on_thermal_state_change = Some(callback);
+    }
+
+    fn thermal_state(&self) -> ThermalState {
+        unsafe {
+            let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
+            let state: NSInteger = msg_send![process_info, thermalState];
+            match state {
+                0 => ThermalState::Nominal,
+                1 => ThermalState::Fair,
+                2 => ThermalState::Serious,
+                3 => ThermalState::Critical,
+                _ => ThermalState::Nominal,
+            }
+        }
+    }
+
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         Box::new(MacKeyboardLayout::new())
     }
@@ -1178,6 +1203,14 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
             object: nil
         ];
 
+        let thermal_name = ns_string("NSProcessInfoThermalStateDidChangeNotification");
+        let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
+        let _: () = msg_send![notification_center, addObserver: this as id
+            selector: sel!(onThermalStateChange:)
+            name: thermal_name
+            object: process_info
+        ];
+
         let platform = get_mac_platform(this);
         let callback = platform.0.lock().finish_launching.take();
         if let Some(callback) = callback {
@@ -1220,6 +1253,20 @@ extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
             .0
             .lock()
             .on_keyboard_layout_change
+            .get_or_insert(callback);
+    }
+}
+
+extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
+    let platform = unsafe { get_mac_platform(this) };
+    let mut lock = platform.0.lock();
+    if let Some(mut callback) = lock.on_thermal_state_change.take() {
+        drop(lock);
+        callback();
+        platform
+            .0
+            .lock()
+            .on_thermal_state_change
             .get_or_insert(callback);
     }
 }
