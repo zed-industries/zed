@@ -510,6 +510,7 @@ impl LanguageServerState {
 
                         submenu = submenu.separator().custom_row({
                             let metadata_label = metadata_label.clone();
+                            let binary_path = binary_path.clone();
                             move |_, _| {
                                 h_flex()
                                     .id("metadata-container")
@@ -540,24 +541,16 @@ impl LanguageServerState {
                                                     .truncate(),
                                             )
                                     })
+                                    .when_some(binary_path.clone(), |el, path| {
+                                        el.child(
+                                            Icon::new(IconName::Info)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                        .tooltip(Tooltip::text(path.clone()))
+                                    })
                                     .into_any_element()
                             }
-                        });
-
-                        submenu = submenu.when_some(binary_path.clone(), |submenu, path| {
-                            submenu.custom_row(move |_, _| {
-                                h_flex()
-                                    .id("binary-path-container")
-                                    .gap_1()
-                                    .child(
-                                        Label::new(path.clone())
-                                            .size(LabelSize::XSmall)
-                                            .color(Color::Muted)
-                                            .truncate(),
-                                    )
-                                    .tooltip(Tooltip::text(path.clone()))
-                                    .into_any_element()
-                            })
                         });
 
                         submenu
