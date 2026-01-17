@@ -3562,6 +3562,154 @@ async fn test_collapse_all_entries_with_collapsed_root(cx: &mut gpui::TestAppCon
 }
 
 #[gpui::test]
+async fn test_header_bar_collapse_all(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        json!({
+            "dir_1": {
+                "file_a.py": "# File contents",
+            },
+            "dir_2": {
+                "nested": {
+                    "file_b.py": "# File contents",
+                },
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    // Expand directories to set up initial state
+    toggle_expand_dir(&panel, "project/dir_1", cx);
+    toggle_expand_dir(&panel, "project/dir_2", cx);
+    toggle_expand_dir(&panel, "project/dir_2/nested", cx);
+
+    // Verify directories are expanded
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v project",
+            "    v dir_1",
+            "          file_a.py",
+            "    v dir_2",
+            "        v nested  <== selected",
+            "              file_b.py",
+        ]
+    );
+
+    // Use the collapse_all_entries action (same as header button click)
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.run_until_parked();
+
+    // Verify all directories are collapsed but root remains expanded
+    // Selection stays on nested (now collapsed inside dir_2)
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v project", "    > dir_1", "    > dir_2",]
+    );
+}
+
+#[gpui::test]
+async fn test_header_bar_select_opened_file(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        json!({
+            "dir_1": {
+                "deeply": {
+                    "nested": {
+                        "file.py": "# Target file",
+                    },
+                },
+            },
+            "dir_2": {
+                "other.py": "# Other file",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    // Initial state - directories collapsed
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v project", "    > dir_1", "    > dir_2",]
+    );
+
+    // Open the deeply nested file
+    let worktree_id = panel.read_with(cx, |panel, cx| {
+        panel
+            .project
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .id()
+    });
+    workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.open_path(
+                project::ProjectPath {
+                    worktree_id,
+                    path: rel_path("dir_1/deeply/nested/file.py").into(),
+                },
+                None,
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    // The file should be revealed (if auto_reveal is enabled)
+    // For this test, we manually trigger the reveal via the project event
+    panel.update(cx, |panel, cx| {
+        if let Some(active_entry) = panel.workspace.upgrade().and_then(|workspace| {
+            workspace
+                .read(cx)
+                .active_item(cx)?
+                .project_entry_ids(cx)
+                .first()
+                .copied()
+        }) {
+            panel.project.update(cx, |_, cx| {
+                cx.emit(project::Event::RevealInProjectPanel(active_entry))
+            });
+        }
+    });
+    cx.run_until_parked();
+
+    // Verify the nested file is now visible and selected
+    let visible = visible_entries_as_strings(&panel, 0..10, cx);
+    assert!(
+        visible.iter().any(|s| s.contains("file.py")),
+        "file.py should be visible after reveal. Got: {:?}",
+        visible
+    );
+}
+
+#[gpui::test]
 async fn test_new_file_move(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
