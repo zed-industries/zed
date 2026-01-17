@@ -22,9 +22,7 @@ use std::{
 };
 use uuid::Uuid;
 
-use crate::Session;
-
-use super::RunningKernel;
+use super::{KernelSession, RunningKernel};
 
 #[derive(Debug, Clone)]
 pub struct LocalKernelSpecification {
@@ -105,13 +103,13 @@ impl Debug for NativeRunningKernel {
 }
 
 impl NativeRunningKernel {
-    pub fn new(
+    pub fn new<S: KernelSession + 'static>(
         kernel_specification: LocalKernelSpecification,
         entity_id: EntityId,
         working_directory: PathBuf,
         fs: Arc<dyn Fs>,
         // todo: convert to weak view
-        session: Entity<Session>,
+        session: Entity<S>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
