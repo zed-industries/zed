@@ -35,7 +35,7 @@ fn translate_point_through_patch(patch: &Patch<Point>, point: Point) -> (Range<P
     if let Some(edit) = edits.get(ix) {
         if point > edit.old.end {
             let translated = edit.new.end + (point - edit.old.end);
-            (translated..translated, translated)
+            (translated..translated, point)
         } else {
             (edit.new.start..edit.new.end, edit.old.start)
         }
@@ -4241,7 +4241,7 @@ mod tests {
 
         assert_eq!(
             translate_point_through_patch(&patch, Point::new(9, 0)),
-            (Point::new(12, 0)..Point::new(12, 0), Point::new(12, 0))
+            (Point::new(12, 0)..Point::new(12, 0), Point::new(9, 0))
         );
 
         let deletion_patch = Patch::new(vec![Edit {
@@ -4267,7 +4267,7 @@ mod tests {
         );
         assert_eq!(
             translate_point_through_patch(&deletion_patch, Point::new(11, 0)),
-            (Point::new(6, 0)..Point::new(6, 0), Point::new(6, 0))
+            (Point::new(6, 0)..Point::new(6, 0), Point::new(11, 0))
         );
 
         let insertion_patch = Patch::new(vec![Edit {
@@ -4285,7 +4285,7 @@ mod tests {
         );
         assert_eq!(
             translate_point_through_patch(&insertion_patch, Point::new(6, 0)),
-            (Point::new(11, 0)..Point::new(11, 0), Point::new(11, 0))
+            (Point::new(11, 0)..Point::new(11, 0), Point::new(6, 0))
         );
     }
 

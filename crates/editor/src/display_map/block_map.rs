@@ -1100,7 +1100,7 @@ impl BlockMap {
         let mut result = Vec::new();
 
         for row_mapping in row_mappings {
-            let Some(((_, first_range), first_group_start)) = row_mapping
+            let Some(((first_boundary, first_range), first_group_start)) = row_mapping
                 .boundaries
                 .first()
                 .zip(row_mapping.first_group_start)
@@ -1129,16 +1129,16 @@ impl BlockMap {
                 let align_at_start = iter
                     .peek()
                     .is_some_and(|(_, next_range)| next_range.end <= current_range.end);
-                let (new_delta, spacer) = determine_spacer(
-                    current_boundary,
-                    if align_at_start {
-                        current_range.start
-                    } else {
-                        current_range.end
-                    },
-                    delta,
-                );
-                delta = new_delta;
+                let companion_point = if align_at_start {
+                    current_range.start
+                } else {
+                    current_range.end
+                };
+                let (new_delta, spacer) =
+                    determine_spacer(current_boundary, companion_point, delta);
+                if !align_at_start || current_range.end > first_range.end {
+                    delta = new_delta;
+                }
                 if let Some((wrap_row, height)) = spacer {
                     result.push((
                         BlockPlacement::Above(wrap_row),
