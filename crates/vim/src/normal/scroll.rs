@@ -1,4 +1,4 @@
-use crate::Vim;
+use crate::{Vim, state::Mode};
 use editor::{
     DisplayPoint, Editor, EditorSettings, SelectionEffects,
     display_map::{DisplayRow, ToDisplayPoint},
@@ -95,16 +95,18 @@ impl Vim {
         by: fn(c: Option<f32>) -> ScrollAmount,
     ) {
         let amount = by(Vim::take_count(cx).map(|c| c as f32));
+        let mode = self.mode;
         Vim::take_forced_motion(cx);
         self.exit_temporary_normal(window, cx);
         self.update_editor(cx, |_, editor, cx| {
-            scroll_editor(editor, move_cursor, amount, window, cx)
+            scroll_editor(editor, mode, move_cursor, amount, window, cx)
         });
     }
 }
 
 fn scroll_editor(
     editor: &mut Editor,
+    mode: Mode,
     preserve_cursor_position: bool,
     amount: ScrollAmount,
     window: &mut Window,
@@ -255,7 +257,7 @@ fn scroll_editor(
                     _ => selection.goal,
                 };
 
-                if selection.is_empty() {
+                if selection.is_empty() || !mode.is_visual() {
                     selection.collapse_to(new_head, goal)
                 } else {
                     selection.set_head(new_head, goal)

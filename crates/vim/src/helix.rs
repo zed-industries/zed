@@ -1694,4 +1694,57 @@ mod test {
             Mode::HelixNormal,
         );
     }
+
+    #[gpui::test]
+    async fn test_scroll_with_selection(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Start with a selection
+        cx.set_state(
+            indoc! {"
+            «lineˇ» one
+            line two
+            line three
+            line four
+            line five"},
+            Mode::HelixNormal,
+        );
+
+        // Scroll down, selection should collapse
+        cx.simulate_keystrokes("ctrl-d");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line two
+            line three
+            line four
+            line fiveˇ"},
+            Mode::HelixNormal,
+        );
+
+        // Make a new selection
+        cx.simulate_keystroke("b");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line two
+            line three
+            line four
+            line «ˇfive»"},
+            Mode::HelixNormal,
+        );
+
+        // And scroll up, once again collapsing the selection.
+        cx.simulate_keystroke("ctrl-u");
+        cx.set_state(
+            indoc! {"
+            ˇline one
+            line two
+            line three
+            line four
+            line five"},
+            Mode::HelixNormal,
+        );
+    }
 }
