@@ -33,7 +33,7 @@ use rope::Point;
 use settings::Settings;
 use std::{cell::RefCell, fmt::Write, rc::Rc, sync::Arc};
 use theme::ThemeSettings;
-use ui::{ContextMenu, prelude::*};
+use ui::{ButtonLike, ButtonStyle, ContextMenu, Disclosure, ElevationIndex, prelude::*};
 use util::{ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, PasteRaw};
@@ -499,12 +499,11 @@ impl MessageEditor {
     }
 
     pub fn send(&mut self, cx: &mut Context<Self>) {
-        if self.is_empty(cx) {
-            return;
+        if !self.is_empty(cx) {
+            self.editor.update(cx, |editor, cx| {
+                editor.clear_inlay_hints(cx);
+            });
         }
-        self.editor.update(cx, |editor, cx| {
-            editor.clear_inlay_hints(cx);
-        });
         cx.emit(MessageEditorEvent::Send)
     }
 
@@ -801,6 +800,72 @@ impl MessageEditor {
             drop(added_worktrees);
         })
         .detach();
+    }
+
+    /// Inserts code snippets as creases into the editor.
+    /// Each tuple contains (code_text, crease_title).
+    pub fn insert_code_creases(
+        &mut self,
+        creases: Vec<(String, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use editor::display_map::{Crease, FoldPlaceholder};
+        use multi_buffer::MultiBufferRow;
+        use rope::Point;
+
+        self.editor.update(cx, |editor, cx| {
+            editor.insert("\n", window, cx);
+            for (text, crease_title) in creases {
+                let point = editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .head();
+                let start_row = MultiBufferRow(point.row);
+
+                editor.insert(&text, window, cx);
+
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                let anchor_before = snapshot.anchor_after(point);
+                let anchor_after = editor
+                    .selections
+                    .newest_anchor()
+                    .head()
+                    .bias_left(&snapshot);
+
+                editor.insert("\n", window, cx);
+
+                let fold_placeholder = FoldPlaceholder {
+                    render: Arc::new({
+                        let title = crease_title.clone();
+                        move |_fold_id, _fold_range, _cx| {
+                            ButtonLike::new("code-crease")
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::ElevatedSurface)
+                                .child(Icon::new(IconName::TextSnippet))
+                                .child(Label::new(title.clone()).single_line())
+                                .into_any_element()
+                        }
+                    }),
+                    merge_adjacent: false,
+                    ..Default::default()
+                };
+
+                let crease = Crease::inline(
+                    anchor_before..anchor_after,
+                    fold_placeholder,
+                    |row, is_folded, fold, _window, _cx| {
+                        Disclosure::new(("code-crease-toggle", row.0 as u64), !is_folded)
+                            .toggle_state(is_folded)
+                            .on_click(move |_e, window, cx| fold(!is_folded, window, cx))
+                            .into_any_element()
+                    },
+                    |_, _, _, _| gpui::Empty.into_any(),
+                );
+                editor.insert_creases(vec![crease], cx);
+                editor.fold_at(start_row, window, cx);
+            }
+        });
     }
 
     pub fn insert_selections(&mut self, window: &mut Window, cx: &mut Context<Self>) {

@@ -5,14 +5,13 @@ use crate::{
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    App, Context, Font, FontFallbacks, FontStyle, FontWeight, Global, Pixels, Subscription, Window,
-    px,
+    App, Context, Font, FontFallbacks, FontStyle, Global, Pixels, Subscription, Window, px,
 };
 use refineable::Refineable;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use settings::{FontFamilyName, IconThemeName, ThemeAppearanceMode, ThemeName};
-use settings::{RegisterSetting, Settings, SettingsContent};
+use settings::{IntoGpui, RegisterSetting, Settings, SettingsContent};
 use std::sync::Arc;
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
@@ -557,7 +556,8 @@ impl ThemeSettings {
 
     fn modify_theme(base_theme: &mut Theme, theme_overrides: &settings::ThemeStyleContent) {
         if let Some(window_background_appearance) = theme_overrides.window_background_appearance {
-            base_theme.styles.window_background_appearance = window_background_appearance.into();
+            base_theme.styles.window_background_appearance =
+                window_background_appearance.into_gpui();
         }
         let status_color_refinement = status_colors_refinement(&theme_overrides.status);
 
@@ -686,12 +686,7 @@ pub fn clamp_font_size(size: Pixels) -> Pixels {
     size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
 }
 
-fn clamp_font_weight(weight: f32) -> FontWeight {
-    FontWeight(weight.clamp(100., 950.))
-}
-
-/// font fallback from settings
-pub fn font_fallbacks_from_settings(
+fn font_fallbacks_from_settings(
     fallbacks: Option<Vec<settings::FontFamilyName>>,
 ) -> Option<FontFallbacks> {
     fallbacks.map(|fallbacks| {
@@ -710,12 +705,12 @@ impl settings::Settings for ThemeSettings {
         let theme_selection: ThemeSelection = content.theme.clone().unwrap().into();
         let icon_theme_selection: IconThemeSelection = content.icon_theme.clone().unwrap().into();
         Self {
-            ui_font_size: clamp_font_size(content.ui_font_size.unwrap().into()),
+            ui_font_size: clamp_font_size(content.ui_font_size.unwrap().into_gpui()),
             ui_font: Font {
                 family: content.ui_font_family.as_ref().unwrap().0.clone().into(),
-                features: content.ui_font_features.clone().unwrap(),
+                features: content.ui_font_features.clone().unwrap().into_gpui(),
                 fallbacks: font_fallbacks_from_settings(content.ui_font_fallbacks.clone()),
-                weight: clamp_font_weight(content.ui_font_weight.unwrap().0),
+                weight: content.ui_font_weight.unwrap().into_gpui(),
                 style: Default::default(),
             },
             buffer_font: Font {
@@ -726,15 +721,15 @@ impl settings::Settings for ThemeSettings {
                     .0
                     .clone()
                     .into(),
-                features: content.buffer_font_features.clone().unwrap(),
+                features: content.buffer_font_features.clone().unwrap().into_gpui(),
                 fallbacks: font_fallbacks_from_settings(content.buffer_font_fallbacks.clone()),
-                weight: clamp_font_weight(content.buffer_font_weight.unwrap().0),
+                weight: content.buffer_font_weight.unwrap().into_gpui(),
                 style: FontStyle::default(),
             },
-            buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into()),
+            buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into_gpui()),
             buffer_line_height: content.buffer_line_height.unwrap().into(),
-            agent_ui_font_size: content.agent_ui_font_size.map(Into::into),
-            agent_buffer_font_size: content.agent_buffer_font_size.map(Into::into),
+            agent_ui_font_size: content.agent_ui_font_size.map(|s| s.into_gpui()),
+            agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),
             theme: theme_selection,
             experimental_theme_overrides: content.experimental_theme_overrides.clone(),
             theme_overrides: content.theme_overrides.clone(),

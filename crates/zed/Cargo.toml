@@ -41,6 +41,7 @@ visual-tests = [
     "image_viewer/test-support",
     "clock/test-support",
     "acp_thread/test-support",
+    "action_log/test-support",
     "agent_ui/test-support",
     "db/test-support",
     "agent/test-support",
@@ -95,6 +96,7 @@ db.workspace = true
 debug_adapter_extension.workspace = true
 debugger_tools.workspace = true
 debugger_ui.workspace = true
+dev_container.workspace = true
 diagnostics.workspace = true
 editor.workspace = true
 encoding_selector.workspace = true
