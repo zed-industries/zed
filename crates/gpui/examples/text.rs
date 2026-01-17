@@ -98,7 +98,7 @@ struct Specimen {
 
 impl Specimen {
     pub fn new(id: usize) -> Self {
-        let string = SharedString::new_static("// The quick brown fox jumps over the lazy dog");
+        let string = SharedString::new_static("The quick brown fox jumps over the lazy dog");
         let id_string = format!("specimen-{}", id);
         let id = ElementId::Name(id_string.into());
         Self {
@@ -202,7 +202,7 @@ impl RenderOnce for CharacterGrid {
             "❮", "<=", "!=", "==", "--", "++", "=>", "->", "🏀", "🎊", "😍", "❤️", "👍", "👎",
         ];
 
-        let columns = 11;
+        let columns = 20;
         let rows = characters.len().div_ceil(columns);
 
         let grid_rows = (0..rows).map(|row_idx| {
@@ -263,7 +263,13 @@ impl TextExample {
     }
 }
 
-const FONT_FAMILIES: [&str; 2] = [".ZedMono", ".SystemUIFont"];
+const FONT_FAMILIES: [&str; 5] = [
+    ".ZedMono",
+    ".SystemUIFont",
+    "Menlo",
+    "Monaco",
+    "Courier New",
+];
 
 impl Render for TextExample {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -344,7 +350,7 @@ fn main() {
             items: vec![],
         }]);
 
-        let fonts = vec![include_bytes!(
+        let fonts = [include_bytes!(
             "../../../assets/fonts/lilex/Lilex-Regular.ttf"
         )]
         .iter()
