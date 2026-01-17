@@ -642,7 +642,10 @@ impl BlockMap {
                             display_map_id,
                             wrap_snapshot.buffer_snapshot(),
                             companion_new_snapshot.buffer_snapshot(),
-                            companion_start..companion_start,
+                            (
+                                Bound::Included(companion_start),
+                                Bound::Included(companion_start),
+                            ),
                         )
                         .first()
                         .and_then(|t| t.boundaries.first())
@@ -653,7 +656,10 @@ impl BlockMap {
                             display_map_id,
                             wrap_snapshot.buffer_snapshot(),
                             companion_new_snapshot.buffer_snapshot(),
-                            companion_end..companion_end,
+                            (
+                                Bound::Included(companion_end),
+                                Bound::Included(companion_end),
+                            ),
                         )
                         .first()
                         .and_then(|t| t.boundaries.first())
@@ -1059,7 +1065,7 @@ impl BlockMap {
 
     fn spacer_blocks(
         &self,
-        bounds: impl RangeBounds<MultiBufferPoint>,
+        bounds: (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
         wrap_snapshot: &WrapSnapshot,
         companion_snapshot: &WrapSnapshot,
         companion: &Companion,
@@ -1068,21 +1074,11 @@ impl BlockMap {
         let our_buffer = wrap_snapshot.buffer_snapshot();
         let companion_buffer = companion_snapshot.buffer_snapshot();
 
-        let start_row = match bounds.start_bound() {
-            Bound::Included(point) => *point,
-            _ => unreachable!(),
-        };
-        let end_row = match bounds.end_bound() {
-            Bound::Excluded(point) => *point,
-            Bound::Unbounded => our_buffer.max_point(),
-            _ => unreachable!(),
-        };
-
         let row_mappings = companion.convert_rows_to_companion(
             display_map_id,
             companion_buffer,
             our_buffer,
-            start_row..end_row,
+            bounds,
         );
 
         let determine_spacer = |our_point: Point, their_point: Point, delta: i32| {

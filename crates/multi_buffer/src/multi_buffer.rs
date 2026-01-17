@@ -4097,27 +4097,47 @@ impl MultiBufferSnapshot {
         &self,
         ranges: impl Iterator<Item = Range<T>>,
     ) -> impl Iterator<Item = (&BufferSnapshot, Range<BufferOffset>, ExcerptId)> {
-        ranges.flat_map(|range| self.range_to_buffer_ranges(range).into_iter())
+        ranges.flat_map(|range| {
+            self.range_to_buffer_ranges((Bound::Included(range.start), Bound::Included(range.end)))
+                .into_iter()
+        })
     }
 
-    pub fn range_to_buffer_ranges<T: ToOffset>(
+    pub fn range_to_buffer_ranges<R, T>(
         &self,
-        range: Range<T>,
-    ) -> Vec<(&BufferSnapshot, Range<BufferOffset>, ExcerptId)> {
-        let start = range.start.to_offset(self);
-        let end = range.end.to_offset(self);
+        range: R,
+    ) -> Vec<(&BufferSnapshot, Range<BufferOffset>, ExcerptId)>
+    where
+        R: RangeBounds<T>,
+        T: ToOffset,
+    {
+        let start = match range.start_bound() {
+            Bound::Included(start) => start.to_offset(self),
+            Bound::Excluded(_) => panic!("excluded start bound not supported"),
+            Bound::Unbounded => MultiBufferOffset::ZERO,
+        };
+        let end_bound = match range.end_bound() {
+            Bound::Included(end) => Bound::Included(end.to_offset(self)),
+            Bound::Excluded(end) => Bound::Excluded(end.to_offset(self)),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+        let bounds = (Bound::Included(start), end_bound);
 
         let mut cursor = self.cursor::<MultiBufferOffset, BufferOffset>();
         cursor.seek(&start);
 
         let mut result: Vec<(&BufferSnapshot, Range<BufferOffset>, ExcerptId)> = Vec::new();
         while let Some(region) = cursor.region() {
-            if region.range.start > end {
+            if !bounds.contains(&region.range.start) {
                 break;
             }
             if region.is_main_buffer {
                 let start_overshoot = start.saturating_sub(region.range.start);
-                let end_overshoot = end.saturating_sub(region.range.start);
+                let end_offset = match end_bound {
+                    Bound::Included(end) | Bound::Excluded(end) => end,
+                    Bound::Unbounded => region.range.end,
+                };
+                let end_overshoot = end_offset.saturating_sub(region.range.start);
                 let start = region
                     .buffer_range
                     .end
@@ -4141,9 +4161,12 @@ impl MultiBufferSnapshot {
             let dominated_by_prev_excerpt =
                 result.last().is_some_and(|(_, _, id)| *id == excerpt.id);
             if !dominated_by_prev_excerpt && excerpt.text_summary.len == 0 {
-                let buffer_offset =
-                    BufferOffset(excerpt.range.context.start.to_offset(&excerpt.buffer));
-                result.push((&excerpt.buffer, buffer_offset..buffer_offset, excerpt.id));
+                let excerpt_position = self.len();
+                if bounds.contains(&excerpt_position) {
+                    let buffer_offset =
+                        BufferOffset(excerpt.range.context.start.to_offset(&excerpt.buffer));
+                    result.push((&excerpt.buffer, buffer_offset..buffer_offset, excerpt.id));
+                }
             }
         }
 
@@ -6794,11 +6817,11 @@ impl MultiBufferSnapshot {
             .to_multi_buffer_debug_ranges(self)
             .into_iter()
             .flat_map(|range| {
-                self.range_to_buffer_ranges(range).into_iter().map(
-                    |(buffer, range, _excerpt_id)| {
+                self.range_to_buffer_ranges(range.start..=range.end)
+                    .into_iter()
+                    .map(|(buffer, range, _excerpt_id)| {
                         buffer.anchor_after(range.start)..buffer.anchor_before(range.end)
-                    },
-                )
+                    })
             })
             .collect();
         text::debug::GlobalDebugRanges::with_locked(|debug_ranges| {

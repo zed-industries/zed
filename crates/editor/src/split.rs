@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::ops::{Bound, Range};
 
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
@@ -27,17 +27,19 @@ use crate::{
     display_map::{Companion, MultiBufferRowMapping},
 };
 
+pub(crate) type MultiBufferPointBounds = (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>);
+
 pub(crate) fn convert_lhs_rows_to_rhs(
     lhs_excerpt_to_rhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
     rhs_snapshot: &MultiBufferSnapshot,
     lhs_snapshot: &MultiBufferSnapshot,
-    lhs_range: Range<MultiBufferPoint>,
+    lhs_bounds: MultiBufferPointBounds,
 ) -> Vec<MultiBufferRowMapping> {
     convert_rows(
         lhs_excerpt_to_rhs_excerpt,
         lhs_snapshot,
         rhs_snapshot,
-        lhs_range,
+        lhs_bounds,
         |diff, points, buffer| diff.base_text_rows_to_rows(points, buffer).collect(),
     )
 }
@@ -46,13 +48,13 @@ pub(crate) fn convert_rhs_rows_to_lhs(
     rhs_excerpt_to_lhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
     lhs_snapshot: &MultiBufferSnapshot,
     rhs_snapshot: &MultiBufferSnapshot,
-    rhs_range: Range<MultiBufferPoint>,
+    rhs_bounds: MultiBufferPointBounds,
 ) -> Vec<MultiBufferRowMapping> {
     convert_rows(
         rhs_excerpt_to_lhs_excerpt,
         rhs_snapshot,
         lhs_snapshot,
-        rhs_range,
+        rhs_bounds,
         |diff, points, buffer| diff.rows_to_base_text_rows(points, buffer).collect(),
     )
 }
@@ -61,23 +63,17 @@ fn convert_rows<F>(
     excerpt_map: &HashMap<ExcerptId, ExcerptId>,
     source_snapshot: &MultiBufferSnapshot,
     target_snapshot: &MultiBufferSnapshot,
-    source_range: Range<MultiBufferPoint>,
+    source_bounds: MultiBufferPointBounds,
     translate_fn: F,
 ) -> Vec<MultiBufferRowMapping>
 where
-    F: Fn(&BufferDiffSnapshot, Vec<Point>, &text::BufferSnapshot) -> Vec<Range<Point>>,
+    F: Fn(&BufferDiffSnapshot, Vec<Point>, &text::BufferSnapshot) -> Vec<std::ops::Range<Point>>,
 {
     let mut result = Vec::new();
 
     for (buffer, buffer_offset_range, source_excerpt_id) in
-        source_snapshot.range_to_buffer_ranges(source_range.clone())
+        source_snapshot.range_to_buffer_ranges(source_bounds)
     {
-        if buffer_offset_range.is_empty()
-            && !buffer.is_empty()
-            && source_range.start != source_range.end
-        {
-            continue;
-        }
         if let Some(translation) = convert_excerpt_rows(
             excerpt_map,
             source_snapshot,

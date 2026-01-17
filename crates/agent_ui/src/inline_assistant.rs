@@ -1064,7 +1064,9 @@ impl InlineAssistant {
                 let language_name = assist.editor.upgrade().and_then(|editor| {
                     let multibuffer = editor.read(cx).buffer().read(cx);
                     let snapshot = multibuffer.snapshot(cx);
-                    let ranges = snapshot.range_to_buffer_ranges(assist.range.clone());
+                    let ranges = snapshot.range_to_buffer_ranges(
+                        assist.range.start.clone()..=assist.range.end.clone(),
+                    );
                     ranges
                         .first()
                         .and_then(|(buffer, _, _)| buffer.language())
