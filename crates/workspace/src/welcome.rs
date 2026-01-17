@@ -331,7 +331,7 @@ impl WelcomePage {
 }
 
 impl Render for WelcomePage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (first_section, second_section) = CONTENT;
         let first_section_entries = first_section.entries.len();
         let last_index = first_section_entries + second_section.entries.len();
