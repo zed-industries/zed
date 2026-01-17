@@ -146,6 +146,7 @@ message UpdateWorktreeSettings {
   string path = 3;
   optional string content = 4;
   optional LocalSettingsKind kind = 5;
+  optional bool outside_worktree = 6;
 }
 
 enum LocalSettingsKind {

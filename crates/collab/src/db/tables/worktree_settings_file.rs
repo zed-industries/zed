@@ -12,6 +12,7 @@ pub struct Model {
     pub path: String,
     pub content: String,
     pub kind: LocalSettingsKind,
+    pub outside_worktree: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
