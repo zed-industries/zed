@@ -547,7 +547,7 @@ impl LanguageServerState {
                                                 .size(IconSize::XSmall)
                                                 .color(Color::Muted),
                                         )
-                                        .tooltip(Tooltip::text(path.clone()))
+                                        .tooltip(Tooltip::text(path))
                                     })
                                     .into_any_element()
                             }
