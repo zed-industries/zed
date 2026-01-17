@@ -650,6 +650,20 @@ fn main() {
                                 }
                             }
 
+                            if let Some(state) =
+                                repo_examples.first().and_then(|e| e.state.as_ref())
+                            {
+                                let mut cx = cx.clone();
+                                if let Some(ep_store) =
+                                    cx.update(|cx| EditPredictionStore::try_global(cx))
+                                {
+                                    let project = state.project.clone();
+                                    ep_store.update(&mut cx, |store, _| {
+                                        store.remove_project(&project);
+                                    });
+                                }
+                            }
+
                             app_state
                                 .project_cache
                                 .remove(&repo_examples.first().unwrap().spec.repository_url);
