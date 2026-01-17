@@ -376,6 +376,9 @@ impl AnyProtoClient {
                             Response::InlayHintsResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
+                            Response::SemanticTokensResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
                         };
                         Some(proto::ProtoLspResponse {
                             server_id,

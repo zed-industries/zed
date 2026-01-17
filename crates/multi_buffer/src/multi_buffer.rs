@@ -7370,6 +7370,12 @@ impl<'a> MultiBufferExcerpt<'a> {
             && range.end <= self.excerpt.buffer_end_offset()
     }
 
+    /// Returns true if any part of the given range is in the buffer's excerpt
+    pub fn contains_partial_buffer_range(&self, range: Range<BufferOffset>) -> bool {
+        range.start <= self.excerpt.buffer_end_offset()
+            && range.end >= self.excerpt.buffer_start_offset()
+    }
+
     pub fn max_buffer_row(&self) -> u32 {
         self.excerpt.max_buffer_row
     }
