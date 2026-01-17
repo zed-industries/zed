@@ -1330,9 +1330,25 @@ fn model_response(request: &PredictEditsV3Request, diff_to_apply: &str) -> Predi
         request.input.cursor_excerpt[request.input.editable_range_in_excerpt.clone()].to_string();
     let new_excerpt = apply_diff_to_string(diff_to_apply, &excerpt).unwrap();
 
-    PredictEditsV3Response {
-        request_id: Uuid::new_v4().to_string(),
-        output: new_excerpt,
+    open_ai::Response {
+        id: Uuid::new_v4().to_string(),
+        object: "response".into(),
+        created: 0,
+        model: "model".into(),
+        choices: vec![open_ai::Choice {
+            index: 0,
+            message: open_ai::RequestMessage::Assistant {
+                content: Some(open_ai::MessageContent::Plain(new_excerpt)),
+                tool_calls: vec![],
+                reasoning_content: None,
+            },
+            finish_reason: None,
+        }],
+        usage: Usage {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+        },
     }
 }
 
@@ -2246,6 +2262,7 @@ async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut Te
                                             .to_string(),
                                         )),
                                         tool_calls: vec![],
+                                        reasoning_content: None,
                                     },
                                     finish_reason: Some("stop".to_string()),
                                 }],
