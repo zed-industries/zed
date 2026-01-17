@@ -12,15 +12,16 @@ pub enum ToolPermissionDecision {
 ///
 /// # Precedence Order (highest to lowest)
 ///
-/// 1. **`always_deny`** - If any deny pattern matches, the tool call is blocked immediately.
-///    This takes precedence over all other rules for security.
-/// 2. **`always_confirm`** - If any confirm pattern matches (and no deny matched),
-///    the user is prompted for confirmation regardless of other settings.
-/// 3. **`always_allow`** - If any allow pattern matches (and no deny/confirm matched),
+/// 1. **`always_allow_tool_actions`** - When enabled, allows all tool actions except those
+///    blocked by `always_deny` patterns. This global setting takes precedence over
+///    `always_confirm` patterns and `default_mode`.
+/// 2. **`always_deny`** - If any deny pattern matches, the tool call is blocked immediately.
+///    This takes precedence over all other rules for security (including `always_allow_tool_actions`).
+/// 3. **`always_confirm`** - If any confirm pattern matches (and no deny matched),
+///    the user is prompted for confirmation (unless `always_allow_tool_actions` is enabled).
+/// 4. **`always_allow`** - If any allow pattern matches (and no deny/confirm matched),
 ///    the tool call proceeds without prompting.
-/// 4. **`default_mode`** - If no patterns match, falls back to the tool's default mode.
-/// 5. **`always_allow_tool_actions`** - Global setting used as fallback when no tool-specific
-///    rules are configured, or when `default_mode` is `Confirm`.
+/// 5. **`default_mode`** - If no patterns match, falls back to the tool's default mode.
 ///
 /// # Pattern Matching Tips
 ///
@@ -67,10 +68,16 @@ pub fn decide_permission(
     }
 
     if rules.always_confirm.iter().any(|r| r.is_match(input)) {
-        return ToolPermissionDecision::Confirm;
+        if !always_allow_tool_actions {
+            return ToolPermissionDecision::Confirm;
+        }
     }
 
     if rules.always_allow.iter().any(|r| r.is_match(input)) {
+        return ToolPermissionDecision::Allow;
+    }
+
+    if always_allow_tool_actions {
         return ToolPermissionDecision::Allow;
     }
 
@@ -79,13 +86,7 @@ pub fn decide_permission(
             ToolPermissionDecision::Deny(format!("{} tool is disabled", tool_name))
         }
         ToolPermissionMode::Allow => ToolPermissionDecision::Allow,
-        ToolPermissionMode::Confirm => {
-            if always_allow_tool_actions {
-                ToolPermissionDecision::Allow
-            } else {
-                ToolPermissionDecision::Confirm
-            }
-        }
+        ToolPermissionMode::Confirm => ToolPermissionDecision::Confirm,
     }
 }
 
@@ -316,11 +317,11 @@ mod tests {
         t("sudo apt install").confirm(&["sudo\\s"]).is_confirm();
     }
     #[test]
-    fn confirm_overrides_global() {
+    fn global_overrides_confirm() {
         t("sudo reboot")
             .confirm(&["sudo\\s"])
             .global(true)
-            .is_confirm();
+            .is_allow();
     }
     #[test]
     fn confirm_overrides_mode_allow() {
@@ -399,6 +400,13 @@ mod tests {
     #[test]
     fn default_deny() {
         t("python x.py").mode(ToolPermissionMode::Deny).is_deny();
+    }
+    #[test]
+    fn default_deny_global_true() {
+        t("python x.py")
+            .mode(ToolPermissionMode::Deny)
+            .global(true)
+            .is_allow();
     }
 
     // default_mode confirm + global
@@ -487,8 +495,14 @@ mod tests {
             },
         );
         let p = ToolPermissions { tools };
-        assert!(matches!(
+        // With always_allow_tool_actions=true, even default_mode: Deny is overridden
+        assert_eq!(
             decide_permission("terminal", "x", &p, true),
+            ToolPermissionDecision::Allow
+        );
+        // With always_allow_tool_actions=false, default_mode: Deny is respected
+        assert!(matches!(
+            decide_permission("terminal", "x", &p, false),
             ToolPermissionDecision::Deny(_)
         ));
         assert_eq!(

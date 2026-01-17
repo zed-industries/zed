@@ -6,7 +6,7 @@ use crate::{
     headless::EpAppState,
     load_project::run_load_project,
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
-    progress::{InfoStyle, Progress, Step},
+    progress::{ExampleProgress, InfoStyle, Step},
     retrieve_context::run_context_retrieval,
 };
 use anyhow::Context as _;
@@ -28,6 +28,7 @@ pub async fn run_prediction(
     example: &mut Example,
     args: &PredictArgs,
     app_state: Arc<EpAppState>,
+    example_progress: &ExampleProgress,
     mut cx: AsyncApp,
 ) -> anyhow::Result<()> {
     let provider = args.provider;
@@ -41,17 +42,18 @@ pub async fn run_prediction(
         }
     }
 
-    run_context_retrieval(example, app_state.clone(), cx.clone()).await?;
+    run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
 
     if let PredictionProvider::Teacher(version) | PredictionProvider::TeacherNonBatching(version) =
         args.provider
     {
-        let _step_progress = Progress::global().start(Step::Predict, &example.spec.name);
+        let _step_progress = example_progress.start(Step::Predict);
 
         run_format_prompt(
             example,
             &FormatPromptArgs { provider },
             app_state.clone(),
+            example_progress,
             cx,
         )
         .await?;
@@ -60,9 +62,9 @@ pub async fn run_prediction(
         return predict_anthropic(example, repetition_count, version, batched).await;
     }
 
-    run_load_project(example, app_state.clone(), cx.clone()).await?;
+    run_load_project(example, app_state.clone(), example_progress, cx.clone()).await?;
 
-    let step_progress = Progress::global().start(Step::Predict, &example.spec.name);
+    let step_progress = example_progress.start(Step::Predict);
 
     if matches!(
         provider,
