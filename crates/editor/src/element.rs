@@ -7795,6 +7795,7 @@ impl EditorElement {
                     editor.update(cx, |editor, cx| {
                         let position_map: &PositionMap = &position_map;
 
+                        let is_precise = delta.precise();
                         let line_height = position_map.line_height;
                         let max_glyph_advance = position_map.em_advance;
                         let (delta, axis) = match delta {
@@ -7813,22 +7814,39 @@ impl EditorElement {
                         };
 
                         let current_scroll_position = position_map.snapshot.scroll_position();
-                        let x = (current_scroll_position.x
+
+                        let base_scroll_position = if is_precise {
+                            editor.scroll_manager.cancel_animation();
+                            current_scroll_position
+                        } else {
+                            editor
+                                .scroll_manager
+                                .scroll_animation()
+                                .map(|a| a.target_position)
+                                .unwrap_or(current_scroll_position)
+                        };
+
+                        let x = (base_scroll_position.x
                             * ScrollPixelOffset::from(max_glyph_advance)
                             - ScrollPixelOffset::from(delta.x * scroll_sensitivity))
                             / ScrollPixelOffset::from(max_glyph_advance);
-                        let y = (current_scroll_position.y * ScrollPixelOffset::from(line_height)
+                        let y = (base_scroll_position.y * ScrollPixelOffset::from(line_height)
                             - ScrollPixelOffset::from(delta.y * scroll_sensitivity))
                             / ScrollPixelOffset::from(line_height);
                         let mut scroll_position =
                             point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
                         let forbid_vertical_scroll = editor.scroll_manager.forbid_vertical_scroll();
                         if forbid_vertical_scroll {
-                            scroll_position.y = current_scroll_position.y;
+                            scroll_position.y = base_scroll_position.y;
                         }
 
-                        if scroll_position != current_scroll_position {
-                            editor.scroll(scroll_position, axis, window, cx);
+                        if scroll_position != base_scroll_position {
+                            if is_precise {
+                                editor.scroll(scroll_position, axis, window, cx);
+                            } else {
+                                editor.scroll_animated(scroll_position, axis, window, cx);
+                            }
+
                             cx.stop_propagation();
                         } else if y < 0. {
                             // Due to clamping, we may fail to detect cases of overscroll to the top;
@@ -9448,6 +9466,28 @@ impl Element for EditorElement {
                             cx,
                         );
                         editor.set_visible_column_count(f64::from(editor_width / em_advance));
+
+                        if let Some(update) = editor.scroll_manager.update_animation() {
+                            use crate::scroll::ScrollAnimationPhase;
+
+                            let snapshot =
+                                editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+                            match update.phase {
+                                ScrollAnimationPhase::Intermediate => {
+                                    editor.scroll_manager.set_scroll_position_visual(
+                                        update.position,
+                                        &snapshot,
+                                        cx,
+                                    );
+
+                                    window.request_animation_frame();
+                                }
+                                ScrollAnimationPhase::Final => {
+                                    editor.set_scroll_position(update.position, window, cx);
+                                }
+                            }
+                        }
 
                         if matches!(
                             editor.mode,

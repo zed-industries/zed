@@ -3314,6 +3314,41 @@ Non-negative `integer` values
 
 Non-negative `integer` values
 
+### Smooth Scroll
+
+- Description: Whether to animate scrolling with a smooth easing effect.
+- Setting: `smooth_scroll`
+- Default:
+
+```json [settings]
+"smooth_scroll": {
+  "enabled": false,
+  "duration": 0.125
+}
+```
+
+> **Tip:** For a better smooth scrolling experience, consider increasing [`scroll_sensitivity`](#scroll-sensitivity) to make each scroll gesture cover more distance, allowing the animation to be more noticeable.
+
+#### Enabled
+
+- Description: Whether smooth scrolling is enabled.
+- Setting: `enabled`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+#### Duration
+
+- Description: Duration of the smooth scroll animation in seconds.
+- Setting: `duration`
+- Default: `0.125`
+
+**Options**
+
+Positive `float` values
+
 ## Search
 
 - Description: Search options to enable by default when opening new project and buffer searches.
