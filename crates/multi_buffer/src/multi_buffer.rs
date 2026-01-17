@@ -4128,7 +4128,12 @@ impl MultiBufferSnapshot {
 
         let mut result: Vec<(&BufferSnapshot, Range<BufferOffset>, ExcerptId)> = Vec::new();
         while let Some(region) = cursor.region() {
-            if !bounds.contains(&region.range.start) {
+            let dominated_by_end_bound = match end_bound {
+                Bound::Included(end) => region.range.start > end,
+                Bound::Excluded(end) => region.range.start >= end,
+                Bound::Unbounded => false,
+            };
+            if dominated_by_end_bound {
                 break;
             }
             if region.is_main_buffer {
