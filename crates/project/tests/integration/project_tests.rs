@@ -91,6 +91,7 @@ use util::{
     test::{TempTree, marked_text_offsets},
     uri,
 };
+use virtual_document;
 use worktree::WorktreeModelHandle as _;
 
 #[gpui::test]
@@ -12255,5 +12256,1242 @@ async fn test_multiple_virtual_buffers(cx: &mut gpui::TestAppContext) {
 
         // Verify count
         assert_eq!(project.buffer_store().read(cx).virtual_buffers.len(), 3);
+    });
+}
+
+// ============================================================================
+// Rust-Analyzer Virtual Document Tests
+// ============================================================================
+
+#[gpui::test]
+async fn test_rust_analyzer_virtual_buffer_registration(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Simulate a rust-analyzer macro expansion virtual document
+    let uri_string = "rust-analyzer://macro-expansion/src/main.rs/1234".to_string();
+    let uri = lsp::Uri::from_str(&uri_string).unwrap();
+    let expanded_macro_content = r#"
+// Expanded macro: println!
+{
+    ::std::io::_print(::core::fmt::Arguments::new_v1(
+        &["Hello, world!\n"],
+        &[],
+    ));
+}
+"#
+    .to_string();
+
+    project.update(cx, |project, cx| {
+        let buffer = cx.new(|cx| {
+            let mut buffer = language::Buffer::local(expanded_macro_content.clone(), cx);
+            buffer.set_capability(language::Capability::ReadOnly, cx);
+            buffer
+        });
+
+        let buffer_id = buffer.read(cx).remote_id();
+
+        // Register the virtual buffer with rust-analyzer scheme
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            buffer_store.register_virtual_buffer(
+                uri_string.clone(),
+                uri.clone(),
+                buffer.clone(),
+                cx,
+            );
+        });
+
+        // Verify registration
+        let found_buffer = project
+            .buffer_store()
+            .read(cx)
+            .get_buffer_by_uri(&uri_string);
+        assert!(found_buffer.is_some());
+        assert_eq!(found_buffer.unwrap().read(cx).remote_id(), buffer_id);
+
+        // Verify the buffer is read-only (macro expansions should not be editable)
+        assert!(buffer.read(cx).read_only());
+
+        // Verify the content
+        assert!(buffer.read(cx).text().contains("::std::io::_print"));
+    });
+}
+
+#[gpui::test]
+async fn test_rust_analyzer_virtual_document_store_config(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        let mut store = virtual_document::VirtualDocumentStore::new(cx);
+
+        // Register rust-analyzer config with UriWithPosition param kind
+        // This is the typical configuration for rust-analyzer virtual documents
+        let ra_config = lsp::VirtualDocumentConfig {
+            scheme: "rust-analyzer".to_string(),
+            content_request_method: "rust-analyzer/viewFileText".to_string(),
+            language_name: "Rust".to_string(),
+            language_id: "rust".to_string(),
+            param_kind: lsp::VirtualDocumentParamKind::UriWithPosition,
+        };
+        store.register_handler(ra_config).unwrap();
+
+        // Verify the handler is registered
+        let handler = store.handler_for_scheme("rust-analyzer");
+        assert!(handler.is_some());
+
+        let handler = handler.unwrap();
+        assert_eq!(handler.scheme, "rust-analyzer");
+        assert_eq!(handler.language_name, "Rust");
+        assert_eq!(handler.language_id, "rust");
+        assert_eq!(
+            handler.param_kind,
+            lsp::VirtualDocumentParamKind::UriWithPosition
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_rust_analyzer_display_name_extraction(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let config = lsp::VirtualDocumentConfig {
+        scheme: "rust-analyzer".to_string(),
+        content_request_method: "rust-analyzer/viewFileText".to_string(),
+        language_name: "Rust".to_string(),
+        language_id: "rust".to_string(),
+        param_kind: lsp::VirtualDocumentParamKind::UriWithPosition,
+    };
+
+    // Test macro expansion URI
+    let macro_uri =
+        lsp::Uri::from_str("rust-analyzer://macro-expansion/src/main.rs/println").unwrap();
+    let display_name = virtual_document::display_name_from_uri(&macro_uri, &config);
+    assert_eq!(display_name, "println");
+
+    // Test syntax tree URI
+    let syntax_uri = lsp::Uri::from_str("rust-analyzer://syntax-tree/src/lib.rs").unwrap();
+    let display_name = virtual_document::display_name_from_uri(&syntax_uri, &config);
+    assert_eq!(display_name, "lib.rs");
+
+    // Test HIR URI (High-level Intermediate Representation)
+    let hir_uri = lsp::Uri::from_str("rust-analyzer://hir/main").unwrap();
+    let display_name = virtual_document::display_name_from_uri(&hir_uri, &config);
+    assert_eq!(display_name, "main");
+}
+
+#[gpui::test]
+async fn test_multiple_language_virtual_buffers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Register virtual buffers from different language servers
+    let virtual_docs = [
+        (
+            "jdt://contents/rt.jar/java.util/ArrayList.class",
+            "// Decompiled Java class",
+        ),
+        (
+            "rust-analyzer://macro-expansion/expanded",
+            "// Expanded Rust macro",
+        ),
+        (
+            "sourcekit-lsp://interface/Foundation.NSObject",
+            "// Swift interface",
+        ),
+    ];
+
+    project.update(cx, |project, cx| {
+        for (uri_str, content) in &virtual_docs {
+            let uri_string = uri_str.to_string();
+            let uri = lsp::Uri::from_str(&uri_string).unwrap();
+            let buffer = cx.new(|cx| {
+                let mut buffer = language::Buffer::local(content.to_string(), cx);
+                buffer.set_capability(language::Capability::ReadOnly, cx);
+                buffer
+            });
+
+            project.buffer_store().update(cx, |buffer_store, cx| {
+                buffer_store.register_virtual_buffer(uri_string, uri, buffer, cx);
+            });
+        }
+    });
+
+    // Verify all virtual buffers are registered
+    project.read_with(cx, |project, cx| {
+        let buffer_store = project.buffer_store().read(cx);
+        assert_eq!(buffer_store.virtual_buffers.len(), 3);
+
+        for (uri_str, expected_content) in &virtual_docs {
+            let buffer = buffer_store.get_buffer_by_uri(uri_str);
+            assert!(buffer.is_some(), "Should find buffer for {}", uri_str);
+
+            let buffer = buffer.unwrap();
+            assert!(
+                buffer.read(cx).text().contains(expected_content),
+                "Buffer content should match for {}",
+                uri_str
+            );
+            assert!(
+                buffer.read(cx).read_only(),
+                "Virtual buffer should be read-only for {}",
+                uri_str
+            );
+        }
+    });
+}
+
+// ============================================================================
+// TypeScript Virtual Document Tests (Generated .d.ts files)
+// ============================================================================
+
+#[gpui::test]
+async fn test_typescript_virtual_dts_registration(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({ "index.ts": "const x = 1;" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Simulate a TypeScript language server providing a generated .d.ts file
+    // This could be for a JavaScript file that has JSDoc annotations
+    let uri_string = "ts-server://generated/node_modules/@types/lodash/index.d.ts".to_string();
+    let uri = lsp::Uri::from_str(&uri_string).unwrap();
+    let dts_content = r#"
+// Type definitions for lodash 4.14
+// Project: https://lodash.com
+// Definitions by: The Lodash Team
+
+declare namespace _ {
+    interface LoDashStatic {
+        chunk<T>(array: ArrayLike<T> | null | undefined, size?: number): T[][];
+        compact<T>(array: ArrayLike<T | null | undefined | false | '' | 0>): T[];
+        concat<T>(...values: Array<T | T[]>): T[];
+        difference<T>(array: ArrayLike<T>, ...values: ArrayLike<T>[]): T[];
+        drop<T>(array: ArrayLike<T>, n?: number): T[];
+    }
+}
+
+declare const _: _.LoDashStatic;
+export = _;
+"#
+    .to_string();
+
+    project.update(cx, |project, cx| {
+        let buffer = cx.new(|cx| {
+            let mut buffer = language::Buffer::local(dts_content.clone(), cx);
+            buffer.set_capability(language::Capability::ReadOnly, cx);
+            buffer
+        });
+
+        let buffer_id = buffer.read(cx).remote_id();
+
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            buffer_store.register_virtual_buffer(
+                uri_string.clone(),
+                uri.clone(),
+                buffer.clone(),
+                cx,
+            );
+        });
+
+        // Verify registration
+        let found_buffer = project
+            .buffer_store()
+            .read(cx)
+            .get_buffer_by_uri(&uri_string);
+        assert!(found_buffer.is_some());
+        assert_eq!(found_buffer.unwrap().read(cx).remote_id(), buffer_id);
+
+        // Verify the buffer is read-only
+        assert!(buffer.read(cx).read_only());
+
+        // Verify the content contains TypeScript declarations
+        let text = buffer.read(cx).text();
+        assert!(text.contains("declare namespace _"));
+        assert!(text.contains("interface LoDashStatic"));
+        assert!(text.contains("chunk<T>"));
+    });
+}
+
+#[gpui::test]
+async fn test_typescript_virtual_document_store_config(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        let mut store = virtual_document::VirtualDocumentStore::new(cx);
+
+        // Register TypeScript config for generated declaration files
+        let ts_config = lsp::VirtualDocumentConfig {
+            scheme: "ts-server".to_string(),
+            content_request_method: "typescript/virtualDocumentContent".to_string(),
+            language_name: "TypeScript".to_string(),
+            language_id: "typescript".to_string(),
+            param_kind: lsp::VirtualDocumentParamKind::Uri,
+        };
+        store.register_handler(ts_config).unwrap();
+
+        // Verify the handler is registered
+        let handler = store.handler_for_scheme("ts-server");
+        assert!(handler.is_some());
+
+        let handler = handler.unwrap();
+        assert_eq!(handler.scheme, "ts-server");
+        assert_eq!(handler.language_name, "TypeScript");
+        assert_eq!(handler.language_id, "typescript");
+        assert_eq!(handler.param_kind, lsp::VirtualDocumentParamKind::Uri);
+    });
+}
+
+#[gpui::test]
+async fn test_typescript_display_name_extraction(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let config = lsp::VirtualDocumentConfig {
+        scheme: "ts-server".to_string(),
+        content_request_method: "typescript/virtualDocumentContent".to_string(),
+        language_name: "TypeScript".to_string(),
+        language_id: "typescript".to_string(),
+        param_kind: lsp::VirtualDocumentParamKind::Uri,
+    };
+
+    // Test .d.ts file URI
+    let dts_uri =
+        lsp::Uri::from_str("ts-server://generated/node_modules/@types/lodash/index.d.ts").unwrap();
+    let display_name = virtual_document::display_name_from_uri(&dts_uri, &config);
+    assert_eq!(display_name, "index.d.ts");
+
+    // Test generated declaration from JS file
+    let gen_uri =
+        lsp::Uri::from_str("ts-server://generated/src/utils/helpers.d.ts?from=helpers.js").unwrap();
+    let display_name = virtual_document::display_name_from_uri(&gen_uri, &config);
+    assert_eq!(display_name, "helpers.d.ts");
+
+    // Test React types
+    let react_uri =
+        lsp::Uri::from_str("ts-server://types/node_modules/@types/react/index.d.ts").unwrap();
+    let display_name = virtual_document::display_name_from_uri(&react_uri, &config);
+    assert_eq!(display_name, "index.d.ts");
+}
+
+#[gpui::test]
+async fn test_typescript_generated_dts_from_javascript(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "utils.js": "/** @param {string} name */\nfunction greet(name) { return 'Hello ' + name; }"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Simulate TypeScript generating a .d.ts from a JavaScript file with JSDoc
+    let uri_string = "ts-server://generated/utils.d.ts".to_string();
+    let uri = lsp::Uri::from_str(&uri_string).unwrap();
+
+    // This is what TypeScript would generate from the JSDoc-annotated JavaScript
+    let generated_dts = r#"
+/**
+ * @param name - The name to greet
+ */
+export function greet(name: string): string;
+"#
+    .to_string();
+
+    project.update(cx, |project, cx| {
+        let buffer = cx.new(|cx| {
+            let mut buffer = language::Buffer::local(generated_dts.clone(), cx);
+            buffer.set_capability(language::Capability::ReadOnly, cx);
+            buffer
+        });
+
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            buffer_store.register_virtual_buffer(
+                uri_string.clone(),
+                uri.clone(),
+                buffer.clone(),
+                cx,
+            );
+        });
+
+        // Verify the generated declaration content
+        let found_buffer = project
+            .buffer_store()
+            .read(cx)
+            .get_buffer_by_uri(&uri_string)
+            .unwrap();
+
+        let text = found_buffer.read(cx).text();
+        assert!(text.contains("export function greet"));
+        assert!(text.contains("name: string"));
+        assert!(text.contains(": string;"));
+    });
+}
+
+#[gpui::test]
+async fn test_typescript_ambient_module_declaration(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({ "index.ts": "import 'custom-module';" }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Simulate an ambient module declaration for a module without types
+    let uri_string = "ts-server://ambient/custom-module.d.ts".to_string();
+    let uri = lsp::Uri::from_str(&uri_string).unwrap();
+
+    let ambient_dts = r#"
+// Auto-generated ambient module declaration
+declare module 'custom-module' {
+    export interface Config {
+        apiKey: string;
+        endpoint: string;
+        timeout?: number;
+    }
+
+    export function initialize(config: Config): Promise<void>;
+    export function getData<T>(key: string): Promise<T | null>;
+    export function setData<T>(key: string, value: T): Promise<void>;
+
+    export const version: string;
+}
+"#
+    .to_string();
+
+    project.update(cx, |project, cx| {
+        let buffer = cx.new(|cx| {
+            let mut buffer = language::Buffer::local(ambient_dts.clone(), cx);
+            buffer.set_capability(language::Capability::ReadOnly, cx);
+            buffer
+        });
+
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            buffer_store.register_virtual_buffer(uri_string.clone(), uri, buffer.clone(), cx);
+        });
+
+        let found_buffer = project
+            .buffer_store()
+            .read(cx)
+            .get_buffer_by_uri(&uri_string)
+            .unwrap();
+
+        let text = found_buffer.read(cx).text();
+        assert!(text.contains("declare module 'custom-module'"));
+        assert!(text.contains("export interface Config"));
+        assert!(text.contains("export function initialize"));
+    });
+}
+
+#[gpui::test]
+async fn test_multiple_typescript_virtual_declarations(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({ "index.ts": "" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Register multiple TypeScript declaration virtual buffers
+    let virtual_dts_files = [
+        (
+            "ts-server://types/lodash/index.d.ts",
+            "declare namespace _ { interface LoDashStatic {} }",
+        ),
+        (
+            "ts-server://types/react/index.d.ts",
+            "declare namespace React { interface Component<P, S> {} }",
+        ),
+        (
+            "ts-server://types/node/index.d.ts",
+            "declare namespace NodeJS { interface Process {} }",
+        ),
+        (
+            "ts-server://generated/api-client.d.ts",
+            "export interface ApiClient { fetch<T>(url: string): Promise<T>; }",
+        ),
+    ];
+
+    project.update(cx, |project, cx| {
+        for (uri_str, content) in &virtual_dts_files {
+            let uri_string = uri_str.to_string();
+            let uri = lsp::Uri::from_str(&uri_string).unwrap();
+            let buffer = cx.new(|cx| {
+                let mut buffer = language::Buffer::local(content.to_string(), cx);
+                buffer.set_capability(language::Capability::ReadOnly, cx);
+                buffer
+            });
+
+            project.buffer_store().update(cx, |buffer_store, cx| {
+                buffer_store.register_virtual_buffer(uri_string, uri, buffer, cx);
+            });
+        }
+    });
+
+    // Verify all virtual buffers are registered and accessible
+    project.read_with(cx, |project, cx| {
+        let buffer_store = project.buffer_store().read(cx);
+        assert_eq!(buffer_store.virtual_buffers.len(), 4);
+
+        for (uri_str, expected_content) in &virtual_dts_files {
+            let buffer = buffer_store.get_buffer_by_uri(uri_str);
+            assert!(buffer.is_some(), "Should find buffer for {}", uri_str);
+
+            let buffer = buffer.unwrap();
+            assert!(
+                buffer.read(cx).text().contains(expected_content),
+                "Buffer content should match for {}",
+                uri_str
+            );
+        }
+    });
+}
+
+// ============================================================================
+// Go / DAP Browser Virtual Document Tests (Debug Adapter Protocol)
+// ============================================================================
+
+#[gpui::test]
+async fn test_go_dap_virtual_document_registration(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({ "main.go": "package main\nfunc main() {}" }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Simulate a DAP browser URI for Go runtime source during debugging
+    // This is used when stepping into Go standard library or runtime code
+    let uri_string = "dap-browser://go-runtime/src/runtime/proc.go".to_string();
+    let uri = lsp::Uri::from_str(&uri_string).unwrap();
+    let runtime_source = r#"
+// Copyright 2014 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+package runtime
+
+import (
+    "internal/abi"
+    "internal/cpu"
+    "runtime/internal/atomic"
+    "unsafe"
+)
+
+// Goroutine scheduler
+// The scheduler's job is to distribute ready-to-run goroutines over worker threads.
+
+func schedule() {
+    mp := getg().m
+
+    if mp.locks != 0 {
+        throw("schedule: holding locks")
+    }
+    // ... scheduler implementation
+}
+"#
+    .to_string();
+
+    project.update(cx, |project, cx| {
+        let buffer = cx.new(|cx| {
+            let mut buffer = language::Buffer::local(runtime_source.clone(), cx);
+            buffer.set_capability(language::Capability::ReadOnly, cx);
+            buffer
+        });
+
+        let buffer_id = buffer.read(cx).remote_id();
+
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            buffer_store.register_virtual_buffer(
+                uri_string.clone(),
+                uri.clone(),
+                buffer.clone(),
+                cx,
+            );
+        });
+
+        // Verify registration
+        let found_buffer = project
+            .buffer_store()
+            .read(cx)
+            .get_buffer_by_uri(&uri_string);
+        assert!(found_buffer.is_some());
+        assert_eq!(found_buffer.unwrap().read(cx).remote_id(), buffer_id);
+
+        // Verify the buffer is read-only (runtime source should not be editable)
+        assert!(buffer.read(cx).read_only());
+
+        // Verify the content
+        let text = buffer.read(cx).text();
+        assert!(text.contains("package runtime"));
+        assert!(text.contains("func schedule()"));
+    });
+}
+
+#[gpui::test]
+async fn test_dap_virtual_document_store_config(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        let mut store = virtual_document::VirtualDocumentStore::new(cx);
+
+        // Register DAP browser config for Go debugging
+        let dap_go_config = lsp::VirtualDocumentConfig {
+            scheme: "dap-browser".to_string(),
+            content_request_method: "dap/source".to_string(),
+            language_name: "Go".to_string(),
+            language_id: "go".to_string(),
+            param_kind: lsp::VirtualDocumentParamKind::Uri,
+        };
+        store.register_handler(dap_go_config).unwrap();
+
+        // Verify the handler is registered
+        let handler = store.handler_for_scheme("dap-browser");
+        assert!(handler.is_some());
+
+        let handler = handler.unwrap();
+        assert_eq!(handler.scheme, "dap-browser");
+        assert_eq!(handler.language_name, "Go");
+        assert_eq!(handler.language_id, "go");
+    });
+}
+
+#[gpui::test]
+async fn test_dap_display_name_extraction(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let config = lsp::VirtualDocumentConfig {
+        scheme: "dap-browser".to_string(),
+        content_request_method: "dap/source".to_string(),
+        language_name: "Go".to_string(),
+        language_id: "go".to_string(),
+        param_kind: lsp::VirtualDocumentParamKind::Uri,
+    };
+
+    // Test Go runtime source URI
+    let runtime_uri = lsp::Uri::from_str("dap-browser://go-runtime/src/runtime/proc.go").unwrap();
+    let display_name = virtual_document::display_name_from_uri(&runtime_uri, &config);
+    assert_eq!(display_name, "proc.go");
+
+    // Test Go standard library URI
+    let stdlib_uri = lsp::Uri::from_str("dap-browser://go-stdlib/src/fmt/print.go").unwrap();
+    let display_name = virtual_document::display_name_from_uri(&stdlib_uri, &config);
+    assert_eq!(display_name, "print.go");
+
+    // Test external package source
+    let pkg_uri =
+        lsp::Uri::from_str("dap-browser://go-pkg/github.com/gin-gonic/gin/context.go").unwrap();
+    let display_name = virtual_document::display_name_from_uri(&pkg_uri, &config);
+    assert_eq!(display_name, "context.go");
+}
+
+#[gpui::test]
+async fn test_go_delve_debugger_source(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({ "main.go": "package main" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Simulate Delve debugger providing source for a goroutine stack trace
+    let uri_string = "dap-browser://delve/src/net/http/server.go".to_string();
+    let uri = lsp::Uri::from_str(&uri_string).unwrap();
+
+    let http_server_source = r#"
+// Copyright 2009 The Go Authors. All rights reserved.
+package http
+
+import (
+    "bufio"
+    "context"
+    "crypto/tls"
+    "errors"
+    "net"
+    "sync"
+    "time"
+)
+
+// A Server defines parameters for running an HTTP server.
+type Server struct {
+    Addr    string
+    Handler Handler
+
+    ReadTimeout  time.Duration
+    WriteTimeout time.Duration
+    IdleTimeout  time.Duration
+
+    mu         sync.Mutex
+    listeners  map[*net.Listener]struct{}
+    activeConn map[*conn]struct{}
+}
+
+func (srv *Server) Serve(l net.Listener) error {
+    // ... implementation
+    return nil
+}
+"#
+    .to_string();
+
+    project.update(cx, |project, cx| {
+        let buffer = cx.new(|cx| {
+            let mut buffer = language::Buffer::local(http_server_source.clone(), cx);
+            buffer.set_capability(language::Capability::ReadOnly, cx);
+            buffer
+        });
+
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            buffer_store.register_virtual_buffer(
+                uri_string.clone(),
+                uri.clone(),
+                buffer.clone(),
+                cx,
+            );
+        });
+
+        let found_buffer = project
+            .buffer_store()
+            .read(cx)
+            .get_buffer_by_uri(&uri_string)
+            .unwrap();
+
+        let text = found_buffer.read(cx).text();
+        assert!(text.contains("package http"));
+        assert!(text.contains("type Server struct"));
+        assert!(text.contains("func (srv *Server) Serve"));
+    });
+}
+
+#[gpui::test]
+async fn test_python_debugpy_virtual_source(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({ "main.py": "print('hello')" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Simulate debugpy providing source for Python standard library during debugging
+    let uri_string = "dap-browser://python-stdlib/Lib/asyncio/base_events.py".to_string();
+    let uri = lsp::Uri::from_str(&uri_string).unwrap();
+
+    let asyncio_source = r#"
+"""Base implementation of event loop."""
+
+import collections
+import concurrent.futures
+import heapq
+import itertools
+import socket
+import subprocess
+import threading
+import time
+import traceback
+
+class BaseEventLoop:
+    """Base class of event loops."""
+
+    def __init__(self):
+        self._closed = False
+        self._ready = collections.deque()
+        self._scheduled = []
+
+    def run_forever(self):
+        """Run until stop() is called."""
+        self._check_closed()
+        # ... implementation
+
+    async def create_connection(self, protocol_factory, host, port):
+        """Create a streaming transport connection."""
+        pass
+"#
+    .to_string();
+
+    project.update(cx, |project, cx| {
+        let buffer = cx.new(|cx| {
+            let mut buffer = language::Buffer::local(asyncio_source.clone(), cx);
+            buffer.set_capability(language::Capability::ReadOnly, cx);
+            buffer
+        });
+
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            buffer_store.register_virtual_buffer(uri_string.clone(), uri, buffer.clone(), cx);
+        });
+
+        let found_buffer = project
+            .buffer_store()
+            .read(cx)
+            .get_buffer_by_uri(&uri_string)
+            .unwrap();
+
+        let text = found_buffer.read(cx).text();
+        assert!(text.contains("class BaseEventLoop"));
+        assert!(text.contains("def run_forever"));
+        assert!(text.contains("async def create_connection"));
+    });
+}
+
+#[gpui::test]
+async fn test_csharp_decompiled_source(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({ "Program.cs": "class Program {}" }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Simulate OmniSharp/C# debugger providing decompiled .NET assembly source
+    let uri_string = "omnisharp://decompiled/System.Collections/List.cs".to_string();
+    let uri = lsp::Uri::from_str(&uri_string).unwrap();
+
+    let decompiled_source = r#"
+// Decompiled from System.Collections.dll
+using System;
+using System.Collections.Generic;
+
+namespace System.Collections.Generic
+{
+    public class List<T> : IList<T>, ICollection<T>, IEnumerable<T>
+    {
+        private T[] _items;
+        private int _size;
+        private int _version;
+
+        public List()
+        {
+            _items = Array.Empty<T>();
+        }
+
+        public List(int capacity)
+        {
+            if (capacity < 0)
+                throw new ArgumentOutOfRangeException(nameof(capacity));
+            _items = new T[capacity];
+        }
+
+        public void Add(T item)
+        {
+            if (_size == _items.Length)
+                EnsureCapacity(_size + 1);
+            _items[_size++] = item;
+            _version++;
+        }
+
+        public bool Contains(T item) => IndexOf(item) >= 0;
+    }
+}
+"#
+    .to_string();
+
+    project.update(cx, |project, cx| {
+        let buffer = cx.new(|cx| {
+            let mut buffer = language::Buffer::local(decompiled_source.clone(), cx);
+            buffer.set_capability(language::Capability::ReadOnly, cx);
+            buffer
+        });
+
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            buffer_store.register_virtual_buffer(uri_string.clone(), uri, buffer.clone(), cx);
+        });
+
+        let found_buffer = project
+            .buffer_store()
+            .read(cx)
+            .get_buffer_by_uri(&uri_string)
+            .unwrap();
+
+        let text = found_buffer.read(cx).text();
+        assert!(text.contains("// Decompiled from System.Collections.dll"));
+        assert!(text.contains("public class List<T>"));
+        assert!(text.contains("public void Add(T item)"));
+    });
+}
+
+#[gpui::test]
+async fn test_multiple_debugger_virtual_sources(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({ "main.go": "" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Register virtual sources from multiple debuggers/languages
+    let virtual_debug_sources = [
+        (
+            "dap-browser://go-runtime/src/runtime/proc.go",
+            "package runtime\nfunc schedule() {}",
+        ),
+        (
+            "dap-browser://python-stdlib/Lib/asyncio/events.py",
+            "class AbstractEventLoop:\n    pass",
+        ),
+        (
+            "dap-browser://node-internals/lib/internal/process/task_queues.js",
+            "function processTicksAndRejections() {}",
+        ),
+        (
+            "lldb://source/libc/malloc.c",
+            "void *malloc(size_t size) { /* ... */ }",
+        ),
+    ];
+
+    project.update(cx, |project, cx| {
+        for (uri_str, content) in &virtual_debug_sources {
+            let uri_string = uri_str.to_string();
+            let uri = lsp::Uri::from_str(&uri_string).unwrap();
+            let buffer = cx.new(|cx| {
+                let mut buffer = language::Buffer::local(content.to_string(), cx);
+                buffer.set_capability(language::Capability::ReadOnly, cx);
+                buffer
+            });
+
+            project.buffer_store().update(cx, |buffer_store, cx| {
+                buffer_store.register_virtual_buffer(uri_string, uri, buffer, cx);
+            });
+        }
+    });
+
+    // Verify all virtual buffers are registered
+    project.read_with(cx, |project, cx| {
+        let buffer_store = project.buffer_store().read(cx);
+        assert_eq!(buffer_store.virtual_buffers.len(), 4);
+
+        for (uri_str, expected_content) in &virtual_debug_sources {
+            let buffer = buffer_store.get_buffer_by_uri(uri_str);
+            assert!(buffer.is_some(), "Should find buffer for {}", uri_str);
+
+            let buffer = buffer.unwrap();
+            assert!(
+                buffer.read(cx).text().contains(expected_content),
+                "Buffer content should match for {}",
+                uri_str
+            );
+            assert!(
+                buffer.read(cx).read_only(),
+                "Debug source should be read-only for {}",
+                uri_str
+            );
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_dap_source_reference_handling(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({ "main.go": "" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // DAP uses sourceReference IDs to identify sources without file paths
+    // This tests handling of source references in virtual document URIs
+    let uri_string = "dap-browser://sourceRef/12345?name=internal_module.go".to_string();
+    let uri = lsp::Uri::from_str(&uri_string).unwrap();
+
+    let internal_source = r#"
+// This is an internal/generated module with no file path on disk
+// The debugger uses a sourceReference ID (12345) to identify it
+
+package internal
+
+func generatedFunction() {
+    // Auto-generated code
+}
+"#
+    .to_string();
+
+    project.update(cx, |project, cx| {
+        let buffer = cx.new(|cx| {
+            let mut buffer = language::Buffer::local(internal_source.clone(), cx);
+            buffer.set_capability(language::Capability::ReadOnly, cx);
+            buffer
+        });
+
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            buffer_store.register_virtual_buffer(uri_string.clone(), uri.clone(), buffer, cx);
+        });
+
+        // Verify the buffer can be found by the full URI including query params
+        let found = project
+            .buffer_store()
+            .read(cx)
+            .get_buffer_by_uri(&uri_string);
+        assert!(found.is_some());
+
+        // Test display name extraction handles query params
+        let config = lsp::VirtualDocumentConfig {
+            scheme: "dap-browser".to_string(),
+            content_request_method: "dap/source".to_string(),
+            language_name: "Go".to_string(),
+            language_id: "go".to_string(),
+            param_kind: lsp::VirtualDocumentParamKind::Uri,
+        };
+        let display_name = virtual_document::display_name_from_uri(&uri, &config);
+        // Should extract "12345" as it's the last path segment before the query
+        assert_eq!(display_name, "12345");
+    });
+}
+
+// ============================================================================
+// Deno Virtual Document Tests (addresses GitHub issue #10108)
+// https://github.com/zed-industries/zed/issues/10108
+// ============================================================================
+
+#[gpui::test]
+async fn test_deno_virtual_text_document(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({ "main.ts": "await Deno.copyFile('src', 'dest');" }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Simulate the Deno LSP providing virtual document for lib.deno.ns.d.ts
+    // This is what happens when user Cmd+clicks on Deno.copyFile
+    let uri_string = "deno:/asset/lib.deno.ns.d.ts".to_string();
+    let uri = lsp::Uri::from_str(&uri_string).unwrap();
+
+    // Content that Deno LSP would return via deno/virtualTextDocument
+    let deno_types = r#"
+// Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
+
+/// <reference no-default-lib="true" />
+/// <reference lib="esnext" />
+
+declare namespace Deno {
+  /** Copy a file or directory from source to destination.
+   *
+   * ```ts
+   * await Deno.copyFile("from.txt", "to.txt");
+   * ```
+   *
+   * Requires `allow-read` permission on source and
+   * `allow-write` permission on destination.
+   */
+  export function copyFile(
+    fromPath: string | URL,
+    toPath: string | URL,
+  ): Promise<void>;
+
+  /** Synchronously copy a file or directory. */
+  export function copyFileSync(
+    fromPath: string | URL,
+    toPath: string | URL,
+  ): void;
+
+  /** Read the entire contents of a file. */
+  export function readFile(
+    path: string | URL,
+    options?: ReadFileOptions,
+  ): Promise<Uint8Array>;
+
+  /** Open a file and resolve to an instance of `Deno.FsFile`. */
+  export function open(
+    path: string | URL,
+    options?: OpenOptions,
+  ): Promise<FsFile>;
+}
+"#
+    .to_string();
+
+    project.update(cx, |project, cx| {
+        let buffer = cx.new(|cx| {
+            let mut buffer = language::Buffer::local(deno_types.clone(), cx);
+            buffer.set_capability(language::Capability::ReadOnly, cx);
+            buffer
+        });
+
+        let buffer_id = buffer.read(cx).remote_id();
+
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            buffer_store.register_virtual_buffer(
+                uri_string.clone(),
+                uri.clone(),
+                buffer.clone(),
+                cx,
+            );
+        });
+
+        // Verify registration - this is what enables "Go to Definition" to work
+        let found_buffer = project
+            .buffer_store()
+            .read(cx)
+            .get_buffer_by_uri(&uri_string);
+        assert!(found_buffer.is_some());
+        assert_eq!(found_buffer.unwrap().read(cx).remote_id(), buffer_id);
+
+        // Verify the buffer is read-only (type definitions should not be editable)
+        assert!(buffer.read(cx).read_only());
+
+        // Verify the content contains Deno API definitions
+        let text = buffer.read(cx).text();
+        assert!(text.contains("declare namespace Deno"));
+        assert!(text.contains("export function copyFile"));
+        assert!(text.contains("fromPath: string | URL"));
+    });
+}
+
+#[gpui::test]
+async fn test_deno_virtual_document_store_config(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        let mut store = virtual_document::VirtualDocumentStore::new(cx);
+
+        // This is how a Deno extension would register its virtual document handler
+        let deno_config = lsp::VirtualDocumentConfig {
+            scheme: "deno".to_string(),
+            content_request_method: "deno/virtualTextDocument".to_string(),
+            language_name: "TypeScript".to_string(),
+            language_id: "typescript".to_string(),
+            param_kind: lsp::VirtualDocumentParamKind::Uri,
+        };
+        store.register_handler(deno_config).unwrap();
+
+        // Verify the handler is registered
+        let handler = store.handler_for_scheme("deno");
+        assert!(handler.is_some());
+
+        let handler = handler.unwrap();
+        assert_eq!(handler.scheme, "deno");
+        assert_eq!(handler.content_request_method, "deno/virtualTextDocument");
+        assert_eq!(handler.language_name, "TypeScript");
+        assert_eq!(handler.language_id, "typescript");
+    });
+}
+
+#[gpui::test]
+async fn test_deno_display_name_extraction(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let config = lsp::VirtualDocumentConfig {
+        scheme: "deno".to_string(),
+        content_request_method: "deno/virtualTextDocument".to_string(),
+        language_name: "TypeScript".to_string(),
+        language_id: "typescript".to_string(),
+        param_kind: lsp::VirtualDocumentParamKind::Uri,
+    };
+
+    // Test Deno namespace types
+    let ns_uri = lsp::Uri::from_str("deno:/asset/lib.deno.ns.d.ts").unwrap();
+    let display_name = virtual_document::display_name_from_uri(&ns_uri, &config);
+    assert_eq!(display_name, "lib.deno.ns.d.ts");
+
+    // Test Deno standard library module
+    let std_uri = lsp::Uri::from_str("deno:/https/deno.land/std/fs/mod.ts").unwrap();
+    let display_name = virtual_document::display_name_from_uri(&std_uri, &config);
+    assert_eq!(display_name, "mod.ts");
+
+    // Test third-party module
+    let third_party_uri = lsp::Uri::from_str("deno:/https/esm.sh/react@18.2.0/index.d.ts").unwrap();
+    let display_name = virtual_document::display_name_from_uri(&third_party_uri, &config);
+    assert_eq!(display_name, "index.d.ts");
+}
+
+#[gpui::test]
+async fn test_deno_multiple_virtual_documents(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({ "main.ts": "" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Register multiple Deno virtual documents (common scenario when exploring Deno APIs)
+    let deno_virtual_docs = [
+        (
+            "deno:/asset/lib.deno.ns.d.ts",
+            "declare namespace Deno { export function exit(code?: number): never; }",
+        ),
+        (
+            "deno:/asset/lib.deno.window.d.ts",
+            "declare function alert(message?: string): void;",
+        ),
+        (
+            "deno:/https/deno.land/std/path/mod.ts",
+            "export function join(...paths: string[]): string { /* ... */ }",
+        ),
+        (
+            "deno:/https/deno.land/std/fs/mod.ts",
+            "export async function copy(src: string, dest: string): Promise<void> { /* ... */ }",
+        ),
+    ];
+
+    project.update(cx, |project, cx| {
+        for (uri_str, content) in &deno_virtual_docs {
+            let uri_string = uri_str.to_string();
+            let uri = lsp::Uri::from_str(&uri_string).unwrap();
+            let buffer = cx.new(|cx| {
+                let mut buffer = language::Buffer::local(content.to_string(), cx);
+                buffer.set_capability(language::Capability::ReadOnly, cx);
+                buffer
+            });
+
+            project.buffer_store().update(cx, |buffer_store, cx| {
+                buffer_store.register_virtual_buffer(uri_string, uri, buffer, cx);
+            });
+        }
+    });
+
+    // Verify all Deno virtual documents are accessible
+    project.read_with(cx, |project, cx| {
+        let buffer_store = project.buffer_store().read(cx);
+        assert_eq!(buffer_store.virtual_buffers.len(), 4);
+
+        for (uri_str, expected_content) in &deno_virtual_docs {
+            let buffer = buffer_store.get_buffer_by_uri(uri_str);
+            assert!(buffer.is_some(), "Should find buffer for {}", uri_str);
+
+            let buffer = buffer.unwrap();
+            assert!(
+                buffer.read(cx).text().contains(expected_content),
+                "Buffer content should match for {}",
+                uri_str
+            );
+            assert!(
+                buffer.read(cx).read_only(),
+                "Deno virtual document should be read-only for {}",
+                uri_str
+            );
+        }
     });
 }

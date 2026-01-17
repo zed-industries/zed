@@ -8,6 +8,46 @@ use std::sync::Arc;
 // Re-export the config types from lsp crate (defined there to avoid circular dependencies)
 pub use lsp::{VirtualDocumentConfig, VirtualDocumentParamKind};
 
+/// Schemes reserved by the system that cannot be registered for virtual documents.
+const RESERVED_SCHEMES: &[&str] = &["file", "http", "https", "ssh", "untitled"];
+
+/// Extracts a friendly display name from a virtual document URI.
+///
+/// For example:
+/// - `jdt://contents/rt.jar/java.util/ArrayList.class` → "ArrayList.java"
+/// - `rust-analyzer://macro-expansion/...` → "macro-expansion"
+pub fn display_name_from_uri(uri: &lsp::Uri, config: &VirtualDocumentConfig) -> String {
+    let uri_str = uri.to_string();
+
+    // Try to extract the last path segment before any query string
+    let path_part = uri_str.split('?').next().unwrap_or(&uri_str);
+    let last_segment = path_part.rsplit('/').next().unwrap_or(path_part);
+
+    // Handle Java .class files - convert to .java for display
+    if last_segment.ends_with(".class") {
+        let name = last_segment.trim_end_matches(".class");
+        return format!("{}.java", name);
+    }
+
+    // For other cases, just use the last segment if it looks like a filename
+    if last_segment.contains('.') && !last_segment.starts_with('.') {
+        return last_segment.to_string();
+    }
+
+    // Fall back to scheme + truncated path for very long/unusual URIs
+    if last_segment.len() > 30 {
+        format!(
+            "[{}] ...{}",
+            config.scheme,
+            &last_segment[last_segment.len() - 20..]
+        )
+    } else if last_segment.is_empty() {
+        format!("[{}]", config.scheme)
+    } else {
+        last_segment.to_string()
+    }
+}
+
 /// Registry mapping URI schemes to virtual document handler configurations.
 ///
 /// Virtual documents are documents provided by language servers via custom LSP requests
@@ -25,8 +65,16 @@ impl VirtualDocumentStore {
         }
     }
 
-    pub fn register_handler(&mut self, config: VirtualDocumentConfig) {
+    /// Returns an error if the scheme is reserved (e.g., "file", "http").
+    pub fn register_handler(&mut self, config: VirtualDocumentConfig) -> Result<()> {
+        if RESERVED_SCHEMES.contains(&config.scheme.as_str()) {
+            anyhow::bail!(
+                "cannot register virtual document handler for reserved scheme: {}",
+                config.scheme
+            );
+        }
         self.handlers.insert(config.scheme.clone(), config);
+        Ok(())
     }
 
     pub fn handler_for_scheme(&self, scheme: &str) -> Option<&VirtualDocumentConfig> {
@@ -101,12 +149,10 @@ mod tests {
         cx.update(|cx| {
             let mut store = VirtualDocumentStore::new(cx);
 
-            // Initially empty
             assert!(store.handlers().is_empty());
 
-            // Register a handler
             let config = make_config("jdt");
-            store.register_handler(config);
+            store.register_handler(config).unwrap();
 
             assert_eq!(store.handlers().len(), 1);
             assert!(store.handlers().contains_key("jdt"));
@@ -118,20 +164,16 @@ mod tests {
         cx.update(|cx| {
             let mut store = VirtualDocumentStore::new(cx);
 
-            // No handler registered
             assert!(store.handler_for_scheme("jdt").is_none());
 
-            // Register handler
             let config = make_config("jdt");
-            store.register_handler(config);
+            store.register_handler(config).unwrap();
 
-            // Now it should be found
             let handler = store.handler_for_scheme("jdt");
             assert!(handler.is_some());
             assert_eq!(handler.unwrap().scheme, "jdt");
             assert_eq!(handler.unwrap().content_request_method, "jdt/getContents");
 
-            // Other schemes still not found
             assert!(store.handler_for_scheme("rust-analyzer").is_none());
         });
     }
@@ -141,9 +183,11 @@ mod tests {
         cx.update(|cx| {
             let mut store = VirtualDocumentStore::new(cx);
 
-            store.register_handler(make_config("jdt"));
-            store.register_handler(make_config("rust-analyzer"));
-            store.register_handler(make_config("dap-browser"));
+            store.register_handler(make_config("jdt")).unwrap();
+            store
+                .register_handler(make_config("rust-analyzer"))
+                .unwrap();
+            store.register_handler(make_config("dap-browser")).unwrap();
 
             assert_eq!(store.handlers().len(), 3);
             assert!(store.handler_for_scheme("jdt").is_some());
@@ -157,7 +201,6 @@ mod tests {
         cx.update(|cx| {
             let mut store = VirtualDocumentStore::new(cx);
 
-            // Register initial handler
             let config1 = VirtualDocumentConfig {
                 scheme: "jdt".to_string(),
                 content_request_method: "java/classFileContents".to_string(),
@@ -165,7 +208,7 @@ mod tests {
                 language_id: "java".to_string(),
                 param_kind: VirtualDocumentParamKind::default(),
             };
-            store.register_handler(config1);
+            store.register_handler(config1).unwrap();
 
             assert_eq!(
                 store
@@ -175,7 +218,6 @@ mod tests {
                 "java/classFileContents"
             );
 
-            // Replace with new handler
             let config2 = VirtualDocumentConfig {
                 scheme: "jdt".to_string(),
                 content_request_method: "java/newMethod".to_string(),
@@ -183,9 +225,8 @@ mod tests {
                 language_id: "java".to_string(),
                 param_kind: VirtualDocumentParamKind::default(),
             };
-            store.register_handler(config2);
+            store.register_handler(config2).unwrap();
 
-            // Should still have only one handler, but with updated method
             assert_eq!(store.handlers().len(), 1);
             assert_eq!(
                 store
@@ -194,6 +235,21 @@ mod tests {
                     .content_request_method,
                 "java/newMethod"
             );
+        });
+    }
+
+    #[gpui::test]
+    fn test_reserved_scheme_rejected(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let mut store = VirtualDocumentStore::new(cx);
+
+            let file_config = make_config("file");
+            assert!(store.register_handler(file_config).is_err());
+
+            let http_config = make_config("http");
+            assert!(store.register_handler(http_config).is_err());
+
+            assert!(store.handlers().is_empty());
         });
     }
 
@@ -218,7 +274,6 @@ mod tests {
         cx.update(|cx| {
             let mut store = VirtualDocumentStore::new(cx);
 
-            // Test Uri param kind (JDTLS style)
             let jdt_config = VirtualDocumentConfig {
                 scheme: "jdt".to_string(),
                 content_request_method: "java/classFileContents".to_string(),
@@ -226,13 +281,12 @@ mod tests {
                 language_id: "java".to_string(),
                 param_kind: VirtualDocumentParamKind::Uri,
             };
-            store.register_handler(jdt_config);
+            store.register_handler(jdt_config).unwrap();
             assert_eq!(
                 store.handler_for_scheme("jdt").unwrap().param_kind,
                 VirtualDocumentParamKind::Uri
             );
 
-            // Test RawUri param kind
             let raw_config = VirtualDocumentConfig {
                 scheme: "custom".to_string(),
                 content_request_method: "custom/getContents".to_string(),
@@ -240,13 +294,12 @@ mod tests {
                 language_id: "custom".to_string(),
                 param_kind: VirtualDocumentParamKind::RawUri,
             };
-            store.register_handler(raw_config);
+            store.register_handler(raw_config).unwrap();
             assert_eq!(
                 store.handler_for_scheme("custom").unwrap().param_kind,
                 VirtualDocumentParamKind::RawUri
             );
 
-            // Test UriWithPosition param kind (rust-analyzer style)
             let ra_config = VirtualDocumentConfig {
                 scheme: "rust-analyzer".to_string(),
                 content_request_method: "rust-analyzer/expandMacro".to_string(),
@@ -254,7 +307,7 @@ mod tests {
                 language_id: "rust".to_string(),
                 param_kind: VirtualDocumentParamKind::UriWithPosition,
             };
-            store.register_handler(ra_config);
+            store.register_handler(ra_config).unwrap();
             assert_eq!(
                 store
                     .handler_for_scheme("rust-analyzer")
@@ -263,7 +316,6 @@ mod tests {
                 VirtualDocumentParamKind::UriWithPosition
             );
 
-            // Verify all three are registered
             assert_eq!(store.handlers().len(), 3);
         });
     }
@@ -273,14 +325,55 @@ mod tests {
         cx.update(|cx| {
             let mut store = VirtualDocumentStore::new(cx);
 
-            // Test that default param_kind is Uri
             let config = make_config("test");
-            store.register_handler(config);
+            store.register_handler(config).unwrap();
 
             assert_eq!(
                 store.handler_for_scheme("test").unwrap().param_kind,
                 VirtualDocumentParamKind::Uri
             );
         });
+    }
+
+    #[test]
+    fn test_display_name_from_uri_java_class() {
+        let config = VirtualDocumentConfig {
+            scheme: "jdt".to_string(),
+            content_request_method: "java/classFileContents".to_string(),
+            language_name: "Java".to_string(),
+            language_id: "java".to_string(),
+            param_kind: VirtualDocumentParamKind::Uri,
+        };
+
+        let uri = lsp::Uri::from_str("jdt://contents/rt.jar/java.util/ArrayList.class").unwrap();
+        assert_eq!(display_name_from_uri(&uri, &config), "ArrayList.java");
+
+        let uri2 =
+            lsp::Uri::from_str("jdt://contents/some.jar/com.example/MyClass.class?query").unwrap();
+        assert_eq!(display_name_from_uri(&uri2, &config), "MyClass.java");
+    }
+
+    #[test]
+    fn test_display_name_from_uri_regular_file() {
+        let config = make_config("custom");
+
+        let uri = lsp::Uri::from_str("custom://path/to/file.rs").unwrap();
+        assert_eq!(display_name_from_uri(&uri, &config), "file.rs");
+    }
+
+    #[test]
+    fn test_display_name_from_uri_no_extension() {
+        let config = make_config("ra");
+
+        let uri = lsp::Uri::from_str("ra://macro-expansion").unwrap();
+        assert_eq!(display_name_from_uri(&uri, &config), "macro-expansion");
+    }
+
+    #[test]
+    fn test_display_name_from_uri_empty_path() {
+        let config = make_config("test");
+
+        let uri = lsp::Uri::from_str("test://").unwrap();
+        assert_eq!(display_name_from_uri(&uri, &config), "[test]");
     }
 }
