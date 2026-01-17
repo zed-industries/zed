@@ -21,7 +21,7 @@ use gpui::{
     App, Rgba, SharedString, TestAppContext, UpdateGlobal, VisualContext, VisualTestContext,
 };
 use indoc::indoc;
-use language::{FakeLspAdapter, rust_lang};
+use language::{FakeLspAdapter, LanguageServerId, rust_lang};
 use lsp::LSP_REQUEST_TIMEOUT;
 use pretty_assertions::assert_eq;
 use project::{
@@ -2344,6 +2344,244 @@ async fn test_inlay_hint_refresh_is_forwarded(
             "Guest should get a /refresh LSP request propagated by host despite host hints are off"
         );
     });
+}
+
+#[gpui::test]
+async fn test_inlay_hint_type_navigation(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let executor = cx_a.executor();
+    // client_a: local    client_b: remote
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    // Enable inlay hints on both clients
+    cx_a.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        enabled: Some(true),
+                        edit_debounce_ms: Some(0),
+                        scroll_debounce_ms: Some(0),
+                        show_type_hints: Some(true),
+                        show_parameter_hints: Some(true),
+                        show_other_hints: Some(true),
+                        show_background: Some(false),
+                        show_value_hints: Some(true),
+                        toggle_on_modifiers_press: None,
+                    })
+            });
+        });
+    });
+    cx_b.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        enabled: Some(true),
+                        edit_debounce_ms: Some(0),
+                        scroll_debounce_ms: Some(0),
+                        show_type_hints: Some(true),
+                        show_parameter_hints: Some(true),
+                        show_other_hints: Some(true),
+                        show_background: Some(false),
+                        show_value_hints: Some(true),
+                        toggle_on_modifiers_press: None,
+                    })
+            });
+        });
+    });
+
+    let capabilities = lsp::ServerCapabilities {
+        inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+        ..Default::default()
+    };
+
+    // Register language on both clients
+    client_b.language_registry().add(rust_lang());
+    client_a.language_registry().add(rust_lang());
+    client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            ..Default::default()
+        },
+    );
+
+    let mut fake_servers = client_b.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            ..Default::default()
+        },
+    );
+
+    client_b
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() {\n    let variable = TestStruct;\n}",
+                "types.rs": "pub struct TestStruct;"
+            }),
+        )
+        .await;
+
+    let (project_b, worktree_id) = client_b.build_local_project(path!("/a"), cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let project_id = active_call_b
+        .update(cx_b, |call, cx| call.share_project(project_b.clone(), cx))
+        .await
+        .unwrap();
+
+    // client_a joins the remote project
+    let project_a = client_a.join_remote_project(project_id, cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+
+    // Remote server (client_b) opens main.rs first to trigger LSP
+    workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+
+    fake_server
+        .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |_params, _| {
+            let types_uri = lsp::Uri::from_file_path(path!("/a/types.rs")).unwrap();
+            async move {
+                Ok(Some(vec![lsp::InlayHint {
+                    position: lsp::Position::new(1, 16),
+                    label: lsp::InlayHintLabel::LabelParts(vec![
+                        lsp::InlayHintLabelPart {
+                            value: ": ".to_string(),
+                            location: None,
+                            tooltip: None,
+                            command: None,
+                        },
+                        lsp::InlayHintLabelPart {
+                            value: "TestStruct".to_string(),
+                            location: Some(lsp::Location {
+                                uri: types_uri,
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 11),
+                                    lsp::Position::new(0, 21),
+                                ),
+                            }),
+                            tooltip: None,
+                            command: None,
+                        },
+                    ]),
+                    kind: Some(lsp::InlayHintKind::TYPE),
+                    text_edits: None,
+                    tooltip: None,
+                    padding_left: Some(false),
+                    padding_right: Some(false),
+                    data: None,
+                }]))
+            }
+        })
+        .next()
+        .await
+        .unwrap();
+
+    // Local client opens file
+    let editor_a = workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    executor.run_until_parked();
+
+    // Verify local client also sees the hints
+    editor_a.update(cx_a, |editor, cx| {
+        let labels = extract_hint_labels(editor, cx);
+        assert_eq!(
+            labels,
+            vec![": TestStruct".to_string()],
+            "Local client should see the type inlay hint"
+        );
+    });
+
+    let hint_locations = editor_a.update(cx_a, |editor, cx| extract_hint_locations(editor, cx));
+
+    let (server_id, target_location) = hint_locations.into_iter().next().unwrap();
+
+    // Local client navigates using the location from the inlay hint
+    let result = project_a
+        .update(cx_a, |project, cx| {
+            project.open_local_buffer_via_lsp(target_location.uri.clone(), server_id, cx)
+        })
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "Local client should handle URI format from remote server: {:?}",
+        result.err()
+    );
+
+    let target_buffer = result.unwrap();
+    target_buffer.read_with(cx_a, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "pub struct TestStruct;",
+            "Target buffer should contain the type definition"
+        );
+    });
+
+    // Verify the location
+    assert_eq!(
+        target_location.range,
+        lsp::Range::new(lsp::Position::new(0, 11), lsp::Position::new(0, 21),),
+        "Target range should point to 'TestStruct'"
+    );
+}
+
+fn extract_hint_locations(editor: &Editor, cx: &mut App) -> Vec<(LanguageServerId, lsp::Location)> {
+    let lsp_store = editor.project().unwrap().read(cx).lsp_store();
+
+    let mut all_locations = Vec::new();
+    for buffer in editor.buffer().read(cx).all_buffers() {
+        lsp_store.update(cx, |lsp_store, cx| {
+            let hints = &lsp_store.latest_lsp_data(&buffer, cx).inlay_hints();
+            for hint in hints.all_cached_hints() {
+                if let project::InlayHintLabel::LabelParts(parts) = &hint.label {
+                    for part in parts {
+                        if let Some(location) = &part.location {
+                            all_locations.push(location.clone());
+                        }
+                    }
+                }
+            }
+        });
+    }
+    all_locations
 }
 
 #[gpui::test(iterations = 10)]
