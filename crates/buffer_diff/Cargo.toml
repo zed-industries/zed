@@ -27,10 +27,12 @@ settings = { workspace = true, optional = true }
 sum_tree.workspace = true
 text.workspace = true
 util.workspace = true
+syntax_diff.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 serde_json.workspace = true
 settings.workspace = true

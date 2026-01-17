@@ -313,6 +313,7 @@ impl RatePredictionsModal {
             self.diff_editor.update(cx, |editor, cx| {
                 let new_buffer = prediction.edit_preview.build_result_buffer(cx);
                 let new_buffer_snapshot = new_buffer.read(cx).snapshot();
+                let new_buffer_language_registry = new_buffer.read(cx).language_registry();
                 let old_buffer_snapshot = prediction.snapshot.clone();
                 let new_buffer_id = new_buffer_snapshot.remote_id();
 
@@ -327,10 +328,11 @@ impl RatePredictionsModal {
                 let diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot.text, cx));
                 diff.update(cx, |diff, cx| {
                     let update = diff.update_diff(
-                        new_buffer_snapshot.text.clone(),
+                        new_buffer_snapshot.clone(),
                         Some(old_buffer_snapshot.text().into()),
                         true,
                         language,
+                        new_buffer_language_registry,
                         cx,
                     );
                     cx.spawn(async move |diff, cx| {

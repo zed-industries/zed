@@ -266,10 +266,11 @@ async fn update_diff_buffer(
     let update = diff
         .update(cx, |diff, cx| {
             diff.update_diff(
-                source_buffer_snapshot.text.clone(),
+                source_buffer_snapshot.clone(),
                 Some(Arc::from(base_text.as_str())),
                 true,
                 language.clone(),
+                language_registry.clone(),
                 cx,
             )
         })

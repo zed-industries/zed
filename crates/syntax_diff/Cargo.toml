@@ -1,0 +1,25 @@
+[package]
+name = "syntax_diff"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/syntax_diff.rs"
+
+[dependencies]
+tree-sitter.workspace = true
+collections.workspace = true
+strsim.workspace = true
+language.workspace = true
+arrayvec.workspace = true
+
+[dev-dependencies]
+tree-sitter-json.workspace = true
+tree-sitter-rust.workspace = true
+criterion.workspace = true
+indoc.workspace = true
+util = { workspace = true, features = ["test-support"] }

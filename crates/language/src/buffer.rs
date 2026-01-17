@@ -3937,6 +3937,40 @@ impl BufferSnapshot {
         result
     }
 
+    /// Find the smallest syntax node that contains the given range.
+    ///
+    /// Unlike `syntax_ancestor`, this returns the tightest-fitting node
+    /// rather than requiring the node to be strictly larger than the range.
+    pub fn syntax_descendant<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> Option<tree_sitter::Node<'a>> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut result: Option<tree_sitter::Node<'a>> = None;
+
+        for layer in self
+            .syntax
+            .layers_for_range(range.clone(), &self.text, true)
+        {
+            let Some(node) = layer
+                .node()
+                .descendant_for_byte_range(range.start, range.end)
+            else {
+                continue;
+            };
+
+            // Pick the smallest node across all layers
+            if result
+                .as_ref()
+                .is_none_or(|prev| node.byte_range().len() < prev.byte_range().len())
+            {
+                result = Some(node);
+            }
+        }
+
+        result
+    }
+
     /// Find the previous sibling syntax node at the given range.
     ///
     /// This function locates the syntax node that precedes the node containing

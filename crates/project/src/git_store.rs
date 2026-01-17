@@ -696,6 +696,15 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
         cx.spawn(async move |this, cx| {
+            // TODO: this is not the right place to await the parsing of the buffer
+            // this is necessary otherwise syntax diff cannot be computed when the buffer
+            // doesn't have a tree yet
+            //
+            // - Should we do it only when syntax diff is enabled?
+            // - Where should we place it? Should BufferDiff directly work with the main buffer instead of snapshots?
+            // - What other places do need it
+            buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
+
             let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
             let language_registry = buffer.update(cx, |buffer, _| buffer.language_registry());
             let content = match oid {
@@ -711,13 +720,14 @@ impl GitStore {
                 .update(cx, |buffer_diff, cx| {
                     buffer_diff.language_changed(
                         buffer_snapshot.language().cloned(),
-                        language_registry,
+                        language_registry.clone(),
                         cx,
                     );
                     buffer_diff.set_base_text(
                         content.map(|s| s.as_str().into()),
                         buffer_snapshot.language().cloned(),
-                        buffer_snapshot.text,
+                        language_registry,
+                        buffer_snapshot,
                         cx,
                     )
                 })
@@ -814,7 +824,7 @@ impl GitStore {
             let buffer_id = buffer.remote_id();
             let language = buffer.language().cloned();
             let language_registry = buffer.language_registry();
-            let text_snapshot = buffer.text_snapshot();
+            let snapshot = buffer.snapshot();
             this.loading_diffs.remove(&(buffer_id, kind));
 
             let git_store = cx.weak_entity();
@@ -823,7 +833,7 @@ impl GitStore {
                 .entry(buffer_id)
                 .or_insert_with(|| cx.new(|_| BufferGitState::new(git_store)));
 
-            let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
+            let diff = cx.new(|cx| BufferDiff::new(&snapshot, cx));
 
             cx.subscribe(&diff, Self::on_buffer_diff_event).detach();
             diff_state.update(cx, |diff_state, cx| {
@@ -837,7 +847,7 @@ impl GitStore {
                         let unstaged_diff = if let Some(diff) = diff_state.unstaged_diff() {
                             diff
                         } else {
-                            let unstaged_diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
+                            let unstaged_diff = cx.new(|cx| BufferDiff::new(&snapshot, cx));
                             diff_state.unstaged_diff = Some(unstaged_diff.downgrade());
                             unstaged_diff
                         };
@@ -847,7 +857,7 @@ impl GitStore {
                     }
                 }
 
-                diff_state.diff_bases_changed(text_snapshot, Some(diff_bases_change), cx);
+                diff_state.diff_bases_changed(snapshot, Some(diff_bases_change), cx);
                 let rx = diff_state.wait_for_recalculation();
 
                 anyhow::Ok(async move {
@@ -1502,7 +1512,7 @@ impl GitStore {
                                 .await?;
 
                             diff_state.update(cx, |diff_state, cx| {
-                                let buffer_snapshot = buffer.read(cx).text_snapshot();
+                                let buffer_snapshot = buffer.read(cx).snapshot();
                                 diff_state.diff_bases_changed(
                                     buffer_snapshot,
                                     Some(diff_bases_change),
@@ -1529,14 +1539,14 @@ impl GitStore {
         let mut futures = Vec::new();
         for buffer in buffers {
             if let Some(diff_state) = self.diffs.get_mut(&buffer.read(cx).remote_id()) {
-                let buffer = buffer.read(cx).text_snapshot();
+                let buffer = buffer.read(cx).snapshot();
                 diff_state.update(cx, |diff_state, cx| {
                     diff_state.recalculate_diffs(buffer.clone(), cx);
                     futures.extend(diff_state.wait_for_recalculation().map(FutureExt::boxed));
                 });
                 futures.push(diff_state.update(cx, |diff_state, cx| {
                     diff_state
-                        .reparse_conflict_markers(buffer, cx)
+                        .reparse_conflict_markers(buffer.text, cx)
                         .map(|_| {})
                         .boxed()
                 }));
@@ -2742,7 +2752,7 @@ impl GitStore {
             if let Some(diff_state) = this.diffs.get_mut(&buffer_id)
                 && let Some(buffer) = this.buffer_store.read(cx).get(buffer_id)
             {
-                let buffer = buffer.read(cx).text_snapshot();
+                let buffer = buffer.read(cx).snapshot();
                 diff_state.update(cx, |diff_state, cx| {
                     diff_state.handle_base_texts_updated(buffer, request.payload, cx);
                 })
@@ -2927,7 +2937,7 @@ impl BufferGitState {
     fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.language = buffer.read(cx).language().cloned();
         self.language_changed = true;
-        let _ = self.recalculate_diffs(buffer.read(cx).text_snapshot(), cx);
+        let _ = self.recalculate_diffs(buffer.read(cx).snapshot(), cx);
     }
 
     fn reparse_conflict_markers(
@@ -2992,7 +3002,7 @@ impl BufferGitState {
 
     fn handle_base_texts_updated(
         &mut self,
-        buffer: text::BufferSnapshot,
+        buffer: language::BufferSnapshot,
         message: proto::UpdateDiffBases,
         cx: &mut Context<Self>,
     ) {
@@ -3033,7 +3043,7 @@ impl BufferGitState {
 
     fn diff_bases_changed(
         &mut self,
-        buffer: text::BufferSnapshot,
+        buffer: language::BufferSnapshot,
         diff_bases_change: Option<DiffBasesChange>,
         cx: &mut Context<Self>,
     ) {
@@ -3080,7 +3090,7 @@ impl BufferGitState {
         self.recalculate_diffs(buffer, cx)
     }
 
-    fn recalculate_diffs(&mut self, buffer: text::BufferSnapshot, cx: &mut Context<Self>) {
+    fn recalculate_diffs(&mut self, buffer: language::BufferSnapshot, cx: &mut Context<Self>) {
         *self.recalculating_tx.borrow_mut() = true;
 
         let language = self.language.clone();
@@ -3107,16 +3117,18 @@ impl BufferGitState {
             let mut new_unstaged_diff = None;
             if let Some(unstaged_diff) = &unstaged_diff {
                 new_unstaged_diff = Some(
-                    cx.update(|cx| {
-                        unstaged_diff.read(cx).update_diff(
-                            buffer.clone(),
-                            index,
-                            index_changed,
-                            language.clone(),
-                            cx,
-                        )
-                    })
-                    .await,
+                    unstaged_diff
+                        .update(cx, |diff, cx| {
+                            diff.update_diff(
+                                buffer.clone(),
+                                index,
+                                index_changed,
+                                language.clone(),
+                                language_registry.clone(),
+                                cx,
+                            )
+                        })
+                        .await,
                 );
             }
 
@@ -3130,16 +3142,18 @@ impl BufferGitState {
                     new_unstaged_diff.clone()
                 } else {
                     Some(
-                        cx.update(|cx| {
-                            uncommitted_diff.read(cx).update_diff(
-                                buffer.clone(),
-                                head,
-                                head_changed,
-                                language.clone(),
-                                cx,
-                            )
-                        })
-                        .await,
+                        uncommitted_diff
+                            .update(cx, |diff, cx| {
+                                diff.update_diff(
+                                    buffer.clone(),
+                                    head,
+                                    head_changed,
+                                    language.clone(),
+                                    language_registry.clone(),
+                                    cx,
+                                )
+                            })
+                            .await,
                     )
                 }
             }
@@ -3747,7 +3761,7 @@ impl Repository {
 
                 git_store.update(&mut cx, |git_store, cx| {
                     for (buffer, diff_bases_change) in buffer_diff_base_changes {
-                        let buffer_snapshot = buffer.read(cx).text_snapshot();
+                        let buffer_snapshot = buffer.read(cx).snapshot();
                         let buffer_id = buffer_snapshot.remote_id();
                         let Some(diff_state) = git_store.diffs.get(&buffer_id) else {
                             continue;

@@ -2372,6 +2372,7 @@ dependencies = [
  "serde_json",
  "settings",
  "sum_tree",
+ "syntax_diff",
  "text",
  "unindent",
  "util",
@@ -16273,6 +16274,22 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "syntax_diff"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "collections",
+ "criterion",
+ "indoc",
+ "language",
+ "strsim",
+ "tree-sitter",
+ "tree-sitter-json",
+ "tree-sitter-rust",
+ "util",
 ]
 
 [[package]]
