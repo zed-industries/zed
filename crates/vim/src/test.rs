@@ -2534,3 +2534,30 @@ async fn test_deactivate(cx: &mut gpui::TestAppContext) {
         assert_eq!(editor.cursor_shape(), CursorShape::Underline);
     });
 }
+
+// workspace::SendKeystrokes should pass literal keystrokes without triggering vim motions.
+// When sending `" _ x`, the `_` should select the blackhole register, not trigger
+// vim::StartOfLineDownward.
+#[gpui::test]
+async fn test_send_keystrokes_underscore_is_literal_46509(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    // Bind a key to send `" _ x` which should:
+    // `"` - start register selection
+    // `_` - select blackhole register (NOT vim::StartOfLineDownward)
+    // `x` - delete character into blackhole register
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "g x",
+            workspace::SendKeystrokes("\" _ x".to_string()),
+            Some("VimControl"),
+        )])
+    });
+
+    cx.set_state("helˇlo", Mode::Normal);
+
+    cx.simulate_keystrokes("g x");
+    cx.run_until_parked();
+
+    cx.assert_state("helˇo", Mode::Normal);
+}
