@@ -56,6 +56,7 @@ pub struct LayoutState {
 }
 
 /// Helper struct for converting data between Alacritty's cursor points, and displayed cursor points.
+#[derive(Copy, Clone)]
 struct DisplayCursor {
     line: i32,
     col: usize,
@@ -504,14 +505,12 @@ impl TerminalElement {
     fn shape_cursor(
         cursor_point: DisplayCursor,
         size: TerminalBounds,
-        text_fragment: &ShapedLine,
+        _text_fragment: &ShapedLine,
     ) -> Option<(Point<Pixels>, Pixels)> {
         if cursor_point.line() < size.total_lines() as i32 {
-            let cursor_width = if text_fragment.width == Pixels::ZERO {
-                size.cell_width()
-            } else {
-                text_fragment.width
-            };
+            // Always use cell_width for cursor - the text shaping width can be too wide
+            // for certain characters like Tab, causing the cursor to stretch
+            let cursor_width = size.cell_width();
 
             // Cursor should always surround as much of the text as possible,
             // hence when on pixel boundaries round the origin down and the width up
