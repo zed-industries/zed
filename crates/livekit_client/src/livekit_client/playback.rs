@@ -551,9 +551,11 @@ impl libwebrtc::native::audio_mixer::AudioMixerSource for AudioMixerSource {
 
 pub fn play_remote_video_track(
     track: &crate::RemoteVideoTrack,
+    executor: &BackgroundExecutor,
 ) -> impl Stream<Item = RemoteVideoFrame> + use<> {
     #[cfg(target_os = "macos")]
     {
+        _ = executor;
         let mut pool = None;
         let most_recent_frame_size = (0, 0);
         NativeVideoStream::new(track.0.rtc_track()).filter_map(move |frame| {
@@ -577,8 +579,10 @@ pub fn play_remote_video_track(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        NativeVideoStream::new(track.0.rtc_track())
-            .filter_map(|frame| async move { video_frame_buffer_from_webrtc(frame.buffer) })
+        let executor = executor.clone();
+        NativeVideoStream::new(track.0.rtc_track()).filter_map(move |frame| {
+            executor.spawn(async move { video_frame_buffer_from_webrtc(frame.buffer) })
+        })
     }
 }
 
@@ -845,8 +849,10 @@ mod macos {
         pub fn new() -> Self {
             unsafe {
                 let process_info = NSProcessInfo::processInfo(nil);
+                #[allow(clippy::disallowed_methods)]
                 let reason = NSString::alloc(nil).init_str("Audio playback in progress");
                 let activity: id = msg_send![process_info, beginActivityWithOptions:NS_ACTIVITY_USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP reason:reason];
+                let _: () = msg_send![reason, release];
                 let _: () = msg_send![activity, retain];
                 Self { activity }
             }

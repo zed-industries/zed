@@ -1,12 +1,12 @@
 use crate::{
-    PredictionProvider, PromptFormat,
+    FormatPromptArgs, PredictArgs, PredictionProvider,
     anthropic_client::AnthropicClient,
     example::{Example, ExamplePrediction, ExamplePrompt},
     format_prompt::{TeacherPrompt, run_format_prompt},
     headless::EpAppState,
     load_project::run_load_project,
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
-    progress::{InfoStyle, Progress, Step},
+    progress::{ExampleProgress, InfoStyle, Step},
     retrieve_context::run_context_retrieval,
 };
 use anyhow::Context as _;
@@ -20,17 +20,19 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
+use zeta_prompt::ZetaVersion;
 
 static ANTHROPIC_CLIENT: OnceLock<AnthropicClient> = OnceLock::new();
 
 pub async fn run_prediction(
     example: &mut Example,
-    provider: Option<PredictionProvider>,
-    repetition_count: usize,
+    args: &PredictArgs,
     app_state: Arc<EpAppState>,
+    example_progress: &ExampleProgress,
     mut cx: AsyncApp,
 ) -> anyhow::Result<()> {
-    let provider = provider.context("provider is required")?;
+    let provider = args.provider;
+    let repetition_count = args.repetitions;
 
     if let Some(existing_prediction) = example.predictions.first() {
         if existing_prediction.provider == provider {
@@ -40,27 +42,33 @@ pub async fn run_prediction(
         }
     }
 
-    run_context_retrieval(example, app_state.clone(), cx.clone()).await?;
+    run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
 
-    if matches!(
-        provider,
-        PredictionProvider::Teacher | PredictionProvider::TeacherNonBatching
-    ) {
-        let _step_progress = Progress::global().start(Step::Predict, &example.spec.name);
+    if let PredictionProvider::Teacher(version) | PredictionProvider::TeacherNonBatching(version) =
+        args.provider
+    {
+        let _step_progress = example_progress.start(Step::Predict);
 
-        run_format_prompt(example, PromptFormat::Teacher, app_state.clone(), cx).await?;
+        run_format_prompt(
+            example,
+            &FormatPromptArgs { provider },
+            app_state.clone(),
+            example_progress,
+            cx,
+        )
+        .await?;
 
-        let batched = matches!(provider, PredictionProvider::Teacher);
-        return predict_anthropic(example, repetition_count, batched).await;
+        let batched = matches!(provider, PredictionProvider::Teacher(..));
+        return predict_anthropic(example, repetition_count, version, batched).await;
     }
 
-    run_load_project(example, app_state.clone(), cx.clone()).await?;
+    run_load_project(example, app_state.clone(), example_progress, cx.clone()).await?;
 
-    let step_progress = Progress::global().start(Step::Predict, &example.spec.name);
+    let step_progress = example_progress.start(Step::Predict);
 
     if matches!(
         provider,
-        PredictionProvider::Zeta1 | PredictionProvider::Zeta2
+        PredictionProvider::Zeta1 | PredictionProvider::Zeta2(_)
     ) {
         step_progress.set_substatus("authenticating");
         static AUTHENTICATED: OnceLock<Shared<Task<()>>> = OnceLock::new();
@@ -85,10 +93,12 @@ pub async fn run_prediction(
     ep_store.update(&mut cx, |store, _cx| {
         let model = match provider {
             PredictionProvider::Zeta1 => edit_prediction::EditPredictionModel::Zeta1,
-            PredictionProvider::Zeta2 => edit_prediction::EditPredictionModel::Zeta2,
+            PredictionProvider::Zeta2(version) => {
+                edit_prediction::EditPredictionModel::Zeta2 { version }
+            }
             PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
             PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
-            PredictionProvider::Teacher | PredictionProvider::TeacherNonBatching => {
+            PredictionProvider::Teacher(..) | PredictionProvider::TeacherNonBatching(..) => {
                 unreachable!()
             }
         };
@@ -123,11 +133,11 @@ pub async fn run_prediction(
 
                         if let Some(prompt) = request.prompt {
                             fs::write(run_dir.join("prediction_prompt.md"), &prompt)?;
-                            if provider == PredictionProvider::Zeta2 {
+                            if matches!(provider, PredictionProvider::Zeta2(_)) {
                                 updated_example.prompt.get_or_insert(ExamplePrompt {
                                     input: prompt,
                                     expected_output: String::new(),
-                                    format: PromptFormat::Zeta2,
+                                    provider,
                                 });
                             }
                         }
@@ -238,6 +248,7 @@ pub async fn run_prediction(
 async fn predict_anthropic(
     example: &mut Example,
     _repetition_count: usize,
+    version: ZetaVersion,
     batched: bool,
 ) -> anyhow::Result<()> {
     let llm_model_name = "claude-sonnet-4-5";
@@ -279,12 +290,16 @@ async fn predict_anthropic(
         .collect::<Vec<String>>()
         .join("\n");
 
-    let actual_patch = TeacherPrompt::parse(example, &actual_output)?;
+    let actual_patch = TeacherPrompt::parse(&example, &actual_output)?;
 
     let prediction = ExamplePrediction {
         actual_patch,
         actual_output,
-        provider: PredictionProvider::Teacher,
+        provider: if batched {
+            PredictionProvider::Teacher(version)
+        } else {
+            PredictionProvider::TeacherNonBatching(version)
+        },
     };
 
     example.predictions.push(prediction);
@@ -293,7 +308,7 @@ async fn predict_anthropic(
 
 pub async fn sync_batches(provider: &PredictionProvider) -> anyhow::Result<()> {
     match provider {
-        PredictionProvider::Teacher => {
+        PredictionProvider::Teacher(..) => {
             let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
                 AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
                     .expect("Failed to create Anthropic client")

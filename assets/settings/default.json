@@ -913,8 +913,6 @@
     "inline_assistant_use_streaming_tools": true,
     // Whether the agent is enabled.
     "enabled": true,
-    // What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
-    "preferred_completion_mode": "normal",
     // Whether to show the agent panel button in the status bar.
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
@@ -956,7 +954,9 @@
       //   "temperature": 1.0
       // }
     ],
-    // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
+    // When enabled, the agent can run tool actions without asking for your confirmation.
+    // This setting takes precedence over `always_confirm` patterns and `default_mode` settings,
+    // but `always_deny` patterns still block actions for security.
     //
     // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
     //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
@@ -997,22 +997,6 @@
             // Privileged commands
             { "pattern": "sudo\\s" },
           ],
-          "always_allow": [
-            // Build and test commands
-            { "pattern": "^cargo\\s+(build|test|check|clippy|run)" },
-            { "pattern": "^npm\\s+(test|run|install)" },
-            { "pattern": "^pnpm\\s+(test|run|install)" },
-            { "pattern": "^yarn\\s+(test|run|install)" },
-            // Safe read-only commands
-            { "pattern": "^ls(\\s|$)" },
-            { "pattern": "^cat\\s" },
-            { "pattern": "^head\\s" },
-            { "pattern": "^tail\\s" },
-            { "pattern": "^grep\\s" },
-            { "pattern": "^find\\s" },
-            // Safe git commands
-            { "pattern": "^git\\s+(status|log|diff|branch|show)" },
-          ],
         },
         "edit_file": {
           "default_mode": "confirm",
@@ -1048,12 +1032,6 @@
         },
         "fetch": {
           "default_mode": "confirm",
-          "always_allow": [
-            // Common documentation sites
-            { "pattern": "^https://(docs\\.|api\\.)?github\\.com" },
-            { "pattern": "^https://docs\\.rs" },
-            { "pattern": "^https://crates\\.io" },
-          ],
         },
       },
     },
@@ -1083,6 +1061,7 @@
           "save_file": true,
           "open": true,
           "grep": true,
+          "subagent": true,
           "terminal": true,
           "thinking": true,
           "web_search": true,
@@ -1102,6 +1081,7 @@
           "read_file": true,
           "open": true,
           "grep": true,
+          "subagent": true,
           "thinking": true,
           "web_search": true,
         },
@@ -1181,6 +1161,10 @@
     "show_nav_history_buttons": true,
     // Whether or not to show the tab bar buttons.
     "show_tab_bar_buttons": true,
+    // Whether or not to show pinned tabs in a separate row.
+    // When enabled, pinned tabs appear in a top row and unpinned tabs in a bottom row.
+    // When disabled, all tabs appear in a single row (default behavior).
+    "show_pinned_tabs_in_separate_row": false,
   },
   // Settings related to the editor's tabs
   "tabs": {
@@ -2528,11 +2512,15 @@
     "use_smartcase_find": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},
-    // Cursor shape for the each mode.
-    // Specify the mode as the key and the shape as the value.
-    // The mode can be one of the following: "normal", "replace", "insert", "visual".
+    // Cursor shape for each mode.
     // The shape can be one of the following: "block", "bar", "underline", "hollow".
-    "cursor_shape": {},
+    "cursor_shape": {
+      "normal": "block",
+      "replace": "underline",
+      "visual": "block",
+      // Set to "inherit" to use the editor's cursor_shape.
+      "insert": "inherit",
+    },
   },
   // Which-key popup settings
   "which_key": {

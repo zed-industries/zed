@@ -454,10 +454,12 @@ message Envelope {
 
         FindSearchCandidatesChunk find_search_candidates_chunk = 409;
         FindSearchCandidatesCancelled find_search_candidates_cancelled = 410;
+        GetContextServerCommand get_context_server_command = 411;
+        ContextServerCommand context_server_command = 412;
 
-        SemanticTokens semantic_tokens = 411;
-        SemanticTokensResponse semantic_tokens_response = 412;
-        RefreshSemanticTokens refresh_semantic_tokens = 413; // current max
+      SemanticTokens semantic_tokens = 413;
+      SemanticTokensResponse semantic_tokens_response = 414;
+      RefreshSemanticTokens refresh_semantic_tokens = 415; // current max
     }
 
     reserved 87 to 88;

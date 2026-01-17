@@ -726,7 +726,6 @@ impl EditAgent {
             thread_id: conversation.thread_id,
             prompt_id: conversation.prompt_id,
             intent: Some(intent),
-            mode: conversation.mode,
             messages: conversation.messages,
             tool_choice,
             tools,

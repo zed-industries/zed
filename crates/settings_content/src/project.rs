@@ -4,12 +4,13 @@ use collections::{BTreeMap, HashMap};
 use gpui::Rgba;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings_json::parse_json_with_comments;
 use settings_macros::{MergeFrom, with_fallible_options};
 use util::serde::default_true;
 
 use crate::{
-    AllLanguageSettingsContent, DelayMs, ExtendingVec, ProjectTerminalSettingsContent,
-    SlashCommandSettings,
+    AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
+    RootUserSettings, SlashCommandSettings, fallible_options,
 };
 
 #[with_fallible_options]
@@ -22,6 +23,15 @@ impl IntoIterator for LspSettingsMap {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
+    }
+}
+
+impl RootUserSettings for ProjectSettingsContent {
+    fn parse_json(json: &str) -> (Option<Self>, ParseStatus) {
+        fallible_options::parse_json(json)
+    }
+    fn parse_json_with_comments(json: &str) -> anyhow::Result<Self> {
+        parse_json_with_comments(json)
     }
 }
 
@@ -308,7 +318,13 @@ pub enum ContextServerSettingsContent {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
         enabled: bool,
-
+        /// Whether to run the context server on the remote server when using remote development.
+        ///
+        /// If this is false, the context server will always run on the local machine.
+        ///
+        /// Default: false
+        #[serde(default)]
+        remote: bool,
         #[serde(flatten)]
         command: ContextServerCommand,
     },
@@ -328,6 +344,13 @@ pub enum ContextServerSettingsContent {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
         enabled: bool,
+        /// Whether to run the context server on the remote server when using remote development.
+        ///
+        /// If this is false, the context server will always run on the local machine.
+        ///
+        /// Default: false
+        #[serde(default)]
+        remote: bool,
         /// The settings for this context server specified by the extension.
         ///
         /// Consult the documentation for the context server to see what settings
