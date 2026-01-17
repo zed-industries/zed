@@ -72,7 +72,10 @@ where
     for (buffer, buffer_offset_range, source_excerpt_id) in
         source_snapshot.range_to_buffer_ranges(source_range.clone())
     {
-        if buffer_offset_range.is_empty() && source_range.start != source_range.end {
+        if buffer_offset_range.is_empty()
+            && !buffer.is_empty()
+            && source_range.start != source_range.end
+        {
             continue;
         }
         if let Some(translation) = convert_excerpt_rows(
@@ -2700,6 +2703,110 @@ mod tests {
             cccc dddd\x20
             eeee ffff
             short"
+                .unindent(),
+            &mut cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_base_text(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx).await;
+
+        let (buffer1, diff1) = buffer_with_diff("xxx\nyyy", "xxx\nyyy", &mut cx);
+
+        let current_text = "
+            aaa
+            bbb
+            ccc
+        "
+        .unindent();
+
+        let buffer2 = cx.new(|cx| Buffer::local(current_text.to_string(), cx));
+        let diff2 = cx.new(|cx| BufferDiff::new(&buffer2.read(cx).text_snapshot(), cx));
+
+        editor.update(cx, |editor, cx| {
+            let path1 = PathKey::for_buffer(&buffer1, cx);
+            editor.set_excerpts_for_path(
+                path1,
+                buffer1.clone(),
+                vec![Point::new(0, 0)..buffer1.read(cx).max_point()],
+                0,
+                diff1.clone(),
+                cx,
+            );
+
+            let path2 = PathKey::for_buffer(&buffer2, cx);
+            editor.set_excerpts_for_path(
+                path2,
+                buffer2.clone(),
+                vec![Point::new(0, 0)..buffer2.read(cx).max_point()],
+                1,
+                diff2.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            xxx
+            yyy
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            xxx
+            yyy
+            § <no file>
+            § -----
+            § spacer
+            § spacer
+            § spacer"
+                .unindent(),
+            &mut cx,
+        );
+
+        buffer1.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(0, 3)..Point::new(0, 3), "z")], None, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            xxxz
+            yyy
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            xxx
+            yyy
+            § <no file>
+            § -----
+            § spacer
+            § spacer
+            § spacer"
                 .unindent(),
             &mut cx,
         );

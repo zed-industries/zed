@@ -4136,6 +4136,17 @@ impl MultiBufferSnapshot {
             }
             cursor.next();
         }
+
+        if let Some(excerpt) = cursor.excerpt() {
+            let dominated_by_prev_excerpt =
+                result.last().is_some_and(|(_, _, id)| *id == excerpt.id);
+            if !dominated_by_prev_excerpt && excerpt.text_summary.len == 0 {
+                let buffer_offset =
+                    BufferOffset(excerpt.range.context.start.to_offset(&excerpt.buffer));
+                result.push((&excerpt.buffer, buffer_offset..buffer_offset, excerpt.id));
+            }
+        }
+
         result
     }
 

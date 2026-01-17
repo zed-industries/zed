@@ -1091,6 +1091,7 @@ impl BlockMap {
                 .make_wrap_point(their_point, Bias::Left)
                 .row();
             let new_delta = companion_wrap.0 as i32 - our_wrap.0 as i32;
+
             let spacer = if new_delta > delta {
                 let height = (new_delta - delta) as u32;
                 Some((our_wrap, height))
@@ -1104,6 +1105,7 @@ impl BlockMap {
 
         for row_mapping in row_mappings.into_iter() {
             let boundaries = &row_mapping.boundaries;
+
             let Some((first_boundary, first_range)) = boundaries.first() else {
                 continue;
             };

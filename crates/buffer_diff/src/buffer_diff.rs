@@ -64,6 +64,7 @@ pub struct BufferDiffUpdate {
     inner: BufferDiffInner<Arc<str>>,
     buffer_snapshot: text::BufferSnapshot,
     base_text_edits: Option<Diff>,
+    base_text_changed: bool,
 }
 
 #[derive(Clone)]
@@ -417,6 +418,9 @@ impl BufferDiffSnapshot {
                 let end = base_text.offset_to_point(hunk.diff_base_byte_range.end);
                 start..end
             }
+        } else if !self.inner.base_text_exists {
+            let zero = Point::zero();
+            zero..zero
         } else {
             target_point..target_point
         }
@@ -456,6 +460,9 @@ impl BufferDiffSnapshot {
                 let end = hunk.buffer_range.end.to_point(original_snapshot);
                 start..end
             }
+        } else if !self.inner.base_text_exists {
+            let zero = Point::zero();
+            zero..original_snapshot.max_point()
         } else {
             base_point..base_point
         }
@@ -1396,8 +1403,6 @@ impl BufferDiff {
         cx: &App,
     ) -> Task<BufferDiffUpdate> {
         let prev_base_text = self.base_text(cx).as_rope().clone();
-        let old_base_text_len = self.base_text(cx).len();
-        let base_version = self.base_text(cx).version().clone();
         let base_text_changed = base_text_change.is_some();
         let compute_base_text_edits = base_text_change == Some(true);
         let diff_options = build_diff_options(
@@ -1455,25 +1460,14 @@ impl BufferDiff {
                     let (inner, diff) = futures::join!(hunk_task, diff_task);
                     (inner, Some(diff))
                 }
-                None => {
-                    let inner = hunk_task.await;
-                    let edits = if base_text_changed {
-                        Some(Diff {
-                            base_version,
-                            line_ending: LineEnding::detect(&inner.base_text),
-                            edits: vec![(0..old_base_text_len, inner.base_text.clone())],
-                        })
-                    } else {
-                        None
-                    };
-                    (inner, edits)
-                }
+                None => (hunk_task.await, None),
             };
 
             BufferDiffUpdate {
                 inner,
                 buffer_snapshot,
                 base_text_edits,
+                base_text_changed,
             }
         })
     }
@@ -1553,6 +1547,13 @@ impl BufferDiff {
             state.base_text.update(cx, |base_text, cx| {
                 base_text.set_capability(Capability::ReadWrite, cx);
                 base_text.apply_diff(diff, cx);
+                base_text.set_capability(Capability::ReadOnly, cx);
+                Some(base_text.parsing_idle())
+            })
+        } else if update.base_text_changed {
+            state.base_text.update(cx, |base_text, cx| {
+                base_text.set_capability(Capability::ReadWrite, cx);
+                base_text.set_text(new_state.base_text.clone(), cx);
                 base_text.set_capability(Capability::ReadOnly, cx);
                 Some(base_text.parsing_idle())
             })
@@ -4158,6 +4159,55 @@ mod tests {
         assert_eq!(
             translate_point_through_patch(&insertion_patch, Point::new(6, 0)),
             Point::new(11, 0)..Point::new(11, 0)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_row_translation_no_base_text(cx: &mut gpui::TestAppContext) {
+        let buffer_text = "aaa\nbbb\nccc\n";
+        let buffer = cx.new(|cx| language::Buffer::local(buffer_text, cx));
+        let diff = cx.new(|cx| BufferDiff::new(&buffer.read(cx).text_snapshot(), cx));
+
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+        let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+
+        assert!(
+            !diff_snapshot.inner.base_text_exists,
+            "base_text_exists should be false"
+        );
+        assert_eq!(
+            diff_snapshot.base_text_string().unwrap_or_default(),
+            "",
+            "base text should be empty"
+        );
+
+        let points = vec![
+            Point::new(0, 0),
+            Point::new(1, 0),
+            Point::new(2, 0),
+            Point::new(3, 0),
+        ];
+        let base_rows: Vec<_> = diff_snapshot
+            .rows_to_base_text_rows(points.clone(), &buffer_snapshot)
+            .collect();
+
+        let zero = Point::new(0, 0);
+        assert_eq!(
+            base_rows,
+            vec![zero..zero, zero..zero, zero..zero, zero..zero],
+            "all buffer rows should map to point 0,0 in empty base text"
+        );
+
+        let base_points = vec![Point::new(0, 0)];
+        let buffer_rows: Vec<_> = diff_snapshot
+            .base_text_rows_to_rows(base_points, &buffer_snapshot)
+            .collect();
+
+        let max_point = buffer_snapshot.max_point();
+        assert_eq!(
+            buffer_rows,
+            vec![zero..max_point],
+            "base text row 0 should map to entire buffer range"
         );
     }
 }
