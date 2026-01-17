@@ -534,7 +534,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     })
                     .collect::<Vec<_>>();
 
-        
                 let new_text: String = PLACEHOLDER.repeat(selections.len());
 
                 let callback = Arc::new({

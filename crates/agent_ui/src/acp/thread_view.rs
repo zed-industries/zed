@@ -6142,11 +6142,9 @@ impl AcpThreadView {
     fn render_selection_indicator(&self, cx: &mut Context<Self>) -> Option<Div> {
         let workspace = self.workspace.upgrade()?;
 
-        // First try to get selections
         let selections = crate::completion_provider::selection_ranges(&workspace, cx);
 
         let (_file_name, selection_text) = if !selections.is_empty() {
-            // Group selections by buffer
             use std::collections::HashMap;
             use std::ops::RangeInclusive;
             let mut groups: HashMap<gpui::EntityId, Vec<&(Entity<Buffer>, std::ops::Range<text::Anchor>)>> = HashMap::default();
@@ -6156,7 +6154,6 @@ impl AcpThreadView {
                 groups.entry(buffer_id).or_default().push(selection);
             }
 
-            // Use the first buffer group
             let (buffer, ranges): (Entity<Buffer>, Vec<RangeInclusive<u32>>) = if let Some((_, group)) = groups.iter().next() {
                 let buffer = group[0].0.clone();
                 let buffer_read = buffer.read(cx);
@@ -6178,14 +6175,12 @@ impl AcpThreadView {
 
             let buffer_read = buffer.read(cx);
 
-            // Get file name
             let file_name = buffer_read
                 .file()
                 .and_then(|f| f.path().file_name())
                 .map(|name| name.to_string())
                 .unwrap_or_else(|| "Untitled".to_string());
 
-            // Format line ranges
             let text = if ranges.len() == 1 {
                 let range = &ranges[0];
                 if range.start() == range.end() {
@@ -6194,10 +6189,9 @@ impl AcpThreadView {
                     format!("{}:{}-{}", file_name, range.start() + 1, range.end() + 1)
                 }
             } else {
-                // Multiple selections - show comma-separated
                 let lines_str: String = ranges
                     .iter()
-                    .take(5) // Limit to first 5 for display
+                    .take(5)
                     .map(|r: &RangeInclusive<u32>| {
                         if r.start() == r.end() {
                             format!("{}", r.start() + 1)
@@ -6217,7 +6211,6 @@ impl AcpThreadView {
 
             (file_name, text)
         } else {
-            // No selection, just show the active file name
             let active_editor = workspace
                 .read(cx)
                 .active_item(cx)

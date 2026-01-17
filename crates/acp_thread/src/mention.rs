@@ -322,7 +322,6 @@ impl MentionUri {
                 };
 
                 if !line_ranges.is_empty() {
-                    // Encode multiple line ranges as comma-separated list
                     let ranges_str = line_ranges
                         .iter()
                         .map(|r| {
