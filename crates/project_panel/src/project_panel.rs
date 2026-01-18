@@ -1787,8 +1787,7 @@ impl ProjectPanel {
                 return None;
             }
             edited_entry_id = entry.id;
-            edit_task =
-                self.confirm_undoable_rename_entry(entry.id, (worktree_id, new_path).into(), cx);
+            edit_task = self.confirm_rename_entry(entry.id, (worktree_id, new_path).into(), cx);
         };
 
         // Reborrow so lifetime does not overlap `self.confirm_undoable_rename_entry()`
@@ -2070,13 +2069,23 @@ impl ProjectPanel {
     ) -> Task<Result<ProjectPanelOperation>> {
         match operation {
             ProjectPanelOperation::Rename { old_path, new_path } => {
-                let Some(entry) = self.project.read(cx).entry_for_path(&old_path, cx) else {
+                let Some(entry_id) = self
+                    .project
+                    .read(cx)
+                    .entry_for_path(&old_path, cx)
+                    .map(|e| e.id)
+                else {
                     return Task::ready(Err(anyhow!("no entry for path")));
                 };
-                let task = self.confirm_rename_entry(entry.id, new_path, cx);
+                let task = self.project.update(cx, |project, cx| {
+                    project.rename_entry(entry_id, new_path.clone(), cx)
+                });
                 cx.spawn(async move |_, _| {
-                    let (_created_entry, reverse_operation) = task.await?;
-                    Ok(reverse_operation)
+                    task.await?;
+                    Ok(ProjectPanelOperation::Rename {
+                        old_path: new_path,
+                        new_path: old_path,
+                    })
                 })
             }
             ProjectPanelOperation::Restore {
@@ -2097,7 +2106,6 @@ impl ProjectPanel {
                 else {
                     return Task::ready(Err(anyhow!("failed to delete entry")));
                 };
-
                 cx.spawn(async move |_, _cx| {
                     task.await?;
                     Ok(ProjectPanelOperation::Trash {
@@ -2127,40 +2135,28 @@ impl ProjectPanel {
         }
     }
 
-    fn confirm_undoable_rename_entry(
-        &self,
-        entry_id: ProjectEntryId,
-        new_path: ProjectPath,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<CreatedEntry>> {
-        let rename_task = self.confirm_rename_entry(entry_id, new_path, cx);
-        cx.spawn(async move |this, cx| {
-            let (new_entry, operation) = rename_task.await?;
-            this.update(cx, |this, _cx| this.record_undoable(operation))
-                .ok();
-            Ok(new_entry)
-        })
-    }
-
     fn confirm_rename_entry(
         &self,
         entry_id: ProjectEntryId,
         new_path: ProjectPath,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(CreatedEntry, ProjectPanelOperation)>> {
+    ) -> Task<Result<CreatedEntry>> {
         let Some(old_path) = self.project.read(cx).path_for_entry(entry_id, cx) else {
             return Task::ready(Err(anyhow!("no path for entry")));
         };
         let rename_task = self.project.update(cx, |project, cx| {
             project.rename_entry(entry_id, new_path.clone(), cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.spawn(async move |this, cx| {
             let created_entry = rename_task.await?;
-            let reverse_operation = ProjectPanelOperation::Rename {
-                old_path: new_path,
-                new_path: old_path,
-            };
-            Ok((created_entry, reverse_operation))
+            this.update(cx, |this, _cx| {
+                this.record_undoable(ProjectPanelOperation::Rename {
+                    old_path: new_path,
+                    new_path: old_path,
+                })
+            })
+            .ok();
+            Ok(created_entry)
         })
     }
 
@@ -3104,7 +3100,7 @@ impl ProjectPanel {
                     self.create_paste_path(clipboard_entry, self.selected_sub_entry(cx)?, cx)?;
                 let clip_entry_id = clipboard_entry.entry_id;
                 let task = if clipboard_entries.is_cut() {
-                    let task = self.confirm_undoable_rename_entry(
+                    let task = self.confirm_rename_entry(
                         clip_entry_id,
                         (worktree_id, new_path).into(),
                         cx,
@@ -3473,7 +3469,7 @@ impl ProjectPanel {
             let mut new_path = destination_dir.to_rel_path_buf();
             new_path.push(source_name);
             let rename_task = this.update(cx, |this, cx| {
-                this.confirm_undoable_rename_entry(
+                this.confirm_rename_entry(
                     entry_to_move,
                     (destination_worktree_id, new_path).into(),
                     cx,
