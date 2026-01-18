@@ -3,7 +3,7 @@ use crate::{
     DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PromptButton,
     ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task,
-    TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
+    TestDisplay, TestPlatformWindow, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -26,7 +26,7 @@ pub(crate) struct TestPlatform {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
 
-    pub(crate) active_window: RefCell<Option<TestWindow>>,
+    pub(crate) active_window: RefCell<Option<TestPlatformWindow>>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
@@ -196,7 +196,7 @@ impl TestPlatform {
         rx
     }
 
-    pub(crate) fn set_active_window(&self, window: Option<TestWindow>) {
+    pub(crate) fn set_active_window(&self, window: Option<TestPlatformWindow>) {
         let executor = self.foreground_executor();
         let previous_window = self.active_window.borrow_mut().take();
         self.active_window.borrow_mut().clone_from(&window);
@@ -314,7 +314,7 @@ impl Platform for TestPlatform {
         handle: AnyWindowHandle,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn crate::PlatformWindow>> {
-        let window = TestWindow::new(
+        let window = TestPlatformWindow::new(
             handle,
             params,
             self.weak.clone(),
