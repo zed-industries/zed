@@ -1,11 +1,11 @@
-use acp_thread::{AcpThread, AgentConnection, UserMessageId};
+use acp_thread::{AcpThread, AgentConnection, SerializedAcpThread, UserMessageId};
 use action_log::ActionLog;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashSet};
 use futures::{FutureExt, channel::mpsc};
 use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task, WeakEntity};
-use language_model::LanguageModelToolUseId;
+use language_model::{LanguageModelToolResultContent, LanguageModelToolUseId};
 use project::Project;
 use prompt_store::ProjectContext;
 use schemars::JsonSchema;
@@ -23,6 +23,29 @@ use crate::{
     AgentTool, AnyAgentTool, ContextServerRegistry, MAX_PARALLEL_SUBAGENTS, MAX_SUBAGENT_DEPTH,
     SubagentContext, Templates, Thread, ThreadEvent, ToolCallAuthorization, ToolCallEventStream,
 };
+
+/// Output from the subagent tool, containing both the LLM-visible summary
+/// and serialized thread data for replay/persistence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentOutput {
+    /// The combined summary text returned to the LLM
+    pub summary: String,
+    /// Serialized subagent threads for replay/persistence
+    pub subagent_threads: Vec<SubagentThreadData>,
+}
+
+/// Data for a single subagent thread, used for serialization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentThreadData {
+    pub label: String,
+    pub thread: SerializedAcpThread,
+}
+
+impl From<SubagentOutput> for LanguageModelToolResultContent {
+    fn from(output: SubagentOutput) -> Self {
+        LanguageModelToolResultContent::Text(output.summary.into())
+    }
+}
 
 /// When a subagent's remaining context window falls below this fraction (25%),
 /// the "context running out" prompt is sent to encourage the subagent to wrap up.
@@ -173,7 +196,7 @@ impl SubagentTool {
 
 impl AgentTool for SubagentTool {
     type Input = SubagentToolInput;
-    type Output = String;
+    type Output = SubagentOutput;
 
     fn name() -> &'static str {
         acp_thread::SUBAGENT_TOOL_NAME
@@ -204,7 +227,7 @@ impl AgentTool for SubagentTool {
         input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<SubagentOutput>> {
         if self.current_depth >= MAX_SUBAGENT_DEPTH {
             return Task::ready(Err(anyhow!(
                 "Maximum subagent depth ({}) reached",
@@ -366,14 +389,14 @@ impl AgentTool for SubagentTool {
                                 });
                             }
 
-                            (label, result)
+                            (label, acp_thread, result)
                         })
                     },
                 )
                 .collect();
 
             // Wait for all subagents to complete, or cancellation
-            let results: Vec<(String, Result<String>)> = futures::select! {
+            let results: Vec<(String, Entity<AcpThread>, Result<String>)> = futures::select! {
                 results = futures::future::join_all(tasks).fuse() => results,
                 _ = event_stream.cancelled_by_user().fuse() => {
                     // Cancel all running subagents
@@ -388,19 +411,52 @@ impl AgentTool for SubagentTool {
                 }
             };
 
-            // Format the combined results
-            let mut output = String::new();
-            for (label, result) in &results {
-                output.push_str(&format!("## {}\n\n", label));
+            // Format the combined results and serialize thread data
+            let mut summary = String::new();
+            let mut subagent_threads_data = Vec::new();
+
+            for (label, acp_thread, result) in &results {
+                summary.push_str(&format!("## {}\n\n", label));
                 match result {
-                    Ok(summary) => output.push_str(&summary),
-                    Err(e) => output.push_str(&format!("Error: {}", e)),
+                    Ok(s) => summary.push_str(s),
+                    Err(e) => summary.push_str(&format!("Error: {}", e)),
                 }
-                output.push_str("\n\n");
+                summary.push_str("\n\n");
+
+                // Serialize the AcpThread for persistence
+                let serialized_thread = cx.update(|cx| acp_thread.read(cx).to_serialized(cx));
+                subagent_threads_data.push(SubagentThreadData {
+                    label: label.clone(),
+                    thread: serialized_thread,
+                });
             }
 
-            Ok(output.trim().to_string())
+            Ok(SubagentOutput {
+                summary: summary.trim().to_string(),
+                subagent_threads: subagent_threads_data,
+            })
         })
+    }
+
+    fn replay(
+        &self,
+        _input: Self::Input,
+        output: Self::Output,
+        event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Result<()> {
+        let project = self.project.clone();
+
+        // Reconstruct each subagent thread from serialized data
+        for thread_data in output.subagent_threads {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let acp_thread = cx.new(|cx| {
+                AcpThread::from_serialized(thread_data.thread, project.clone(), action_log, cx)
+            });
+            event_stream.update_subagent_thread(acp_thread);
+        }
+
+        Ok(())
     }
 }
 
