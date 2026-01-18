@@ -32,7 +32,7 @@ const MIN_ZOOM: f32 = 0.1;
 const MAX_ZOOM: f32 = 100.0;
 const ZOOM_STEP: f32 = 0.1;
 
-actions!(image_viewer, [ZoomIn, ZoomOut, ResetZoom]);
+actions!(image_viewer, [ZoomIn, ZoomOut, ResetZoom, ZoomToActualSize]);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ZoomMode {
@@ -129,6 +129,27 @@ impl ImageView {
         self.zoom_mode = ZoomMode::Fit;
         self.scroll_handle.set_offset(point(px(0.), px(0.)));
         cx.notify();
+    }
+
+    fn zoom_to_actual_size(
+        &mut self,
+        _: &ZoomToActualSize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.zoom_mode == ZoomMode::Fit {
+            self.zoom_level = self.calculate_fit_zoom(window, cx);
+            self.zoom_mode = ZoomMode::Manual;
+        }
+
+        let old_zoom = self.zoom_level;
+        let new_zoom = 1.0;
+
+        if old_zoom != new_zoom {
+            self.adjust_zoom_center(old_zoom, new_zoom, window, cx);
+            self.zoom_level = new_zoom;
+            cx.notify();
+        }
     }
 
     fn adjust_zoom_center(
@@ -473,6 +494,7 @@ impl Render for ImageView {
             .on_action(cx.listener(Self::zoom_in))
             .on_action(cx.listener(Self::zoom_out))
             .on_action(cx.listener(Self::reset_zoom))
+            .on_action(cx.listener(Self::zoom_to_actual_size))
             .child(
                 h_flex()
                     .gap_2()
@@ -508,6 +530,15 @@ impl Render for ImageView {
                             .tooltip(move |_window, cx| {
                                 Tooltip::for_action("Reset Zoom", &ResetZoom, cx)
                             }),
+                    )
+                    .child(
+                        IconButton::new("zoom_to_actual_size", IconName::GenericRestore)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.zoom_to_actual_size(&ZoomToActualSize, window, cx)
+                            }))
+                            .tooltip(move |_window, cx| {
+                                Tooltip::for_action("Zoom to Actual Size", &ZoomToActualSize, cx)
+                            }),
                     ),
             )
             .child(
@@ -519,7 +550,7 @@ impl Render for ImageView {
                     .track_scroll(&self.scroll_handle)
                     .on_scroll_wheel(cx.listener(
                         move |this, event: &ScrollWheelEvent, window, cx| {
-                            if event.modifiers.secondary() {
+                            if event.modifiers.secondary() || event.modifiers.control {
                                 let delta = event.delta.pixel_delta(px(1.)).y;
                                 let zoom_delta = if delta > px(0.) {
                                     ZOOM_STEP

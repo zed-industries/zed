@@ -196,6 +196,7 @@
       "cmd-+": "image_viewer::ZoomIn",
       "cmd--": "image_viewer::ZoomOut",
       "cmd-0": "image_viewer::ResetZoom",
+      "cmd-1": "image_viewer::ZoomToActualSize",
     },
   },
   {

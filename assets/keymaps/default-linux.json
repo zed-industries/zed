@@ -191,6 +191,7 @@
       "ctrl-+": "image_viewer::ZoomIn",
       "ctrl--": "image_viewer::ZoomOut",
       "ctrl-0": "image_viewer::ResetZoom",
+      "ctrl-1": "image_viewer::ZoomToActualSize",
     },
   },
   {
