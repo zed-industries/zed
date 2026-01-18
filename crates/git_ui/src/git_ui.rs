@@ -244,10 +244,15 @@ pub fn init(cx: &mut App) {
             let Some(active_item) = workspace.active_item(cx) else {
                 return;
             };
-            let Some(editor) = active_item.downcast::<Editor>() else {
+            let Some(editor) = active_item.act_as::<Editor>(cx) else {
                 return;
             };
-            let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() else {
+            let buffer = editor.read(cx).buffer();
+            let Some(buffer) = buffer.read(cx).as_singleton().or_else(|| {
+                // if this is a multibuffer, use the cursor pos to pick a buffer
+                let anchor = editor.read(cx).selections.newest_anchor().head();
+                buffer.read(cx).buffer_for_anchor(anchor, cx)
+            }) else {
                 return;
             };
             let Some(file) = buffer.read(cx).file() else {

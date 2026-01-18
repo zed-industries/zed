@@ -465,23 +465,24 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|workspace, _: &git::FileHistory, window, cx| {
             // First try to get from project panel if it's focused
-            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
-                let maybe_project_path = panel.read(cx).state.selection.and_then(|selection| {
-                    let project = workspace.project().read(cx);
-                    let worktree = project.worktree_for_id(selection.worktree_id, cx)?;
-                    let entry = worktree.read(cx).entry_for_id(selection.entry_id)?;
-                    if entry.is_file() {
-                        Some(ProjectPath {
-                            worktree_id: selection.worktree_id,
-                            path: entry.path.clone(),
-                        })
-                    } else {
-                        None
-                    }
-                });
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx)
+                && panel.read(cx).focus_handle.is_focused(window)
+            {
+                let mut did_show = false;
+                let project = workspace.project();
+                for selected in panel.read(cx).effective_entries() {
+                    let Some(worktree) = project.read(cx).worktree_for_id(selected.worktree_id, cx)
+                    else {
+                        continue;
+                    };
+                    let Some(entry) = worktree.read(cx).entry_for_id(selected.entry_id) else {
+                        continue;
+                    };
+                    let project_path = ProjectPath {
+                        worktree_id: selected.worktree_id,
+                        path: entry.path.clone(),
+                    };
 
-                if let Some(project_path) = maybe_project_path {
-                    let project = workspace.project();
                     let git_store = project.read(cx).git_store();
                     if let Some((repo, repo_path)) = git_store
                         .read(cx)
@@ -495,15 +496,23 @@ pub fn init(cx: &mut App) {
                             window,
                             cx,
                         );
-                        return;
+                        did_show = true;
                     }
+                }
+                if did_show {
+                    return;
                 }
             }
 
             // Fallback: try to get from active editor
             if let Some(active_item) = workspace.active_item(cx)
-                && let Some(editor) = active_item.downcast::<Editor>()
-                && let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton()
+                && let Some(editor) = active_item.act_as::<Editor>(cx)
+                && let buffer = editor.read(cx).buffer()
+                && let Some(buffer) = buffer.read(cx).as_singleton().or_else(|| {
+                    // if this is a multibuffer, use the cursor pos to pick a buffer
+                    let anchor = editor.read(cx).selections.newest_anchor().head();
+                    buffer.read(cx).buffer_for_anchor(anchor, cx)
+                })
                 && let Some(file) = buffer.read(cx).file()
             {
                 let worktree_id = file.worktree_id(cx);
