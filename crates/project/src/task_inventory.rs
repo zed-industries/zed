@@ -21,8 +21,8 @@ use lsp::{LanguageServerId, LanguageServerName};
 use paths::{debug_task_file_name, task_file_name};
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
-    DebugScenario, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables,
-    VariableName,
+    DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskId, TaskTemplate,
+    TaskTemplates, TaskVariables, VariableName,
 };
 use text::{BufferId, Point, ToPoint};
 use util::{NumericPrefixWithSuffix, ResultExt as _, post_inc, rel_path::RelPath};
@@ -32,7 +32,7 @@ use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 
 #[derive(Clone, Debug, Default)]
 pub struct DebugScenarioContext {
-    pub task_context: TaskContext,
+    pub task_context: SharedTaskContext,
     pub worktree_id: Option<WorktreeId>,
     pub active_buffer: Option<WeakEntity<Buffer>>,
 }
@@ -252,7 +252,7 @@ impl Inventory {
     pub fn scenario_scheduled(
         &mut self,
         scenario: DebugScenario,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         worktree_id: Option<WorktreeId>,
         active_buffer: Option<WeakEntity<Buffer>>,
     ) {
