@@ -5,6 +5,7 @@
 //! read/write messages and the types from types.rs for serialization/deserialization
 //! of messages.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -15,12 +16,12 @@ use serde_json::Value;
 use crate::client::{Client, NotificationSubscription};
 use crate::types::{self, Notification, Request};
 
-pub struct ModelContextProtocol {
-    inner: Client,
+pub(crate) struct ModelContextProtocol {
+    inner: Arc<Client>,
 }
 
 impl ModelContextProtocol {
-    pub(crate) fn new(inner: Client) -> Self {
+    pub(crate) fn new_from_arc(inner: Arc<Client>) -> Self {
         Self { inner }
     }
 
@@ -60,7 +61,7 @@ impl ModelContextProtocol {
         log::trace!("mcp server info {:?}", response.server_info);
 
         let initialized_protocol = InitializedContextServerProtocol {
-            inner: self.inner,
+            inner: self.inner.clone(),
             initialize: response,
         };
 
@@ -71,8 +72,15 @@ impl ModelContextProtocol {
 }
 
 pub struct InitializedContextServerProtocol {
-    inner: Client,
+    inner: Arc<Client>,
     pub initialize: types::InitializeResponse,
+}
+
+impl InitializedContextServerProtocol {
+    /// Retrieves the buffered stdout and stderr output from the server.
+    pub fn get_output(&self) -> (String, String) {
+        self.inner.get_output()
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
