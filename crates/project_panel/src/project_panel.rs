@@ -3442,50 +3442,41 @@ impl ProjectPanel {
             return None;
         }
 
-        let this = cx.entity();
+        let (destination_worktree, destination_worktree_id, new_path) =
+            self.project.read_with(cx, |project, cx| {
+                let source_path = project.path_for_entry(entry_to_move, cx)?;
+                let destination_path = project.path_for_entry(destination_entry, cx)?;
+                let destination_worktree_id = destination_path.worktree_id;
 
-        let (destination_worktree, rename_task) = self.project.update(cx, |project, cx| {
-            let Some(source_path) = project.path_for_entry(entry_to_move, cx) else {
-                return (None, None);
-            };
-            let Some(destination_path) = project.path_for_entry(destination_entry, cx) else {
-                return (None, None);
-            };
-            let destination_worktree_id = destination_path.worktree_id;
+                let destination_dir = if destination_is_file {
+                    destination_path.path.parent().unwrap_or(RelPath::empty())
+                } else {
+                    destination_path.path.as_ref()
+                };
 
-            let destination_dir = if destination_is_file {
-                destination_path.path.parent().unwrap_or(RelPath::empty())
-            } else {
-                destination_path.path.as_ref()
-            };
+                let source_name = source_path.path.file_name()?;
+                let source_name = RelPath::unix(source_name).ok()?;
 
-            let Some(source_name) = source_path.path.file_name() else {
-                return (None, None);
-            };
-            let Ok(source_name) = RelPath::unix(source_name) else {
-                return (None, None);
-            };
+                let mut new_path = destination_dir.to_rel_path_buf();
+                new_path.push(source_name);
 
-            let mut new_path = destination_dir.to_rel_path_buf();
-            new_path.push(source_name);
-            let rename_task = this.update(cx, |this, cx| {
-                this.confirm_rename_entry(
-                    entry_to_move,
-                    (destination_worktree_id, new_path).into(),
-                    cx,
-                )
-            });
+                Some((
+                    project.worktree_id_for_entry(destination_entry, cx),
+                    destination_worktree_id,
+                    new_path,
+                ))
+            })?;
 
-            (
-                project.worktree_id_for_entry(destination_entry, cx),
-                Some(rename_task),
-            )
-        });
+        let rename_task = self.confirm_rename_entry(
+            entry_to_move,
+            (destination_worktree_id, new_path).into(),
+            cx,
+        );
 
         if let Some(destination_worktree) = destination_worktree {
             self.expand_entry(destination_worktree, destination_entry, cx);
         }
-        rename_task
+        Some(rename_task)
     }
 
     fn index_for_selection(&self, selection: SelectedEntry) -> Option<(usize, usize, usize)> {
