@@ -1,0 +1,14 @@
+[package]
+name = "focus_follows_mouse"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/focus_follows_mouse.rs"
+
+[dependencies]
+gpui.workspace = true
+
+[lints]
+workspace = true
