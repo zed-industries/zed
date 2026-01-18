@@ -223,7 +223,6 @@ impl Item for ImageView {
         match event {
             ImageViewEvent::TitleChanged => {
                 f(workspace::item::ItemEvent::UpdateTab);
-                f(workspace::item::ItemEvent::UpdateBreadcrumbs);
             }
         }
     }
