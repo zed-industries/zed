@@ -2023,13 +2023,14 @@ impl Vim {
 
     fn sync_vim_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(cx, |vim, editor, cx| {
+            let helix_mode = HelixModeSetting::get_global(cx).0;
             editor.set_cursor_shape(vim.cursor_shape(cx), cx);
             editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
-            let collapse_matches = !HelixModeSetting::get_global(cx).0;
+            let collapse_matches = !helix_mode;
             editor.set_collapse_matches(collapse_matches);
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
-            editor.set_cursor_offset_on_selection(vim.mode.is_visual());
+            editor.set_cursor_offset_on_selection(helix_mode || vim.mode.is_visual());
             editor
                 .selections
                 .set_line_mode(matches!(vim.mode, Mode::VisualLine));
