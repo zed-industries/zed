@@ -5244,7 +5244,6 @@ version = "0.1.0"
 dependencies = [
  "ai_onboarding",
  "anyhow",
- "arrayvec",
  "brotli",
  "buffer_diff",
  "client",
@@ -5262,6 +5261,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
+ "heapless",
  "indoc",
  "itertools 0.14.0",
  "language",

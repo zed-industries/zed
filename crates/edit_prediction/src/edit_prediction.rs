@@ -1,5 +1,4 @@
 use anyhow::Result;
-use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::predict_edits_v3::{
     PredictEditsV3Request, PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
@@ -26,6 +25,7 @@ use gpui::{
     http_client::{self, AsyncBody, Method},
     prelude::*,
 };
+use heapless::Vec as ArrayVec;
 use language::language_settings::all_language_settings;
 use language::{Anchor, Buffer, File, Point, TextBufferSnapshot, ToOffset, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
@@ -254,7 +254,7 @@ struct ProjectState {
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     current_prediction: Option<CurrentEditPrediction>,
     next_pending_prediction_id: usize,
-    pending_predictions: ArrayVec<PendingPrediction, 2>,
+    pending_predictions: ArrayVec<PendingPrediction, 2, u8>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
     last_prediction_refresh: Option<(EntityId, Instant)>,
     cancelled_predictions: HashSet<usize>,
@@ -1635,16 +1635,22 @@ impl EditPredictionStore {
         });
 
         if project_state.pending_predictions.len() <= 1 {
-            project_state.pending_predictions.push(PendingPrediction {
-                id: pending_prediction_id,
-                task,
-            });
+            project_state
+                .pending_predictions
+                .push(PendingPrediction {
+                    id: pending_prediction_id,
+                    task,
+                })
+                .unwrap();
         } else if project_state.pending_predictions.len() == 2 {
             let pending_prediction = project_state.pending_predictions.pop().unwrap();
-            project_state.pending_predictions.push(PendingPrediction {
-                id: pending_prediction_id,
-                task,
-            });
+            project_state
+                .pending_predictions
+                .push(PendingPrediction {
+                    id: pending_prediction_id,
+                    task,
+                })
+                .unwrap();
             project_state.cancel_pending_prediction(pending_prediction, cx);
         }
     }
