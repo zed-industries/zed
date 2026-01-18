@@ -8811,6 +8811,7 @@ impl Editor {
                     };
 
                     window.focus(&editor.focus_handle(cx), cx);
+                    editor.update_breakpoint_collision_on_toggle(&edit_action);
                     editor.edit_breakpoint_at_anchor(
                         position,
                         breakpoint.as_ref().clone(),
@@ -11665,6 +11666,15 @@ impl Editor {
                     BreakpointEditAction::Toggle,
                     cx,
                 );
+            }
+        }
+    }
+
+    fn update_breakpoint_collision_on_toggle(&mut self, edit_action: &BreakpointEditAction) {
+        if let Some(ref mut breakpoint_indicator) = self.gutter_breakpoint_indicator.0 {
+            if matches!(edit_action, BreakpointEditAction::Toggle) {
+                breakpoint_indicator.collides_with_existing_breakpoint =
+                    !breakpoint_indicator.collides_with_existing_breakpoint;
             }
         }
     }
