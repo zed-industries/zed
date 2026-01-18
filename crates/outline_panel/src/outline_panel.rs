@@ -2012,7 +2012,8 @@ impl OutlinePanel {
             .selected_entry()
             .and_then(|entry| self.abs_path(entry, cx))
         {
-            cx.reveal_path(&abs_path);
+            self.project
+                .update(cx, |project, cx| project.reveal_path(&abs_path, cx));
         }
     }
 
