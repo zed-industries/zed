@@ -713,7 +713,7 @@ impl Fs for RealFs {
     }
 
     #[cfg(target_os = "windows")]
-    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<Option<TrashedItem>> {
+    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<Option<TrashItem>> {
         // todo!: We need to construct someway the trash item
         // evaluate: https://github.com/Byron/trash-rs/blob/master/src/windows.rs
         use util::paths::SanitizedPath;
@@ -737,12 +737,12 @@ impl Fs for RealFs {
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<Option<TrashedItem>> {
+    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<Option<TrashItem>> {
         self.trash_file(path, options).await
     }
 
     #[cfg(target_os = "windows")]
-    async fn trash_dir(&self, path: &Path, _options: RemoveOptions) -> Result<Option<TrashedItem>> {
+    async fn trash_dir(&self, path: &Path, _options: RemoveOptions) -> Result<Option<TrashItem>> {
         // todo!: We need to construct someway the trash item
         // evaluate: https://github.com/Byron/trash-rs/blob/master/src/windows.rs
         use util::paths::SanitizedPath;
