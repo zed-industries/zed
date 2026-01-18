@@ -2941,7 +2941,7 @@ pub async fn copy_recursive<'a>(
     target: &'a Path,
     options: CopyOptions,
 ) -> Result<()> {
-    for (item, metadata) in read_dir_items(fs, source).await? {
+    for (item, is_dir) in read_dir_items(fs, source).await? {
         let Ok(item_relative_path) = item.strip_prefix(source) else {
             continue;
         };
@@ -2950,7 +2950,7 @@ pub async fn copy_recursive<'a>(
         } else {
             target.join(item_relative_path)
         };
-        if metadata.is_dir {
+        if is_dir {
             if !options.overwrite && fs.metadata(&target_item).await.is_ok_and(|m| m.is_some()) {
                 if options.ignore_if_exists {
                     continue;
