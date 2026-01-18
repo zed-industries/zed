@@ -439,6 +439,35 @@ impl Deref for ScrollWheelEvent {
     }
 }
 
+/// A trackpad magnification gesture.
+#[derive(Clone, Debug)]
+pub struct MagnifyEvent {
+    /// The screen position of the mouse during the event.
+    pub position: Point<Pixels>,
+    /// The relative magnification change. 0.1 means 10% zoom in.
+    pub magnification: f32,
+    /// The phase of the magnification gesture.
+    pub touch_phase: TouchPhase,
+    /// The keyboard modifiers held during the event.
+    pub modifiers: Modifiers,
+}
+
+impl Sealed for MagnifyEvent {}
+impl InputEvent for MagnifyEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::Magnify(self)
+    }
+}
+impl MouseEvent for MagnifyEvent {}
+
+impl Deref for MagnifyEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
+}
+
 /// The scroll delta for a scroll wheel event.
 #[derive(Clone, Copy, Debug)]
 pub enum ScrollDelta {
@@ -613,6 +642,8 @@ pub enum PlatformInput {
     MouseExited(MouseExitEvent),
     /// The scroll wheel was used.
     ScrollWheel(ScrollWheelEvent),
+    /// A magnification gesture.
+    Magnify(MagnifyEvent),
     /// Files were dragged and dropped onto the window.
     FileDrop(FileDropEvent),
 }
@@ -629,6 +660,7 @@ impl PlatformInput {
             PlatformInput::MousePressure(event) => Some(event),
             PlatformInput::MouseExited(event) => Some(event),
             PlatformInput::ScrollWheel(event) => Some(event),
+            PlatformInput::Magnify(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
         }
     }
@@ -644,6 +676,7 @@ impl PlatformInput {
             PlatformInput::MousePressure(_) => None,
             PlatformInput::MouseExited(_) => None,
             PlatformInput::ScrollWheel(_) => None,
+            PlatformInput::Magnify(_) => None,
             PlatformInput::FileDrop(_) => None,
         }
     }
