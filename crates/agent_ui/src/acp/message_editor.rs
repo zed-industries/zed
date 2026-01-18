@@ -931,7 +931,7 @@ impl MessageEditor {
                 .snapshot(cx)
                 .anchor_before(Point::zero());
 
-            (anchor, buffer.clone())
+            (anchor, buffer)
         };
 
         let mut grouped_by_buffer: HashMap<gpui::EntityId, Vec<(Entity<Buffer>, std::ops::Range<text::Anchor>)>> = HashMap::new();

@@ -6162,7 +6162,7 @@ impl AcpThreadView {
                 let line_ranges: Vec<RangeInclusive<u32>> = group
                     .iter()
                     .map(|item| {
-                        let range = &(**item).1;
+                        let range = &item.1;
                         let point_range = range.to_point(&snapshot);
                         point_range.start.row..=point_range.end.row
                     })
