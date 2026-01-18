@@ -1,7 +1,7 @@
 use crate::{
-    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
-    EditPredictionStartedDebugEvent, open_ai_response::text_from_response,
-    prediction::EditPredictionResult,
+    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModel,
+    EditPredictionModelInput, EditPredictionStartedDebugEvent,
+    open_ai_response::text_from_response, prediction::EditPredictionResult,
 };
 use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
@@ -18,22 +18,38 @@ const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions"
 const MAX_REWRITE_TOKENS: usize = 150;
 const MAX_CONTEXT_TOKENS: usize = 350;
 
-pub struct Mercury {
-    pub api_token: Entity<ApiKeyState>,
+pub struct MercuryModel {
+    api_token: Entity<ApiKeyState>,
 }
 
-impl Mercury {
+impl MercuryModel {
     pub fn new(cx: &mut App) -> Self {
-        Mercury {
+        Self {
             api_token: mercury_api_token(cx),
         }
     }
+}
 
-    pub(crate) fn request_prediction(
+impl EditPredictionModel for MercuryModel {
+    fn requires_context(&self) -> bool {
+        true
+    }
+
+    fn requires_edit_history(&self) -> bool {
+        true
+    }
+
+    fn is_enabled(&self, cx: &App) -> bool {
+        self.api_token
+            .read(cx)
+            .key(&MERCURY_CREDENTIALS_URL)
+            .is_some()
+    }
+
+    fn request_prediction(
         &self,
         EditPredictionModelInput {
             buffer,
-            snapshot,
             position,
             events,
             related_files,
@@ -42,6 +58,7 @@ impl Mercury {
         }: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
+        let snapshot = buffer.read(cx).snapshot();
         self.api_token.update(cx, |key_state, cx| {
             _ = key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, cx);
         });
