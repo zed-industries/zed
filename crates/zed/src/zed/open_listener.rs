@@ -30,7 +30,7 @@ use util::ResultExt;
 use util::paths::PathWithPosition;
 use workspace::PathList;
 use workspace::item::ItemHandle;
-use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
+use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace, WorkspaceId};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -467,7 +467,9 @@ async fn open_workspaces(
                 .unwrap_or_default()
         }
     } else {
+        // For new workspaces opened via CLI, use default WorkspaceId (will be assigned by open_paths)
         vec![(
+            WorkspaceId::default(),
             SerializedWorkspaceLocation::Local,
             PathList::new(&paths.into_iter().map(PathBuf::from).collect::<Vec<_>>()),
         )]
@@ -495,7 +497,7 @@ async fn open_workspaces(
         // If there are paths to open, open a workspace for each grouping of paths
         let mut errored = false;
 
-        for (location, workspace_paths) in grouped_locations {
+        for (_workspace_id, location, workspace_paths) in grouped_locations {
             match location {
                 SerializedWorkspaceLocation::Local => {
                     let workspace_paths = workspace_paths
