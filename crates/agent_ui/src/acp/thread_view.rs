@@ -10,7 +10,6 @@ use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings};
 use anyhow::{Result, anyhow};
-use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use client::zed_urls;
@@ -31,6 +30,7 @@ use gpui::{
     WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient, list, point,
     pulsating_between,
 };
+use heapless::Vec as ArrayVec;
 use language::Buffer;
 use language_model::LanguageModelRegistry;
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
@@ -4169,7 +4169,7 @@ impl AcpThreadView {
                 .first_tool_awaiting_confirmation()
                 .is_some_and(|call| call.id == tool_call_id)
         });
-        let mut seen_kinds: ArrayVec<acp::PermissionOptionKind, 3> = ArrayVec::new();
+        let mut seen_kinds: ArrayVec<acp::PermissionOptionKind, 3, u8> = ArrayVec::new();
 
         div()
             .p_1()
@@ -4208,7 +4208,7 @@ impl AcpThreadView {
                             return this;
                         }
 
-                        seen_kinds.push(option.kind);
+                        seen_kinds.push(option.kind).unwrap();
 
                         this.key_binding(
                             KeyBinding::for_action_in(action, &self.focus_handle, cx)
