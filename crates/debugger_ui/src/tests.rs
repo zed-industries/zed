@@ -6,7 +6,7 @@ use dap::client::DebugAdapterClient;
 use gpui::{Entity, TestAppContext, WindowHandle};
 use project::{Project, debugger::session::Session};
 use settings::SettingsStore;
-use task::TaskContext;
+use task::SharedTaskContext;
 use terminal_view::terminal_panel::TerminalPanel;
 use workspace::Workspace;
 
@@ -110,7 +110,7 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
     workspace.update(cx, |workspace, window, cx| {
         workspace.start_debug_session(
             config.to_scenario(),
-            TaskContext::default(),
+            SharedTaskContext::default(),
             None,
             None,
             window,

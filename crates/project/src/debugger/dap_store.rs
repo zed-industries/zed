@@ -51,7 +51,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Once},
 };
-use task::{DebugScenario, SpawnInTerminal, TaskContext, TaskTemplate};
+use task::{DebugScenario, SharedTaskContext, SpawnInTerminal, TaskTemplate};
 use util::{ResultExt as _, rel_path::RelPath};
 use worktree::Worktree;
 
@@ -451,7 +451,7 @@ impl DapStore {
         &mut self,
         label: Option<SharedString>,
         adapter: DebugAdapterName,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         parent_session: Option<Entity<Session>>,
         quirks: SessionQuirks,
         cx: &mut Context<Self>,
