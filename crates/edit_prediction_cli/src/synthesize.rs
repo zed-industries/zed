@@ -791,6 +791,7 @@ async fn build_example(
         cursor_position: String::new(),
         edit_history,
         expected_patches: vec![expected_patch_with_header],
+        rejected_patch: None,
     };
     spec.set_cursor_excerpt(&excerpt, cursor_offset, comment_prefix);
 

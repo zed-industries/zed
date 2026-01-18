@@ -78,6 +78,7 @@ pub fn capture_example(
         // Initialize an empty patch with context lines, to make it easy
         // to write the expected patch by hand.
         let mut expected_patches = Vec::new();
+        let mut rejected_patch = None;
         if populate_expected_patch {
             let mut empty_patch = String::new();
             let start_row = cursor_excerpt_range.start.row + 1;
@@ -93,7 +94,9 @@ pub fn capture_example(
             for line in cursor_excerpt.lines() {
                 writeln!(&mut empty_patch, " {}", line).ok();
             }
-            expected_patches.push(empty_patch);
+
+            expected_patches.push(empty_patch.clone());
+            rejected_patch = Some(empty_patch);
         }
 
         let mut spec = ExampleSpec {
@@ -107,6 +110,7 @@ pub fn capture_example(
             cursor_position: String::new(),
             edit_history,
             expected_patches,
+            rejected_patch,
         };
         spec.set_cursor_excerpt(&cursor_excerpt, cursor_offset, &line_comment_prefix);
         Ok(spec)
@@ -483,27 +487,50 @@ mod tests {
                 .to_string(),
                 expected_patches: vec![
                     indoc! {"
-                    --- a/src/main.rs
-                    +++ b/src/main.rs
-                    @@ -1,16 +1,16 @@
-                     fn main() {
-                         // comment 1
-                         one();
-                         two();
-                         // comment 4
-                         three();
-                         four();
-                         // comment 3
-                         five();
-                         six();
-                         seven();
-                         eight();
-                         // comment 2
-                         nine();
-                     }
-                "}
+                        --- a/src/main.rs
+                        +++ b/src/main.rs
+                        @@ -1,16 +1,16 @@
+                         fn main() {
+                             // comment 1
+                             one();
+                             two();
+                             // comment 4
+                             three();
+                             four();
+                             // comment 3
+                             five();
+                             six();
+                             seven();
+                             eight();
+                             // comment 2
+                             nine();
+                         }
+                    "}
                     .to_string()
-                ]
+                ],
+                rejected_patch: Some(
+                    indoc! {"
+                        --- a/src/main.rs
+                        +++ b/src/main.rs
+                        @@ -1,16 +1,16 @@
+                         fn main() {
+                             // comment 1
+                             one();
+                             two();
+                             // comment 4
+                             three();
+                             four();
+                             // comment 3
+                             five();
+                             six();
+                             seven();
+                             eight();
+                             // comment 2
+                             nine();
+                         }
+                    "}
+                    .to_string()
+                )
             }
         );
     }

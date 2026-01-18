@@ -21,6 +21,8 @@ pub struct ExampleSpec {
     pub cursor_position: String,
     pub edit_history: String,
     pub expected_patches: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejected_patch: Option<String>,
 }
 
 const REASONING_HEADING: &str = "Reasoning";
@@ -28,7 +30,7 @@ const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
 const EDIT_HISTORY_HEADING: &str = "Edit History";
 const CURSOR_POSITION_HEADING: &str = "Cursor Position";
 const EXPECTED_PATCH_HEADING: &str = "Expected Patch";
-const EXPECTED_CONTEXT_HEADING: &str = "Expected Context";
+const REJECTED_PATCH_HEADING: &str = "Rejected Patch";
 
 #[derive(Serialize, Deserialize)]
 struct FrontMatter<'a> {
@@ -136,6 +138,18 @@ impl ExampleSpec {
             markdown.push('\n');
         }
 
+        if let Some(rejected_patch) = &self.rejected_patch {
+            _ = writeln!(markdown, "## {}", REJECTED_PATCH_HEADING);
+            markdown.push('\n');
+            _ = writeln!(markdown, "```diff");
+            markdown.push_str(rejected_patch);
+            if !markdown.ends_with('\n') {
+                markdown.push('\n');
+            }
+            _ = writeln!(markdown, "```");
+            markdown.push('\n');
+        }
+
         markdown
     }
 
@@ -154,6 +168,7 @@ impl ExampleSpec {
             cursor_position: String::new(),
             edit_history: String::new(),
             expected_patches: Vec::new(),
+            rejected_patch: None,
         };
 
         if let Some(rest) = input.strip_prefix("+++\n")
@@ -177,8 +192,8 @@ impl ExampleSpec {
             UncommittedDiff,
             EditHistory,
             CursorPosition,
-            ExpectedExcerpts,
             ExpectedPatch,
+            RejectedPatch,
             Other,
         }
 
@@ -202,8 +217,8 @@ impl ExampleSpec {
                         Section::CursorPosition
                     } else if title.eq_ignore_ascii_case(EXPECTED_PATCH_HEADING) {
                         Section::ExpectedPatch
-                    } else if title.eq_ignore_ascii_case(EXPECTED_CONTEXT_HEADING) {
-                        Section::ExpectedExcerpts
+                    } else if title.eq_ignore_ascii_case(REJECTED_PATCH_HEADING) {
+                        Section::RejectedPatch
                     } else {
                         Section::Other
                     };
@@ -244,11 +259,11 @@ impl ExampleSpec {
                             spec.cursor_path = Path::new(block_info).into();
                             spec.cursor_position = mem::take(&mut text);
                         }
-                        Section::ExpectedExcerpts => {
-                            mem::take(&mut text);
-                        }
                         Section::ExpectedPatch => {
                             spec.expected_patches.push(mem::take(&mut text));
+                        }
+                        Section::RejectedPatch => {
+                            spec.rejected_patch = Some(mem::take(&mut text));
                         }
                         Section::Start | Section::Other => {}
                     }
@@ -399,6 +414,7 @@ mod tests {
             cursor_position: String::new(),
             edit_history: String::new(),
             expected_patches: Vec::new(),
+            rejected_patch: None,
         };
 
         // Cursor before `42`
@@ -531,6 +547,7 @@ mod tests {
             cursor_position: String::new(),
             edit_history: String::new(),
             expected_patches: Vec::new(),
+            rejected_patch: None,
         };
 
         // Cursor before `42` using inline marker
