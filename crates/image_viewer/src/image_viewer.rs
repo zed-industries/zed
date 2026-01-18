@@ -4,7 +4,7 @@ mod image_viewer_settings;
 use std::path::Path;
 
 use anyhow::Context as _;
-use editor::{EditorSettings, items::entry_git_aware_label_color};
+use editor::items::entry_git_aware_label_color;
 use file_icons::FileIcons;
 use gpui::{
     AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -16,8 +16,8 @@ use language::File as _;
 use persistence::IMAGE_VIEWER;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
-use theme::{Theme, ThemeSettings};
-use ui::{Scrollbars, ScrollAxes, WithScrollbar, prelude::*};
+use theme::Theme;
+use ui::{Scrollbars, ScrollAxes, WithScrollbar, prelude::*, Tooltip};
 use util::paths::PathExt;
 use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
@@ -252,25 +252,14 @@ impl Item for ImageView {
             .map(Icon::from_path)
     }
 
-    fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
-        let show_breadcrumb = EditorSettings::get_global(cx).toolbar.breadcrumbs;
-        if show_breadcrumb {
-            ToolbarItemLocation::PrimaryLeft
-        } else {
-            ToolbarItemLocation::Hidden
-        }
+    fn breadcrumb_location(&self, _cx: &App) -> ToolbarItemLocation {
+        ToolbarItemLocation::Hidden
     }
 
-    fn breadcrumbs(&self, _theme: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        let text = breadcrumbs_text_for_image(self.project.read(cx), self.image_item.read(cx), cx);
-        let settings = ThemeSettings::get_global(cx);
-
-        Some(vec![BreadcrumbText {
-            text,
-            highlights: None,
-            font: Some(settings.buffer_font.clone()),
-        }])
+    fn breadcrumbs(&self, _theme: &Theme, _cx: &App) -> Option<Vec<BreadcrumbText>> {
+        None
     }
+
 
     fn can_split(&self) -> bool {
         true
@@ -302,16 +291,6 @@ impl Item for ImageView {
     }
 }
 
-fn breadcrumbs_text_for_image(project: &Project, image: &ImageItem, cx: &App) -> String {
-    let mut path = image.file.path().clone();
-    if project.visible_worktrees(cx).count() > 1
-        && let Some(worktree) = project.worktree_for_id(image.project_path(cx).worktree_id, cx)
-    {
-        path = worktree.read(cx).root_name().join(&path);
-    }
-
-    path.display(project.path_style(cx)).to_string()
-}
 
 impl SerializableItem for ImageView {
     fn serialized_item_kind() -> &'static str {
@@ -466,6 +445,8 @@ impl Render for ImageView {
 
         div()
             .size_full()
+            .flex()
+            .flex_col()
             .relative() // Ensure custom scrollbars anchor to the pane edges
             .key_context(key_context)
             .track_focus(&self.focus_handle)
@@ -474,13 +455,33 @@ impl Render for ImageView {
             .on_action(cx.listener(Self::reset_zoom))
             .on_action(cx.listener(Self::actual_size))
             .child(
+                h_flex()
+                    .gap_2()
+                    .p_2()
+                    .border_b_1()
+                    .border_color(cx.theme().styles.colors.border)
+                    .bg(cx.theme().styles.colors.toolbar_background)
+                    .child(
+                        IconButton::new("zoom_in", IconName::Plus)
+                            .on_click(cx.listener(|this, _, window, cx| this.zoom_in(&ZoomIn, window, cx)))
+                            .tooltip(move |window, cx| Tooltip::for_action("Zoom In", &ZoomIn, cx)),
+                    )
+                    .child(
+                        IconButton::new("zoom_out", IconName::Dash)
+                            .on_click(cx.listener(|this, _, window, cx| this.zoom_out(&ZoomOut, window, cx)))
+                            .tooltip(move |window, cx| Tooltip::for_action("Zoom Out", &ZoomOut, cx)),
+                    )
+                    .child(
+                        IconButton::new("reset_zoom", IconName::Maximize)
+                            .on_click(cx.listener(|this, _, window, cx| this.reset_zoom(&ResetZoom, window, cx)))
+                            .tooltip(move |window, cx| Tooltip::for_action("Reset Zoom", &ResetZoom, cx)),
+                    ),
+            )
+            .child(
                 div()
                     .id("image-viewer-scroll-container")
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .bottom_0()
+                    .w_full()
+                    .flex_1()
                     .overflow_scroll()
                     .track_scroll(&self.scroll_handle)
                     .on_scroll_wheel(cx.listener(
@@ -494,17 +495,18 @@ impl Render for ImageView {
                                 } else {
                                     return;
                                 };
-                                
+
                                 let old_zoom = this.zoom_level;
                                 let new_zoom = (old_zoom + zoom_delta).clamp(MIN_ZOOM, MAX_ZOOM);
-                                
+
                                 if new_zoom != old_zoom {
                                     let zoom_factor = new_zoom / old_zoom;
                                     let mouse_pos = event.position;
                                     let scroll_offset = this.scroll_handle.offset();
-                                    
-                                    let new_offset = scroll_offset * zoom_factor + mouse_pos * (zoom_factor - 1.0);
-                                    
+
+                                    let new_offset =
+                                        scroll_offset * zoom_factor + mouse_pos * (zoom_factor - 1.0);
+
                                     this.zoom_level = new_zoom;
                                     this.scroll_handle.set_offset(new_offset);
                                     cx.notify();
@@ -547,17 +549,16 @@ impl Render for ImageView {
                                                 img(image)
                                                     .object_fit(ObjectFit::Fill)
                                                     .size_full()
-                                                    .id("img")
+                                                    .id("img"),
                                             ),
                                     )
                                     .child(div().flex_grow()) // Right spacer
                             )
                             .child(div().flex_grow()) // Bottom spacer
-                    )
+                    ),
             )
             .custom_scrollbars(
-                Scrollbars::new(ScrollAxes::Both)
-                    .tracked_scroll_handle(&self.scroll_handle),
+                Scrollbars::new(ScrollAxes::Both).tracked_scroll_handle(&self.scroll_handle),
                 window,
                 cx,
             )
