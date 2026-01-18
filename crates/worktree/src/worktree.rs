@@ -833,6 +833,20 @@ impl Worktree {
         Some(task)
     }
 
+    pub fn restore_entry(
+        &mut self,
+        path: &RelPath,
+        cx: &mut Context<Worktree>,
+    ) -> Option<Task<Result<()>>> {
+        match self {
+            Worktree::Local(this) => this.restore_entry(path, cx),
+            Worktree::Remote(_) => {
+                // TODO: Implement remote restore support
+                None
+            }
+        }
+    }
+
     fn get_children_ids_recursive(&self, path: &RelPath, ids: &mut Vec<ProjectEntryId>) {
         let children_iter = self.child_entries(path);
         for child in children_iter {
@@ -1599,6 +1613,7 @@ impl LocalWorktree {
         cx: &Context<Worktree>,
     ) -> Option<Task<Result<()>>> {
         let entry = self.entry_for_id(entry_id)?.clone();
+        let entry_path = entry.path.clone();
         let abs_path = self.absolutize(&entry.path);
         let fs = self.fs.clone();
 
@@ -1628,15 +1643,38 @@ impl LocalWorktree {
                 )
                 .await?;
             }
-            anyhow::Ok(entry.path)
+            anyhow::Ok(())
         });
 
         Some(cx.spawn(async move |this, cx| {
-            let path = delete.await?;
+            delete.await?;
             this.update(cx, |this, _| {
                 this.as_local_mut()
                     .unwrap()
-                    .refresh_entries_for_paths(vec![path])
+                    .refresh_entries_for_paths(vec![entry_path])
+            })?
+            .recv()
+            .await;
+            Ok(())
+        }))
+    }
+
+    fn restore_entry(&self, path: &RelPath, cx: &Context<Worktree>) -> Option<Task<Result<()>>> {
+        let abs_path = self.absolutize(path);
+        let entry_path: Arc<RelPath> = Arc::from(path);
+        let fs = self.fs.clone();
+
+        let restore = cx.background_spawn(async move {
+            fs.restore_from_trash(&abs_path).await?;
+            anyhow::Ok(())
+        });
+
+        Some(cx.spawn(async move |this, cx| {
+            restore.await?;
+            this.update(cx, |this, _| {
+                this.as_local_mut()
+                    .unwrap()
+                    .refresh_entries_for_paths(vec![entry_path])
             })?
             .recv()
             .await;
@@ -2024,7 +2062,9 @@ impl RemoteWorktree {
                 let snapshot = &mut this.background_snapshot.lock().0;
                 snapshot.delete_entry(entry_id);
                 this.snapshot = snapshot.clone();
-            })
+            })?;
+
+            Ok(())
         }))
     }
 
@@ -2084,7 +2124,7 @@ impl RemoteWorktree {
                 else {
                     continue;
                 };
-                for (abs_path, metadata) in
+                for (abs_path, is_dir) in
                     read_dir_items(local_fs.as_ref(), &root_path_to_copy).await?
                 {
                     let Some(relative_path) = abs_path
@@ -2095,7 +2135,7 @@ impl RemoteWorktree {
                     else {
                         continue;
                     };
-                    let content = if metadata.is_dir {
+                    let content = if is_dir {
                         None
                     } else {
                         Some(local_fs.load_bytes(&abs_path).await?)
@@ -2110,7 +2150,7 @@ impl RemoteWorktree {
                         project_id,
                         worktree_id,
                         path: target_path.to_proto(),
-                        is_directory: metadata.is_dir,
+                        is_directory: is_dir,
                         content,
                     });
                 }

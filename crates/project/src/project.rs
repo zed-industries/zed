@@ -336,6 +336,7 @@ pub enum Event {
     DisconnectedFromRemote,
     Closed,
     DeletedEntry(WorktreeId, ProjectEntryId),
+    RestoredEntry(ProjectPath),
     CollaboratorUpdated {
         old_peer_id: proto::PeerId,
         new_peer_id: proto::PeerId,
@@ -2399,6 +2400,19 @@ impl Project {
         cx.emit(Event::DeletedEntry(worktree.read(cx).id(), entry_id));
         worktree.update(cx, |worktree, cx| {
             worktree.delete_entry(entry_id, trash, cx)
+        })
+    }
+
+    #[inline]
+    pub fn restore_entry(
+        &mut self,
+        project_path: ProjectPath,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
+        cx.emit(Event::RestoredEntry(project_path.clone()));
+        worktree.update(cx, |worktree, cx| {
+            worktree.restore_entry(project_path.path.as_ref(), cx)
         })
     }
 

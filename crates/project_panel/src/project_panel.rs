@@ -1,4 +1,3 @@
-mod project_panel_operation;
 mod project_panel_settings;
 mod utils;
 
@@ -76,8 +75,6 @@ use workspace::{
 };
 use worktree::CreatedEntry;
 use zed_actions::{project_panel::ToggleFocus, workspace::OpenWithSystem};
-
-use crate::project_panel_operation::ProjectPanelOperation;
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -554,6 +551,21 @@ pub enum Event {
         split_direction: Option<SplitDirection>,
     },
     Focus,
+}
+
+pub enum ProjectPanelOperation {
+    Trash {
+        project_path: ProjectPath,
+        is_directory: bool,
+    },
+    Restore {
+        is_directory: bool,
+        project_path: ProjectPath,
+    },
+    Rename {
+        old_path: ProjectPath,
+        new_path: ProjectPath,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -2067,6 +2079,51 @@ impl ProjectPanel {
                     Ok(reverse_operation)
                 })
             }
+            ProjectPanelOperation::Restore {
+                is_directory,
+                project_path,
+            } => {
+                let Some(entry_id) = self
+                    .project
+                    .read(cx)
+                    .entry_for_path(&project_path, cx)
+                    .map(|e| e.id)
+                else {
+                    return Task::ready(Err(anyhow!("no entry for path")));
+                };
+                let Some(task) = self
+                    .project
+                    .update(cx, |project, cx| project.delete_entry(entry_id, true, cx))
+                else {
+                    return Task::ready(Err(anyhow!("failed to delete entry")));
+                };
+
+                cx.spawn(async move |_, _cx| {
+                    task.await?;
+                    Ok(ProjectPanelOperation::Trash {
+                        project_path,
+                        is_directory,
+                    })
+                })
+            }
+            ProjectPanelOperation::Trash {
+                project_path,
+                is_directory,
+            } => {
+                let Some(task) = self.project.update(cx, |project, cx| {
+                    project.restore_entry(project_path.clone(), cx)
+                }) else {
+                    return Task::ready(Err(anyhow!("failed to restore entry")));
+                };
+
+                cx.spawn(async move |_, _cx| {
+                    task.await?;
+                    Ok(ProjectPanelOperation::Restore {
+                        is_directory,
+                        project_path,
+                    })
+                })
+            }
         }
     }
 
@@ -3401,16 +3458,16 @@ impl ProjectPanel {
             let mut new_path = destination_dir.to_rel_path_buf();
             new_path.push(source_name);
             let rename_task = this.update(cx, |this, cx| {
-                    this.confirm_undoable_rename_entry(
-                        entry_to_move,
-                        (destination_worktree_id, new_path).into(),
-                        cx,
-                    )
-                });
+                this.confirm_undoable_rename_entry(
+                    entry_to_move,
+                    (destination_worktree_id, new_path).into(),
+                    cx,
+                )
+            });
 
             (
                 project.worktree_id_for_entry(destination_entry, cx),
-                rename_task,
+                Some(rename_task),
             )
         });
 
