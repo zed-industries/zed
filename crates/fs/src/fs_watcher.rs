@@ -72,9 +72,10 @@ impl Watcher for FsWatcher {
         }
         #[cfg(target_os = "linux")]
         {
-            if self.registrations.lock().contains_key(path) {
-                log::trace!("path to watch is already watched: {path:?}");
-                return Ok(());
+            let existing_registration = self.registrations.lock().remove(path);
+            if let Some(existing_registration) = existing_registration {
+                log::trace!("path to watch is already watched, re-registering: {path:?}");
+                global(|g| g.remove(existing_registration))?;
             }
         }
 
