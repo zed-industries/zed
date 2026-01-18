@@ -28,7 +28,7 @@ use workspace::{
 pub use crate::image_info::*;
 pub use crate::image_viewer_settings::*;
 
-const MIN_ZOOM: f32 = 0.01;
+const MIN_ZOOM: f32 = 0.1;
 const MAX_ZOOM: f32 = 100.0;
 const ZOOM_STEP: f32 = 0.1;
 
