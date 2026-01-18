@@ -12,7 +12,7 @@ workspace = true
 path = "src/rope.rs"
 
 [dependencies]
-arrayvec = "0.7.1"
+heapless = "0.9.2"
 log.workspace = true
 rayon.workspace = true
 sum_tree.workspace = true
