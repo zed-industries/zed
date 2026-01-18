@@ -34,11 +34,18 @@ const ZOOM_STEP: f32 = 0.1;
 
 actions!(image_viewer, [ZoomIn, ZoomOut, ResetZoom, ActualSize]);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ZoomMode {
+    Fit,
+    Manual,
+}
+
 pub struct ImageView {
     image_item: Entity<ImageItem>,
     project: Entity<Project>,
     focus_handle: FocusHandle,
     zoom_level: f32,
+    zoom_mode: ZoomMode,
     scroll_handle: ScrollHandle,
 }
 
@@ -64,6 +71,7 @@ impl ImageView {
             project,
             focus_handle: cx.focus_handle(),
             zoom_level: 1.0,
+            zoom_mode: ZoomMode::Fit,
             scroll_handle: ScrollHandle::new(),
         }
     }
@@ -86,6 +94,11 @@ impl ImageView {
     }
 
     fn zoom_in(&mut self, _: &ZoomIn, window: &mut Window, cx: &mut Context<Self>) {
+        if self.zoom_mode == ZoomMode::Fit {
+            self.zoom_level = self.calculate_fit_zoom(window, cx);
+            self.zoom_mode = ZoomMode::Manual;
+        }
+
         let old_zoom = self.zoom_level;
         let new_zoom = (self.zoom_level + ZOOM_STEP).min(MAX_ZOOM);
 
@@ -97,6 +110,11 @@ impl ImageView {
     }
 
     fn zoom_out(&mut self, _: &ZoomOut, window: &mut Window, cx: &mut Context<Self>) {
+        if self.zoom_mode == ZoomMode::Fit {
+            self.zoom_level = self.calculate_fit_zoom(window, cx);
+            self.zoom_mode = ZoomMode::Manual;
+        }
+
         let old_zoom = self.zoom_level;
         let new_zoom = (self.zoom_level - ZOOM_STEP).max(MIN_ZOOM);
 
@@ -107,38 +125,14 @@ impl ImageView {
         }
     }
 
-    fn reset_zoom(&mut self, _: &ResetZoom, window: &mut Window, cx: &mut Context<Self>) {
-        let viewport_size = self.scroll_handle.bounds().size;
-        let image = self.image_item.read(cx).image.clone();
-        let image_size = image
-            .use_render_image(window, cx)
-            .map(|data| {
-                let size = data.size(0);
-                gpui::size(px(size.width.0 as f32), px(size.height.0 as f32))
-            })
-            .unwrap_or(size(px(0.), px(0.)));
-
-        if viewport_size.width > px(0.)
-            && viewport_size.height > px(0.)
-            && image_size.width > px(0.)
-            && image_size.height > px(0.)
-        {
-            let width_ratio = viewport_size.width / image_size.width;
-            let height_ratio = viewport_size.height / image_size.height;
-            // Zoom to fit: scale down to fit viewport, but don't scale up small images beyond 100%
-            self.zoom_level = width_ratio
-                .min(height_ratio)
-                .min(1.0)
-                .clamp(MIN_ZOOM, MAX_ZOOM);
-        } else {
-            self.zoom_level = 1.0;
-        }
-
+    fn reset_zoom(&mut self, _: &ResetZoom, _window: &mut Window, cx: &mut Context<Self>) {
+        self.zoom_mode = ZoomMode::Fit;
         self.scroll_handle.set_offset(point(px(0.), px(0.)));
         cx.notify();
     }
 
     fn actual_size(&mut self, _: &ActualSize, _window: &mut Window, cx: &mut Context<Self>) {
+        self.zoom_mode = ZoomMode::Manual;
         self.zoom_level = 1.0;
         self.scroll_handle.set_offset(point(px(0.), px(0.)));
         cx.notify();
@@ -173,6 +167,30 @@ impl ImageView {
 
         let new_offset = scroll_offset * zoom_factor + viewport_center * (zoom_factor - 1.0);
         self.scroll_handle.set_offset(new_offset);
+    }
+
+    fn calculate_fit_zoom(&self, window: &mut Window, cx: &mut Context<Self>) -> f32 {
+        let viewport_size = self.scroll_handle.bounds().size;
+        let image = self.image_item.read(cx).image.clone();
+        let image_size = image
+            .use_render_image(window, cx)
+            .map(|data| {
+                let size = data.size(0);
+                gpui::size(px(size.width.0 as f32), px(size.height.0 as f32))
+            })
+            .unwrap_or(size(px(0.), px(0.)));
+
+        if viewport_size.width > px(0.)
+            && viewport_size.height > px(0.)
+            && image_size.width > px(0.)
+            && image_size.height > px(0.)
+        {
+            let width_ratio = viewport_size.width / image_size.width;
+            let height_ratio = viewport_size.height / image_size.height;
+            width_ratio.min(height_ratio).min(1.0).clamp(MIN_ZOOM, MAX_ZOOM)
+        } else {
+            1.0
+        }
     }
 }
 
@@ -281,6 +299,7 @@ impl Item for ImageView {
             project: self.project.clone(),
             focus_handle: cx.focus_handle(),
             zoom_level: 1.0,
+            zoom_mode: ZoomMode::Fit,
             scroll_handle: ScrollHandle::new(),
         })))
     }
@@ -393,7 +412,15 @@ impl Render for ImageView {
                 gpui::size(px(size.width.0 as f32), px(size.height.0 as f32))
             })
             .unwrap_or(size(px(0.), px(0.)));
-        let zoom_level = self.zoom_level;
+
+
+        let zoom_level = if self.zoom_mode == ZoomMode::Fit {
+            self.calculate_fit_zoom(window, cx)
+        } else {
+            self.zoom_level
+        };
+        
+
         let scaled_width = image_size.width * zoom_level;
         let scaled_height = image_size.height * zoom_level;
 
@@ -496,7 +523,7 @@ impl Render for ImageView {
                     .overflow_scroll()
                     .track_scroll(&self.scroll_handle)
                     .on_scroll_wheel(cx.listener(
-                        move |this, event: &ScrollWheelEvent, _window, cx| {
+                        move |this, event: &ScrollWheelEvent, window, cx| {
                             if event.modifiers.secondary() {
                                 let delta = event.delta.pixel_delta(px(1.)).y;
                                 let zoom_delta = if delta > px(0.) {
@@ -506,6 +533,11 @@ impl Render for ImageView {
                                 } else {
                                     return;
                                 };
+
+                                if this.zoom_mode == ZoomMode::Fit {
+                                    this.zoom_level = this.calculate_fit_zoom(window, cx);
+                                    this.zoom_mode = ZoomMode::Manual;
+                                }
 
                                 let old_zoom = this.zoom_level;
                                 let new_zoom = (old_zoom + zoom_delta).clamp(MIN_ZOOM, MAX_ZOOM);
@@ -550,13 +582,14 @@ impl Render for ImageView {
                                             .left_0(),
                                     )
                                     .child(
-                                        img(image) // Removed .object_fit(ObjectFit::Fill) as it might not be needed if img is sized exactly
+                                        img(image)
                                             .object_fit(ObjectFit::Fill)
                                             .size_full()
                                             .id("img"),
                                     ),
+                            )
                     )
-            ))
+            )
             .custom_scrollbars(
                 Scrollbars::new(ScrollAxes::Both).tracked_scroll_handle(&self.scroll_handle),
                 window,
