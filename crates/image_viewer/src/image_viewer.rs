@@ -8,16 +8,16 @@ use editor::items::entry_git_aware_label_color;
 use file_icons::FileIcons;
 use gpui::{
     AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, KeyContext, ParentElement, Render, ScrollHandle,
+    InteractiveElement, IntoElement, KeyContext, ObjectFit, ParentElement, Render, ScrollHandle,
     ScrollWheelEvent, Styled, Task, WeakEntity, Window, actions, canvas, div, fill, img,
-    opaque_grey, point, px, size, ObjectFit,
+    opaque_grey, point, px, size,
 };
 use language::File as _;
 use persistence::IMAGE_VIEWER;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
 use theme::Theme;
-use ui::{Scrollbars, ScrollAxes, WithScrollbar, prelude::*, Tooltip};
+use ui::{ScrollAxes, Scrollbars, Tooltip, WithScrollbar, prelude::*};
 use util::paths::PathExt;
 use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
@@ -88,7 +88,7 @@ impl ImageView {
     fn zoom_in(&mut self, _: &ZoomIn, window: &mut Window, cx: &mut Context<Self>) {
         let old_zoom = self.zoom_level;
         let new_zoom = (self.zoom_level + ZOOM_STEP).min(MAX_ZOOM);
-        
+
         if old_zoom != new_zoom {
             self.adjust_zoom_center(old_zoom, new_zoom, window, cx);
             self.zoom_level = new_zoom;
@@ -99,7 +99,7 @@ impl ImageView {
     fn zoom_out(&mut self, _: &ZoomOut, window: &mut Window, cx: &mut Context<Self>) {
         let old_zoom = self.zoom_level;
         let new_zoom = (self.zoom_level - ZOOM_STEP).max(MIN_ZOOM);
-        
+
         if old_zoom != new_zoom {
             self.adjust_zoom_center(old_zoom, new_zoom, window, cx);
             self.zoom_level = new_zoom;
@@ -126,7 +126,10 @@ impl ImageView {
             let width_ratio = viewport_size.width / image_size.width;
             let height_ratio = viewport_size.height / image_size.height;
             // Zoom to fit: scale down to fit viewport, but don't scale up small images beyond 100%
-            self.zoom_level = width_ratio.min(height_ratio).min(1.0).clamp(MIN_ZOOM, MAX_ZOOM);
+            self.zoom_level = width_ratio
+                .min(height_ratio)
+                .min(1.0)
+                .clamp(MIN_ZOOM, MAX_ZOOM);
         } else {
             self.zoom_level = 1.0;
         }
@@ -260,7 +263,6 @@ impl Item for ImageView {
         None
     }
 
-
     fn can_split(&self) -> bool {
         true
     }
@@ -290,7 +292,6 @@ impl Item for ImageView {
         workspace::item::ItemBufferKind::Singleton
     }
 }
-
 
 impl SerializableItem for ImageView {
     fn serialized_item_kind() -> &'static str {
@@ -438,8 +439,6 @@ impl Render for ImageView {
                 }
             };
 
-
-
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("ImageView");
 
@@ -463,18 +462,30 @@ impl Render for ImageView {
                     .bg(cx.theme().styles.colors.toolbar_background)
                     .child(
                         IconButton::new("zoom_in", IconName::Plus)
-                            .on_click(cx.listener(|this, _, window, cx| this.zoom_in(&ZoomIn, window, cx)))
-                            .tooltip(move |window, cx| Tooltip::for_action("Zoom In", &ZoomIn, cx)),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.zoom_in(&ZoomIn, window, cx)
+                                }),
+                            )
+                            .tooltip(move |_window, cx| Tooltip::for_action("Zoom In", &ZoomIn, cx)),
                     )
                     .child(
                         IconButton::new("zoom_out", IconName::Dash)
-                            .on_click(cx.listener(|this, _, window, cx| this.zoom_out(&ZoomOut, window, cx)))
-                            .tooltip(move |window, cx| Tooltip::for_action("Zoom Out", &ZoomOut, cx)),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.zoom_out(&ZoomOut, window, cx)
+                            }))
+                            .tooltip(move |_window, cx| {
+                                Tooltip::for_action("Zoom Out", &ZoomOut, cx)
+                            }),
                     )
                     .child(
                         IconButton::new("reset_zoom", IconName::Maximize)
-                            .on_click(cx.listener(|this, _, window, cx| this.reset_zoom(&ResetZoom, window, cx)))
-                            .tooltip(move |window, cx| Tooltip::for_action("Reset Zoom", &ResetZoom, cx)),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.reset_zoom(&ResetZoom, window, cx)
+                            }))
+                            .tooltip(move |_window, cx| {
+                                Tooltip::for_action("Reset Zoom", &ResetZoom, cx)
+                            }),
                     ),
             )
             .child(
@@ -504,8 +515,8 @@ impl Render for ImageView {
                                     let mouse_pos = event.position;
                                     let scroll_offset = this.scroll_handle.offset();
 
-                                    let new_offset =
-                                        scroll_offset * zoom_factor + mouse_pos * (zoom_factor - 1.0);
+                                    let new_offset = scroll_offset * zoom_factor
+                                        + mouse_pos * (zoom_factor - 1.0);
 
                                     this.zoom_level = new_zoom;
                                     this.scroll_handle.set_offset(new_offset);
@@ -518,45 +529,34 @@ impl Render for ImageView {
                     .child(
                         div()
                             .flex()
-                            .flex_col()
-                            .min_w_full()
-                            .min_h_full()
+                            .justify_center()
+                            .items_center()
+                            .size_full()
                             .min_w(scaled_width)
                             .min_h(scaled_height)
-                            .child(div().flex_grow()) // Top spacer
                             .child(
                                 div()
-                                    .flex()
-                                    .min_w_full()
-                                    .min_w(scaled_width)
-                                    .child(div().flex_grow()) // Left spacer
+                                    .flex_shrink_0()
+                                    .relative()
+                                    .w(scaled_width)
+                                    .h(scaled_height)
                                     .child(
-                                        div()
-                                            .flex_shrink_0()
-                                            .relative()
-                                            .w(scaled_width)
-                                            .h(scaled_height)
-                                            .child(
-                                                canvas(|_, _, _| (), checkered_background)
-                                                    .border_2()
-                                                    .border_color(cx.theme().styles.colors.border)
-                                                    .size_full()
-                                                    .absolute()
-                                                    .top_0()
-                                                    .left_0(),
-                                            )
-                                            .child(
-                                                img(image)
-                                                    .object_fit(ObjectFit::Fill)
-                                                    .size_full()
-                                                    .id("img"),
-                                            ),
+                                        canvas(|_, _, _| (), checkered_background)
+                                            .border_2()
+                                            .border_color(cx.theme().styles.colors.border)
+                                            .size_full()
+                                            .absolute()
+                                            .top_0()
+                                            .left_0(),
                                     )
-                                    .child(div().flex_grow()) // Right spacer
-                            )
-                            .child(div().flex_grow()) // Bottom spacer
-                    ),
-            )
+                                    .child(
+                                        img(image) // Removed .object_fit(ObjectFit::Fill) as it might not be needed if img is sized exactly
+                                            .object_fit(ObjectFit::Fill)
+                                            .size_full()
+                                            .id("img"),
+                                    ),
+                    )
+            ))
             .custom_scrollbars(
                 Scrollbars::new(ScrollAxes::Both).tracked_scroll_handle(&self.scroll_handle),
                 window,
