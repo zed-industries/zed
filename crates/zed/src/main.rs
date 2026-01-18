@@ -667,6 +667,7 @@ fn main() {
         git_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
+        csv_preview::init(cx);
         svg_preview::init(cx);
         onboarding::init(cx);
         settings_ui::init(cx);
