@@ -41,6 +41,7 @@ menu.workspace = true
 multi_buffer.workspace = true
 notifications.workspace = true
 panel.workspace = true
+pathdiff.workspace = true
 picker.workspace = true
 project.workspace = true
 prompt_store.workspace = true
