@@ -22,7 +22,7 @@ use alacritty_terminal::{
     term::Config,
     vte::ansi::Processor,
 };
-use gpui::{Bounds, ClipboardItem, Entity, FontStyle, TextStyle, WhiteSpace, canvas, size};
+use gpui::{Bounds, ClipboardItem, Entity, FontStyle, TextStyle, WhiteSpace, canvas, px, size};
 use language::Buffer;
 use settings::Settings as _;
 use terminal::terminal_settings::TerminalSettings;
@@ -55,7 +55,7 @@ pub struct TerminalOutput {
 }
 
 /// Returns the default text style for the terminal output.
-pub fn text_style(window: &mut Window, cx: &mut App) -> TextStyle {
+pub fn text_style(window: &mut Window, cx: &App) -> TextStyle {
     let settings = ThemeSettings::get_global(cx).clone();
 
     let font_size = settings.buffer_font_size(cx).into();
@@ -112,6 +112,27 @@ pub fn terminal_size(window: &mut Window, cx: &mut App) -> terminal::TerminalBou
             size: size(width, height),
         },
     }
+}
+
+pub fn max_width_for_columns(
+    columns: usize,
+    window: &mut Window,
+    cx: &App,
+) -> Option<gpui::Pixels> {
+    if columns == 0 {
+        return None;
+    }
+
+    let text_style = text_style(window, cx);
+    let text_system = window.text_system();
+    let font_pixels = text_style.font_size.to_pixels(window.rem_size());
+    let font_id = text_system.resolve_font(&text_style.font());
+    let cell_width = text_system
+        .advance(font_id, font_pixels, 'w')
+        .unwrap()
+        .width;
+
+    Some(px(cell_width * columns as f32))
 }
 
 impl TerminalOutput {

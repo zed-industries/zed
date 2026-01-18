@@ -16,7 +16,8 @@ use util::ResultExt;
 
 use crate::{
     notebook::{CODE_BLOCK_INSET, GUTTER_WIDTH},
-    outputs::{Output, plain::TerminalOutput, user_error::ErrorView},
+    outputs::{Output, plain, plain::TerminalOutput, user_error::ErrorView},
+    repl_settings::ReplSettings,
 };
 
 #[derive(Copy, Clone, PartialEq, PartialOrd)]
@@ -569,6 +570,18 @@ impl RunnableCell for CodeCell {
 
 impl Render for CodeCell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let output_max_height = ReplSettings::get_global(cx).output_max_height_lines;
+        let output_max_height = if output_max_height > 0 {
+            Some(px(window.line_height() * output_max_height as f32))
+        } else {
+            None
+        };
+        let output_max_width = plain::max_width_for_columns(
+            ReplSettings::get_global(cx).output_max_width_columns,
+            window,
+            cx,
+        );
+
         v_flex()
             .size_full()
             // TODO: Move base cell render into trait impl so we don't have to repeat this
@@ -621,45 +634,53 @@ impl Render for CodeCell {
                                 .border_1()
                                 // .border_color(cx.theme().colors().border)
                                 // .bg(cx.theme().colors().editor_background)
-                                .child(div().w_full().children(self.outputs.iter().map(
-                                    |output| {
-                                        let content = match output {
-                                            Output::Plain { content, .. } => {
-                                                Some(content.clone().into_any_element())
-                                            }
-                                            Output::Markdown { content, .. } => {
-                                                Some(content.clone().into_any_element())
-                                            }
-                                            Output::Stream { content, .. } => {
-                                                Some(content.clone().into_any_element())
-                                            }
-                                            Output::Image { content, .. } => {
-                                                Some(content.clone().into_any_element())
-                                            }
-                                            Output::Message(message) => Some(
-                                                div().child(message.clone()).into_any_element(),
-                                            ),
-                                            Output::Table { content, .. } => {
-                                                Some(content.clone().into_any_element())
-                                            }
-                                            Output::ErrorOutput(error_view) => {
-                                                error_view.render(window, cx)
-                                            }
-                                            Output::ClearOutputWaitMarker => None,
-                                        };
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .when_some(output_max_width, |div, max_w| {
+                                            div.max_w(max_w).overflow_x_scroll()
+                                        })
+                                        .when_some(output_max_height, |div, max_h| {
+                                            div.max_h(max_h).overflow_y_scroll()
+                                        })
+                                        .children(self.outputs.iter().map(|output| {
+                                            let content = match output {
+                                                Output::Plain { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Markdown { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Stream { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Image { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Message(message) => Some(
+                                                    div().child(message.clone()).into_any_element(),
+                                                ),
+                                                Output::Table { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::ErrorOutput(error_view) => {
+                                                    error_view.render(window, cx)
+                                                }
+                                                Output::ClearOutputWaitMarker => None,
+                                            };
 
-                                        div()
-                                            // .w_full()
-                                            // .mt_3()
-                                            // .p_3()
-                                            // .rounded_sm()
-                                            // .bg(cx.theme().colors().editor_background)
-                                            // .border(px(1.))
-                                            // .border_color(cx.theme().colors().border)
-                                            // .shadow_xs()
-                                            .children(content)
-                                    },
-                                ))),
+                                            div()
+                                                // .w_full()
+                                                // .mt_3()
+                                                // .p_3()
+                                                // .rounded_sm()
+                                                // .bg(cx.theme().colors().editor_background)
+                                                // .border(px(1.))
+                                                // .border_color(cx.theme().colors().border)
+                                                // .shadow_xs()
+                                                .children(content)
+                                        })),
+                                ),
                         ),
                     ),
             )

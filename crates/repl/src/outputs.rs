@@ -206,6 +206,11 @@ impl Output {
         window: &mut Window,
         cx: &mut Context<ExecutionView>,
     ) -> impl IntoElement + use<> {
+        let max_width = plain::max_width_for_columns(
+            ReplSettings::get_global(cx).output_max_width_columns,
+            window,
+            cx,
+        );
         let content = match self {
             Self::Plain { content, .. } => Some(content.clone().into_any_element()),
             Self::Markdown { content, .. } => Some(content.clone().into_any_element()),
@@ -220,6 +225,7 @@ impl Output {
         h_flex()
             .id("output-content")
             .w_full()
+            .when_some(max_width, |this, max_w| this.max_w(max_w))
             .overflow_x_scroll()
             .items_start()
             .child(div().flex_1().children(content))

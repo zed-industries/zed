@@ -4313,7 +4313,13 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
   "max_columns": 128,
   // Maximum number of lines to keep in REPL's scrollback buffer.
   // Clamped with [4, 256] range.
-  "max_lines": 32
+  "max_lines": 32,
+  // Maximum number of lines of output to display before scrolling.
+  // Set to 0 to disable output height limits.
+  "output_max_height_lines": 0,
+  // Maximum number of columns of output to display before scaling images.
+  // Set to 0 to disable output width limits.
+  "output_max_width_columns": 0
 },
 ```
 
