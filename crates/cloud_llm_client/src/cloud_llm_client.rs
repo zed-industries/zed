@@ -17,29 +17,13 @@ pub const ZED_VERSION_HEADER_NAME: &str = "x-zed-version";
 /// The client may use this as a signal to refresh the token.
 pub const EXPIRED_LLM_TOKEN_HEADER_NAME: &str = "x-zed-expired-token";
 
-/// The name of the header used to indicate what plan the user is currently on.
-pub const CURRENT_PLAN_HEADER_NAME: &str = "x-zed-plan";
-
-/// The name of the header used to indicate the usage limit for model requests.
-pub const MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME: &str = "x-zed-model-requests-usage-limit";
-
-/// The name of the header used to indicate the usage amount for model requests.
-pub const MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME: &str = "x-zed-model-requests-usage-amount";
-
 /// The name of the header used to indicate the usage limit for edit predictions.
 pub const EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME: &str = "x-zed-edit-predictions-usage-limit";
 
 /// The name of the header used to indicate the usage amount for edit predictions.
 pub const EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME: &str = "x-zed-edit-predictions-usage-amount";
 
-/// The name of the header used to indicate the resource for which the subscription limit has been reached.
-pub const SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME: &str = "x-zed-subscription-limit-resource";
-
-pub const MODEL_REQUESTS_RESOURCE_HEADER_VALUE: &str = "model_requests";
 pub const EDIT_PREDICTIONS_RESOURCE_HEADER_VALUE: &str = "edit_predictions";
-
-/// The name of the header used to indicate that the maximum number of consecutive tool uses has been reached.
-pub const TOOL_USE_LIMIT_REACHED_HEADER_NAME: &str = "x-zed-tool-use-limit-reached";
 
 /// The name of the header used to indicate the minimum required Zed version.
 ///
@@ -84,38 +68,12 @@ impl FromStr for UsageLimit {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Plan {
-    V1(PlanV1),
     V2(PlanV2),
 }
 
 impl Plan {
     pub fn is_v2(&self) -> bool {
         matches!(self, Self::V2(_))
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PlanV1 {
-    #[default]
-    #[serde(alias = "Free")]
-    ZedFree,
-    #[serde(alias = "ZedPro")]
-    ZedPro,
-    #[serde(alias = "ZedProTrial")]
-    ZedProTrial,
-}
-
-impl FromStr for PlanV1 {
-    type Err = anyhow::Error;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "zed_free" => Ok(Self::ZedFree),
-            "zed_pro" => Ok(Self::ZedPro),
-            "zed_pro_trial" => Ok(Self::ZedProTrial),
-            plan => Err(anyhow::anyhow!("invalid plan: {plan:?}")),
-        }
     }
 }
 
@@ -243,13 +201,6 @@ pub enum EditPredictionRejectReason {
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CompletionMode {
-    Normal,
-    Max,
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum CompletionIntent {
     UserPrompt,
     ToolResults,
@@ -270,8 +221,6 @@ pub struct CompletionBody {
     pub prompt_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub intent: Option<CompletionIntent>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub mode: Option<CompletionMode>,
     pub provider: LanguageModelProvider,
     pub model: String,
     pub provider_request: serde_json::Value,
@@ -370,10 +319,9 @@ pub struct LanguageModel {
     pub supports_tools: bool,
     pub supports_images: bool,
     pub supports_thinking: bool,
-    pub supports_max_mode: bool,
     #[serde(default)]
     pub supports_streaming_tools: bool,
-    // only used by OpenAI and xAI
+    /// Only used by OpenAI and xAI.
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,
 }
@@ -386,15 +334,8 @@ pub struct ListModelsResponse {
     pub recommended_models: Vec<LanguageModelId>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct GetSubscriptionResponse {
-    pub plan: PlanV1,
-    pub usage: Option<CurrentUsage>,
-}
-
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct CurrentUsage {
-    pub model_requests: UsageData,
     pub edit_predictions: UsageData,
 }
 
@@ -410,30 +351,6 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-
-    #[test]
-    fn test_plan_v1_deserialize_snake_case() {
-        let plan = serde_json::from_value::<PlanV1>(json!("zed_free")).unwrap();
-        assert_eq!(plan, PlanV1::ZedFree);
-
-        let plan = serde_json::from_value::<PlanV1>(json!("zed_pro")).unwrap();
-        assert_eq!(plan, PlanV1::ZedPro);
-
-        let plan = serde_json::from_value::<PlanV1>(json!("zed_pro_trial")).unwrap();
-        assert_eq!(plan, PlanV1::ZedProTrial);
-    }
-
-    #[test]
-    fn test_plan_v1_deserialize_aliases() {
-        let plan = serde_json::from_value::<PlanV1>(json!("Free")).unwrap();
-        assert_eq!(plan, PlanV1::ZedFree);
-
-        let plan = serde_json::from_value::<PlanV1>(json!("ZedPro")).unwrap();
-        assert_eq!(plan, PlanV1::ZedPro);
-
-        let plan = serde_json::from_value::<PlanV1>(json!("ZedProTrial")).unwrap();
-        assert_eq!(plan, PlanV1::ZedProTrial);
-    }
 
     #[test]
     fn test_plan_v2_deserialize_snake_case() {

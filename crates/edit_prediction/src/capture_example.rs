@@ -13,6 +13,7 @@ use std::{collections::hash_map, fmt::Write as _, ops::Range, path::Path, sync::
 use text::{BufferSnapshot as TextBufferSnapshot, Point};
 
 pub(crate) const DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS: u16 = 10;
+pub(crate) const DEFAULT_STAFF_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS: u16 = 100;
 
 pub fn capture_example(
     project: Entity<Project>,
@@ -232,10 +233,15 @@ fn generate_timestamp_name() -> String {
 }
 
 pub(crate) fn should_sample_edit_prediction_example_capture(cx: &App) -> bool {
+    let default_rate = if cx.is_staff() {
+        DEFAULT_STAFF_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS
+    } else {
+        DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS
+    };
     let capture_rate = language::language_settings::all_language_settings(None, cx)
         .edit_predictions
         .example_capture_rate
-        .unwrap_or(DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS);
+        .unwrap_or(default_rate);
     cx.has_flag::<EditPredictionExampleCaptureFeatureFlag>()
         && rand::random::<u16>() % 10_000 < capture_rate
 }
