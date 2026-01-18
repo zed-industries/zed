@@ -3733,6 +3733,7 @@ dependencies = [
  "log",
  "lsp",
  "menu",
+ "project",
  "serde_json",
  "ui",
  "util",
