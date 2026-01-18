@@ -2084,7 +2084,7 @@ impl RemoteWorktree {
                 else {
                     continue;
                 };
-                for (abs_path, is_directory) in
+                for (abs_path, metadata) in
                     read_dir_items(local_fs.as_ref(), &root_path_to_copy).await?
                 {
                     let Some(relative_path) = abs_path
@@ -2095,7 +2095,7 @@ impl RemoteWorktree {
                     else {
                         continue;
                     };
-                    let content = if is_directory {
+                    let content = if metadata.is_dir {
                         None
                     } else {
                         Some(local_fs.load_bytes(&abs_path).await?)
@@ -2110,7 +2110,7 @@ impl RemoteWorktree {
                         project_id,
                         worktree_id,
                         path: target_path.to_proto(),
-                        is_directory,
+                        is_directory: metadata.is_dir,
                         content,
                     });
                 }

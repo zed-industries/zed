@@ -2033,7 +2033,7 @@ impl ProjectPanel {
             let task = self.do_operation(operation, cx);
             cx.spawn(async move |this, cx| {
                 let reverse_operation = task.await?;
-                this.update(cx, |this, _| this.redo_stack.push(reverse_operation))
+                this.update(cx, |this, _cx| this.redo_stack.push(reverse_operation))
             })
             .detach();
         }
@@ -2044,7 +2044,7 @@ impl ProjectPanel {
             let task = self.do_operation(operation, cx);
             cx.spawn(async |this, cx| {
                 let reverse_operation = task.await?;
-                this.update(cx, |this, cx| this.undo_stack.push(reverse_operation))
+                this.update(cx, |this, _cx| this.undo_stack.push(reverse_operation))
             })
             .detach();
         }

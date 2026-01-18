@@ -6509,6 +6509,7 @@ dependencies = [
  "text",
  "time",
  "util",
+ "uuid",
  "windows 0.61.3",
 ]
 
