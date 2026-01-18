@@ -32,7 +32,6 @@ use std::{
         atomic::{self, AtomicBool},
     },
 };
-use text::Point;
 use ui::{
     ButtonLike, ContextMenu, HighlightedLabel, Indicator, KeyBinding, ListItem, ListItemSpacing,
     PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
@@ -1575,7 +1574,14 @@ impl PickerDelegate for FileFinderDelegate {
                     active_editor
                         .downgrade()
                         .update_in(cx, |editor, window, cx| {
-                            editor.go_to_singleton_buffer_point(Point::new(row, col), window, cx);
+                            let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
+                                return;
+                            };
+                            let buffer_snapshot = buffer.read(cx).snapshot();
+                            let point = buffer_snapshot
+                                .text
+                                .point_for_row_and_column_from_external_source(row, col);
+                            editor.go_to_singleton_buffer_point(point, window, cx);
                         })
                         .log_err();
                 }
