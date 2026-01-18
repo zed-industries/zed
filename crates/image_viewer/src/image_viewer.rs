@@ -16,13 +16,12 @@ use language::File as _;
 use persistence::IMAGE_VIEWER;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
-use theme::Theme;
 use ui::{ScrollAxes, Scrollbars, Tooltip, WithScrollbar, prelude::*};
 use util::paths::PathExt;
 use workspace::{
-    ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
+    ItemId, ItemSettings, Pane, Workspace, WorkspaceId, delete_unloaded_items,
     invalid_item_view::InvalidItemView,
-    item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
+    item::{Item, ProjectItem, SerializableItem, TabContentParams},
 };
 
 pub use crate::image_info::*;
@@ -288,14 +287,6 @@ impl Item for ImageView {
             .then(|| FileIcons::get_icon(&path, cx))
             .flatten()
             .map(Icon::from_path)
-    }
-
-    fn breadcrumb_location(&self, _cx: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::Hidden
-    }
-
-    fn breadcrumbs(&self, _theme: &Theme, _cx: &App) -> Option<Vec<BreadcrumbText>> {
-        None
     }
 
     fn can_split(&self) -> bool {
