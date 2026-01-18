@@ -88,9 +88,6 @@ impl From<PathEvent> for PathBuf {
     }
 }
 
-/// Represents an item that has been moved to the OS trash.
-pub struct TrashItem(PathBuf);
-
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;
@@ -315,7 +312,7 @@ pub struct RealFs {
     executor: BackgroundExecutor,
     next_job_id: Arc<AtomicUsize>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
-    trash: Arc<Mutex<HashMap<PathBuf, TrashItem>>>,
+    trash: Arc<Mutex<HashMap<PathBuf, PathBuf>>>,
 }
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
@@ -675,9 +672,8 @@ impl Fs for RealFs {
         })
         .await?;
 
-        let trashed_item = trash_path.map(|trash_path| TrashItem(trash_path));
-        if let Some(trashed_item) = trashed_item {
-            self.trash.lock().insert(path.to_path_buf(), trashed_item);
+        if let Some(trash_path) = trash_path {
+            self.trash.lock().insert(path.to_path_buf(), trash_path);
         };
 
         Ok(())
@@ -784,14 +780,14 @@ impl Fs for RealFs {
     }
 
     async fn restore_from_trash(&self, path: &Path) -> Result<()> {
-        let trash_item = self
+        let trash_path = self
             .trash
             .lock()
             .remove(path)
             .ok_or_else(|| anyhow!("No trash item found for path: {}", path.display()))?;
 
         self.rename(
-            &trash_item.0,
+            &trash_path,
             path,
             RenameOptions {
                 overwrite: false,
@@ -1312,7 +1308,7 @@ struct FakeFsState {
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     moves: std::collections::HashMap<u64, PathBuf>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
-    trash: HashMap<PathBuf, TrashItem>,
+    trash: HashMap<PathBuf, PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -2660,14 +2656,13 @@ impl Fs for FakeFs {
         )
         .await?;
 
-        let trash_item = TrashItem(path_in_trash);
-        self.state.lock().trash.insert(original_path, trash_item);
+        self.state.lock().trash.insert(original_path, path_in_trash);
         Ok(())
     }
 
     async fn restore_from_trash(&self, path: &Path) -> Result<()> {
         let path = normalize_path(path);
-        let trash_item = self
+        let trash_path = self
             .state
             .lock()
             .trash
@@ -2675,7 +2670,7 @@ impl Fs for FakeFs {
             .ok_or_else(|| anyhow!("No trash item found for path: {}", path.display()))?;
 
         self.rename(
-            &trash_item.0,
+            &trash_path,
             &path,
             RenameOptions {
                 overwrite: false,
