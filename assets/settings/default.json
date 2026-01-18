@@ -2233,8 +2233,6 @@
     },
   },
   // Common language server settings.
-  //
-  // Note that modifying most properties will require restarting the language servers to come into effect.
   "global_lsp_settings": {
     // Whether to show the LSP servers button in the status bar.
     "button": true,

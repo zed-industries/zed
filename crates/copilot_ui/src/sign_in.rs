@@ -5,10 +5,10 @@ use gpui::{
     Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled,
     Subscription, Window, WindowBounds, WindowOptions, div, point,
 };
+use project::project_settings::ProjectSettings;
 use ui::{ButtonLike, CommonAnimationExt, ConfiguredApiCard, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
-use workspace::{Toast, item::Settings, Workspace, notifications::NotificationId};
-use project::project_settings::ProjectSettings;
+use workspace::{Toast, Workspace, item::Settings, notifications::NotificationId};
 
 const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
 const ERROR_LABEL: &str =
