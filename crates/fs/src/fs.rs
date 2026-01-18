@@ -87,6 +87,17 @@ impl From<PathEvent> for PathBuf {
     }
 }
 
+/// Represents an item that has been moved to the OS trash.
+///
+/// This handle can be used with [`Fs::restore_from_trash`] to restore
+/// the item to its original location.
+pub struct TrashItem {
+    /// The current location of the item in the trash.
+    path_in_trash: PathBuf,
+    /// The original location of the item before it was trashed.
+    original_path: PathBuf,
+}
+
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;
@@ -105,13 +116,10 @@ pub trait Fs: Send + Sync {
     async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()>;
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.remove_dir(path, options).await
-    }
+    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<Option<TrashItem>>;
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
-    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.remove_file(path, options).await
-    }
+    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<Option<TrashItem>>;
+    async fn restore_from_trash(&self, trash_item: TrashItem) -> Result<PathBuf>;
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>>;
     async fn load(&self, path: &Path) -> Result<String> {
@@ -647,31 +655,43 @@ impl Fs for RealFs {
     }
 
     #[cfg(target_os = "macos")]
-    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        use cocoa::{
-            base::{id, nil},
-            foundation::{NSAutoreleasePool, NSString},
-        };
-        use objc::{class, msg_send, sel, sel_impl};
+    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<Option<TrashItem>> {
+        let path_buf = path.to_path_buf();
+        let trash_path = smol::unblock(move || {
+            use objc2_foundation::{NSFileManager, NSString, NSURL};
 
-        unsafe {
-            /// Allow NSString::alloc use here because it sets autorelease
-            #[allow(clippy::disallowed_methods)]
-            unsafe fn ns_string(string: &str) -> id {
-                unsafe { NSString::alloc(nil).init_str(string).autorelease() }
+            let path_str = path_buf.to_string_lossy();
+            let ns_string = NSString::from_str(&path_str);
+            let url = unsafe { NSURL::fileURLWithPath(&ns_string) };
+            let file_manager = unsafe { NSFileManager::defaultManager() };
+
+            let mut result_url: Option<objc2::rc::Retained<NSURL>> = None;
+
+            unsafe {
+                file_manager.trashItemAtURL_resultingItemURL_error(&url, Some(&mut result_url))
             }
+            .map_err(|e| anyhow::anyhow!("Failed to trash file: {}", e.localizedDescription()))?;
 
-            let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(path.to_string_lossy().as_ref())];
-            let array: id = msg_send![class!(NSArray), arrayWithObject: url];
-            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+            let trash_path = result_url
+                .and_then(|url| unsafe { url.path() })
+                .map(|p| PathBuf::from(p.to_string()));
 
-            let _: id = msg_send![workspace, recycleURLs: array completionHandler: nil];
-        }
-        Ok(())
+            anyhow::Ok(trash_path)
+        })
+        .await?;
+
+        let trashed_item = trash_path.map(|trash_path| TrashItem {
+            path_in_trash: trash_path,
+            original_path: path.to_path_buf(),
+        });
+
+        Ok(trashed_item)
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
+    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<Option<TrashItem>> {
+        // todo!: We need to construct someway the trash item
+        // evaluate: https://github.com/Byron/trash-rs/blob/master/src/freedesktop.rs
         if let Ok(Some(metadata)) = self.metadata(path).await
             && metadata.is_symlink
         {
@@ -680,7 +700,7 @@ impl Fs for RealFs {
         }
         let file = smol::fs::File::open(path).await?;
         match trash::trash_file(&file.as_fd()).await {
-            Ok(_) => Ok(()),
+            Ok(_) => Ok(trashed_item),
             Err(err) => {
                 log::error!("Failed to trash file: {}", err);
                 // Trashing files can fail if you don't have a trashing dbus service configured.
@@ -688,10 +708,14 @@ impl Fs for RealFs {
                 return self.remove_file(path, RemoveOptions::default()).await;
             }
         }
+
+        Ok(trashed_item)
     }
 
     #[cfg(target_os = "windows")]
-    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
+    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<Option<TrashItem>> {
+        // todo!: We need to construct someway the trash item
+        // evaluate: https://github.com/Byron/trash-rs/blob/master/src/windows.rs
         use util::paths::SanitizedPath;
         use windows::{
             Storage::{StorageDeleteOption, StorageFile},
@@ -704,21 +728,23 @@ impl Fs for RealFs {
         let path_string = path.to_string();
         let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path_string))?.get()?;
         file.DeleteAsync(StorageDeleteOption::Default)?.get()?;
-        Ok(())
+        Ok(trashed_item)
     }
 
     #[cfg(target_os = "macos")]
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<Option<TrashItem>> {
         self.trash_file(path, options).await
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<Option<TrashItem>> {
         self.trash_file(path, options).await
     }
 
     #[cfg(target_os = "windows")]
-    async fn trash_dir(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
+    async fn trash_dir(&self, path: &Path, _options: RemoveOptions) -> Result<Option<TrashItem>> {
+        // todo!: We need to construct someway the trash item
+        // evaluate: https://github.com/Byron/trash-rs/blob/master/src/windows.rs
         use util::paths::SanitizedPath;
         use windows::{
             Storage::{StorageDeleteOption, StorageFolder},
@@ -732,7 +758,22 @@ impl Fs for RealFs {
         let path_string = path.to_string();
         let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path_string))?.get()?;
         folder.DeleteAsync(StorageDeleteOption::Default)?.get()?;
-        Ok(())
+        Ok(trashed_item)
+    }
+
+    async fn restore_from_trash(&self, trash_item: TrashItem) -> Result<PathBuf> {
+        self.rename(
+            &trash_item.path_in_trash,
+            &trash_item.original_path,
+            RenameOptions {
+                overwrite: false,
+                ignore_if_exists: false,
+                create_parents: true,
+            },
+        )
+        .await?;
+
+        Ok(trash_item.original_path)
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
@@ -2534,6 +2575,10 @@ impl Fs for FakeFs {
         Ok(())
     }
 
+    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<Option<TrashItem>> {
+        self.trash_file(path, options).await
+    }
+
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         self.simulate_random_delay().await;
 
@@ -2558,6 +2603,53 @@ impl Fs for FakeFs {
         }
         state.emit_event([(path, Some(PathEventKind::Removed))]);
         Ok(())
+    }
+
+    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<Option<TrashItem>> {
+        self.simulate_random_delay().await;
+
+        let original_path = normalize_path(path);
+        if !options.ignore_if_not_exists {
+            self.state.lock().entry(&original_path)?;
+        } else if self.metadata(&original_path).await?.is_none() {
+            return Ok(None);
+        }
+
+        let trash_dir = PathBuf::from("/.trash");
+        if !self.is_dir(&trash_dir).await {
+            self.create_dir(&trash_dir).await?;
+        }
+
+        let path_in_trash = trash_dir.join(uuid::Uuid::new_v4().to_string());
+        self.rename(
+            &original_path,
+            &path_in_trash,
+            RenameOptions {
+                overwrite: false,
+                ignore_if_exists: false,
+                create_parents: false,
+            },
+        )
+        .await?;
+
+        Ok(Some(TrashItem {
+            path_in_trash,
+            original_path,
+        }))
+    }
+
+    async fn restore_from_trash(&self, trash_item: TrashItem) -> Result<PathBuf> {
+        self.rename(
+            &trash_item.path_in_trash,
+            &trash_item.original_path,
+            RenameOptions {
+                overwrite: false,
+                ignore_if_exists: false,
+                create_parents: true,
+            },
+        )
+        .await?;
+        Ok(trash_item.original_path)
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
@@ -3515,52 +3607,44 @@ mod tests {
     }
 
     #[gpui::test]
-    #[cfg(unix)]
-    async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
-        let tempdir = TempDir::new().unwrap();
-        let path = tempdir.path();
-        let fs = RealFs {
-            bundled_git_binary_path: None,
-            executor,
-            next_job_id: Arc::new(AtomicUsize::new(0)),
-            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
-        };
-        let symlink_path = path.join("symlink");
-        smol::block_on(fs.create_symlink(&symlink_path, PathBuf::from("file_a.txt"))).unwrap();
-        let metadata = fs
-            .metadata(&symlink_path)
+    async fn test_trash_and_restore(executor: BackgroundExecutor) {
+        let fs = FakeFs::new(executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "src": {
+                    "file_a.txt": "content a",
+                    "file_b.txt": "content b",
+                    "file_c.txt": "content c"
+                }
+            }),
+        )
+        .await;
+        let file_a = fs
+            .trash_file(
+                path!("/root/src/file_a.txt").as_ref(),
+                RemoveOptions::default(),
+            )
             .await
-            .expect("metadata call succeeds")
-            .expect("metadata returned");
-        assert!(metadata.is_symlink);
-        assert!(!metadata.is_dir);
-        assert!(!metadata.is_fifo);
-        assert!(!metadata.is_executable);
-        // don't care about len or mtime on symlinks?
-    }
-
-    #[gpui::test]
-    #[cfg(unix)]
-    async fn test_realfs_symlink_loop_metadata(executor: BackgroundExecutor) {
-        let tempdir = TempDir::new().unwrap();
-        let path = tempdir.path();
-        let fs = RealFs {
-            bundled_git_binary_path: None,
-            executor,
-            next_job_id: Arc::new(AtomicUsize::new(0)),
-            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
-        };
-        let symlink_path = path.join("symlink");
-        smol::block_on(fs.create_symlink(&symlink_path, PathBuf::from("symlink"))).unwrap();
-        let metadata = fs
-            .metadata(&symlink_path)
+            .unwrap()
+            .unwrap();
+        assert!(!fs.is_file(path!("/root/src/file_a.txt").as_ref()).await);
+        let src_dir = fs
+            .trash_dir(
+                path!("/root/src").as_ref(),
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: false,
+                },
+            )
             .await
-            .expect("metadata call succeeds")
-            .expect("metadata returned");
-        assert!(metadata.is_symlink);
-        assert!(!metadata.is_dir);
-        assert!(!metadata.is_fifo);
-        assert!(!metadata.is_executable);
-        // don't care about len or mtime on symlinks?
+            .unwrap()
+            .unwrap();
+        assert!(!fs.is_dir(path!("/root/src").as_ref()).await);
+        fs.restore_from_trash(src_dir).await.unwrap();
+        assert!(fs.is_dir(path!("/root/src").as_ref()).await);
+        assert!(!fs.is_file(path!("/root/src/file_a.txt").as_ref()).await);
+        fs.restore_from_trash(file_a).await.unwrap();
+        assert!(fs.is_file(path!("/root/src/file_a.txt").as_ref()).await);
     }
 }

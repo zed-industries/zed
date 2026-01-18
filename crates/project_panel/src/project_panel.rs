@@ -1,7 +1,8 @@
+mod project_panel_operation;
 mod project_panel_settings;
 mod utils;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use client::{ErrorCode, ErrorExt};
 use collections::{BTreeSet, HashMap, hash_map};
 use command_palette_hooks::CommandPaletteFilter;
@@ -76,6 +77,8 @@ use workspace::{
 use worktree::CreatedEntry;
 use zed_actions::{project_panel::ToggleFocus, workspace::OpenWithSystem};
 
+use crate::project_panel_operation::ProjectPanelOperation;
+
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
@@ -144,6 +147,8 @@ pub struct ProjectPanel {
     sticky_items_count: usize,
     last_reported_update: Instant,
     update_visible_entries_task: UpdateVisibleEntriesTask,
+    undo_stack: Vec<ProjectPanelOperation>,
+    redo_stack: Vec<ProjectPanelOperation>,
     state: State,
 }
 
@@ -345,6 +350,10 @@ actions!(
         SelectPrevDirectory,
         /// Opens a diff view to compare two marked files.
         CompareMarkedFiles,
+        /// Undoes the last file operation.
+        Undo,
+        /// Redoes the last undone file operation.
+        Redo,
     ]
 );
 
@@ -837,6 +846,8 @@ impl ProjectPanel {
                     unfolded_dir_ids: Default::default(),
                 },
                 update_visible_entries_task: Default::default(),
+                undo_stack: Default::default(),
+                redo_stack: Default::default(),
             };
             this.update_visible_entries(None, false, false, window, cx);
 
@@ -1175,7 +1186,10 @@ impl ProjectPanel {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))
                             })
                             .when(!is_root, |menu| {
-                                menu.action("Delete", Box::new(Delete { skip_prompt: false }))
+                                menu.action(
+                                    "Delete Permanently",
+                                    Box::new(Delete { skip_prompt: false }),
+                                )
                             })
                             .when(!is_remote && is_root, |menu| {
                                 menu.separator()
@@ -1761,10 +1775,12 @@ impl ProjectPanel {
                 return None;
             }
             edited_entry_id = entry.id;
-            edit_task = self.project.update(cx, |project, cx| {
-                project.rename_entry(entry.id, (worktree_id, new_path).into(), cx)
-            });
+            edit_task =
+                self.confirm_undoable_rename_entry(entry.id, (worktree_id, new_path).into(), cx);
         };
+
+        // Reborrow so lifetime does not overlap `self.confirm_undoable_rename_entry()`
+        let edit_state = self.state.edit_state.as_mut()?;
 
         if refocus {
             window.focus(&self.focus_handle, cx);
@@ -2007,6 +2023,90 @@ impl ProjectPanel {
         }
     }
 
+    fn record_undoable(&mut self, operation: ProjectPanelOperation) {
+        self.redo_stack.clear();
+        self.undo_stack.push(operation);
+    }
+
+    pub fn undo(&mut self, _: &Undo, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(operation) = self.undo_stack.pop() {
+            let task = self.do_operation(operation, cx);
+            cx.spawn(async move |this, cx| {
+                let reverse_operation = task.await?;
+                this.update(cx, |this, _cx| this.redo_stack.push(reverse_operation))
+            })
+            .detach();
+        }
+    }
+
+    fn redo(&mut self, _: &Redo, _window: &mut Window, cx: &mut Context<Self>) -> () {
+        if let Some(operation) = self.redo_stack.pop() {
+            let task = self.do_operation(operation, cx);
+            cx.spawn(async |this, cx| {
+                let reverse_operation = task.await?;
+                this.update(cx, |this, _cx| this.undo_stack.push(reverse_operation))
+            })
+            .detach();
+        }
+    }
+
+    /// Does an undoable operation and returns the reverse operation.
+    fn do_operation(
+        &self,
+        operation: ProjectPanelOperation,
+        cx: &mut Context<'_, Self>,
+    ) -> Task<Result<ProjectPanelOperation>> {
+        match operation {
+            ProjectPanelOperation::Rename { old_path, new_path } => {
+                let Some(entry) = self.project.read(cx).entry_for_path(&old_path, cx) else {
+                    return Task::ready(Err(anyhow!("no entry for path")));
+                };
+                let task = self.confirm_rename_entry(entry.id, new_path, cx);
+                cx.spawn(async move |_, _| {
+                    let (_created_entry, reverse_operation) = task.await?;
+                    Ok(reverse_operation)
+                })
+            }
+        }
+    }
+
+    fn confirm_undoable_rename_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        new_path: ProjectPath,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<CreatedEntry>> {
+        let rename_task = self.confirm_rename_entry(entry_id, new_path, cx);
+        cx.spawn(async move |this, cx| {
+            let (new_entry, operation) = rename_task.await?;
+            this.update(cx, |this, _cx| this.record_undoable(operation))
+                .ok();
+            Ok(new_entry)
+        })
+    }
+
+    fn confirm_rename_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        new_path: ProjectPath,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(CreatedEntry, ProjectPanelOperation)>> {
+        let Some(old_path) = self.project.read(cx).path_for_entry(entry_id, cx) else {
+            return Task::ready(Err(anyhow!("no path for entry")));
+        };
+        let rename_task = self.project.update(cx, |project, cx| {
+            project.rename_entry(entry_id, new_path.clone(), cx)
+        });
+        cx.spawn(async move |_, _| {
+            let created_entry = rename_task.await?;
+            let reverse_operation = ProjectPanelOperation::Rename {
+                old_path: new_path,
+                new_path: old_path,
+            };
+            Ok((created_entry, reverse_operation))
+        })
+    }
+
     fn rename_impl(
         &mut self,
         selection: Option<Range<usize>>,
@@ -2204,6 +2304,11 @@ impl ProjectPanel {
             }
             let answer = if !skip_prompt {
                 let operation = if trash { "Trash" } else { "Delete" };
+                let permanent_warning = if trash {
+                    ""
+                } else {
+                    "\n\nThis is PERMANENT and CANNOT be undone."
+                };
                 let prompt = match file_paths.first() {
                     Some((_, path)) if file_paths.len() == 1 => {
                         let unsaved_warning = if dirty_buffers > 0 {
@@ -2212,7 +2317,7 @@ impl ProjectPanel {
                             ""
                         };
 
-                        format!("{operation} {path}?{unsaved_warning}")
+                        format!("{operation} {path}?{unsaved_warning}{permanent_warning}")
                     }
                     _ => {
                         const CUTOFF_POINT: usize = 10;
@@ -2244,7 +2349,7 @@ impl ProjectPanel {
                         };
 
                         format!(
-                            "Do you want to {} the following {} files?\n{}{unsaved_warning}",
+                            "Do you want to {} the following {} files?\n{}{unsaved_warning}{permanent_warning}",
                             operation.to_lowercase(),
                             file_paths.len(),
                             names.join("\n")
@@ -2927,9 +3032,11 @@ impl ProjectPanel {
                     self.create_paste_path(clipboard_entry, self.selected_sub_entry(cx)?, cx)?;
                 let clip_entry_id = clipboard_entry.entry_id;
                 let task = if clipboard_entries.is_cut() {
-                    let task = self.project.update(cx, |project, cx| {
-                        project.rename_entry(clip_entry_id, (worktree_id, new_path).into(), cx)
-                    });
+                    let task = self.confirm_undoable_rename_entry(
+                        clip_entry_id,
+                        (worktree_id, new_path).into(),
+                        cx,
+                    );
                     PasteTask::Rename(task)
                 } else {
                     let task = self.project.update(cx, |project, cx| {
@@ -3267,6 +3374,8 @@ impl ProjectPanel {
             return None;
         }
 
+        let this = cx.entity();
+
         let (destination_worktree, rename_task) = self.project.update(cx, |project, cx| {
             let Some(source_path) = project.path_for_entry(entry_to_move, cx) else {
                 return (None, None);
@@ -3291,13 +3400,13 @@ impl ProjectPanel {
 
             let mut new_path = destination_dir.to_rel_path_buf();
             new_path.push(source_name);
-            let rename_task = (new_path.as_rel_path() != source_path.path.as_ref()).then(|| {
-                project.rename_entry(
-                    entry_to_move,
-                    (destination_worktree_id, new_path).into(),
-                    cx,
-                )
-            });
+            let rename_task = this.update(cx, |this, cx| {
+                    this.confirm_undoable_rename_entry(
+                        entry_to_move,
+                        (destination_worktree_id, new_path).into(),
+                        cx,
+                    )
+                });
 
             (
                 project.worktree_id_for_entry(destination_entry, cx),
@@ -6031,6 +6140,8 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
+                .on_action(cx.listener(Self::undo))
+                .on_action(cx.listener(Self::redo))
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))

@@ -6492,7 +6492,6 @@ dependencies = [
  "ashpd",
  "async-tar",
  "async-trait",
- "cocoa 0.26.0",
  "collections",
  "fsevent",
  "futures 0.3.31",
@@ -6503,7 +6502,8 @@ dependencies = [
  "libc",
  "log",
  "notify 8.2.0",
- "objc",
+ "objc2",
+ "objc2-foundation",
  "parking_lot",
  "paths",
  "proto",
@@ -6515,6 +6515,7 @@ dependencies = [
  "text",
  "time",
  "util",
+ "uuid",
  "windows 0.61.3",
 ]
 

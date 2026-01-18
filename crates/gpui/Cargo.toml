@@ -157,7 +157,7 @@ foreign-types = "0.5"
 log.workspace = true
 media.workspace = true
 objc.workspace = true
-objc2 = { version = "0.6", optional = true }
+objc2 = { workspace = true, optional = true }
 objc2-metal = { version = "0.3", optional = true }
 mach2.workspace = true
 #TODO: replace with "objc2"
