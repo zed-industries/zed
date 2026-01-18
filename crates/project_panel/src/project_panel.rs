@@ -1175,7 +1175,10 @@ impl ProjectPanel {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))
                             })
                             .when(!is_root, |menu| {
-                                menu.action("Delete", Box::new(Delete { skip_prompt: false }))
+                                menu.action(
+                                    "Delete Permanently",
+                                    Box::new(Delete { skip_prompt: false }),
+                                )
                             })
                             .when(!is_remote && is_root, |menu| {
                                 menu.separator()
@@ -2204,6 +2207,11 @@ impl ProjectPanel {
             }
             let answer = if !skip_prompt {
                 let operation = if trash { "Trash" } else { "Delete" };
+                let permanent_warning = if trash {
+                    ""
+                } else {
+                    "\n\nThis is PERMANENT and CANNOT be undone."
+                };
                 let prompt = match file_paths.first() {
                     Some((_, path)) if file_paths.len() == 1 => {
                         let unsaved_warning = if dirty_buffers > 0 {
@@ -2212,7 +2220,7 @@ impl ProjectPanel {
                             ""
                         };
 
-                        format!("{operation} {path}?{unsaved_warning}")
+                        format!("{operation} {path}?{unsaved_warning}{permanent_warning}")
                     }
                     _ => {
                         const CUTOFF_POINT: usize = 10;
@@ -2244,7 +2252,7 @@ impl ProjectPanel {
                         };
 
                         format!(
-                            "Do you want to {} the following {} files?\n{}{unsaved_warning}",
+                            "Do you want to {} the following {} files?\n{}{unsaved_warning}{permanent_warning}",
                             operation.to_lowercase(),
                             file_paths.len(),
                             names.join("\n")
