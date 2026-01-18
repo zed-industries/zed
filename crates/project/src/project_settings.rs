@@ -146,10 +146,7 @@ impl GlobalLspSettings {
     /// Zero durations are treated as no timeout by language servers, so code using this in an async context can
     /// simply call unwrap_or_default.
     pub const fn get_request_timeout(&self) -> Duration {
-        match self.request_timeout {
-            0 => Duration::ZERO,
-            _ => Duration::from_secs(self.request_timeout),
-        }
+        Duration::from_secs(self.request_timeout)
     }
 }
 

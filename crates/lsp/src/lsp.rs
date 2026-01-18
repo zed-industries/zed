@@ -118,8 +118,6 @@ pub struct LanguageServer {
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     server: Arc<Mutex<Option<Child>>>,
     workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
-    /// The user-configured timeout for performing LSP requests.
-    request_timeout: Duration,
     root_uri: Uri,
 }
 
@@ -337,7 +335,6 @@ impl LanguageServer {
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
-        request_timeout: Duration,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
@@ -383,7 +380,6 @@ impl LanguageServer {
             binary,
             root_uri,
             workspace_folders,
-            request_timeout,
             cx,
             move |notification| {
                 log::info!(
@@ -411,7 +407,6 @@ impl LanguageServer {
         binary: LanguageServerBinary,
         root_uri: Uri,
         workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
-        request_timeout: Duration,
         cx: &mut AsyncApp,
         on_unhandled_notification: F,
     ) -> Self
@@ -536,7 +531,6 @@ impl LanguageServer {
             output_done_rx: Mutex::new(Some(output_done_rx)),
             server: Arc::new(Mutex::new(server)),
             workspace_folders,
-            request_timeout,
             root_uri,
         }
     }
@@ -931,11 +925,12 @@ impl LanguageServer {
         mut self,
         params: InitializeParams,
         configuration: Arc<DidChangeConfigurationParams>,
+        timeout: Duration,
         cx: &App,
     ) -> Task<Result<Arc<Self>>> {
         cx.background_spawn(async move {
             let response = self
-                .request::<request::Initialize>(params)
+                .request::<request::Initialize>(params, timeout)
                 .await
                 .into_response()
                 .with_context(|| {
@@ -958,7 +953,10 @@ impl LanguageServer {
     }
 
     /// Sends a shutdown request to the language server process and prepares the [`LanguageServer`] to be dropped.
-    pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>> + use<>> {
+    pub fn shutdown(
+        &self,
+        request_timeout: Duration,
+    ) -> Option<impl 'static + Send + Future<Output = Option<()>> + use<>> {
         let tasks = self.io_tasks.lock().take()?;
 
         let response_handlers = self.response_handlers.clone();
@@ -973,7 +971,7 @@ impl LanguageServer {
             &outbound_tx,
             &notification_serializers,
             &executor,
-            self.request_timeout,
+            request_timeout,
             (),
         );
 
@@ -1206,7 +1204,7 @@ impl LanguageServer {
     }
 
     /// Get the individual configuration settings for the running language server.
-    /// Does not include globally applied settings (which are stored in ProjectSettings.GlobalLspSettings).
+    /// Does not include globally applied settings (which are stored in ProjectSettings::GlobalLspSettings).
     pub fn configuration(&self) -> &Value {
         &self.configuration.settings
     }
@@ -1227,6 +1225,7 @@ impl LanguageServer {
     pub fn request<T: request::Request>(
         &self,
         params: T::Params,
+        request_timeout: Duration,
     ) -> impl LspRequestFuture<T::Result> + use<T>
     where
         T::Result: 'static + Send,
@@ -1237,7 +1236,7 @@ impl LanguageServer {
             &self.outbound_tx,
             &self.notification_tx,
             &self.executor,
-            self.request_timeout,
+            request_timeout,
             params,
         )
     }
@@ -1408,15 +1407,7 @@ impl LanguageServer {
     }
 
     /// Obtain a request timer for the LSP.
-    /// If specified, runs no less than `min_timeout`.
-    pub fn request_timer(&self, min_timeout: Option<Duration>) -> impl Future<Output = String> {
-        let timeout = if let Some(min_timeout) = min_timeout
-            && self.request_timeout != Duration::ZERO
-        {
-            self.request_timeout.max(min_timeout)
-        } else {
-            self.request_timeout
-        };
+    pub fn request_timer(&self, timeout: Duration) -> impl Future<Output = String> {
         Self::request_timeout_future(self.executor.clone(), timeout)
     }
 
@@ -1576,7 +1567,7 @@ impl LanguageServer {
 
 impl Drop for LanguageServer {
     fn drop(&mut self) {
-        if let Some(shutdown) = self.shutdown() {
+        if let Some(shutdown) = self.shutdown(DEFAULT_LSP_REQUEST_TIMEOUT) {
             self.executor.spawn(shutdown).detach();
         }
     }
@@ -1696,7 +1687,6 @@ impl FakeLanguageServer {
             binary.clone(),
             root,
             Some(workspace_folders.clone()),
-            DEFAULT_LSP_REQUEST_TIMEOUT,
             cx,
             |_| false,
         );
@@ -1716,7 +1706,6 @@ impl FakeLanguageServer {
                     binary,
                     Self::root_path(),
                     Some(workspace_folders),
-                    DEFAULT_LSP_REQUEST_TIMEOUT,
                     cx,
                     move |msg| {
                         notifications_tx
@@ -1790,12 +1779,16 @@ impl FakeLanguageServer {
     }
 
     /// See [`LanguageServer::request`].
-    pub async fn request<T>(&self, params: T::Params) -> ConnectionResult<T::Result>
+    pub async fn request<T>(
+        &self,
+        params: T::Params,
+        timeout: Duration,
+    ) -> ConnectionResult<T::Result>
     where
         T: request::Request,
         T::Result: 'static + Send,
     {
-        self.server.request::<T>(params).await
+        self.server.request::<T>(params, timeout).await
     }
 
     /// Attempts [`Self::try_receive_notification`], unwrapping if it has not received the specified type yet.
@@ -1954,7 +1947,12 @@ mod tests {
                 let configuration = DidChangeConfigurationParams {
                     settings: Default::default(),
                 };
-                server.initialize(params, configuration.into(), cx)
+                server.initialize(
+                    params,
+                    configuration.into(),
+                    DEFAULT_LSP_REQUEST_TIMEOUT,
+                    cx,
+                )
             })
             .await
             .unwrap();

@@ -436,10 +436,6 @@ impl LocalLspStore {
         );
         let pending_workspace_folders = Arc::<Mutex<BTreeSet<Uri>>>::default();
 
-        let request_timeout = ProjectSettings::get_global(cx)
-            .global_lsp_settings
-            .get_request_timeout();
-
         let pending_server = cx.spawn({
             let adapter = adapter.clone();
             let server_name = adapter.name.clone();
@@ -474,7 +470,6 @@ impl LocalLspStore {
                     &worktree_abs_path,
                     code_action_kinds,
                     Some(pending_workspace_folders),
-                    request_timeout,
                     cx,
                 )
             }
@@ -538,9 +533,14 @@ impl LocalLspStore {
                     };
                     let language_server = cx
                         .update(|cx| {
+                            let request_timeout = ProjectSettings::get_global(cx)
+                                .global_lsp_settings
+                                .get_request_timeout();
+
                             language_server.initialize(
                                 initialization_params,
                                 Arc::new(did_change_configuration_params.clone()),
+                                request_timeout,
                                 cx,
                             )
                         })
@@ -1231,12 +1231,16 @@ impl LocalLspStore {
 
     fn shutdown_language_servers_on_quit(
         &mut self,
-        _: &mut Context<LspStore>,
+        cx: &mut Context<LspStore>,
     ) -> impl Future<Output = ()> + use<> {
+        let request_timeout = ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .get_request_timeout();
+
         let shutdown_futures = self
             .language_servers
             .drain()
-            .map(|(_, server_state)| Self::shutdown_server(server_state))
+            .map(|(_, server_state)| Self::shutdown_server(server_state, request_timeout))
             .collect::<Vec<_>>();
 
         async move {
@@ -1244,16 +1248,19 @@ impl LocalLspStore {
         }
     }
 
-    async fn shutdown_server(server_state: LanguageServerState) -> anyhow::Result<()> {
+    async fn shutdown_server(
+        server_state: LanguageServerState,
+        request_timeout: Duration,
+    ) -> anyhow::Result<()> {
         match server_state {
             LanguageServerState::Running { server, .. } => {
-                if let Some(shutdown) = server.shutdown() {
+                if let Some(shutdown) = server.shutdown(request_timeout) {
                     shutdown.await;
                 }
             }
             LanguageServerState::Starting { startup, .. } => {
                 if let Some(server) = startup.await
-                    && let Some(shutdown) = server.shutdown()
+                    && let Some(shutdown) = server.shutdown(request_timeout)
                 {
                     shutdown.await;
                 }
@@ -1514,20 +1521,24 @@ impl LocalLspStore {
         logger: zlog::Logger,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let (adapters_and_servers, settings) = lsp_store.update(cx, |lsp_store, cx| {
-            buffer.handle.update(cx, |buffer, cx| {
-                let adapters_and_servers = lsp_store
-                    .as_local()
-                    .unwrap()
-                    .language_servers_for_buffer(buffer, cx)
-                    .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
-                    .collect::<Vec<_>>();
-                let settings =
-                    language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
-                        .into_owned();
-                (adapters_and_servers, settings)
-            })
-        })?;
+        let (adapters_and_servers, settings, request_timeout) =
+            lsp_store.update(cx, |lsp_store, cx| {
+                buffer.handle.update(cx, |buffer, cx| {
+                    let adapters_and_servers = lsp_store
+                        .as_local()
+                        .unwrap()
+                        .language_servers_for_buffer(buffer, cx)
+                        .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
+                        .collect::<Vec<_>>();
+                    let settings =
+                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                            .into_owned();
+                    let request_timeout = ProjectSettings::get_global(cx)
+                        .global_lsp_settings
+                        .get_request_timeout();
+                    (adapters_and_servers, settings, request_timeout)
+                })
+            })?;
 
         /// Apply edits to the buffer that will become part of the formatting transaction.
         /// Fails if the buffer has been edited since the start of that transaction.
@@ -1826,7 +1837,10 @@ impl LocalLspStore {
 
                         zlog::trace!(logger => "Executing {}", describe_code_action(&action));
 
-                        if let Err(err) = Self::try_resolve_code_action(server, &mut action).await {
+                        if let Err(err) =
+                            Self::try_resolve_code_action(server, &mut action, request_timeout)
+                                .await
+                        {
                             zlog::error!(
                                 logger =>
                                 "Failed to resolve {}. Error: {}",
@@ -1988,125 +2002,131 @@ impl LocalLspStore {
                             )?;
                         }
 
-                        if let Some(command) = action.lsp_action.command() {
+                        // bail early if command is invalid
+                        let Some(command) = action.lsp_action.command() else {
+                            continue;
+                        };
+
+                        zlog::warn!(
+                            logger =>
+                            "Executing code action command '{}'. This may cause formatting to abort unnecessarily as well as splitting formatting into two entries in the undo history",
+                            &command.command,
+                        );
+
+                        let server_capabilities = server.capabilities();
+                        let available_commands = server_capabilities
+                            .execute_command_provider
+                            .as_ref()
+                            .map(|options| options.commands.as_slice())
+                            .unwrap_or_default();
+                        if !available_commands.contains(&command.command) {
                             zlog::warn!(
                                 logger =>
-                                "Executing code action command '{}'. This may cause formatting to abort unnecessarily as well as splitting formatting into two entries in the undo history",
+                                "Cannot execute a command {} not listed in the language server capabilities of server {}",
+                                command.command,
+                                server.name(),
+                            );
+                            continue;
+                        }
+
+                        // noop so we just ensure buffer hasn't been edited since resolving code actions
+                        extend_formatting_transaction(
+                            buffer,
+                            formatting_transaction_id,
+                            cx,
+                            |_, _| {},
+                        )?;
+                        zlog::info!(logger => "Executing command {}", &command.command);
+
+                        lsp_store.update(cx, |this, _| {
+                            this.as_local_mut()
+                                .unwrap()
+                                .last_workspace_edits_by_language_server
+                                .remove(&server.server_id());
+                        })?;
+
+                        let execute_command_result = server
+                            .request::<lsp::request::ExecuteCommand>(
+                                lsp::ExecuteCommandParams {
+                                    command: command.command.clone(),
+                                    arguments: command.arguments.clone().unwrap_or_default(),
+                                    ..Default::default()
+                                },
+                                request_timeout,
+                            )
+                            .await
+                            .into_response();
+
+                        if execute_command_result.is_err() {
+                            zlog::error!(
+                                logger =>
+                                "Failed to execute command '{}' as part of {}",
+                                &command.command,
+                                describe_code_action(&action),
+                            );
+                            continue 'actions;
+                        }
+
+                        let mut project_transaction_command = lsp_store.update(cx, |this, _| {
+                            this.as_local_mut()
+                                .unwrap()
+                                .last_workspace_edits_by_language_server
+                                .remove(&server.server_id())
+                                .unwrap_or_default()
+                        })?;
+
+                        if let Some(transaction) =
+                            project_transaction_command.0.remove(&buffer.handle)
+                        {
+                            zlog::trace!(
+                                logger =>
+                                "Successfully captured {} edits that resulted from command {}",
+                                transaction.edit_ids.len(),
                                 &command.command,
                             );
-
-                            // bail early if command is invalid
-                            let server_capabilities = server.capabilities();
-                            let available_commands = server_capabilities
-                                .execute_command_provider
-                                .as_ref()
-                                .map(|options| options.commands.as_slice())
-                                .unwrap_or_default();
-                            if !available_commands.contains(&command.command) {
-                                zlog::warn!(
-                                    logger =>
-                                    "Cannot execute a command {} not listed in the language server capabilities of server {}",
-                                    command.command,
-                                    server.name(),
-                                );
-                                continue;
-                            }
-
-                            // noop so we just ensure buffer hasn't been edited since resolving code actions
-                            extend_formatting_transaction(
-                                buffer,
-                                formatting_transaction_id,
-                                cx,
-                                |_, _| {},
-                            )?;
-                            zlog::info!(logger => "Executing command {}", &command.command);
-
-                            lsp_store.update(cx, |this, _| {
-                                this.as_local_mut()
-                                    .unwrap()
-                                    .last_workspace_edits_by_language_server
-                                    .remove(&server.server_id());
-                            })?;
-
-                            let execute_command_result = server
-                                .request::<lsp::request::ExecuteCommand>(
-                                    lsp::ExecuteCommandParams {
-                                        command: command.command.clone(),
-                                        arguments: command.arguments.clone().unwrap_or_default(),
-                                        ..Default::default()
-                                    },
-                                )
-                                .await
-                                .into_response();
-
-                            if execute_command_result.is_err() {
-                                zlog::error!(
-                                    logger =>
-                                    "Failed to execute command '{}' as part of {}",
-                                    &command.command,
-                                    describe_code_action(&action),
-                                );
-                                continue 'actions;
-                            }
-
-                            let mut project_transaction_command =
-                                lsp_store.update(cx, |this, _| {
-                                    this.as_local_mut()
-                                        .unwrap()
-                                        .last_workspace_edits_by_language_server
-                                        .remove(&server.server_id())
-                                        .unwrap_or_default()
-                                })?;
-
-                            if let Some(transaction) =
-                                project_transaction_command.0.remove(&buffer.handle)
-                            {
-                                zlog::trace!(
-                                    logger =>
-                                    "Successfully captured {} edits that resulted from command {}",
-                                    transaction.edit_ids.len(),
-                                    &command.command,
-                                );
-                                let transaction_id_project_transaction = transaction.id;
-                                buffer.handle.update(cx, |buffer, _| {
-                                    // it may have been removed from history if push_to_history was
-                                    // false in deserialize_workspace_edit. If so push it so we
-                                    // can merge it with the format transaction
-                                    // and pop the combined transaction off the history stack
-                                    // later if push_to_history is false
-                                    if buffer.get_transaction(transaction.id).is_none() {
-                                        buffer.push_transaction(transaction, Instant::now());
-                                    }
-                                    buffer.merge_transactions(
-                                        transaction_id_project_transaction,
-                                        formatting_transaction_id,
-                                    );
-                                });
-                            }
-
-                            if !project_transaction_command.0.is_empty() {
-                                let mut extra_buffers = String::new();
-                                for buffer in project_transaction_command.0.keys() {
-                                    buffer.read_with(cx, |b, cx| {
-                                        if let Some(path) = b.project_path(cx) {
-                                            if !extra_buffers.is_empty() {
-                                                extra_buffers.push_str(", ");
-                                            }
-                                            extra_buffers.push_str(path.path.as_unix_str());
-                                        }
-                                    });
+                            let transaction_id_project_transaction = transaction.id;
+                            buffer.handle.update(cx, |buffer, _| {
+                                // it may have been removed from history if push_to_history was
+                                // false in deserialize_workspace_edit. If so push it so we
+                                // can merge it with the format transaction
+                                // and pop the combined transaction off the history stack
+                                // later if push_to_history is false
+                                if buffer.get_transaction(transaction.id).is_none() {
+                                    buffer.push_transaction(transaction, Instant::now());
                                 }
-                                zlog::warn!(
-                                    logger =>
-                                    "Unexpected edits to buffers other than the buffer actively being formatted due to command {}. Impacted buffers: [{}].",
-                                    &command.command,
-                                    extra_buffers,
+                                buffer.merge_transactions(
+                                    transaction_id_project_transaction,
+                                    formatting_transaction_id,
                                 );
-                                // NOTE: if this case is hit, the proper thing to do is to for each buffer, merge the extra transaction
-                                // into the existing transaction in project_transaction if there is one, and if there isn't one in project_transaction,
-                                // add it so it's included, and merge it into the format transaction when its created later
-                            }
+                            });
                         }
+
+                        if project_transaction_command.0.is_empty() {
+                            continue;
+                        }
+
+                        let mut extra_buffers = String::new();
+                        for buffer in project_transaction_command.0.keys() {
+                            buffer.read_with(cx, |b, cx| {
+                                let Some(path) = b.project_path(cx) else {
+                                    return;
+                                };
+
+                                if !extra_buffers.is_empty() {
+                                    extra_buffers.push_str(", ");
+                                }
+                                extra_buffers.push_str(path.path.as_unix_str());
+                            });
+                        }
+                        zlog::warn!(
+                            logger =>
+                            "Unexpected edits to buffers other than the buffer actively being formatted due to command {}. Impacted buffers: [{}].",
+                            &command.command,
+                            extra_buffers,
+                        );
+                        // NOTE: if this case is hit, the proper thing to do is to for each buffer, merge the extra transaction
+                        // into the existing transaction in project_transaction if there is one, and if there isn't one in project_transaction,
+                        // add it so it's included, and merge it into the format transaction when its created later
                     }
                 }
             }
@@ -2136,6 +2156,11 @@ impl LocalLspStore {
         let uri = file_path_to_lsp_url(abs_path)?;
         let text_document = lsp::TextDocumentIdentifier::new(uri);
 
+        let request_timeout = cx.update(|app| {
+            ProjectSettings::get_global(app)
+                .global_lsp_settings
+                .get_request_timeout()
+        });
         let lsp_edits = {
             let mut lsp_ranges = Vec::new();
             this.update(cx, |_this, cx| {
@@ -2155,12 +2180,15 @@ impl LocalLspStore {
             let mut edits = None;
             for range in lsp_ranges {
                 if let Some(mut edit) = language_server
-                    .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
-                        text_document: text_document.clone(),
-                        range,
-                        options: lsp_command::lsp_formatting_options(settings),
-                        work_done_progress_params: Default::default(),
-                    })
+                    .request::<lsp::request::RangeFormatting>(
+                        lsp::DocumentRangeFormattingParams {
+                            text_document: text_document.clone(),
+                            range,
+                            options: lsp_command::lsp_formatting_options(settings),
+                            work_done_progress_params: Default::default(),
+                        },
+                        request_timeout,
+                    )
                     .await
                     .into_response()?
                 {
@@ -2204,14 +2232,23 @@ impl LocalLspStore {
         let formatting_provider = capabilities.document_formatting_provider.as_ref();
         let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
 
+        let request_timeout = cx.update(|app| {
+            ProjectSettings::get_global(app)
+                .global_lsp_settings
+                .get_request_timeout()
+        });
+
         let lsp_edits = if matches!(formatting_provider, Some(p) if *p != OneOf::Left(false)) {
             let _timer = zlog::time!(logger => "format-full");
             language_server
-                .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
-                    text_document,
-                    options: lsp_command::lsp_formatting_options(settings),
-                    work_done_progress_params: Default::default(),
-                })
+                .request::<lsp::request::Formatting>(
+                    lsp::DocumentFormattingParams {
+                        text_document,
+                        options: lsp_command::lsp_formatting_options(settings),
+                        work_done_progress_params: Default::default(),
+                    },
+                    request_timeout,
+                )
                 .await
                 .into_response()?
         } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
@@ -2219,12 +2256,15 @@ impl LocalLspStore {
             let buffer_start = lsp::Position::new(0, 0);
             let buffer_end = buffer.read_with(cx, |b, _| point_to_lsp(b.max_point_utf16()));
             language_server
-                .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
-                    text_document: text_document.clone(),
-                    range: lsp::Range::new(buffer_start, buffer_end),
-                    options: lsp_command::lsp_formatting_options(settings),
-                    work_done_progress_params: Default::default(),
-                })
+                .request::<lsp::request::RangeFormatting>(
+                    lsp::DocumentRangeFormattingParams {
+                        text_document: text_document.clone(),
+                        range: lsp::Range::new(buffer_start, buffer_end),
+                        options: lsp_command::lsp_formatting_options(settings),
+                        work_done_progress_params: Default::default(),
+                    },
+                    request_timeout,
+                )
                 .await
                 .into_response()?
         } else {
@@ -2319,6 +2359,7 @@ impl LocalLspStore {
     async fn try_resolve_code_action(
         lang_server: &LanguageServer,
         action: &mut CodeAction,
+        request_timeout: Duration,
     ) -> anyhow::Result<()> {
         match &mut action.lsp_action {
             LspAction::Action(lsp_action) => {
@@ -2328,7 +2369,10 @@ impl LocalLspStore {
                     && (lsp_action.command.is_none() || lsp_action.edit.is_none())
                 {
                     **lsp_action = lang_server
-                        .request::<lsp::request::CodeActionResolveRequest>(*lsp_action.clone())
+                        .request::<lsp::request::CodeActionResolveRequest>(
+                            *lsp_action.clone(),
+                            request_timeout,
+                        )
                         .await
                         .into_response()?;
                 }
@@ -2336,7 +2380,7 @@ impl LocalLspStore {
             LspAction::CodeLens(lens) => {
                 if !action.resolved && GetCodeLens::can_resolve_lens(&lang_server.capabilities()) {
                     *lens = lang_server
-                        .request::<lsp::request::CodeLensResolve>(lens.clone())
+                        .request::<lsp::request::CodeLensResolve>(lens.clone(), request_timeout)
                         .await
                         .into_response()?;
                 }
@@ -2899,14 +2943,19 @@ impl LocalLspStore {
     pub async fn execute_code_actions_on_server(
         lsp_store: &WeakEntity<LspStore>,
         language_server: &Arc<LanguageServer>,
-
         actions: Vec<CodeAction>,
         push_to_history: bool,
         project_transaction: &mut ProjectTransaction,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
+        let request_timeout = cx.update(|app| {
+            ProjectSettings::get_global(app)
+                .global_lsp_settings
+                .get_request_timeout()
+        });
+
         for mut action in actions {
-            Self::try_resolve_code_action(language_server, &mut action)
+            Self::try_resolve_code_action(language_server, &mut action, request_timeout)
                 .await
                 .context("resolving a formatting code action")?;
 
@@ -2926,48 +2975,54 @@ impl LocalLspStore {
                 project_transaction.0.extend(new.0);
             }
 
-            if let Some(command) = action.lsp_action.command() {
-                let server_capabilities = language_server.capabilities();
-                let available_commands = server_capabilities
-                    .execute_command_provider
-                    .as_ref()
-                    .map(|options| options.commands.as_slice())
-                    .unwrap_or_default();
-                if available_commands.contains(&command.command) {
-                    lsp_store.update(cx, |lsp_store, _| {
-                        if let LspStoreMode::Local(mode) = &mut lsp_store.mode {
-                            mode.last_workspace_edits_by_language_server
-                                .remove(&language_server.server_id());
-                        }
-                    })?;
+            let Some(command) = action.lsp_action.command() else {
+                continue;
+            };
 
-                    language_server
-                        .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
-                            command: command.command.clone(),
-                            arguments: command.arguments.clone().unwrap_or_default(),
-                            ..Default::default()
-                        })
-                        .await
-                        .into_response()
-                        .context("execute command")?;
+            let server_capabilities = language_server.capabilities();
+            let available_commands = server_capabilities
+                .execute_command_provider
+                .as_ref()
+                .map(|options| options.commands.as_slice())
+                .unwrap_or_default();
+            if !available_commands.contains(&command.command) {
+                log::warn!(
+                    "Cannot execute a command {} not listed in the language server capabilities",
+                    command.command
+                );
+                continue;
+            }
 
-                    lsp_store.update(cx, |this, _| {
-                        if let LspStoreMode::Local(mode) = &mut this.mode {
-                            project_transaction.0.extend(
-                                mode.last_workspace_edits_by_language_server
-                                    .remove(&language_server.server_id())
-                                    .unwrap_or_default()
-                                    .0,
-                            )
-                        }
-                    })?;
-                } else {
-                    log::warn!(
-                        "Cannot execute a command {} not listed in the language server capabilities",
-                        command.command
+            lsp_store.update(cx, |lsp_store, _| {
+                if let LspStoreMode::Local(mode) = &mut lsp_store.mode {
+                    mode.last_workspace_edits_by_language_server
+                        .remove(&language_server.server_id());
+                }
+            })?;
+
+            language_server
+                .request::<lsp::request::ExecuteCommand>(
+                    lsp::ExecuteCommandParams {
+                        command: command.command.clone(),
+                        arguments: command.arguments.clone().unwrap_or_default(),
+                        ..Default::default()
+                    },
+                    request_timeout,
+                )
+                .await
+                .into_response()
+                .context("execute command")?;
+
+            lsp_store.update(cx, |this, _| {
+                if let LspStoreMode::Local(mode) = &mut this.mode {
+                    project_transaction.0.extend(
+                        mode.last_workspace_edits_by_language_server
+                            .remove(&language_server.server_id())
+                            .unwrap_or_default()
+                            .0,
                     )
                 }
-            }
+            })?;
         }
         Ok(())
     }
@@ -4824,8 +4879,13 @@ impl LspStore {
         if !request.check_capabilities(language_server.adapter_server_capabilities()) {
             return Task::ready(Ok(Default::default()));
         }
+
+        let request_timeout = ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .get_request_timeout();
+
         cx.spawn(async move |this, cx| {
-            let lsp_request = language_server.request::<R::LspRequest>(lsp_params);
+            let lsp_request = language_server.request::<R::LspRequest>(lsp_params, request_timeout);
 
             let id = lsp_request.id();
             let _cleanup = if status.is_some() {
@@ -5094,14 +5154,18 @@ impl LspStore {
                     .await
             })
         } else if self.mode.is_local() {
-            let Some((_, lang_server)) = buffer_handle.update(cx, |buffer, cx| {
+            let Some((_, lang_server, request_timeout)) = buffer_handle.update(cx, |buffer, cx| {
+                let request_timeout = ProjectSettings::get_global(cx)
+                    .global_lsp_settings
+                    .get_request_timeout();
                 self.language_server_for_local_buffer(buffer, action.server_id, cx)
-                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
+                    .map(|(adapter, server)| (adapter.clone(), server.clone(), request_timeout))
             }) else {
                 return Task::ready(Ok(ProjectTransaction::default()));
             };
-            cx.spawn(async move |this,  cx| {
-                LocalLspStore::try_resolve_code_action(&lang_server, &mut action)
+
+            cx.spawn(async move |this, cx| {
+                LocalLspStore::try_resolve_code_action(&lang_server, &mut action, request_timeout)
                     .await
                     .context("resolving a code action")?;
                 if let Some(edit) = action.lsp_action.edit()
@@ -5117,43 +5181,51 @@ impl LspStore {
                         .await;
                     }
 
-                if let Some(command) = action.lsp_action.command() {
-                    let server_capabilities = lang_server.capabilities();
-                    let available_commands = server_capabilities
-                        .execute_command_provider
-                        .as_ref()
-                        .map(|options| options.commands.as_slice())
-                        .unwrap_or_default();
-                    if available_commands.contains(&command.command) {
-                        this.update(cx, |this, _| {
-                            this.as_local_mut()
-                                .unwrap()
-                                .last_workspace_edits_by_language_server
-                                .remove(&lang_server.server_id());
-                        })?;
+                let Some(command) = action.lsp_action.command() else {
+                    return Ok(ProjectTransaction::default())
+                };
 
-                        let _result = lang_server
-                            .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
-                                command: command.command.clone(),
-                                arguments: command.arguments.clone().unwrap_or_default(),
-                                ..lsp::ExecuteCommandParams::default()
-                            })
-                            .await.into_response()
-                            .context("execute command")?;
+                let server_capabilities = lang_server.capabilities();
+                let available_commands = server_capabilities
+                    .execute_command_provider
+                    .as_ref()
+                    .map(|options| options.commands.as_slice())
+                    .unwrap_or_default();
 
-                        return this.update(cx, |this, _| {
-                            this.as_local_mut()
-                                .unwrap()
-                                .last_workspace_edits_by_language_server
-                                .remove(&lang_server.server_id())
-                                .unwrap_or_default()
-                        });
-                    } else {
-                        log::warn!("Cannot execute a command {} not listed in the language server capabilities", command.command);
-                    }
+                if !available_commands.contains(&command.command) {
+                    log::warn!("Cannot execute a command {} not listed in the language server capabilities", command.command);
+                    return Ok(ProjectTransaction::default())
                 }
 
-                Ok(ProjectTransaction::default())
+                let request_timeout = cx.update(|app|
+                    ProjectSettings::get_global(app)
+                    .global_lsp_settings
+                    .get_request_timeout()
+                );
+
+                this.update(cx, |this, _| {
+                    this.as_local_mut()
+                        .unwrap()
+                        .last_workspace_edits_by_language_server
+                        .remove(&lang_server.server_id());
+                })?;
+
+                let _result = lang_server
+                    .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
+                        command: command.command.clone(),
+                        arguments: command.arguments.clone().unwrap_or_default(),
+                        ..lsp::ExecuteCommandParams::default()
+                    }, request_timeout)
+                    .await.into_response()
+                    .context("execute command")?;
+
+                return this.update(cx, |this, _| {
+                    this.as_local_mut()
+                        .unwrap()
+                        .last_workspace_edits_by_language_server
+                        .remove(&lang_server.server_id())
+                        .unwrap_or_default()
+                });
             })
         } else {
             Task::ready(Err(anyhow!("no upstream client and not local")))
@@ -5317,10 +5389,18 @@ impl LspStore {
             if !InlayHints::can_resolve_inlays(&lang_server.capabilities()) {
                 return Task::ready(Ok(hint));
             }
+
             let buffer_snapshot = buffer.read(cx).snapshot();
             cx.spawn(async move |_, cx| {
+                let request_timeout = cx.update(|app| {
+                    ProjectSettings::get_global(app)
+                        .global_lsp_settings
+                        .get_request_timeout()
+                });
+
                 let resolve_task = lang_server.request::<lsp::request::InlayHintResolveRequest>(
                     InlayHints::project_to_lsp_hint(hint, &buffer_snapshot),
+                    request_timeout,
                 );
                 let resolved_hint = resolve_task
                     .await
@@ -5404,12 +5484,18 @@ impl LspStore {
                 Ok(path) => path,
                 Err(e) => return Task::ready(Err(e)),
             };
+
             let Some(lang_server) = buffer.update(cx, |buffer, cx| {
                 self.language_server_for_local_buffer(buffer, server_id, cx)
                     .map(|(_, server)| server.clone())
             }) else {
                 return Task::ready(Ok(color));
             };
+
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
+
             cx.background_spawn(async move {
                 let resolve_task = lang_server.request::<lsp::request::ColorPresentationRequest>(
                     lsp::ColorPresentationParams {
@@ -5419,6 +5505,7 @@ impl LspStore {
                         work_done_progress_params: Default::default(),
                         partial_result_params: Default::default(),
                     },
+                    request_timeout,
                 );
                 color.color_presentations = resolve_task
                     .await
@@ -6414,6 +6501,12 @@ impl LspStore {
             return Task::ready(Ok(false));
         }
         cx.spawn(async move |lsp_store, cx| {
+            let request_timeout = cx.update(|app| {
+                ProjectSettings::get_global(app)
+                    .global_lsp_settings
+                    .get_request_timeout()
+            });
+
             let mut did_resolve = false;
             if let Some((client, project_id)) = client {
                 for completion_index in completion_indices {
@@ -6467,6 +6560,7 @@ impl LspStore {
                             server,
                             completions.clone(),
                             completion_index,
+                            request_timeout,
                         )
                         .await
                         .log_err()
@@ -6499,6 +6593,7 @@ impl LspStore {
         server: Arc<lsp::LanguageServer>,
         completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
+        request_timeout: Duration,
     ) -> Result<()> {
         let server_id = server.server_id();
         if !GetCompletions::can_resolve_completions(&server.capabilities()) {
@@ -6521,7 +6616,10 @@ impl LspStore {
                         server_id == *completion_server_id,
                         "server_id mismatch, querying completion resolve for {server_id} but completion server id is {completion_server_id}"
                     );
-                    server.request::<lsp::request::ResolveCompletionItem>(*lsp_completion.clone())
+                    server.request::<lsp::request::ResolveCompletionItem>(
+                        *lsp_completion.clone(),
+                        request_timeout,
+                    )
                 }
                 CompletionSource::BufferWord { .. }
                 | CompletionSource::Dap { .. }
@@ -6757,25 +6855,29 @@ impl LspStore {
                     }
                 };
 
-                if let Some(transaction) = client.request(request).await?.transaction {
-                    let transaction = language::proto::deserialize_transaction(transaction)?;
-                    buffer_handle
-                        .update(cx, |buffer, _| {
-                            buffer.wait_for_edits(transaction.edit_ids.iter().copied())
-                        })
-                        .await?;
-                    if push_to_history {
-                        buffer_handle.update(cx, |buffer, _| {
-                            buffer.push_transaction(transaction.clone(), Instant::now());
-                            buffer.finalize_last_transaction();
-                        });
-                    }
-                    Ok(Some(transaction))
-                } else {
-                    Ok(None)
+                let Some(transaction) = client.request(request).await?.transaction else {
+                    return Ok(None);
+                };
+
+                let transaction = language::proto::deserialize_transaction(transaction)?;
+                buffer_handle
+                    .update(cx, |buffer, _| {
+                        buffer.wait_for_edits(transaction.edit_ids.iter().copied())
+                    })
+                    .await?;
+                if push_to_history {
+                    buffer_handle.update(cx, |buffer, _| {
+                        buffer.push_transaction(transaction.clone(), Instant::now());
+                        buffer.finalize_last_transaction();
+                    });
                 }
+                Ok(Some(transaction))
             })
         } else {
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
+
             let Some(server) = buffer_handle.update(cx, |buffer, cx| {
                 let completion = &completions.borrow()[completion_index];
                 let server_id = completion.source.server_id()?;
@@ -6793,6 +6895,7 @@ impl LspStore {
                     server.clone(),
                     completions.clone(),
                     completion_index,
+                    request_timeout,
                 )
                 .await
                 .context("resolving completion")?;
@@ -7825,6 +7928,10 @@ impl LspStore {
 
             let mut requests = Vec::new();
             let mut requested_servers = BTreeSet::new();
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
+
             for (seed, state) in local.language_server_ids.iter() {
                 let Some(worktree_handle) = self
                     .worktree_store
@@ -7833,6 +7940,7 @@ impl LspStore {
                 else {
                     continue;
                 };
+
                 let worktree = worktree_handle.read(cx);
                 if !worktree.is_visible() {
                     continue;
@@ -7849,15 +7957,18 @@ impl LspStore {
 
                     _ => continue,
                 };
+
                 let supports_workspace_symbol_request =
                     match server.capabilities().workspace_symbol_provider {
                         Some(OneOf::Left(supported)) => supported,
                         Some(OneOf::Right(_)) => true,
                         None => false,
                     };
+
                 if !supports_workspace_symbol_request {
                     continue;
                 }
+
                 let worktree_handle = worktree_handle.clone();
                 let server_id = server.server_id();
                 requests.push(
@@ -7867,6 +7978,7 @@ impl LspStore {
                                 query: query.to_string(),
                                 ..Default::default()
                             },
+                            request_timeout,
                         )
                         .map(move |response| {
                             let lsp_symbols = response
@@ -9892,36 +10004,43 @@ impl LspStore {
                         continue;
                     };
 
-                    if filter.should_send_will_rename(&old_uri, is_dir) {
-                        let apply_edit = cx.spawn({
-                            let old_uri = old_uri.clone();
-                            let new_uri = new_uri.clone();
-                            let language_server = language_server.clone();
-                            async move |this, cx| {
-                                let edit = language_server
-                                    .request::<WillRenameFiles>(RenameFilesParams {
-                                        files: vec![FileRename { old_uri, new_uri }],
-                                    })
-                                    .await
-                                    .into_response()
-                                    .context("will rename files")
-                                    .log_err()
-                                    .flatten()?;
+                    if !filter.should_send_will_rename(&old_uri, is_dir) {
+                        continue;
+                    }
+                    let request_timeout = ProjectSettings::get_global(cx)
+                        .global_lsp_settings
+                        .get_request_timeout();
 
-                                let transaction = LocalLspStore::deserialize_workspace_edit(
-                                    this.upgrade()?,
-                                    edit,
-                                    false,
-                                    language_server.clone(),
-                                    cx,
+                    let apply_edit = cx.spawn({
+                        let old_uri = old_uri.clone();
+                        let new_uri = new_uri.clone();
+                        let language_server = language_server.clone();
+                        async move |this, cx| {
+                            let edit = language_server
+                                .request::<WillRenameFiles>(
+                                    RenameFilesParams {
+                                        files: vec![FileRename { old_uri, new_uri }],
+                                    },
+                                    request_timeout,
                                 )
                                 .await
-                                .ok()?;
-                                Some(transaction)
-                            }
-                        });
-                        tasks.push(apply_edit);
-                    }
+                                .into_response()
+                                .context("will rename files")
+                                .log_err()
+                                .flatten()?;
+
+                            LocalLspStore::deserialize_workspace_edit(
+                                this.upgrade()?,
+                                edit,
+                                false,
+                                language_server.clone(),
+                                cx,
+                            )
+                            .await
+                            .ok()
+                        }
+                    });
+                    tasks.push(apply_edit);
                 }
                 Some(())
             })
@@ -10214,6 +10333,10 @@ impl LspStore {
                     .language_server_for_id(id)
                     .with_context(|| format!("No language server {id}"))?;
 
+                let request_timeout = ProjectSettings::get_global(cx)
+                    .global_lsp_settings
+                    .get_request_timeout();
+
                 anyhow::Ok(cx.background_spawn(async move {
                     let can_resolve = server
                         .capabilities()
@@ -10223,7 +10346,10 @@ impl LspStore {
                         .unwrap_or(false);
                     if can_resolve {
                         server
-                            .request::<lsp::request::ResolveCompletionItem>(lsp_completion)
+                            .request::<lsp::request::ResolveCompletionItem>(
+                                lsp_completion,
+                                request_timeout,
+                            )
                             .await
                             .into_response()
                             .context("resolve completion item")
@@ -10944,9 +11070,15 @@ impl LspStore {
             None => None,
         };
 
-        if let Some(server) = server
-            && let Some(shutdown) = server.shutdown()
-        {
+        let Some(server) = server else { return };
+
+        let request_timeout: Duration = cx.update(|app| {
+            ProjectSettings::get_global(app)
+                .global_lsp_settings
+                .get_request_timeout()
+        });
+
+        if let Some(shutdown) = server.shutdown(request_timeout) {
             shutdown.await;
         }
     }
@@ -13327,6 +13459,18 @@ fn lsp_workspace_diagnostics_refresh(
     let (mut refresh_tx, mut refresh_rx) = mpsc::channel(1);
     refresh_tx.try_send(()).ok();
 
+    let request_timeout = ProjectSettings::get_global(cx)
+        .global_lsp_settings
+        .get_request_timeout();
+
+    // Clamp timeout duration at a minimum of [`DEFAULT_LSP_REQUEST_TIMEOUT`] to mitigate useless loops from re-trying connections with smaller timeouts from project settings.
+    // This allows users to increase the duration if need be
+    let timeout = if request_timeout != Duration::ZERO {
+        request_timeout.max(DEFAULT_LSP_REQUEST_TIMEOUT)
+    } else {
+        request_timeout
+    };
+
     let workspace_query_language_server = cx.spawn(async move |lsp_store, cx| {
         let mut attempts = 0;
         let max_attempts = 50;
@@ -13377,9 +13521,7 @@ fn lsp_workspace_diagnostics_refresh(
                 };
 
                 progress_rx.try_recv().ok();
-                // Clamp timeout duration at a minimum of [`DEFAULT_LSP_REQUEST_TIMEOUT`] to mitigate useless loops from re-trying connections with smaller timeouts from project settings.
-                // This allows users to increase the duration if need be
-                let timer = server.request_timer(Some(DEFAULT_LSP_REQUEST_TIMEOUT)).fuse();
+                let timer = server.request_timer(timeout).fuse();
                 let progress = pin!(progress_rx.recv().fuse());
                 let response_result = server
                     .request_with_timer::<lsp::WorkspaceDiagnosticRequest, _>(
