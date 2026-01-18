@@ -2348,11 +2348,16 @@ impl ProjectPanel {
                 .iter()
                 .filter_map(|selection| {
                     let project_path = project.path_for_entry(selection.entry_id, cx)?;
+                    let entry = project.entry_for_path(&project_path, cx)?;
+                    let display_name = project_path.path.file_name()?.to_string();
                     dirty_buffers +=
                         project.dirty_buffers(cx).any(|path| path == project_path) as usize;
+
                     Some((
                         selection.entry_id,
-                        project_path.path.file_name()?.to_string(),
+                        project_path,
+                        display_name,
+                        entry.is_dir(),
                     ))
                 })
                 .collect::<Vec<_>>();
@@ -2367,14 +2372,14 @@ impl ProjectPanel {
                     "\n\nThis is PERMANENT and CANNOT be undone."
                 };
                 let prompt = match file_paths.first() {
-                    Some((_, path)) if file_paths.len() == 1 => {
+                    Some((_, _, display_name, _)) if file_paths.len() == 1 => {
                         let unsaved_warning = if dirty_buffers > 0 {
                             "\n\nIt has unsaved changes, which will be lost."
                         } else {
                             ""
                         };
 
-                        format!("{operation} {path}?{unsaved_warning}{permanent_warning}")
+                        format!("{operation} {display_name}?{unsaved_warning}{permanent_warning}")
                     }
                     _ => {
                         const CUTOFF_POINT: usize = 10;
@@ -2382,7 +2387,7 @@ impl ProjectPanel {
                             let truncated_path_counts = file_paths.len() - CUTOFF_POINT;
                             let mut paths = file_paths
                                 .iter()
-                                .map(|(_, path)| path.clone())
+                                .map(|(_, _, display_name, _)| display_name.clone())
                                 .take(CUTOFF_POINT)
                                 .collect::<Vec<_>>();
                             paths.truncate(CUTOFF_POINT);
@@ -2393,7 +2398,10 @@ impl ProjectPanel {
                             }
                             paths
                         } else {
-                            file_paths.iter().map(|(_, path)| path.clone()).collect()
+                            file_paths
+                                .iter()
+                                .map(|(_, _, display_name, _)| display_name.clone())
+                                .collect()
                         };
                         let unsaved_warning = if dirty_buffers == 0 {
                             String::new()
@@ -2424,7 +2432,7 @@ impl ProjectPanel {
                 {
                     return anyhow::Ok(());
                 }
-                for (entry_id, _) in file_paths {
+                for (entry_id, project_path, _, is_dir) in file_paths {
                     panel
                         .update(cx, |panel, cx| {
                             panel
@@ -2433,6 +2441,13 @@ impl ProjectPanel {
                                 .context("no such entry")
                         })??
                         .await?;
+
+                    panel.update(cx, |panel, _| {
+                        panel.record_undoable(ProjectPanelOperation::Trash {
+                            project_path,
+                            is_directory: is_dir,
+                        });
+                    })?;
                 }
                 panel.update_in(cx, |panel, window, cx| {
                     if let Some(next_selection) = next_selection {
