@@ -2975,22 +2975,10 @@ pub async fn copy_recursive<'a>(
     Ok(())
 }
 
-pub async fn dir_total_len<'a>(fs: &'a dyn Fs, source: &'a Path) -> Result<u64> {
-    Ok(read_dir_items(fs, source)
-        .await?
-        .into_iter()
-        .filter(|(_path, metadata)| !metadata.is_dir)
-        .map(|(_path, metadata)| metadata.len)
-        .sum())
-}
-
 /// Recursively reads all of the paths in the given directory.
 ///
 /// Returns a vector of tuples of (path, is_dir).
-pub async fn read_dir_items<'a>(
-    fs: &'a dyn Fs,
-    source: &'a Path,
-) -> Result<Vec<(PathBuf, Metadata)>> {
+pub async fn read_dir_items<'a>(fs: &'a dyn Fs, source: &'a Path) -> Result<Vec<(PathBuf, bool)>> {
     let mut items = Vec::new();
     read_recursive(fs, source, &mut items).await?;
     Ok(items)
@@ -2999,7 +2987,7 @@ pub async fn read_dir_items<'a>(
 fn read_recursive<'a>(
     fs: &'a dyn Fs,
     source: &'a Path,
-    output: &'a mut Vec<(PathBuf, Metadata)>,
+    output: &'a mut Vec<(PathBuf, bool)>,
 ) -> BoxFuture<'a, Result<()>> {
     use futures::future::FutureExt;
 
@@ -3010,7 +2998,7 @@ fn read_recursive<'a>(
             .with_context(|| format!("path does not exist: {source:?}"))?;
 
         if metadata.is_dir {
-            output.push((source.to_path_buf(), metadata));
+            output.push((source.to_path_buf(), true));
             let mut children = fs.read_dir(source).await?;
             while let Some(child_path) = children.next().await {
                 if let Ok(child_path) = child_path {
@@ -3018,7 +3006,7 @@ fn read_recursive<'a>(
                 }
             }
         } else {
-            output.push((source.to_path_buf(), metadata));
+            output.push((source.to_path_buf(), false));
         }
         Ok(())
     }
