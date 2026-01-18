@@ -18,7 +18,11 @@ actions!(
         /// Runs the current cell and advances to the next one.
         Run,
         /// Runs the current cell without advancing.
-        RunInPlace,
+        RunInPlace, 
+        /// Run the current cell and advances to the next one.
+        RunCell,
+        /// Run the current cell without advancing.
+        RunCellInPlace,
         /// Clears all outputs in the REPL.
         ClearOutputs,
         /// Opens the REPL sessions panel.
@@ -121,19 +125,45 @@ pub fn init(cx: &mut App) {
                                 return;
                             }
 
-                            crate::run(editor_handle.clone(), true, window, cx).log_err();
+                            crate::run(editor_handle.clone(), true, window, cx, false).log_err();
                         }
                     })
                     .detach();
 
                 editor
                     .register_action({
+                        let editor_handle = editor_handle.clone();
                         move |_: &RunInPlace, window, cx| {
                             if !JupyterSettings::enabled(cx) {
                                 return;
                             }
 
-                            crate::run(editor_handle.clone(), false, window, cx).log_err();
+                            crate::run(editor_handle.clone(), false, window, cx, false).log_err();
+                        }
+                    })
+                    .detach();
+
+                editor
+                    .register_action({
+                        let editor_handle = editor_handle.clone();
+                        move |_: &RunCell, window, cx| {
+                            if !JupyterSettings::enabled(cx) {
+                                return;
+                            }
+
+                            crate::run(editor_handle.clone(), true, window, cx, true).log_err();
+                        }
+                    })
+                    .detach();
+
+                editor
+                    .register_action({
+                        move |_: &RunCellInPlace, window, cx| {
+                            if !JupyterSettings::enabled(cx) {
+                                return;
+                            }
+
+                            crate::run(editor_handle.clone(), false, window, cx, true).log_err();
                         }
                     })
                     .detach();
