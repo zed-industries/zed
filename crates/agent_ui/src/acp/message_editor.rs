@@ -898,7 +898,10 @@ impl MessageEditor {
         };
 
         self.editor.update(cx, |message_editor, cx| {
-            message_editor.edit([(cursor_anchor..cursor_anchor, completion.new_text.clone())], cx);
+            message_editor.edit(
+                [(cursor_anchor..cursor_anchor, completion.new_text.clone())],
+                cx,
+            );
             message_editor.request_autoscroll(Autoscroll::fit(), cx);
         });
 
@@ -927,23 +930,31 @@ impl MessageEditor {
                 return;
             };
 
-            let anchor = editor_buffer
-                .snapshot(cx)
-                .anchor_before(Point::zero());
+            let anchor = editor_buffer.snapshot(cx).anchor_before(Point::zero());
 
             (anchor, buffer)
         };
 
-        let mut grouped_by_buffer: HashMap<gpui::EntityId, Vec<(Entity<Buffer>, std::ops::Range<text::Anchor>)>> = HashMap::new();
+        let mut grouped_by_buffer: HashMap<
+            gpui::EntityId,
+            Vec<(Entity<Buffer>, std::ops::Range<text::Anchor>)>,
+        > = HashMap::new();
 
         for (buffer, range) in workspace_selections {
             let buffer_id = buffer.entity_id();
-            grouped_by_buffer.entry(buffer_id).or_default().push((buffer, range));
+            grouped_by_buffer
+                .entry(buffer_id)
+                .or_default()
+                .push((buffer, range));
         }
 
         let num_groups = grouped_by_buffer.len();
 
-        let mut selections_with_ranges: Vec<(Entity<Buffer>, std::ops::Range<text::Anchor>, std::ops::Range<usize>)> = Vec::new();
+        let mut selections_with_ranges: Vec<(
+            Entity<Buffer>,
+            std::ops::Range<text::Anchor>,
+            std::ops::Range<usize>,
+        )> = Vec::new();
         let mut current_offset = 0;
 
         for (_, group) in grouped_by_buffer {
@@ -959,7 +970,10 @@ impl MessageEditor {
         let new_text: String = PLACEHOLDER.repeat(num_groups);
 
         self.editor.update(cx, |message_editor, cx| {
-            message_editor.edit([(editor_start_anchor..editor_start_anchor, new_text.clone())], cx);
+            message_editor.edit(
+                [(editor_start_anchor..editor_start_anchor, new_text.clone())],
+                cx,
+            );
         });
 
         let text_anchor = {

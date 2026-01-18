@@ -283,18 +283,15 @@ impl UserMessage {
                             let tag = if !line_ranges.is_empty() {
                                 codeblock_tag_multi(
                                     path.as_deref().unwrap_or("Untitled".as_ref()),
-                                    line_ranges
+                                    line_ranges,
                                 )
                             } else if let Some(range) = line_range {
                                 codeblock_tag(
                                     path.as_deref().unwrap_or("Untitled".as_ref()),
-                                    Some(range)
+                                    Some(range),
                                 )
                             } else {
-                                codeblock_tag(
-                                    path.as_deref().unwrap_or("Untitled".as_ref()),
-                                    None
-                                )
+                                codeblock_tag(path.as_deref().unwrap_or("Untitled".as_ref()), None)
                             };
 
                             write!(

@@ -436,13 +436,15 @@ impl MentionSet {
             let point_range = selection_range.to_point(&buffer_snapshot);
             let line_range = point_range.start.row..=point_range.end.row;
 
-            let group = groups.entry(abs_path.clone()).or_insert_with(|| SelectionGroup {
-                abs_path: abs_path.clone(),
-                buffer: buffer.clone(),
-                line_ranges: Vec::new(),
-                texts: Vec::new(),
-                range_to_fold: range_to_fold.clone(),
-            });
+            let group = groups
+                .entry(abs_path.clone())
+                .or_insert_with(|| SelectionGroup {
+                    abs_path: abs_path.clone(),
+                    buffer: buffer.clone(),
+                    line_ranges: Vec::new(),
+                    texts: Vec::new(),
+                    range_to_fold: range_to_fold.clone(),
+                });
             group.line_ranges.push(line_range);
             group.texts.push(text);
         }
@@ -451,8 +453,8 @@ impl MentionSet {
             let range_start_offset = offset + group.range_to_fold.start;
             let range_end_offset = offset + group.range_to_fold.end;
 
-            let range = snapshot.anchor_after(range_start_offset)
-                ..snapshot.anchor_after(range_end_offset);
+            let range =
+                snapshot.anchor_after(range_start_offset)..snapshot.anchor_after(range_end_offset);
 
             let combined_text = group.texts.join("\n");
 

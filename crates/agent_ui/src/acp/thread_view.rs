@@ -6147,31 +6147,35 @@ impl AcpThreadView {
         let (_file_name, selection_text) = if !selections.is_empty() {
             use std::collections::HashMap;
             use std::ops::RangeInclusive;
-            let mut groups: HashMap<gpui::EntityId, Vec<&(Entity<Buffer>, std::ops::Range<text::Anchor>)>> = HashMap::default();
+            let mut groups: HashMap<
+                gpui::EntityId,
+                Vec<&(Entity<Buffer>, std::ops::Range<text::Anchor>)>,
+            > = HashMap::default();
 
             for selection in &selections {
                 let buffer_id = selection.0.entity_id();
                 groups.entry(buffer_id).or_default().push(selection);
             }
 
-            let (buffer, ranges): (Entity<Buffer>, Vec<RangeInclusive<u32>>) = if let Some((_, group)) = groups.iter().next() {
-                let buffer = group[0].0.clone();
-                let buffer_read = buffer.read(cx);
-                let snapshot = buffer_read.snapshot();
+            let (buffer, ranges): (Entity<Buffer>, Vec<RangeInclusive<u32>>) =
+                if let Some((_, group)) = groups.iter().next() {
+                    let buffer = group[0].0.clone();
+                    let buffer_read = buffer.read(cx);
+                    let snapshot = buffer_read.snapshot();
 
-                let line_ranges: Vec<RangeInclusive<u32>> = group
-                    .iter()
-                    .map(|item| {
-                        let range = &item.1;
-                        let point_range = range.to_point(&snapshot);
-                        point_range.start.row..=point_range.end.row
-                    })
-                    .collect();
+                    let line_ranges: Vec<RangeInclusive<u32>> = group
+                        .iter()
+                        .map(|item| {
+                            let range = &item.1;
+                            let point_range = range.to_point(&snapshot);
+                            point_range.start.row..=point_range.end.row
+                        })
+                        .collect();
 
-                (buffer, line_ranges)
-            } else {
-                return None;
-            };
+                    (buffer, line_ranges)
+                } else {
+                    return None;
+                };
 
             let buffer_read = buffer.read(cx);
 
@@ -6230,29 +6234,30 @@ impl AcpThreadView {
         };
 
         Some(
-            h_flex()
-                .gap_1()
-                .items_center()
-                .child(
-                    div()
-                        .px_1p5()
-                        .py_0p5()
-                        .rounded_md()
-                        .bg(cx.theme().colors().element_background)
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .items_center()
-                                .child(Icon::new(IconName::FileCode).size(IconSize::Small).color(Color::Muted))
-                                .child(
-                                    Label::new(selection_text)
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                )
-                        )
-                )
+            h_flex().gap_1().items_center().child(
+                div()
+                    .px_1p5()
+                    .py_0p5()
+                    .rounded_md()
+                    .bg(cx.theme().colors().element_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .items_center()
+                            .child(
+                                Icon::new(IconName::FileCode)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new(selection_text)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    ),
+            ),
         )
     }
 

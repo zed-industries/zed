@@ -322,18 +322,27 @@ impl MentionUri {
                 };
 
                 if !line_ranges.is_empty() {
-                    let ranges_str = line_ranges
-                        .iter()
-                        .map(|r| {
-                            if r.start() == r.end() {
-                                format!("{}", r.start() + 1)
-                            } else {
-                                format!("{}-{}", r.start() + 1, r.end() + 1)
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join(",");
-                    url.set_fragment(Some(&format!("L{}", ranges_str)));
+                    if line_ranges.len() == 1 {
+                        let r = &line_ranges[0];
+                        if r.start() == r.end() {
+                            url.set_fragment(Some(&format!("L{}", r.start() + 1)));
+                        } else {
+                            url.set_fragment(Some(&format!("L{}-{}", r.start() + 1, r.end() + 1)));
+                        }
+                    } else {
+                        let ranges_str = line_ranges
+                            .iter()
+                            .map(|r| {
+                                if r.start() == r.end() {
+                                    format!("{}", r.start() + 1)
+                                } else {
+                                    format!("{}-{}", r.start() + 1, r.end() + 1)
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        url.set_fragment(Some(&format!("L{}", ranges_str)));
+                    }
                 } else if let Some(range) = line_range {
                     if range.start() == range.end() {
                         url.set_fragment(Some(&format!("L{}", range.start() + 1)));
@@ -408,7 +417,12 @@ pub fn selection_name(path: Option<&Path>, line_range: &RangeInclusive<u32>) -> 
     if line_range.start() == line_range.end() {
         format!("{} ({})", file_name, line_range.start() + 1)
     } else {
-        format!("{} ({}-{})", file_name, line_range.start() + 1, line_range.end() + 1)
+        format!(
+            "{} ({}-{})",
+            file_name,
+            line_range.start() + 1,
+            line_range.end() + 1
+        )
     }
 }
 
@@ -428,12 +442,7 @@ pub fn selection_name_multi(path: Option<&Path>, line_ranges: &[RangeInclusive<u
         if range.start() == range.end() {
             return format!("{} ({})", file_name, range.start() + 1);
         } else {
-            return format!(
-                "{} ({}-{})",
-                file_name,
-                range.start() + 1,
-                range.end() + 1
-            );
+            return format!("{} ({}-{})", file_name, range.start() + 1, range.end() + 1);
         }
     }
 
@@ -510,7 +519,7 @@ mod tests {
 
     #[test]
     fn test_parse_symbol_uri() {
-        let symbol_uri = uri!("file:///path/to/file.rs?symbol=MySymbol#L10:20");
+        let symbol_uri = uri!("file:///path/to/file.rs?symbol=MySymbol#L10-20");
         let parsed = MentionUri::parse(symbol_uri, PathStyle::local()).unwrap();
         match &parsed {
             MentionUri::Symbol {
@@ -530,7 +539,7 @@ mod tests {
 
     #[test]
     fn test_parse_selection_uri() {
-        let selection_uri = uri!("file:///path/to/file.rs#L5:15");
+        let selection_uri = uri!("file:///path/to/file.rs#L5-15");
         let parsed = MentionUri::parse(selection_uri, PathStyle::local()).unwrap();
         match &parsed {
             MentionUri::Selection {
@@ -564,7 +573,7 @@ mod tests {
 
     #[test]
     fn test_parse_untitled_selection_uri() {
-        let selection_uri = uri!("zed:///agent/untitled-buffer#L1:10");
+        let selection_uri = uri!("zed:///agent/untitled-buffer#L1-10");
         let parsed = MentionUri::parse(selection_uri, PathStyle::local()).unwrap();
         match &parsed {
             MentionUri::Selection {
