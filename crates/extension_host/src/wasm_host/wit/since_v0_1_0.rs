@@ -192,6 +192,7 @@ impl From<latest::lsp::Symbol> for lsp::Symbol {
         Self {
             name: value.name,
             kind: value.kind.into(),
+            container_name: value.container_name,
         }
     }
 }

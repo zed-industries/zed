@@ -565,6 +565,7 @@ impl LspAdapter for RustLspAdapter {
         &self,
         name: &str,
         kind: lsp::SymbolKind,
+        _container_name: Option<&str>,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         let (prefix, suffix) = match kind {
@@ -1807,7 +1808,7 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol("hello", lsp::SymbolKind::FUNCTION, &language)
+                .label_for_symbol("hello", lsp::SymbolKind::FUNCTION, None, &language)
                 .await,
             Some(CodeLabel::new(
                 "fn hello".to_string(),
@@ -1818,7 +1819,7 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol("World", lsp::SymbolKind::TYPE_PARAMETER, &language)
+                .label_for_symbol("World", lsp::SymbolKind::TYPE_PARAMETER, None, &language)
                 .await,
             Some(CodeLabel::new(
                 "type World".to_string(),
@@ -1829,7 +1830,7 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol("zed", lsp::SymbolKind::PACKAGE, &language)
+                .label_for_symbol("zed", lsp::SymbolKind::PACKAGE, None, &language)
                 .await,
             Some(CodeLabel::new(
                 "extern crate zed".to_string(),
