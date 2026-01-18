@@ -847,13 +847,38 @@ impl Vim {
         if self.mode == Mode::HelixSelect {
             self.update_editor(cx, |_vim, editor, cx| {
                 let snapshot = editor.snapshot(window, cx);
-                editor.change_selections(SelectionEffects::default(), window, cx, |s| {
-                    s.select_anchor_ranges(
-                        prior_selections
-                            .iter()
-                            .cloned()
-                            .chain(s.all_anchors(&snapshot).iter().map(|s| s.range())),
-                    );
+                editor.change_selections(SelectionEffects::default(), window, cx, move |s| {
+                    let mut selections = prior_selections;
+                    selections.extend(s.all_anchors(&snapshot).iter().map(|s| s.range()));
+
+                    selections
+                        .sort_unstable_by(|a, b| a.start.cmp(&b.start, &snapshot.display_snapshot));
+
+                    let mut selections = selections.into_iter().peekable();
+                    let merged_selections = std::iter::from_fn(|| {
+                        let mut selection = selections.next()?;
+                        while let Some(next_selection) = selections.peek() {
+                            if selection
+                                .end
+                                .cmp(&next_selection.start, &snapshot.display_snapshot)
+                                .is_ge()
+                            {
+                                let next_selection = selections.next().unwrap();
+                                if next_selection
+                                    .end
+                                    .cmp(&selection.end, &snapshot.display_snapshot)
+                                    .is_ge()
+                                {
+                                    selection.end = next_selection.end;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        Some(selection)
+                    });
+
+                    s.select_anchor_ranges(merged_selections);
                 })
             });
         }
@@ -1571,6 +1596,14 @@ mod test {
         cx.assert_state("hello two one two one two «oneˇ»", Mode::HelixNormal);
 
         cx.set_state("ˇhello two one two one two one", Mode::HelixSelect);
+        cx.simulate_keystrokes("/ o n e");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("n n");
+        cx.assert_state("hello two «oneˇ» two «oneˇ» two «oneˇ»", Mode::HelixSelect);
+        cx.simulate_keystrokes("n");
+        cx.assert_state("hello two «oneˇ» two «oneˇ» two «oneˇ»", Mode::HelixSelect);
+
+        cx.set_state("hello two one twoˇ one two one", Mode::HelixSelect);
         cx.simulate_keystrokes("/ o n e");
         cx.simulate_keystrokes("enter");
         cx.simulate_keystrokes("n n");
