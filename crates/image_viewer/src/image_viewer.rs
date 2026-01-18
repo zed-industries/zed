@@ -32,7 +32,7 @@ const MIN_ZOOM: f32 = 0.01;
 const MAX_ZOOM: f32 = 100.0;
 const ZOOM_STEP: f32 = 0.1;
 
-actions!(image_viewer, [ZoomIn, ZoomOut, ResetZoom, ActualSize]);
+actions!(image_viewer, [ZoomIn, ZoomOut, ResetZoom]);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ZoomMode {
@@ -131,13 +131,6 @@ impl ImageView {
         cx.notify();
     }
 
-    fn actual_size(&mut self, _: &ActualSize, _window: &mut Window, cx: &mut Context<Self>) {
-        self.zoom_mode = ZoomMode::Manual;
-        self.zoom_level = 1.0;
-        self.scroll_handle.set_offset(point(px(0.), px(0.)));
-        cx.notify();
-    }
-
     fn adjust_zoom_center(
         &mut self,
         old_zoom: f32,
@@ -187,7 +180,10 @@ impl ImageView {
         {
             let width_ratio = viewport_size.width / image_size.width;
             let height_ratio = viewport_size.height / image_size.height;
-            width_ratio.min(height_ratio).min(1.0).clamp(MIN_ZOOM, MAX_ZOOM)
+            width_ratio
+                .min(height_ratio)
+                .min(1.0)
+                .clamp(MIN_ZOOM, MAX_ZOOM)
         } else {
             1.0
         }
@@ -413,13 +409,11 @@ impl Render for ImageView {
             })
             .unwrap_or(size(px(0.), px(0.)));
 
-
         let zoom_level = if self.zoom_mode == ZoomMode::Fit {
             self.calculate_fit_zoom(window, cx)
         } else {
             self.zoom_level
         };
-        
 
         let scaled_width = image_size.width * zoom_level;
         let scaled_height = image_size.height * zoom_level;
@@ -479,7 +473,6 @@ impl Render for ImageView {
             .on_action(cx.listener(Self::zoom_in))
             .on_action(cx.listener(Self::zoom_out))
             .on_action(cx.listener(Self::reset_zoom))
-            .on_action(cx.listener(Self::actual_size))
             .child(
                 h_flex()
                     .gap_2()
@@ -494,7 +487,9 @@ impl Render for ImageView {
                                     this.zoom_in(&ZoomIn, window, cx)
                                 }),
                             )
-                            .tooltip(move |_window, cx| Tooltip::for_action("Zoom In", &ZoomIn, cx)),
+                            .tooltip(move |_window, cx| {
+                                Tooltip::for_action("Zoom In", &ZoomIn, cx)
+                            }),
                     )
                     .child(
                         IconButton::new("zoom_out", IconName::Dash)
@@ -587,8 +582,8 @@ impl Render for ImageView {
                                             .size_full()
                                             .id("img"),
                                     ),
-                            )
-                    )
+                            ),
+                    ),
             )
             .custom_scrollbars(
                 Scrollbars::new(ScrollAxes::Both).tracked_scroll_handle(&self.scroll_handle),
