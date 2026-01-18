@@ -2,7 +2,8 @@
 (
   (
     (function_declaration name: (_) @run
-      (#match? @run "^Test.*"))
+      (#match? @run "^Test.*")
+      (#not-match? @run "^TestMain$"))
   ) @_
   (#set! tag go-test)
 )
