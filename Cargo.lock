@@ -408,6 +408,7 @@ dependencies = [
  "streaming_diff",
  "task",
  "telemetry",
+ "tempfile",
  "terminal",
  "terminal_view",
  "text",

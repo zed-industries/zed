@@ -24,6 +24,12 @@ impl FeatureFlag for AcpBetaFeatureFlag {
     const NAME: &'static str = "acp-beta";
 }
 
+pub struct UserSlashCommandsFeatureFlag;
+
+impl FeatureFlag for UserSlashCommandsFeatureFlag {
+    const NAME: &'static str = "slash-commands";
+}
+
 pub struct ToolPermissionsFeatureFlag;
 
 impl FeatureFlag for ToolPermissionsFeatureFlag {
