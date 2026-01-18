@@ -1201,6 +1201,7 @@ impl ToolchainLister for PythonToolchainProvider {
             subroot_relative_path
                 .ancestors()
                 .map(|ancestor| {
+                    // remove trailing separator as it alters the environment name hash used by Poetry.
                     let path = worktree_root.join(ancestor.as_std_path());
                     let path_str = path.to_string_lossy();
                     if path_str.ends_with(std::path::MAIN_SEPARATOR) && path_str.len() > 1 {
