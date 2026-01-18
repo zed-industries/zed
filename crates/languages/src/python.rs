@@ -1200,7 +1200,15 @@ impl ToolchainLister for PythonToolchainProvider {
         config.workspace_directories = Some(
             subroot_relative_path
                 .ancestors()
-                .map(|ancestor| worktree_root.join(ancestor.as_std_path()))
+                .map(|ancestor| {
+                    let path = worktree_root.join(ancestor.as_std_path());
+                    let path_str = path.to_string_lossy();
+                    if path_str.ends_with(std::path::MAIN_SEPARATOR) && path_str.len() > 1 {
+                        PathBuf::from(path_str.trim_end_matches(std::path::MAIN_SEPARATOR))
+                    } else {
+                        path
+                    }
+                })
                 .collect(),
         );
         for locator in locators.iter() {
