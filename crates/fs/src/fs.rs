@@ -89,15 +89,7 @@ impl From<PathEvent> for PathBuf {
 }
 
 /// Represents an item that has been moved to the OS trash.
-///
-/// This handle can be used with [`Fs::restore_from_trash`] to restore
-/// the item to its original location.
-pub struct TrashItem {
-    /// The current location of the item in the trash.
-    path_in_trash: PathBuf,
-    /// The original location of the item before it was trashed.
-    original_path: PathBuf,
-}
+pub struct TrashItem(PathBuf);
 
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
@@ -683,11 +675,7 @@ impl Fs for RealFs {
         })
         .await?;
 
-        let trashed_item = trash_path.map(|trash_path| TrashItem {
-            path_in_trash: trash_path,
-            original_path: path.to_path_buf(),
-        });
-
+        let trashed_item = trash_path.map(|trash_path| TrashItem(trash_path));
         if let Some(trashed_item) = trashed_item {
             self.trash.lock().insert(path.to_path_buf(), trashed_item);
         };
@@ -803,8 +791,8 @@ impl Fs for RealFs {
             .ok_or_else(|| anyhow!("No trash item found for path: {}", path.display()))?;
 
         self.rename(
-            &trash_item.path_in_trash,
-            &trash_item.original_path,
+            &trash_item.0,
+            path,
             RenameOptions {
                 overwrite: false,
                 ignore_if_exists: false,
@@ -2672,10 +2660,7 @@ impl Fs for FakeFs {
         )
         .await?;
 
-        let trash_item = TrashItem {
-            path_in_trash,
-            original_path: original_path.clone(),
-        };
+        let trash_item = TrashItem(path_in_trash);
         self.state.lock().trash.insert(original_path, trash_item);
         Ok(())
     }
@@ -2690,8 +2675,8 @@ impl Fs for FakeFs {
             .ok_or_else(|| anyhow!("No trash item found for path: {}", path.display()))?;
 
         self.rename(
-            &trash_item.path_in_trash,
-            &trash_item.original_path,
+            &trash_item.0,
+            &path,
             RenameOptions {
                 overwrite: false,
                 ignore_if_exists: false,
