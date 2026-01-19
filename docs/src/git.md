@@ -153,6 +153,8 @@ You can specify your preferred model to use by providing a `commit_message_model
 }
 ```
 
+To customize the format of generated commit messages, run {#action agent::OpenRulesLibrary} and select the "Commit message" rule on the left side. From there, you can modify the prompt to match your desired format.
+
 <!-- Add media -->
 
 More advanced AI integration with Git features may come in the future.
