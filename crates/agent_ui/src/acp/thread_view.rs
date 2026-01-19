@@ -76,7 +76,6 @@ use crate::{
     SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage, ToggleProfileSelector,
 };
 
-const MAX_COLLAPSED_LINES: usize = 3;
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
 const TOKEN_THRESHOLD: u64 = 250;
 
@@ -331,11 +330,6 @@ pub struct AcpThreadView {
     /// Tracks which tool calls have their content/output expanded.
     /// Used for showing/hiding tool call results, terminal output, etc.
     expanded_tool_calls: HashSet<acp::ToolCallId>,
-    /// Tracks which terminal commands have their command text expanded.
-    /// This is separate from `expanded_tool_calls` because command text expansion
-    /// (showing all lines of a long command) is independent from output expansion
-    /// (showing the terminal output).
-    expanded_terminal_commands: HashSet<acp::ToolCallId>,
     expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     expanded_subagents: HashSet<acp::SessionId>,
@@ -520,7 +514,6 @@ impl AcpThreadView {
             thread_feedback: Default::default(),
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
-            expanded_terminal_commands: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             expanded_subagents: HashSet::default(),
@@ -4283,8 +4276,6 @@ impl AcpThreadView {
             .into_any()
     }
 
-    /// Renders command lines with an optional expand/collapse button depending
-    /// on the number of lines in `command_source`.
     fn render_collapsible_command(
         &self,
         is_preview: bool,
@@ -4292,23 +4283,6 @@ impl AcpThreadView {
         tool_call_id: &acp::ToolCallId,
         cx: &Context<Self>,
     ) -> Div {
-        let expand_button_bg = self.tool_card_header_bg(cx);
-        let expanded = self.expanded_terminal_commands.contains(tool_call_id);
-
-        let lines: Vec<&str> = command_source.lines().collect();
-        let line_count = lines.len();
-        let extra_lines = line_count.saturating_sub(MAX_COLLAPSED_LINES);
-
-        let show_expand_button = extra_lines > 0;
-
-        let max_lines = if expanded || !show_expand_button {
-            usize::MAX
-        } else {
-            MAX_COLLAPSED_LINES
-        };
-
-        let display_lines = lines.into_iter().take(max_lines);
-
         let command_group =
             SharedString::from(format!("collapsible-command-group-{}", tool_call_id));
 
@@ -4331,7 +4305,7 @@ impl AcpThreadView {
                             ),
                         )
                     })
-                    .children(display_lines.map(|line| {
+                    .children(command_source.lines().map(|line| {
                         let text: SharedString = if line.is_empty() {
                             " ".into()
                         } else {
@@ -4348,53 +4322,6 @@ impl AcpThreadView {
                         ),
                     ),
             )
-            .when(show_expand_button, |this| {
-                let expand_icon = if expanded {
-                    IconName::ChevronUp
-                } else {
-                    IconName::ChevronDown
-                };
-
-                this.child(
-                    h_flex()
-                        .id(format!("expand-command-btn-{}", tool_call_id))
-                        .cursor_pointer()
-                        .when(!expanded, |s| s.absolute().bottom_0())
-                        .when(expanded, |s| s.mt_1())
-                        .w_full()
-                        .h_6()
-                        .gap_1()
-                        .justify_center()
-                        .border_t_1()
-                        .border_color(self.tool_card_border_color(cx))
-                        .bg(expand_button_bg.opacity(0.95))
-                        .hover(|s| s.bg(cx.theme().colors().element_hover))
-                        .when(!expanded, |this| {
-                            let label = match extra_lines {
-                                1 => "1 more line".to_string(),
-                                _ => format!("{} more lines", extra_lines),
-                            };
-
-                            this.child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
-                        })
-                        .child(
-                            Icon::new(expand_icon)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .on_click(cx.listener({
-                            let tool_call_id = tool_call_id.clone();
-                            move |this, _event, _window, cx| {
-                                if expanded {
-                                    this.expanded_terminal_commands.remove(&tool_call_id);
-                                } else {
-                                    this.expanded_terminal_commands.insert(tool_call_id.clone());
-                                }
-                                cx.notify();
-                            }
-                        })),
-                )
-            })
     }
 
     fn render_terminal_tool_call(
