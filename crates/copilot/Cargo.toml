@@ -25,19 +25,16 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
-chrono.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
-dirs.workspace = true
+copilot_chat.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
-http_client.workspace = true
 edit_prediction_types.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true
-menu.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
@@ -47,12 +44,7 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 sum_tree.workspace = true
-task.workspace = true
-ui.workspace = true
 util.workspace = true
-workspace.workspace = true
-itertools.workspace = true
-url.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 async-std = { version = "1.12.0", features = ["unstable"] }
@@ -76,5 +68,4 @@ serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
-workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

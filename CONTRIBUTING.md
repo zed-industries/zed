@@ -43,7 +43,7 @@ submitted. If you'd like your PR to have the best chance of being merged:
   effort. If there isn't already a GitHub issue for your feature with staff
   confirmation that we want it, start with a GitHub discussion rather than a PR.
 - Include a clear description of **what you're solving**, and why it's important.
-- Include **tests**.
+- Include **tests**. For UI changes, consider updating visual regression tests (see [Building Zed for macOS](./docs/src/development/macos.md#visual-regression-tests)).
 - If it changes the UI, attach **screenshots** or screen recordings.
 - Make the PR about **one thing only**, e.g. if it's a bugfix, don't add two
   features and a refactoring on top of that.

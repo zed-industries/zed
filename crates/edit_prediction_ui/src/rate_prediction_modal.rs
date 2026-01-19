@@ -335,9 +335,14 @@ impl RatePredictionsModal {
                     );
                     cx.spawn(async move |diff, cx| {
                         let update = update.await;
-                        diff.update(cx, |diff, cx| {
-                            diff.set_snapshot(update, &new_buffer_snapshot.text, cx);
-                        })
+                        if let Some(task) = diff
+                            .update(cx, |diff, cx| {
+                                diff.set_snapshot(update, &new_buffer_snapshot.text, cx)
+                            })
+                            .ok()
+                        {
+                            task.await;
+                        }
                     })
                     .detach();
                 });
@@ -369,7 +374,7 @@ impl RatePredictionsModal {
 
             write!(&mut formatted_inputs, "## Related files\n\n").unwrap();
 
-            for included_file in prediction.inputs.related_files.as_ref() {
+            for included_file in prediction.inputs.related_files.iter() {
                 write!(
                     &mut formatted_inputs,
                     "### {}\n\n",

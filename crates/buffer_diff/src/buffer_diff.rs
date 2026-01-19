@@ -1,22 +1,16 @@
 use futures::channel::oneshot;
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task, TaskLabel};
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
 use language::{
     BufferRow, Capability, DiffOptions, File, Language, LanguageName, LanguageRegistry,
     language_settings::language_settings, word_diff_ranges,
 };
 use rope::Rope;
-use std::{
-    cmp::Ordering,
-    iter,
-    ops::Range,
-    sync::{Arc, LazyLock},
-};
+use std::{cmp::Ordering, future::Future, iter, ops::Range, sync::Arc};
 use sum_tree::SumTree;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _, ToPoint as _};
 use util::ResultExt;
 
-pub static CALCULATE_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 pub const MAX_WORD_DIFF_LINE_COUNT: usize = 5;
 
 pub struct BufferDiff {
@@ -222,6 +216,7 @@ impl BufferDiffSnapshot {
         self.secondary_diff.as_deref()
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn hunks_intersecting_range<'a>(
         &'a self,
         range: Range<Anchor>,
@@ -1138,17 +1133,16 @@ impl BufferDiff {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = BufferDiff::new(&buffer, cx);
-        let executor = cx.background_executor().clone();
         let mut base_text = base_text.to_owned();
         text::LineEnding::normalize(&mut base_text);
-        let inner = executor.block(this.update_diff(
+        let inner = cx.foreground_executor().block_on(this.update_diff(
             buffer.clone(),
             Some(Arc::from(base_text)),
             true,
             None,
             cx,
         ));
-        this.set_snapshot(inner, &buffer, cx);
+        this.set_snapshot(inner, &buffer, cx).detach();
         this
     }
 
@@ -1254,71 +1248,70 @@ impl BufferDiff {
             cx,
         );
 
-        cx.background_executor()
-            .spawn_labeled(*CALCULATE_DIFF_TASK, async move {
-                let base_text_rope = if let Some(base_text) = &base_text {
-                    if base_text_changed {
-                        Rope::from(base_text.as_ref())
-                    } else {
-                        prev_base_text
-                    }
+        cx.background_executor().spawn(async move {
+            let base_text_rope = if let Some(base_text) = &base_text {
+                if base_text_changed {
+                    Rope::from(base_text.as_ref())
                 } else {
-                    Rope::new()
-                };
-                let base_text_exists = base_text.is_some();
-                let hunks = compute_hunks(
-                    base_text
-                        .clone()
-                        .map(|base_text| (base_text, base_text_rope.clone())),
-                    buffer.clone(),
-                    diff_options,
-                );
-                let base_text = base_text.unwrap_or_default();
-                let inner = BufferDiffInner {
-                    base_text,
-                    hunks,
-                    base_text_exists,
-                    pending_hunks: SumTree::new(&buffer),
-                };
-                BufferDiffUpdate {
-                    inner,
-                    base_text_changed,
+                    prev_base_text
                 }
-            })
+            } else {
+                Rope::new()
+            };
+            let base_text_exists = base_text.is_some();
+            let hunks = compute_hunks(
+                base_text
+                    .clone()
+                    .map(|base_text| (base_text, base_text_rope.clone())),
+                buffer.clone(),
+                diff_options,
+            );
+            let base_text = base_text.unwrap_or_default();
+            let inner = BufferDiffInner {
+                base_text,
+                hunks,
+                base_text_exists,
+                pending_hunks: SumTree::new(&buffer),
+            };
+            BufferDiffUpdate {
+                inner,
+                base_text_changed,
+            }
+        })
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn language_changed(
         &mut self,
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut Context<Self>,
     ) {
-        self.inner.base_text.update(cx, |base_text, cx| {
-            base_text.set_language(language, cx);
+        let fut = self.inner.base_text.update(cx, |base_text, cx| {
             if let Some(language_registry) = language_registry {
                 base_text.set_language_registry(language_registry);
             }
+            base_text.set_language(language, cx);
+            base_text.parsing_idle()
         });
-        cx.emit(BufferDiffEvent::LanguageChanged);
+        cx.spawn(async move |this, cx| {
+            fut.await;
+            this.update(cx, |_, cx| {
+                cx.emit(BufferDiffEvent::LanguageChanged);
+            })
+            .ok();
+        })
+        .detach();
     }
 
-    pub fn set_snapshot(
-        &mut self,
-        new_state: BufferDiffUpdate,
-        buffer: &text::BufferSnapshot,
-        cx: &mut Context<Self>,
-    ) -> Option<Range<Anchor>> {
-        self.set_snapshot_with_secondary(new_state, buffer, None, false, cx)
-    }
-
-    pub fn set_snapshot_with_secondary(
+    fn set_snapshot_with_secondary_inner(
         &mut self,
         update: BufferDiffUpdate,
         buffer: &text::BufferSnapshot,
         secondary_diff_change: Option<Range<Anchor>>,
         clear_pending_hunks: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Range<Anchor>> {
+    ) -> impl Future<Output = (Option<Range<Anchor>>, Option<Range<usize>>)> + use<> {
         log::debug!("set snapshot with secondary {secondary_diff_change:?}");
 
         let old_snapshot = self.snapshot(cx);
@@ -1357,13 +1350,16 @@ impl BufferDiff {
 
         let state = &mut self.inner;
         state.base_text_exists = new_state.base_text_exists;
-        if update.base_text_changed {
+        let parsing_idle = if update.base_text_changed {
             state.base_text.update(cx, |base_text, cx| {
                 base_text.set_capability(Capability::ReadWrite, cx);
                 base_text.set_text(new_state.base_text.clone(), cx);
                 base_text.set_capability(Capability::ReadOnly, cx);
+                Some(base_text.parsing_idle())
             })
-        }
+        } else {
+            None
+        };
         state.hunks = new_state.hunks;
         if update.base_text_changed || clear_pending_hunks {
             if let Some((first, last)) = state.pending_hunks.first().zip(state.pending_hunks.last())
@@ -1387,11 +1383,50 @@ impl BufferDiff {
             state.pending_hunks = SumTree::new(buffer);
         }
 
-        cx.emit(BufferDiffEvent::DiffChanged {
-            changed_range: changed_range.clone(),
-            base_text_changed_range,
-        });
-        changed_range
+        async move {
+            if let Some(parsing_idle) = parsing_idle {
+                parsing_idle.await;
+            }
+            (changed_range, base_text_changed_range)
+        }
+    }
+
+    pub fn set_snapshot(
+        &mut self,
+        new_state: BufferDiffUpdate,
+        buffer: &text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<Range<Anchor>>> {
+        self.set_snapshot_with_secondary(new_state, buffer, None, false, cx)
+    }
+
+    pub fn set_snapshot_with_secondary(
+        &mut self,
+        update: BufferDiffUpdate,
+        buffer: &text::BufferSnapshot,
+        secondary_diff_change: Option<Range<Anchor>>,
+        clear_pending_hunks: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<Range<Anchor>>> {
+        let fut = self.set_snapshot_with_secondary_inner(
+            update,
+            buffer,
+            secondary_diff_change,
+            clear_pending_hunks,
+            cx,
+        );
+
+        cx.spawn(async move |this, cx| {
+            let (changed_range, base_text_changed_range) = fut.await;
+            this.update(cx, |_, cx| {
+                cx.emit(BufferDiffEvent::DiffChanged {
+                    changed_range: changed_range.clone(),
+                    base_text_changed_range,
+                });
+            })
+            .ok();
+            changed_range
+        })
     }
 
     pub fn base_text(&self, cx: &App) -> language::BufferSnapshot {
@@ -1439,10 +1474,12 @@ impl BufferDiff {
                 return;
             };
             let state = state.await;
-            this.update(cx, |this, cx| {
-                this.set_snapshot(state, &buffer, cx);
-            })
-            .log_err();
+            if let Some(task) = this
+                .update(cx, |this, cx| this.set_snapshot(state, &buffer, cx))
+                .log_err()
+            {
+                task.await;
+            }
             drop(complete_on_drop)
         })
         .detach();
@@ -1460,8 +1497,14 @@ impl BufferDiff {
         let language = self.base_text(cx).language().cloned();
         let base_text = self.base_text_string(cx).map(|s| s.as_str().into());
         let fut = self.update_diff(buffer.clone(), base_text, false, language, cx);
-        let snapshot = cx.background_executor().block(fut);
-        self.set_snapshot(snapshot, &buffer, cx);
+        let fg_executor = cx.foreground_executor().clone();
+        let snapshot = fg_executor.block_on(fut);
+        let fut = self.set_snapshot_with_secondary_inner(snapshot, buffer, None, false, cx);
+        let (changed_range, base_text_changed_range) = fg_executor.block_on(fut);
+        cx.emit(BufferDiffEvent::DiffChanged {
+            changed_range,
+            base_text_changed_range,
+        })
     }
 
     pub fn base_text_buffer(&self) -> Entity<language::Buffer> {
@@ -2574,6 +2617,7 @@ mod tests {
         let diff = cx.new(|cx| {
             BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
         });
+        cx.run_until_parked();
         let (tx, rx) = mpsc::channel();
         let subscription =
             cx.update(|cx| cx.subscribe(&diff, move |_, event, _| tx.send(event.clone()).unwrap()));
@@ -2604,7 +2648,8 @@ mod tests {
                 )
             })
             .await;
-        diff.update(cx, |diff, cx| diff.set_snapshot(update, &snapshot, cx));
+        diff.update(cx, |diff, cx| diff.set_snapshot(update, &snapshot, cx))
+            .await;
         cx.run_until_parked();
         drop(subscription);
         let events = rx.into_iter().collect::<Vec<_>>();

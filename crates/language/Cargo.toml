@@ -62,6 +62,7 @@ sum_tree.workspace = true
 task.workspace = true
 text.workspace = true
 theme.workspace = true
+tracing.workspace = true
 tree-sitter-md = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
@@ -71,6 +72,7 @@ unicase = "2.6"
 util.workspace = true
 watch.workspace = true
 zlog.workspace = true
+ztracing.workspace = true
 diffy = "0.4.2"
 
 [dev-dependencies]
@@ -98,3 +100,6 @@ toml.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]
