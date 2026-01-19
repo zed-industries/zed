@@ -1,4 +1,4 @@
-use std::{collections::hash_map, time::Duration};
+use std::{collections::hash_map, sync::Arc, time::Duration};
 
 use collections::{HashMap, HashSet};
 use futures::future::join_all;
@@ -7,12 +7,15 @@ use gpui::{
 };
 use itertools::Itertools as _;
 use language::language_settings::language_settings;
-use project::{lsp_store::RefreshForServer, project_settings::ProjectSettings};
+use project::{
+    lsp_store::{BufferSemanticToken, RefreshForServer},
+    project_settings::ProjectSettings,
+};
 use settings::{
     SemanticTokenColorOverride, SemanticTokenFontStyle, SemanticTokenFontWeight,
     SemanticTokenRules, Settings as _,
 };
-use text::{Bias, BufferId};
+use text::BufferId;
 use theme::SyntaxTheme;
 use ui::ActiveTheme as _;
 
@@ -121,10 +124,6 @@ impl Editor {
                 let all_excerpts = editor.buffer().read(cx).excerpt_ids();
 
                 for (buffer_id, query_version, tokens) in all_semantic_tokens {
-                    let Some(buffer) = editor.buffer().read(cx).buffer(buffer_id) else {
-                        continue;
-                    };
-
                     let tokens = match tokens {
                         Ok(tokens) => tokens,
                         Err(e) => {
@@ -148,48 +147,40 @@ impl Editor {
 
                     editor.display_map.update(cx, |display_map, cx| {
                         let lsp_store = project.read(cx).lsp_store().read(cx);
-                        let stylizers = tokens.servers.keys().filter_map(|&server_id| {
-                            let legend = match lsp_store.lsp_server_capabilities.get(&server_id)?.semantic_tokens_provider.as_ref()? {
-                                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => &opts.legend,
-                                lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) => &opts.semantic_tokens_options.legend,
-                            };
-                            Some((server_id, legend))
-                        }).map(|(server_id, legend)| (server_id, SemanticTokenStylizer::new(legend, cx)))
-                        .collect::<HashMap<_, _>>();
 
-                        let buffer_snapshot = buffer.read(cx).snapshot();
-                        let token_highlights = tokens
-                            .all_tokens()
-                            .filter_map(|(server_id, token)| {
-                                let stylizer = stylizers.get(&server_id)?;
-                                let start = text::Unclipped(text::PointUtf16::new(token.line, token.start));
-                                let (start_offset, end_offset) = point_offset_to_offsets(
-                                    buffer.read(cx).clip_point_utf16(start, Bias::Left),
-                                    text::OffsetUtf16(token.length as usize),
-                                    &buffer.read(cx),
-                                );
-                                let buffer_range = buffer_snapshot.anchor_before(start_offset)..buffer_snapshot.anchor_after(end_offset);
-                                let multi_buffer_start = all_excerpts.iter().find_map(|&excerpt_id| multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, buffer_range.start))?;
-                                let multi_buffer_end = all_excerpts.iter().find_map(|&excerpt_id| multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, buffer_range.end))?;
-
-                                Some(SemanticTokenHighlight {
-                                    range: multi_buffer_start..multi_buffer_end,
-                                    style: stylizer.convert(
-                                        cx.theme().syntax(),
-                                        token.token_type,
-                                        token.token_modifiers,
-                                    )?,
+                        let mut token_highlights = Vec::new();
+                        for (&server_id, server_tokens) in &tokens.tokens {
+                            let Some(legend) = lsp_store
+                                .lsp_server_capabilities
+                                .get(&server_id)
+                                .and_then(|caps| caps.semantic_tokens_provider.as_ref())
+                                .map(|provider| match provider {
+                                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                                        opts,
+                                    ) => &opts.legend,
+                                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) => {
+                                        &opts.semantic_tokens_options.legend
+                                    }
                                 })
-                            });
+                            else {
+                                continue;
+                            };
+                            let stylizer = SemanticTokenStylizer::new(legend, cx);
+                            token_highlights.extend(buffer_into_editor_highlights(
+                                server_tokens,
+                                &stylizer,
+                                &all_excerpts,
+                                &multi_buffer_snapshot,
+                                cx,
+                            ));
+                        }
 
-                        display_map
-                            .semantic_token_highlights.remove(&buffer_id);
-
-                        let mut tokens: std::sync::Arc<[_]> = token_highlights.collect();
-                        std::sync::Arc::get_mut(&mut tokens).unwrap().sort_by(|a, b| a.range.start.cmp(&b.range.start,&multi_buffer_snapshot));
+                        token_highlights.sort_by(|a, b| {
+                            a.range.start.cmp(&b.range.start, &multi_buffer_snapshot)
+                        });
                         display_map
                             .semantic_token_highlights
-                            .insert(buffer_id, tokens);
+                            .insert(buffer_id, Arc::from(token_highlights));
                     });
                 }
 
@@ -199,18 +190,30 @@ impl Editor {
     }
 }
 
-fn point_offset_to_offsets(
-    point: text::PointUtf16,
-    length: text::OffsetUtf16,
-    buffer: &text::Buffer,
-) -> (usize, usize) {
-    let start_offset = buffer.as_rope().point_utf16_to_offset_utf16(point);
-    let end_offset = start_offset + length;
+fn buffer_into_editor_highlights<'a>(
+    buffer_tokens: &'a [BufferSemanticToken],
+    stylizer: &'a SemanticTokenStylizer<'a>,
+    all_excerpts: &'a [multi_buffer::ExcerptId],
+    multi_buffer_snapshot: &'a multi_buffer::MultiBufferSnapshot,
+    cx: &'a gpui::App,
+) -> impl Iterator<Item = SemanticTokenHighlight> + 'a {
+    buffer_tokens.iter().filter_map(|token| {
+        let multi_buffer_start = all_excerpts.iter().find_map(|&excerpt_id| {
+            multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, token.range.start)
+        })?;
+        let multi_buffer_end = all_excerpts.iter().find_map(|&excerpt_id| {
+            multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, token.range.end)
+        })?;
 
-    let start = buffer.as_rope().offset_utf16_to_offset(start_offset);
-    let end = buffer.as_rope().offset_utf16_to_offset(end_offset);
-
-    (start, end)
+        Some(SemanticTokenHighlight {
+            range: multi_buffer_start..multi_buffer_end,
+            style: stylizer.convert(
+                cx.theme().syntax(),
+                token.token_type,
+                token.token_modifiers,
+            )?,
+        })
+    })
 }
 
 struct SemanticTokenStylizer<'a> {

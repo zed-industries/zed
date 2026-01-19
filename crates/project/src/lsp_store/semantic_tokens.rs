@@ -1,4 +1,4 @@
-use std::{collections::hash_map, slice::ChunksExact, sync::Arc};
+use std::{collections::hash_map, ops::Range, slice::ChunksExact, sync::Arc};
 
 use itertools::Itertools;
 
@@ -14,7 +14,7 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use language::Buffer;
 use lsp::{AdapterServerCapabilities, LSP_REQUEST_TIMEOUT, LanguageServerId};
 use rpc::{TypedEnvelope, proto};
-use text::BufferId;
+use text::{Anchor, Bias, BufferId, OffsetUtf16, PointUtf16, Unclipped};
 use util::ResultExt as _;
 
 use crate::{
@@ -32,13 +32,13 @@ pub struct RefreshForServer {
 }
 
 impl LspStore {
-    pub fn current_semantic_tokens(&self, buffer: BufferId) -> Option<BufferSemanticTokens> {
+    pub fn current_semantic_tokens(&self, buffer: BufferId) -> Option<RawSemanticTokens> {
         Some(
             self.lsp_data
                 .get(&buffer)?
                 .semantic_tokens
                 .as_ref()?
-                .buffer_tokens
+                .raw_tokens
                 .clone(),
         )
     }
@@ -91,12 +91,12 @@ impl LspStore {
 
         let task_buffer = buffer.clone();
         let task_version_queried_for = version_queried_for.clone();
-        let task: SemanticTokensTask = cx
+        let task = cx
             .spawn(async move |lsp_store, cx| {
                 let buffer = task_buffer;
                 let version_queried_for = task_version_queried_for;
                 let new_tokens = new_tokens.await.unwrap_or_default();
-                let buffer_tokens = lsp_store
+                let raw_tokens = lsp_store
                     .update(cx, |lsp_store, cx| {
                         let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
                         let semantic_tokens_data = lsp_data.semantic_tokens.get_or_insert_default();
@@ -105,14 +105,14 @@ impl LspStore {
                             for (server_id, new_tokens_response) in new_tokens {
                                 match new_tokens_response {
                                     SemanticTokensResponse::Full { data, result_id } => {
-                                        semantic_tokens_data.buffer_tokens.servers.insert(
+                                        semantic_tokens_data.raw_tokens.servers.insert(
                                             server_id,
                                             ServerSemanticTokens::from_full(data, result_id),
                                         );
                                     }
                                     SemanticTokensResponse::Delta { edits, result_id } => {
                                         if let Some(tokens) = semantic_tokens_data
-                                            .buffer_tokens
+                                            .raw_tokens
                                             .servers
                                             .get_mut(&server_id)
                                         {
@@ -123,10 +123,13 @@ impl LspStore {
                                 }
                             }
                         }
-                        semantic_tokens_data.buffer_tokens.clone()
+                        semantic_tokens_data.raw_tokens.clone()
                     })
                     .map_err(Arc::new)?;
-                Ok(buffer_tokens)
+
+                let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                let tokens = raw_to_buffer_semantic_tokens(&raw_tokens, &buffer_snapshot);
+                Ok(BufferSemanticTokens { tokens })
             })
             .shared();
 
@@ -138,7 +141,7 @@ impl LspStore {
         task
     }
 
-    pub(crate) fn fetch_semantic_tokens_for_buffer(
+    pub(super) fn fetch_semantic_tokens_for_buffer(
         &mut self,
         buffer: &Entity<Buffer>,
         for_server: Option<LanguageServerId>,
@@ -295,7 +298,7 @@ impl LspStore {
         self.latest_lsp_data(buffer, cx)
             .semantic_tokens
             .as_ref()?
-            .buffer_tokens
+            .raw_tokens
             .servers
             .get(&server_id)?
             .result_id
@@ -306,9 +309,61 @@ impl LspStore {
 pub type SemanticTokensTask =
     Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>>;
 
+#[derive(Clone, Default)]
+pub struct BufferSemanticTokens {
+    pub tokens: HashMap<LanguageServerId, Arc<[BufferSemanticToken]>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BufferSemanticToken {
+    pub range: Range<Anchor>,
+    pub token_type: u32,
+    pub token_modifiers: u32,
+}
+
+fn raw_to_buffer_semantic_tokens(
+    raw_tokens: &RawSemanticTokens,
+    buffer_snapshot: &text::BufferSnapshot,
+) -> HashMap<LanguageServerId, Arc<[BufferSemanticToken]>> {
+    raw_tokens
+        .servers
+        .iter()
+        .map(|(&server_id, server_tokens)| {
+            let buffer_tokens: Arc<[BufferSemanticToken]> = server_tokens
+                .tokens()
+                .filter_map(|token| {
+                    let start = Unclipped(PointUtf16::new(token.line, token.start));
+                    let clipped_start = buffer_snapshot.clip_point_utf16(start, Bias::Left);
+                    let start_offset = buffer_snapshot
+                        .as_rope()
+                        .point_utf16_to_offset_utf16(clipped_start);
+                    let end_offset = start_offset + OffsetUtf16(token.length as usize);
+
+                    let start = buffer_snapshot
+                        .as_rope()
+                        .offset_utf16_to_offset(start_offset);
+                    let end = buffer_snapshot.as_rope().offset_utf16_to_offset(end_offset);
+
+                    if start == end {
+                        return None;
+                    }
+
+                    Some(BufferSemanticToken {
+                        range: buffer_snapshot.anchor_before(start)
+                            ..buffer_snapshot.anchor_after(end),
+                        token_type: token.token_type,
+                        token_modifiers: token.token_modifiers,
+                    })
+                })
+                .collect();
+            (server_id, buffer_tokens)
+        })
+        .collect()
+}
+
 #[derive(Default, Debug)]
 pub struct SemanticTokensData {
-    pub(super) buffer_tokens: BufferSemanticTokens,
+    pub(super) raw_tokens: RawSemanticTokens,
     pub(super) latest_invalidation_requests: HashMap<LanguageServerId, Option<usize>>,
     update: Option<(Global, SemanticTokensTask)>,
 }
@@ -318,7 +373,7 @@ pub struct SemanticTokensData {
 /// This aggregates semantic tokens from multiple language servers in a specific order.
 /// Semantic tokens later in the list will override earlier ones in case of overlap.
 #[derive(Default, Debug, Clone)]
-pub struct BufferSemanticTokens {
+pub struct RawSemanticTokens {
     pub servers: HashMap<lsp::LanguageServerId, ServerSemanticTokens>,
 }
 
@@ -362,7 +417,7 @@ pub struct SemanticToken {
     pub token_modifiers: u32,
 }
 
-impl BufferSemanticTokens {
+impl RawSemanticTokens {
     pub fn all_tokens(&self) -> impl Iterator<Item = (lsp::LanguageServerId, SemanticToken)> + '_ {
         self.servers
             .iter()
@@ -479,14 +534,14 @@ mod tests {
         // A token at 0,5 and at 2,10
         let tokens_2 = ServerSemanticTokens::from_full(vec![0, 5, 0, 0, 0, 2, 10, 0, 0, 0], None);
 
-        let buffer_tokens = BufferSemanticTokens {
+        let raw_tokens = RawSemanticTokens {
             servers: HashMap::from_iter([
                 (lsp::LanguageServerId(1), tokens_1),
                 (lsp::LanguageServerId(2), tokens_2),
             ]),
         };
 
-        let all_tokens = buffer_tokens
+        let all_tokens = raw_tokens
             .all_tokens()
             .map(|(server, tok)| (server, tok.line, tok.start))
             .collect::<Vec<_>>();

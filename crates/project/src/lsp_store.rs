@@ -138,7 +138,9 @@ pub use language::Location;
 pub use lsp_store::inlay_hint_cache::{CacheInlayHints, InvalidationStrategy};
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
-pub use semantic_tokens::{BufferSemanticTokens, RefreshForServer};
+pub use semantic_tokens::{
+    BufferSemanticToken, BufferSemanticTokens, RawSemanticTokens, RefreshForServer,
+};
 pub use worktree::{
     Entry, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange, ProjectEntryId,
     UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
@@ -3855,7 +3857,7 @@ impl BufferLspData {
         self.inlay_hints.remove_server_data(for_server);
 
         if let Some(semantic_tokens) = &mut self.semantic_tokens {
-            semantic_tokens.buffer_tokens.servers.remove(&for_server);
+            semantic_tokens.raw_tokens.servers.remove(&for_server);
             semantic_tokens
                 .latest_invalidation_requests
                 .remove(&for_server);

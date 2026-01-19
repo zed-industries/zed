@@ -8,7 +8,7 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
 };
 use language::{Buffer, BufferSnapshot, OffsetUtf16, OwnedSyntaxLayer, PointUtf16};
-use project::lsp_store::BufferSemanticTokens;
+use project::lsp_store::RawSemanticTokens;
 use std::{any::TypeId, mem, ops::Range};
 use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
@@ -119,7 +119,7 @@ struct EditorState {
 
 type SemanticTokenState = Option<(
     HashMap<lsp::LanguageServerId, lsp::SemanticTokensLegend>,
-    BufferSemanticTokens,
+    RawSemanticTokens,
     BufferSnapshot,
 )>;
 
