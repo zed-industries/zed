@@ -154,7 +154,7 @@ pub fn lsp_tasks(
                         new_lsp_tasks.extend(new_runnables.runnables.into_iter().filter_map(
                             |(location, runnable)| {
                                 let resolved_task =
-                                    runnable.resolve_task(&id_base, &lsp_buffer_context).ok()?;
+                                    runnable.resolve_task(&id_base, &lsp_buffer_context)?;
                                 Some((location, resolved_task))
                             },
                         ));

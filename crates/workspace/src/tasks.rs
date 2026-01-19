@@ -33,7 +33,7 @@ impl Workspace {
             }
         }
 
-        if let Ok(spawn_in_terminal) =
+        if let Some(spawn_in_terminal) =
             task_to_resolve.resolve_task(&task_source_kind.to_id_base(), task_cx)
         {
             self.schedule_resolved_task(

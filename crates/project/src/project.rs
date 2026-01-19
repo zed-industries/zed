@@ -145,8 +145,8 @@ pub use language::Location;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use task_inventory::{
-    BasicContextProvider, ContextProviderWithTasks, DebugScenarioContext, Inventory,
-    InventoryEvent, TaskContexts, TaskSourceKind,
+    BasicContextProvider, ContextProviderWithTasks, DebugScenarioContext, Inventory, TaskContexts,
+    TaskSourceKind,
 };
 
 pub use buffer_store::ProjectTransaction;

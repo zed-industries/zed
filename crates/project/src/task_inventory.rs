@@ -11,7 +11,7 @@ use std::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use dap::DapRegistry;
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
+use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity};
 use itertools::Itertools;
 use language::{
     Buffer, ContextLocation, ContextProvider, File, Language, LanguageToolchainStore, Location,
@@ -21,18 +21,14 @@ use lsp::{LanguageServerId, LanguageServerName};
 use paths::{debug_task_file_name, task_file_name};
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
-    DebugScenario, ResolvedTask, TaskContext, TaskId, TaskResolutionError, TaskTemplate,
-    TaskTemplates, TaskVariables, VariableName,
+    DebugScenario, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables,
+    VariableName,
 };
 use text::{BufferId, Point, ToPoint};
 use util::{NumericPrefixWithSuffix, ResultExt as _, post_inc, rel_path::RelPath};
 use worktree::WorktreeId;
 
 use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
-
-pub enum InventoryEvent {
-    TaskResolutionFailed(String),
-}
 
 #[derive(Clone, Debug, Default)]
 pub struct DebugScenarioContext {
@@ -48,8 +44,6 @@ pub struct Inventory {
     templates_from_settings: InventoryFor<TaskTemplate>,
     scenarios_from_settings: InventoryFor<DebugScenario>,
 }
-
-impl EventEmitter<InventoryEvent> for Inventory {}
 
 impl std::fmt::Debug for Inventory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -498,7 +492,7 @@ impl Inventory {
             .flat_map(|worktree| self.worktree_templates_from_settings(worktree))
             .collect::<Vec<_>>();
         let task_contexts = task_contexts.clone();
-        cx.spawn(async move |inventory, cx| {
+        cx.background_spawn(async move {
             let language_tasks = if let Some(task) = associated_tasks {
                 task.await.map(|templates| {
                     templates
@@ -510,30 +504,14 @@ impl Inventory {
                 None
             };
 
-            let all_tasks = worktree_tasks
+            let worktree_tasks = worktree_tasks
                 .into_iter()
                 .chain(language_tasks.into_iter().flatten())
                 .chain(global_tasks);
 
-            let mut user_task_resolution_errors = std::collections::HashMap::new();
-            let new_resolved_tasks = all_tasks
+            let new_resolved_tasks = worktree_tasks
                 .flat_map(|(kind, task)| {
                     let id_base = kind.to_id_base();
-                    let mut resolve_task =
-                        |context: &TaskContext| match task.resolve_task(&id_base, context) {
-                            Ok(resolved) => Some(resolved),
-                            Err(e) => {
-                                if matches!(
-                                    kind,
-                                    TaskSourceKind::AbsPath { .. }
-                                        | TaskSourceKind::Worktree { .. }
-                                        | TaskSourceKind::UserInput
-                                ) {
-                                    user_task_resolution_errors.insert(task.label.clone(), e);
-                                }
-                                None
-                            }
-                        };
 
                     if let TaskSourceKind::Worktree { id, .. } = &kind {
                         None.or_else(|| {
@@ -541,14 +519,14 @@ impl Inventory {
                                 task_contexts.active_item_context.as_ref().filter(
                                     |(worktree_id, _, _)| Some(id) == worktree_id.as_ref(),
                                 )?;
-                            resolve_task(item_context)
+                            task.resolve_task(&id_base, item_context)
                         })
                         .or_else(|| {
                             let (_, worktree_context) = task_contexts
                                 .active_worktree_context
                                 .as_ref()
                                 .filter(|(worktree_id, _)| id == worktree_id)?;
-                            resolve_task(worktree_context)
+                            task.resolve_task(&id_base, worktree_context)
                         })
                         .or_else(|| {
                             if let TaskSourceKind::Worktree { id, .. } = &kind {
@@ -557,7 +535,7 @@ impl Inventory {
                                     .iter()
                                     .find(|(worktree_id, _)| worktree_id == id)
                                     .map(|(_, context)| context)?;
-                                resolve_task(worktree_context)
+                                task.resolve_task(&id_base, worktree_context)
                             } else {
                                 None
                             }
@@ -566,15 +544,15 @@ impl Inventory {
                         None.or_else(|| {
                             let (_, _, item_context) =
                                 task_contexts.active_item_context.as_ref()?;
-                            resolve_task(item_context)
+                            task.resolve_task(&id_base, item_context)
                         })
                         .or_else(|| {
                             let (_, worktree_context) =
                                 task_contexts.active_worktree_context.as_ref()?;
-                            resolve_task(worktree_context)
+                            task.resolve_task(&id_base, worktree_context)
                         })
                     }
-                    .or_else(|| resolve_task(&TaskContext::default()))
+                    .or_else(|| task.resolve_task(&id_base, &TaskContext::default()))
                     .map(move |resolved_task| (kind.clone(), resolved_task, not_used_score))
                 })
                 .filter(|(_, resolved_task, _)| {
@@ -592,18 +570,6 @@ impl Inventory {
                 .sorted_unstable_by(task_lru_comparator)
                 .map(|(kind, task, _)| (kind, task))
                 .collect::<Vec<_>>();
-
-            if !user_task_resolution_errors.is_empty() {
-                inventory
-                    .update(cx, |_, cx| {
-                        for (label, error) in user_task_resolution_errors {
-                            if let TaskResolutionError::UnknownVariable(ref name) = error {
-                                cx.emit(InventoryEvent::TaskResolutionFailed(format!("The task `{label}` was not loaded because `{name}` could not be resolved.")));
-                            }
-                        }
-                    })
-                    .log_err();
-            }
 
             (previously_spawned_tasks, new_resolved_tasks)
         })
@@ -695,8 +661,31 @@ impl Inventory {
                 });
             }
         };
+
+        let mut validation_errors = Vec::new();
         let new_templates = raw_tasks.into_iter().filter_map(|raw_template| {
-            serde_json::from_value::<TaskTemplate>(raw_template).log_err()
+            let template = serde_json::from_value::<TaskTemplate>(raw_template).log_err()?;
+
+            // Validate the variable names used in the `TaskTemplate`.
+            let unknown_variables = template.unknown_variables();
+            if !unknown_variables.is_empty() {
+                let variables_list = unknown_variables
+                    .iter()
+                    .map(|variable| format!("${variable}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                validation_errors.push(format!(
+                    "Task '{}' uses unknown variables: {}",
+                    template.label, variables_list
+                ));
+
+                // Skip this template, since it uses unknown variable names, but
+                // continue processing others.
+                return None;
+            }
+
+            Some(template)
         });
 
         let parsed_templates = &mut self.templates_from_settings;
@@ -743,6 +732,18 @@ impl Inventory {
                     }
                 });
             }
+        }
+
+        if !validation_errors.is_empty() {
+            return Err(InvalidSettingsError::Tasks {
+                path: match &location {
+                    TaskSettingsLocation::Global(path) => path.to_path_buf(),
+                    TaskSettingsLocation::Worktree(location) => {
+                        location.path.as_std_path().join(task_file_name())
+                    }
+                },
+                message: validation_errors.join("\n"),
+            });
         }
 
         Ok(())
@@ -932,8 +933,8 @@ mod test_inventory {
                     inventory.task_scheduled(
                         task_source_kind.clone(),
                         task.resolve_task(&id_base, &TaskContext::default())
-                            .unwrap_or_else(|e| {
-                                panic!("Failed to resolve task with name {task_name}: {e:?}")
+                            .unwrap_or_else(|| {
+                                panic!("Failed to resolve task with name {task_name}")
                             }),
                     )
                 })
@@ -965,8 +966,8 @@ mod test_inventory {
                     inventory.task_scheduled(
                         task_source_kind.clone(),
                         task.resolve_task(&id_base, &TaskContext::default())
-                            .unwrap_or_else(|e| {
-                                panic!("Failed to resolve task with name {task_name}: {e:?}")
+                            .unwrap_or_else(|| {
+                                panic!("Failed to resolve task with name {task_name}")
                             }),
                     );
                 })
@@ -988,7 +989,7 @@ mod test_inventory {
             .into_iter()
             .filter_map(|(source_kind, task)| {
                 let id_base = source_kind.to_id_base();
-                Some((source_kind, task.resolve_task(&id_base, task_context).ok()?))
+                Some((source_kind, task.resolve_task(&id_base, task_context)?))
             })
             .map(|(source_kind, resolved_task)| (source_kind, resolved_task.resolved_label))
             .collect()
@@ -1575,6 +1576,35 @@ mod tests {
                 .chain(worktree_independent_tasks.iter())
                 .cloned()
                 .collect::<Vec<_>>(),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_update_file_based_tasks_with_unknown_variables(cx: &mut TestAppContext) {
+        init_test(cx);
+        let inventory = cx.update(|cx| Inventory::new(cx));
+
+        let result = inventory.update(cx, |inventory, _| {
+            inventory.update_file_based_tasks(
+                TaskSettingsLocation::Global(tasks_file()),
+                Some(
+                    &json!([{
+                        "label": "bad task",
+                        "command": "echo $ZED_BANANAS"
+                    }, {
+                        "label": "good task",
+                        "command": "echo $ZED_FILE"
+                    }])
+                    .to_string(),
+                ),
+            )
+        });
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("ZED_BANANAS"));
+        assert_eq!(
+            task_template_names(&inventory, None, cx).await,
+            vec!["good task".to_string()]
         );
     }
 

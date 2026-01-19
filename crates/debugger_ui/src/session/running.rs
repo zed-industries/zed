@@ -652,7 +652,7 @@ impl RunningState {
                 if s.starts_with("\"$ZED_") && s.ends_with('"') {
                     *s = s[1..s.len() - 1].to_string();
                 }
-                if let Ok(substituted) = substitute_variables_in_str(s, context) {
+                if let Some(substituted) = substitute_variables_in_str(s, context) {
                     *s = substituted;
                 }
             }
@@ -716,7 +716,7 @@ impl RunningState {
                 }
                 resolve_path(s);
 
-                if let Ok(substituted) = substitute_variables_in_str(s, context) {
+                if let Some(substituted) = substitute_variables_in_str(s, context) {
                     *s = substituted;
                 }
             }
@@ -1055,10 +1055,9 @@ impl RunningState {
                         (task, None)
                     }
                 };
-                let mut task = task_template
-                    .resolve_task("debug-build-task", &task_context)
-                    .map_err(|e| anyhow::anyhow!(e))
-                    .context("Could not resolve task variables within a debug scenario")?;
+                let Some(mut task) = task_template.resolve_task("debug-build-task", &task_context) else {
+                    anyhow::bail!("Could not resolve task variables with a debug scenario");
+                };
 
                 let locator_name = if let Some(locator_name) = locator_name {
                     extra_config = config.clone();
