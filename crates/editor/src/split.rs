@@ -7,10 +7,7 @@ use gpui::{
     Action, AppContext as _, Entity, EventEmitter, Focusable, NoAction, Subscription, WeakEntity,
 };
 use language::{Buffer, Capability};
-use multi_buffer::{
-    Anchor, BufferOffset, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer,
-    MultiBufferPoint, MultiBufferSnapshot, PathKey,
-};
+use multi_buffer::{Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, PathKey};
 use project::Project;
 use rope::Point;
 use text::{OffsetRangeExt as _, ToPoint as _};
@@ -521,17 +518,11 @@ impl SplittableEditor {
             editor.set_scroll_companion(Some(primary_weak));
         });
 
-        let primary_scroll_position = self.primary_editor.update(cx, |editor, cx| {
-            editor.scroll_position(cx)
-        });
+        let primary_scroll_position = self
+            .primary_editor
+            .update(cx, |editor, cx| editor.scroll_position(cx));
         secondary.editor.update(cx, |editor, cx| {
-            editor.set_scroll_position_internal(
-                primary_scroll_position,
-                false,
-                false,
-                window,
-                cx,
-            );
+            editor.set_scroll_position_internal(primary_scroll_position, false, false, window, cx);
         });
 
         self.secondary = Some(secondary);
@@ -572,7 +563,10 @@ impl SplittableEditor {
     ) {
         if let Some(secondary) = &self.secondary {
             if secondary.has_latest_selection {
-                self.primary_editor.read(cx).focus_handle(cx).focus(window, cx);
+                self.primary_editor
+                    .read(cx)
+                    .focus_handle(cx)
+                    .focus(window, cx);
                 self.primary_editor.update(cx, |editor, cx| {
                     editor.request_autoscroll(Autoscroll::fit(), cx);
                 });
@@ -859,6 +853,33 @@ impl SplittableEditor {
             self.debug_print(cx);
             pretty_assertions::assert_eq!(primary_t, secondary_t);
         }
+    }
+
+    fn unmodified_rows(snapshot: &multi_buffer::MultiBufferSnapshot) -> Vec<Vec<String>> {
+        use multi_buffer::MultiBufferRow;
+
+        let mut result: Vec<Vec<String>> = Vec::new();
+        let mut current_group: Vec<String> = Vec::new();
+
+        for (line, row_info) in snapshot
+            .text()
+            .split("\n")
+            .zip(snapshot.row_infos(MultiBufferRow(0)))
+        {
+            if row_info.diff_status.is_none() {
+                current_group.push(line.to_owned());
+            } else {
+                if !current_group.is_empty() {
+                    result.push(std::mem::take(&mut current_group));
+                }
+            }
+        }
+
+        if !current_group.is_empty() {
+            result.push(current_group);
+        }
+
+        result
     }
 
     fn debug_print(&self, cx: &mut App) {
@@ -1232,7 +1253,8 @@ impl Render for SplittableEditor {
     ) -> impl ui::IntoElement {
         let inner = if self.secondary.is_some() {
             let style = self.primary_editor.read(cx).create_style(cx);
-            SplitEditorView::new(cx.entity().clone(), style, self.split_state.clone()).into_any_element()
+            SplitEditorView::new(cx.entity().clone(), style, self.split_state.clone())
+                .into_any_element()
         } else {
             self.primary_editor.clone().into_any_element()
         };

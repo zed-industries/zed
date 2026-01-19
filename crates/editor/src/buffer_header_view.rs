@@ -1,8 +1,8 @@
 use collections::HashMap;
 use gpui::{
-    Action, AnyElement, ClickEvent, ClipboardItem, Entity, Focusable, IntoElement, Length,
-    MouseButton, Pixels, SharedString, Window, linear_color_stop, linear_gradient, size,
-    AvailableSpace,
+    Action, AnyElement, App, Bounds, ClickEvent, ClipboardItem, Element, ElementId, Entity,
+    Focusable, GlobalElementId, IntoElement, LayoutId, Length, MouseButton, Pixels, SharedString,
+    Window, linear_color_stop, linear_gradient, size, AvailableSpace,
 };
 use multi_buffer::{Anchor, ExcerptInfo};
 use settings::Settings;
@@ -24,7 +24,6 @@ use git::status::FileStatus;
 use project::Entry;
 use workspace::{ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel};
 
-#[derive(IntoElement)]
 pub struct BufferHeadersView {
     editor: Entity<Editor>,
     snapshot: EditorSnapshot,
@@ -438,9 +437,7 @@ impl BufferHeadersView {
         excerpt: &ExcerptInfo,
         snapshot: &EditorSnapshot,
         scroll_position: gpui::Point<crate::scroll::ScrollOffset>,
-        visible_row_range: &std::ops::Range<DisplayRow>,
         line_height: Pixels,
-        hitbox_origin: gpui::Point<Pixels>,
         available_width: Pixels,
         selected_buffer_ids: &[BufferId],
         latest_selection_anchors: &HashMap<BufferId, Anchor>,
@@ -459,7 +456,7 @@ impl BufferHeadersView {
 
         let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
 
-        let mut header = v_flex()
+        v_flex()
             .w_full()
             .relative()
             .child(
@@ -488,10 +485,15 @@ impl BufferHeadersView {
                 )
                 .into_any_element(),
             )
-            .into_any_element();
+            .into_any_element()
+    }
 
-        let mut origin = hitbox_origin;
-        for (row, block) in snapshot.blocks_in_range(visible_row_range.clone()) {
+    fn compute_sticky_header_origin(
+        &self,
+        scroll_position: gpui::Point<crate::scroll::ScrollOffset>,
+    ) -> gpui::Point<Pixels> {
+        let mut origin = self.hitbox_origin;
+        for (row, block) in self.snapshot.blocks_in_range(self.visible_row_range.clone()) {
             if !block.is_buffer_header() {
                 continue;
             }
@@ -504,19 +506,11 @@ impl BufferHeadersView {
             let offset = scroll_position.y - max_row as f64;
 
             if offset > 0.0 {
-                origin.y -= Pixels::from(offset * ScrollPixelOffset::from(line_height));
+                origin.y -= Pixels::from(offset * ScrollPixelOffset::from(self.line_height));
             }
             break;
         }
-
-        let available_size = size(
-            AvailableSpace::Definite(available_width),
-            AvailableSpace::MinContent,
-        );
-
-        header.prepaint_as_root(origin, available_size, window, cx);
-
-        header
+        origin
     }
 }
 
@@ -536,34 +530,104 @@ fn file_status_label_color(file_status: Option<FileStatus>) -> Color {
     })
 }
 
-impl RenderOnce for BufferHeadersView {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+pub struct BufferHeadersViewState {
+    sticky_header_element: Option<AnyElement>,
+    sticky_header_origin: gpui::Point<Pixels>,
+    available_width: Pixels,
+}
+
+impl Element for BufferHeadersView {
+    type RequestLayoutState = BufferHeadersViewState;
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
         let sticky_header_excerpt = self
             .snapshot
             .sticky_header_excerpt(self.scroll_position.y.into());
 
         let available_width = self.hitbox_width - self.right_margin;
 
-        let mut children: Vec<AnyElement> = Vec::new();
-
-        if let Some(sticky_header_excerpt) = sticky_header_excerpt {
-            let sticky_element = Self::render_sticky_buffer_header(
+        let sticky_header_element = sticky_header_excerpt.map(|sticky_header_excerpt| {
+            Self::render_sticky_buffer_header(
                 &self.editor,
                 sticky_header_excerpt.excerpt,
                 &self.snapshot,
                 self.scroll_position,
-                &self.visible_row_range,
                 self.line_height,
-                self.hitbox_origin,
                 available_width,
                 &self.selected_buffer_ids,
                 &self.latest_selection_anchors,
                 window,
                 cx,
-            );
-            children.push(sticky_element);
-        }
+            )
+        });
 
-        div().children(children)
+        let sticky_header_origin = self.compute_sticky_header_origin(self.scroll_position);
+
+        let layout_id = window.request_layout(gpui::Style::default(), None, cx);
+
+        (
+            layout_id,
+            BufferHeadersViewState {
+                sticky_header_element,
+                sticky_header_origin,
+                available_width,
+            },
+        )
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        if let Some(ref mut header) = request_layout.sticky_header_element {
+            let available_size = size(
+                AvailableSpace::Definite(request_layout.available_width),
+                AvailableSpace::MinContent,
+            );
+            header.prepaint_as_root(request_layout.sticky_header_origin, available_size, window, cx);
+        }
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if let Some(ref mut header) = request_layout.sticky_header_element {
+            header.paint(window, cx);
+        }
+    }
+}
+
+impl IntoElement for BufferHeadersView {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
     }
 }
