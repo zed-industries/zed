@@ -12,7 +12,8 @@ use ui::{Button, ButtonLike, Color, Icon, IconName, Label, Tooltip, h_flex, prel
 use util::ResultExt;
 use workspace::{StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
 
-use crate::{Deploy, IncludeWarnings, ProjectDiagnosticsEditor};
+use crate::{Deploy, DiagnosticsMaxSeverity, ProjectDiagnosticsEditor};
+use project::project_settings::DiagnosticSeverity;
 
 /// The status bar item that displays diagnostic counts.
 pub struct DiagnosticIndicator {
@@ -33,13 +34,20 @@ impl Render for DiagnosticIndicator {
             return indicator.hidden();
         }
 
-        let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
-            (0, 0) => h_flex().child(
+        let error_count = self.summary.error_count;
+        let warning_count = self.summary.warning_count;
+        let info_count = self.summary.info_count;
+        let hint_count = self.summary.hint_count;
+        let total_count = error_count + warning_count + info_count + hint_count;
+
+        let diagnostic_indicator = if total_count == 0 {
+            h_flex().child(
                 Icon::new(IconName::Check)
                     .size(IconSize::Small)
                     .color(Color::Default),
-            ),
-            (error_count, warning_count) => h_flex()
+            )
+        } else {
+            h_flex()
                 .gap_1()
                 .when(error_count > 0, |this| {
                     this.child(
@@ -56,7 +64,23 @@ impl Render for DiagnosticIndicator {
                             .color(Color::Warning),
                     )
                     .child(Label::new(warning_count.to_string()).size(LabelSize::Small))
-                }),
+                })
+                .when(info_count > 0, |this| {
+                    this.child(
+                        Icon::new(IconName::Info)
+                            .size(IconSize::Small)
+                            .color(Color::Info),
+                    )
+                    .child(Label::new(info_count.to_string()).size(LabelSize::Small))
+                })
+                .when(hint_count > 0, |this| {
+                    this.child(
+                        Icon::new(IconName::Sparkle)
+                            .size(IconSize::Small)
+                            .color(Color::Hint),
+                    )
+                    .child(Label::new(hint_count.to_string()).size(LabelSize::Small))
+                })
         };
 
         let status = if let Some(diagnostic) = &self.current_diagnostic {
@@ -89,11 +113,23 @@ impl Render for DiagnosticIndicator {
                     .tooltip(move |_window, cx| {
                         Tooltip::for_action("Project Diagnostics", &Deploy, cx)
                     })
-                    .on_click(cx.listener(|this, _, window, cx| {
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
-                            if this.summary.error_count == 0 && this.summary.warning_count > 0 {
+                            let total_count = this.summary.error_count
+                                + this.summary.warning_count
+                                + this.summary.info_count
+                                + this.summary.hint_count;
+                            if this.summary.error_count == 0 && total_count > 0 {
                                 cx.update_default_global(
-                                    |show_warnings: &mut IncludeWarnings, _| show_warnings.0 = true,
+                                    |max_severity: &mut DiagnosticsMaxSeverity, _| {
+                                        if this.summary.warning_count > 0 {
+                                            max_severity.0 = DiagnosticSeverity::Warning;
+                                        } else if this.summary.info_count > 0 {
+                                            max_severity.0 = DiagnosticSeverity::Info;
+                                        } else if this.summary.hint_count > 0 {
+                                            max_severity.0 = DiagnosticSeverity::Hint;
+                                        }
+                                    },
                                 );
                             }
                             workspace.update(cx, |workspace, cx| {

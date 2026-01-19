@@ -1,6 +1,7 @@
 use crate::{BufferDiagnosticsEditor, ProjectDiagnosticsEditor, ToggleDiagnosticsRefresh};
 use gpui::{Context, EventEmitter, ParentElement, Render, Window};
 use language::DiagnosticEntry;
+use project::project_settings::DiagnosticSeverity;
 use text::{Anchor, BufferId};
 use ui::prelude::*;
 use ui::{IconButton, IconButtonShape, IconName, Tooltip};
@@ -11,11 +12,10 @@ pub struct ToolbarControls {
 }
 
 pub(crate) trait DiagnosticsToolbarEditor: Send + Sync {
-    /// Informs the toolbar whether warnings are included in the diagnostics.
-    fn include_warnings(&self, cx: &App) -> bool;
-    /// Toggles whether warning diagnostics should be displayed by the
-    /// diagnostics editor.
-    fn toggle_warnings(&self, window: &mut Window, cx: &mut App);
+    /// Returns the maximum severity level of diagnostics being displayed.
+    fn max_severity(&self, cx: &App) -> DiagnosticSeverity;
+    /// Cycles to the next severity level for displaying diagnostics.
+    fn cycle_severity(&self, window: &mut Window, cx: &mut App);
     /// Indicates whether the diagnostics editor is currently updating the
     /// diagnostics.
     fn is_updating(&self, cx: &App) -> bool;
@@ -34,27 +34,38 @@ pub(crate) trait DiagnosticsToolbarEditor: Send + Sync {
 
 impl Render for ToolbarControls {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut include_warnings = false;
+        let mut max_severity = DiagnosticSeverity::Warning;
         let mut is_updating = false;
 
         match &self.editor {
             Some(editor) => {
-                include_warnings = editor.include_warnings(cx);
+                max_severity = editor.max_severity(cx);
                 is_updating = editor.is_updating(cx);
             }
             None => {}
         }
 
-        let warning_tooltip = if include_warnings {
-            "Exclude Warnings"
-        } else {
-            "Include Warnings"
+        let severity_tooltip = match max_severity {
+            DiagnosticSeverity::Off => "Show Errors",
+            DiagnosticSeverity::Error => "Show Warnings",
+            DiagnosticSeverity::Warning => "Show Info",
+            DiagnosticSeverity::Info => "Show Hints",
+            DiagnosticSeverity::Hint => "Show Errors Only",
         };
 
-        let warning_color = if include_warnings {
-            Color::Warning
-        } else {
-            Color::Muted
+        let severity_icon = match max_severity {
+            DiagnosticSeverity::Off | DiagnosticSeverity::Error => IconName::XCircle,
+            DiagnosticSeverity::Warning => IconName::Warning,
+            DiagnosticSeverity::Info => IconName::Info,
+            DiagnosticSeverity::Hint => IconName::Sparkle,
+        };
+
+        let severity_color = match max_severity {
+            DiagnosticSeverity::Off => Color::Muted,
+            DiagnosticSeverity::Error => Color::Error,
+            DiagnosticSeverity::Warning => Color::Warning,
+            DiagnosticSeverity::Info => Color::Info,
+            DiagnosticSeverity::Hint => Color::Hint,
         };
 
         h_flex()
@@ -96,13 +107,13 @@ impl Render for ToolbarControls {
                 }
             })
             .child(
-                IconButton::new("toggle-warnings", IconName::Warning)
-                    .icon_color(warning_color)
+                IconButton::new("cycle-severity", severity_icon)
+                    .icon_color(severity_color)
                     .shape(IconButtonShape::Square)
-                    .tooltip(Tooltip::text(warning_tooltip))
+                    .tooltip(Tooltip::text(severity_tooltip))
                     .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(editor) = &this.editor {
-                            editor.toggle_warnings(window, cx)
+                            editor.cycle_severity(window, cx)
                         }
                     })),
             )

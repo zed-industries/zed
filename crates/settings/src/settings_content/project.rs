@@ -440,7 +440,17 @@ pub struct DiagnosticsSettingsContent {
     pub button: Option<bool>,
 
     /// Whether or not to include warning diagnostics.
+    ///
+    /// Deprecated: Use `max_severity` instead.
     pub include_warnings: Option<bool>,
+
+    /// The maximum severity level of diagnostics to display in the
+    /// project diagnostics panel and status bar counter.
+    ///
+    /// Possible values: "off", "error", "warning", "info", "hint", "all"
+    ///
+    /// Default: warning
+    pub max_severity: Option<DiagnosticSeverityContent>,
 
     /// Settings for using LSP pull diagnostics mechanism in Zed.
     pub lsp_pull_diagnostics: Option<LspPullDiagnosticsSettingsContent>,

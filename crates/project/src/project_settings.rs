@@ -242,6 +242,18 @@ impl DiagnosticSeverity {
             DiagnosticSeverity::Hint => Some(lsp::DiagnosticSeverity::HINT),
         }
     }
+
+    /// Cycles to the next severity level for the diagnostics panel toggle.
+    /// Cycles: Error -> Warning -> Info -> Hint -> Error
+    pub fn cycle_next(self) -> Self {
+        match self {
+            DiagnosticSeverity::Off => DiagnosticSeverity::Error,
+            DiagnosticSeverity::Error => DiagnosticSeverity::Warning,
+            DiagnosticSeverity::Warning => DiagnosticSeverity::Info,
+            DiagnosticSeverity::Info => DiagnosticSeverity::Hint,
+            DiagnosticSeverity::Hint => DiagnosticSeverity::Error,
+        }
+    }
 }
 
 impl From<settings::DiagnosticSeverityContent> for DiagnosticSeverity {
@@ -445,8 +457,9 @@ pub struct DiagnosticsSettings {
     /// Whether to show the project diagnostics button in the status bar.
     pub button: bool,
 
-    /// Whether or not to include warning diagnostics.
-    pub include_warnings: bool,
+    /// The maximum severity level of diagnostics to display in the
+    /// project diagnostics panel and status bar counter.
+    pub max_severity: DiagnosticSeverity,
 
     /// Settings for using LSP pull diagnostics mechanism in Zed.
     pub lsp_pull_diagnostics: LspPullDiagnosticsSettings,
@@ -559,7 +572,15 @@ impl Settings for ProjectSettings {
                 .collect(),
             diagnostics: DiagnosticsSettings {
                 button: diagnostics.button.unwrap(),
-                include_warnings: diagnostics.include_warnings.unwrap(),
+                max_severity: diagnostics.max_severity.map(Into::into).unwrap_or_else(|| {
+                    // Backwards compatibility: if max_severity is not set,
+                    // use include_warnings to determine the severity level
+                    if diagnostics.include_warnings.unwrap() {
+                        DiagnosticSeverity::Warning
+                    } else {
+                        DiagnosticSeverity::Error
+                    }
+                }),
                 lsp_pull_diagnostics: LspPullDiagnosticsSettings {
                     enabled: lsp_pull_diagnostics.enabled.unwrap(),
                     debounce_ms: lsp_pull_diagnostics.debounce_ms.unwrap().0,

@@ -1899,6 +1899,8 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
                 DiagnosticSummary {
                     error_count: 1,
                     warning_count: 0,
+                    info_count: 0,
+                    hint_count: 0,
                 }
             )]
         );
@@ -2193,6 +2195,8 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             DiagnosticSummary {
                 error_count: 1,
                 warning_count: 0,
+                info_count: 0,
+                hint_count: 0,
             }
         );
     });
@@ -2219,6 +2223,8 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             DiagnosticSummary {
                 error_count: 0,
                 warning_count: 0,
+                info_count: 0,
+                hint_count: 0,
             }
         );
     });
@@ -2873,6 +2879,8 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
             DiagnosticSummary {
                 error_count: 2,
                 warning_count: 0,
+                info_count: 0,
+                hint_count: 0,
             }
         );
     });
@@ -10921,4 +10929,62 @@ async fn test_git_worktree_remove(cx: &mut gpui::TestAppContext) {
             .map(|r| r.read(cx).work_directory_abs_path.clone())
     });
     assert!(active_repo_path.is_none());
+}
+
+#[test]
+fn test_diagnostic_summary_counts_all_severities() {
+    use crate::lsp_store::DiagnosticSummary;
+    use language::{Diagnostic, DiagnosticEntry};
+    use lsp::DiagnosticSeverity;
+
+    let diagnostics = vec![
+        DiagnosticEntry {
+            range: 0..10,
+            diagnostic: Diagnostic {
+                severity: DiagnosticSeverity::ERROR,
+                is_primary: true,
+                ..Default::default()
+            },
+        },
+        DiagnosticEntry {
+            range: 10..20,
+            diagnostic: Diagnostic {
+                severity: DiagnosticSeverity::WARNING,
+                is_primary: true,
+                ..Default::default()
+            },
+        },
+        DiagnosticEntry {
+            range: 20..30,
+            diagnostic: Diagnostic {
+                severity: DiagnosticSeverity::INFORMATION,
+                is_primary: true,
+                ..Default::default()
+            },
+        },
+        DiagnosticEntry {
+            range: 30..40,
+            diagnostic: Diagnostic {
+                severity: DiagnosticSeverity::HINT,
+                is_primary: true,
+                ..Default::default()
+            },
+        },
+        // Non-primary diagnostics should not be counted
+        DiagnosticEntry {
+            range: 40..50,
+            diagnostic: Diagnostic {
+                severity: DiagnosticSeverity::ERROR,
+                is_primary: false,
+                ..Default::default()
+            },
+        },
+    ];
+
+    let summary = DiagnosticSummary::new(&diagnostics);
+
+    assert_eq!(summary.error_count, 1);
+    assert_eq!(summary.warning_count, 1);
+    assert_eq!(summary.info_count, 1);
+    assert_eq!(summary.hint_count, 1);
 }

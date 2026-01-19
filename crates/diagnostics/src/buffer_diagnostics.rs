@@ -1,5 +1,5 @@
 use crate::{
-    DIAGNOSTICS_UPDATE_DEBOUNCE, IncludeWarnings, ToggleWarnings, context_range_for_entry,
+    DIAGNOSTICS_UPDATE_DEBOUNCE, DiagnosticsMaxSeverity, ToggleWarnings, context_range_for_entry,
     diagnostic_renderer::{DiagnosticBlock, DiagnosticRenderer},
     toolbar_controls::DiagnosticsToolbarEditor,
 };
@@ -66,9 +66,8 @@ pub(crate) struct BufferDiagnosticsEditor {
     /// Summary of the number of warnings and errors for the path. Used to
     /// display the number of warnings and errors in the tab's content.
     summary: DiagnosticSummary,
-    /// Whether to include warnings in the list of diagnostics shown in the
-    /// editor.
-    pub(crate) include_warnings: bool,
+    /// The maximum severity level of diagnostics to display in the editor.
+    pub(crate) max_severity: DiagnosticSeverity,
     /// Keeps track of whether there's a background task already running to
     /// update the excerpts, in order to avoid firing multiple tasks for this purpose.
     pub(crate) update_excerpts_task: Option<Task<Result<()>>>,
@@ -84,7 +83,7 @@ impl BufferDiagnosticsEditor {
         project_path: ProjectPath,
         project_handle: Entity<Project>,
         buffer: Option<Entity<Buffer>>,
-        include_warnings: bool,
+        max_severity: DiagnosticSeverity,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -146,7 +145,6 @@ impl BufferDiagnosticsEditor {
             .diagnostic_summary_for_path(&project_path, cx);
 
         let multibuffer = cx.new(|cx| MultiBuffer::new(project_handle.read(cx).capability()));
-        let max_severity = Self::max_diagnostics_severity(include_warnings);
         let editor = cx.new(|cx| {
             let mut editor = Editor::for_multibuffer(
                 multibuffer.clone(),
@@ -199,7 +197,7 @@ impl BufferDiagnosticsEditor {
             buffer,
             project_path,
             summary,
-            include_warnings,
+            max_severity,
             update_excerpts_task,
             _subscription: project_event_subscription,
         };
@@ -231,9 +229,9 @@ impl BufferDiagnosticsEditor {
             if let Some(editor) = existing_editor {
                 workspace.activate_item(&editor, true, true, window, cx);
             } else {
-                let include_warnings = match cx.try_global::<IncludeWarnings>() {
-                    Some(include_warnings) => include_warnings.0,
-                    None => ProjectSettings::get_global(cx).diagnostics.include_warnings,
+                let max_severity = match cx.try_global::<DiagnosticsMaxSeverity>() {
+                    Some(severity) => severity.0,
+                    None => ProjectSettings::get_global(cx).diagnostics.max_severity,
                 };
 
                 let item = cx.new(|cx| {
@@ -241,7 +239,7 @@ impl BufferDiagnosticsEditor {
                         project_path,
                         workspace.project().clone(),
                         editor.read(cx).buffer().read(cx).as_singleton(),
-                        include_warnings,
+                        max_severity,
                         window,
                         cx,
                     )
@@ -315,7 +313,8 @@ impl BufferDiagnosticsEditor {
         let multibuffer_context = multibuffer_context_lines(cx);
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_snapshot_max = buffer_snapshot.max_point();
-        let max_severity = Self::max_diagnostics_severity(self.include_warnings)
+        let max_severity = self
+            .max_severity
             .into_lsp()
             .unwrap_or(lsp::DiagnosticSeverity::WARNING);
 
@@ -634,23 +633,14 @@ impl BufferDiagnosticsEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let include_warnings = !self.include_warnings;
-        let max_severity = Self::max_diagnostics_severity(include_warnings);
+        self.max_severity = self.max_severity.cycle_next();
 
         self.editor.update(cx, |editor, cx| {
-            editor.set_max_diagnostics_severity(max_severity, cx);
+            editor.set_max_diagnostics_severity(self.max_severity, cx);
         });
 
-        self.include_warnings = include_warnings;
         self.diagnostics.clear();
         self.update_all_diagnostics(window, cx);
-    }
-
-    fn max_diagnostics_severity(include_warnings: bool) -> DiagnosticSeverity {
-        match include_warnings {
-            true => DiagnosticSeverity::Warning,
-            false => DiagnosticSeverity::Error,
-        }
     }
 
     #[cfg(test)]
@@ -735,7 +725,7 @@ impl Item for BufferDiagnosticsEditor {
                 self.project_path.clone(),
                 self.project.clone(),
                 self.buffer.clone(),
-                self.include_warnings,
+                self.max_severity,
                 window,
                 cx,
             )
@@ -884,9 +874,10 @@ impl Render for BufferDiagnosticsEditor {
         let path_style = self.project.read(cx).path_style(cx);
         let filename = self.project_path.path.display(path_style).to_string();
         let error_count = self.summary.error_count;
-        let warning_count = match self.include_warnings {
-            true => self.summary.warning_count,
-            false => 0,
+        let warning_count = if self.max_severity >= DiagnosticSeverity::Warning {
+            self.summary.warning_count
+        } else {
+            0
         };
 
         let child = if error_count + warning_count == 0 {
@@ -960,11 +951,11 @@ impl Render for BufferDiagnosticsEditor {
 }
 
 impl DiagnosticsToolbarEditor for WeakEntity<BufferDiagnosticsEditor> {
-    fn include_warnings(&self, cx: &App) -> bool {
+    fn max_severity(&self, cx: &App) -> DiagnosticSeverity {
         self.read_with(cx, |buffer_diagnostics_editor, _cx| {
-            buffer_diagnostics_editor.include_warnings
+            buffer_diagnostics_editor.max_severity
         })
-        .unwrap_or(false)
+        .unwrap_or(DiagnosticSeverity::Warning)
     }
 
     fn is_updating(&self, cx: &App) -> bool {
@@ -993,7 +984,7 @@ impl DiagnosticsToolbarEditor for WeakEntity<BufferDiagnosticsEditor> {
         });
     }
 
-    fn toggle_warnings(&self, window: &mut Window, cx: &mut App) {
+    fn cycle_severity(&self, window: &mut Window, cx: &mut App) {
         let _ = self.update(cx, |buffer_diagnostics_editor, cx| {
             buffer_diagnostics_editor.toggle_warnings(&Default::default(), window, cx);
         });

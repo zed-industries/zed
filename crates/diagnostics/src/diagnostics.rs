@@ -62,9 +62,15 @@ actions!(
     ]
 );
 
-#[derive(Default)]
-pub(crate) struct IncludeWarnings(bool);
-impl Global for IncludeWarnings {}
+#[derive(Clone, Copy)]
+pub(crate) struct DiagnosticsMaxSeverity(pub DiagnosticSeverity);
+impl Global for DiagnosticsMaxSeverity {}
+
+impl Default for DiagnosticsMaxSeverity {
+    fn default() -> Self {
+        Self(DiagnosticSeverity::Warning)
+    }
+}
 
 pub fn init(cx: &mut App) {
     editor::set_diagnostic_renderer(diagnostic_renderer::DiagnosticRenderer {}, cx);
@@ -82,7 +88,7 @@ pub(crate) struct ProjectDiagnosticsEditor {
     summary: DiagnosticSummary,
     multibuffer: Entity<MultiBuffer>,
     paths_to_update: BTreeSet<ProjectPath>,
-    include_warnings: bool,
+    max_severity: DiagnosticSeverity,
     update_excerpts_task: Option<Task<Result<()>>>,
     diagnostic_summary_update: Task<()>,
     _subscription: Subscription,
@@ -95,50 +101,41 @@ const DIAGNOSTICS_SUMMARY_UPDATE_DEBOUNCE: Duration = Duration::from_millis(30);
 
 impl Render for ProjectDiagnosticsEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let warning_count = if self.include_warnings {
-            self.summary.warning_count
-        } else {
-            0
-        };
+        let visible_diagnostic_count = self.visible_diagnostic_count();
+        let total_diagnostic_count = self.summary.error_count
+            + self.summary.warning_count
+            + self.summary.info_count
+            + self.summary.hint_count;
 
-        let child =
-            if warning_count + self.summary.error_count == 0 && self.editor.read(cx).is_empty(cx) {
-                let label = if self.summary.warning_count == 0 {
-                    SharedString::new_static("No problems in workspace")
-                } else {
-                    SharedString::new_static("No errors in workspace")
-                };
-                v_flex()
-                    .key_context("EmptyPane")
-                    .size_full()
-                    .gap_1()
-                    .justify_center()
-                    .items_center()
-                    .text_center()
-                    .bg(cx.theme().colors().editor_background)
-                    .child(Label::new(label).color(Color::Muted))
-                    .when(self.summary.warning_count > 0, |this| {
-                        let plural_suffix = if self.summary.warning_count > 1 {
-                            "s"
-                        } else {
-                            ""
-                        };
-                        let label = format!(
-                            "Show {} warning{}",
-                            self.summary.warning_count, plural_suffix
-                        );
-                        this.child(
-                            Button::new("diagnostics-show-warning-label", label).on_click(
-                                cx.listener(|this, _, window, cx| {
-                                    this.toggle_warnings(&Default::default(), window, cx);
-                                    cx.notify();
-                                }),
-                            ),
-                        )
-                    })
+        let child = if visible_diagnostic_count == 0 && self.editor.read(cx).is_empty(cx) {
+            let label = if total_diagnostic_count == 0 {
+                SharedString::new_static("No problems in workspace")
             } else {
-                div().size_full().child(self.editor.clone())
+                SharedString::new_static("No errors in workspace")
             };
+            let hidden_count = total_diagnostic_count - visible_diagnostic_count;
+            v_flex()
+                .key_context("EmptyPane")
+                .size_full()
+                .gap_1()
+                .justify_center()
+                .items_center()
+                .text_center()
+                .bg(cx.theme().colors().editor_background)
+                .child(Label::new(label).color(Color::Muted))
+                .when(hidden_count > 0, |this| {
+                    let plural_suffix = if hidden_count > 1 { "s" } else { "" };
+                    let label = format!("Show {} more diagnostic{}", hidden_count, plural_suffix);
+                    this.child(Button::new("diagnostics-show-more-label", label).on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.toggle_warnings(&Default::default(), window, cx);
+                            cx.notify();
+                        }),
+                    ))
+                })
+        } else {
+            div().size_full().child(self.editor.clone())
+        };
 
         div()
             .key_context("Diagnostics")
@@ -166,7 +163,7 @@ impl ProjectDiagnosticsEditor {
     }
 
     fn new(
-        include_warnings: bool,
+        max_severity: DiagnosticSeverity,
         project_handle: Entity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -224,14 +221,7 @@ impl ProjectDiagnosticsEditor {
                 Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), window, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor.disable_inline_diagnostics();
-            editor.set_max_diagnostics_severity(
-                if include_warnings {
-                    DiagnosticSeverity::Warning
-                } else {
-                    DiagnosticSeverity::Error
-                },
-                cx,
-            );
+            editor.set_max_diagnostics_severity(max_severity, cx);
             editor.set_all_diagnostics_active(cx);
             editor
         });
@@ -256,18 +246,11 @@ impl ProjectDiagnosticsEditor {
             },
         )
         .detach();
-        cx.observe_global_in::<IncludeWarnings>(window, |this, window, cx| {
-            let include_warnings = cx.global::<IncludeWarnings>().0;
-            this.include_warnings = include_warnings;
+        cx.observe_global_in::<DiagnosticsMaxSeverity>(window, |this, window, cx| {
+            let max_severity = cx.global::<DiagnosticsMaxSeverity>().0;
+            this.max_severity = max_severity;
             this.editor.update(cx, |editor, cx| {
-                editor.set_max_diagnostics_severity(
-                    if include_warnings {
-                        DiagnosticSeverity::Warning
-                    } else {
-                        DiagnosticSeverity::Error
-                    },
-                    cx,
-                )
+                editor.set_max_diagnostics_severity(max_severity, cx)
             });
             this.refresh(window, cx);
         })
@@ -279,7 +262,7 @@ impl ProjectDiagnosticsEditor {
             summary: project.diagnostic_summary(false, cx),
             diagnostics: Default::default(),
             blocks: Default::default(),
-            include_warnings,
+            max_severity,
             workspace,
             multibuffer: excerpts,
             focus_handle,
@@ -396,14 +379,14 @@ impl ProjectDiagnosticsEditor {
         } else {
             let workspace_handle = cx.entity().downgrade();
 
-            let include_warnings = match cx.try_global::<IncludeWarnings>() {
-                Some(include_warnings) => include_warnings.0,
-                None => ProjectSettings::get_global(cx).diagnostics.include_warnings,
+            let max_severity = match cx.try_global::<DiagnosticsMaxSeverity>() {
+                Some(severity) => severity.0,
+                None => ProjectSettings::get_global(cx).diagnostics.max_severity,
             };
 
             let diagnostics = cx.new(|cx| {
                 ProjectDiagnosticsEditor::new(
-                    include_warnings,
+                    max_severity,
                     workspace.project().clone(),
                     workspace_handle,
                     window,
@@ -415,7 +398,22 @@ impl ProjectDiagnosticsEditor {
     }
 
     fn toggle_warnings(&mut self, _: &ToggleWarnings, _: &mut Window, cx: &mut Context<Self>) {
-        cx.set_global(IncludeWarnings(!self.include_warnings));
+        let new_severity = self.max_severity.cycle_next();
+        cx.set_global(DiagnosticsMaxSeverity(new_severity));
+    }
+
+    fn visible_diagnostic_count(&self) -> usize {
+        let mut count = self.summary.error_count;
+        if self.max_severity >= DiagnosticSeverity::Warning {
+            count += self.summary.warning_count;
+        }
+        if self.max_severity >= DiagnosticSeverity::Info {
+            count += self.summary.info_count;
+        }
+        if self.max_severity >= DiagnosticSeverity::Hint {
+            count += self.summary.hint_count;
+        }
+        count
     }
 
     fn toggle_diagnostics_refresh(
@@ -494,11 +492,7 @@ impl ProjectDiagnosticsEditor {
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer_snapshot.remote_id();
 
-        let max_severity = if self.include_warnings {
-            lsp::DiagnosticSeverity::WARNING
-        } else {
-            lsp::DiagnosticSeverity::ERROR
-        };
+        let max_severity = self.max_severity.into_lsp();
 
         cx.spawn_in(window, async move |this, cx| {
             let diagnostics = buffer_snapshot
@@ -542,7 +536,12 @@ impl ProjectDiagnosticsEditor {
             let diagnostics_toolbar_editor = Arc::new(this.clone());
             for (_, group) in grouped {
                 let group_severity = group.iter().map(|d| d.diagnostic.severity).min();
-                if group_severity.is_none_or(|s| s > max_severity) {
+                let dominated_by_filter = match (group_severity, max_severity) {
+                    (None, _) => true,
+                    (_, None) => true,
+                    (Some(severity), Some(max)) => severity > max,
+                };
+                if dominated_by_filter {
                     continue;
                 }
                 let languages = this
@@ -745,19 +744,21 @@ impl Item for ProjectDiagnosticsEditor {
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, _: &App) -> AnyElement {
+        let total_count = self.summary.error_count
+            + self.summary.warning_count
+            + self.summary.info_count
+            + self.summary.hint_count;
+
         h_flex()
             .gap_1()
-            .when(
-                self.summary.error_count == 0 && self.summary.warning_count == 0,
-                |then| {
-                    then.child(
-                        h_flex()
-                            .gap_1()
-                            .child(Icon::new(IconName::Check).color(Color::Success))
-                            .child(Label::new("No problems").color(params.text_color())),
-                    )
-                },
-            )
+            .when(total_count == 0, |then| {
+                then.child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::Check).color(Color::Success))
+                        .child(Label::new("No problems").color(params.text_color())),
+                )
+            })
             .when(self.summary.error_count > 0, |then| {
                 then.child(
                     h_flex()
@@ -776,6 +777,28 @@ impl Item for ProjectDiagnosticsEditor {
                         .child(Icon::new(IconName::Warning).color(Color::Warning))
                         .child(
                             Label::new(self.summary.warning_count.to_string())
+                                .color(params.text_color()),
+                        ),
+                )
+            })
+            .when(self.summary.info_count > 0, |then| {
+                then.child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::Info).color(Color::Info))
+                        .child(
+                            Label::new(self.summary.info_count.to_string())
+                                .color(params.text_color()),
+                        ),
+                )
+            })
+            .when(self.summary.hint_count > 0, |then| {
+                then.child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::Sparkle).color(Color::Hint))
+                        .child(
+                            Label::new(self.summary.hint_count.to_string())
                                 .color(params.text_color()),
                         ),
                 )
@@ -821,7 +844,7 @@ impl Item for ProjectDiagnosticsEditor {
     {
         Task::ready(Some(cx.new(|cx| {
             ProjectDiagnosticsEditor::new(
-                self.include_warnings,
+                self.max_severity,
                 self.project.clone(),
                 self.workspace.clone(),
                 window,
@@ -919,11 +942,11 @@ impl Item for ProjectDiagnosticsEditor {
 }
 
 impl DiagnosticsToolbarEditor for WeakEntity<ProjectDiagnosticsEditor> {
-    fn include_warnings(&self, cx: &App) -> bool {
+    fn max_severity(&self, cx: &App) -> DiagnosticSeverity {
         self.read_with(cx, |project_diagnostics_editor, _cx| {
-            project_diagnostics_editor.include_warnings
+            project_diagnostics_editor.max_severity
         })
-        .unwrap_or(false)
+        .unwrap_or(DiagnosticSeverity::Warning)
     }
 
     fn is_updating(&self, cx: &App) -> bool {
@@ -952,7 +975,7 @@ impl DiagnosticsToolbarEditor for WeakEntity<ProjectDiagnosticsEditor> {
         });
     }
 
-    fn toggle_warnings(&self, window: &mut Window, cx: &mut App) {
+    fn cycle_severity(&self, window: &mut Window, cx: &mut App) {
         let _ = self.update(cx, |project_diagnostics_editor, cx| {
             project_diagnostics_editor.toggle_warnings(&Default::default(), window, cx);
         });

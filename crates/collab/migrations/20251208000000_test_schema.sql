@@ -467,7 +467,9 @@ CREATE TABLE public.worktree_diagnostic_summaries (
     path character varying NOT NULL,
     language_server_id bigint NOT NULL,
     error_count integer NOT NULL,
-    warning_count integer NOT NULL
+    warning_count integer NOT NULL,
+    info_count integer NOT NULL,
+    hint_count integer NOT NULL
 );
 
 CREATE TABLE public.worktree_entries (
