@@ -56,6 +56,8 @@ struct EpArgs {
     max_parallelism: usize,
     #[clap(long, global = true)]
     limit: Option<usize>,
+    #[clap(long, global = true)]
+    offset: Option<usize>,
     /// Filter examples by name
     #[clap(long, global = true)]
     name: Option<String>,
@@ -87,6 +89,8 @@ pub enum FailedHandling {
     Keep,
     /// Exclude failed examples from the main output
     Skip,
+    /// Skip writing files
+    SkipNoFiles,
 }
 
 const INPUTS_HELP: &str = r#"
@@ -366,18 +370,20 @@ async fn load_examples(
         examples.retain(|example| example.spec.repository_url.contains(repo_filter));
     }
 
-    if let Some(limit) = args.limit {
-        if examples.len() > limit {
-            examples.truncate(limit);
-        }
-    }
-
     // Skip resume logic for --in-place since input and output are the same file,
     // which would incorrectly treat all input examples as already processed.
     if !args.in_place {
         if let Some(path) = output_path {
             resume_from_output(path, &mut examples);
         }
+    }
+
+    if let Some(offset) = args.offset {
+        examples.splice(0..offset, []);
+    }
+
+    if let Some(limit) = args.limit {
+        examples.truncate(limit);
     }
 
     Progress::global().set_total_examples(examples.len());
@@ -734,57 +740,71 @@ async fn handle_error(
     example: &Example,
 ) {
     Progress::global().increment_failed();
-    let example_name = example.spec.filename();
-    let failed_example_path = FAILED_EXAMPLES_DIR.join(format!("{}.json", example_name));
-    app_state
-        .fs
-        .write(
-            &failed_example_path,
-            &serde_json::to_vec_pretty(&example).unwrap(),
-        )
-        .await
-        .unwrap();
-    let err_path = FAILED_EXAMPLES_DIR.join(format!("{}_err.txt", example_name));
-    app_state
-        .fs
-        .write(&err_path, format!("{error:?}").as_bytes())
-        .await
-        .unwrap();
 
-    let failed_jsonl_path = RUN_DIR.join("failed.jsonl");
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&failed_jsonl_path)
-        .expect("Failed to open failed.jsonl");
-    writeln!(file, "{}", serde_json::to_string(example).unwrap())
-        .expect("Failed to write to failed.jsonl");
+    let msg;
+    if !matches!(args.failed, FailedHandling::SkipNoFiles) {
+        let example_name = example.spec.filename();
 
-    let cursor_path = example
-        .repo_name()
-        .unwrap()
-        .worktree_path()
-        .join(&example.spec.cursor_path);
+        let failed_example_path = FAILED_EXAMPLES_DIR.join(format!("{}.json", example_name));
+        app_state
+            .fs
+            .write(
+                &failed_example_path,
+                &serde_json::to_vec_pretty(&example).unwrap(),
+            )
+            .await
+            .unwrap();
+        let err_path = FAILED_EXAMPLES_DIR.join(format!("{}_err.txt", example_name));
+        app_state
+            .fs
+            .write(&err_path, format!("{error:?}").as_bytes())
+            .await
+            .unwrap();
 
-    let msg = format!(
-        indoc::indoc! {"
+        let failed_jsonl_path = RUN_DIR.join("failed.jsonl");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&failed_jsonl_path)
+            .expect("Failed to open failed.jsonl");
+        writeln!(file, "{}", serde_json::to_string(example).unwrap())
+            .expect("Failed to write to failed.jsonl");
+
+        let cursor_path = example
+            .repo_name()
+            .unwrap()
+            .worktree_path()
+            .join(&example.spec.cursor_path);
+        msg = format!(
+            indoc::indoc! {"
+                While processing \"{}\":
+
+                \x1b[31m{:?}\x1b[0m
+
+                Example:        \x1b[36m{}\x1b[0m
+                Error file:     \x1b[36m{}\x1b[0m
+                Cursor file:    \x1b[36m{}\x1b[0m
+                Re-run:         cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
+            "},
+            example.spec.name,
+            error,
+            failed_example_path.display(),
+            err_path.display(),
+            cursor_path.display(),
+            command,
+            failed_example_path.display(),
+        );
+    } else {
+        msg = format!(
+            indoc::indoc! {"
             While processing \"{}\":
 
-            \x1b[31m{:?}\x1b[0m
+                \x1b[31m{:?}\x1b[0m
+            "},
+            example.spec.name, error
+        );
+    }
 
-            Example:        \x1b[36m{}\x1b[0m
-            Error file:     \x1b[36m{}\x1b[0m
-            Cursor file:    \x1b[36m{}\x1b[0m
-            Re-run:         cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
-        "},
-        example.spec.name,
-        error,
-        failed_example_path.display(),
-        err_path.display(),
-        cursor_path.display(),
-        command,
-        failed_example_path.display(),
-    );
     if args.failfast || failfast_on_single_example {
         Progress::global().finalize();
         panic!("{}", msg);
