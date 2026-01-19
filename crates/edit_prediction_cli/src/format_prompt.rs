@@ -251,6 +251,7 @@ impl TeacherPrompt {
         for file in related_files {
             let path_str = file.path.to_string_lossy();
             writeln!(&mut prompt, "`````{path_str}").ok();
+
             let mut prev_row = 0;
             for excerpt in &file.excerpts {
                 if excerpt.row_range.start > prev_row {
@@ -263,7 +264,7 @@ impl TeacherPrompt {
             if prev_row < file.max_row {
                 prompt.push_str("…\n");
             }
-            prompt.push_str("\n`````");
+            prompt.push_str("\n`````\n");
         }
 
         prompt

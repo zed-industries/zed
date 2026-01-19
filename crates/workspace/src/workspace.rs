@@ -6420,6 +6420,24 @@ impl Workspace {
                     cx.propagate();
                 },
             ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, action: &pane::CloseActiveItem, window, cx| {
+                    if let Some(active_dock) = workspace.active_dock(window, cx) {
+                        let dock = active_dock.read(cx);
+                        if let Some(active_panel) = dock.active_panel() {
+                            if active_panel.pane(cx).is_none() {
+                                let active_pane = workspace.active_pane().clone();
+                                active_pane.update(cx, |pane, cx| {
+                                    pane.close_active_item(action, window, cx)
+                                        .detach_and_log_err(cx);
+                                });
+                                return;
+                            }
+                        }
+                    }
+                    cx.propagate();
+                },
+            ))
             .on_action(
                 cx.listener(|workspace, _: &ToggleReadOnlyFile, window, cx| {
                     let pane = workspace.active_pane().clone();
@@ -12266,6 +12284,67 @@ mod tests {
         workspace.read_with(cx, |workspace, cx| {
             let visible = workspace.status_bar_visible(cx);
             assert!(visible, "Status bar should be visible when show is true");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_pane_close_active_item(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+
+            workspace
+                .right_dock()
+                .update(cx, |right_dock, cx| right_dock.set_open(true, window, cx));
+
+            panel
+        });
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let item_a = cx.new(TestItem::new);
+        let item_b = cx.new(TestItem::new);
+        let item_a_id = item_a.entity_id();
+        let item_b_id = item_b.entity_id();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(item_a.clone()), true, true, None, window, cx);
+            pane.add_item(Box::new(item_b.clone()), true, true, None, window, cx);
+        });
+
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items_len(), 2);
+            assert_eq!(pane.active_item().unwrap().item_id(), item_b_id);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+        });
+
+        workspace.update_in(cx, |_, window, cx| {
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+
+        // Assert that the `pane::CloseActiveItem` action is handled at the
+        // workspace level when one of the dock panels is focused and, in that
+        // case, the center pane's active item is closed but the focus is not
+        // moved.
+        cx.dispatch_action(pane::CloseActiveItem::default());
+        cx.run_until_parked();
+
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items_len(), 1);
+            assert_eq!(pane.active_item().unwrap().item_id(), item_a_id);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
     }
 
