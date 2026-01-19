@@ -612,7 +612,7 @@ impl ToolPermissionContext {
     ///
     /// This is the canonical source for permission option generation.
     /// Tests should use this function rather than manually constructing options.
-    pub fn build_permission_options(&self) -> Vec<acp::PermissionOption> {
+    pub fn build_permission_options(&self) -> acp_thread::PermissionOptions {
         use crate::pattern_extraction::*;
 
         let tool_name = &self.tool_name;
@@ -634,11 +634,30 @@ impl ToolPermissionContext {
             _ => (None, None),
         };
 
-        let mut options = vec![acp::PermissionOption::new(
-            acp::PermissionOptionId::new(format!("always:{}", tool_name)),
+        let mut choices = Vec::new();
+
+        let mut push_choice = |label: String, allow_id, deny_id, allow_kind, deny_kind| {
+            choices.push(acp_thread::PermissionOptionChoice {
+                allow: acp::PermissionOption::new(
+                    acp::PermissionOptionId::new(allow_id),
+                    label.clone(),
+                    allow_kind,
+                ),
+                deny: acp::PermissionOption::new(
+                    acp::PermissionOptionId::new(deny_id),
+                    label,
+                    deny_kind,
+                ),
+            });
+        };
+
+        push_choice(
             format!("Always for {}", tool_name.replace('_', " ")),
+            format!("always_allow:{}", tool_name),
+            format!("always_deny:{}", tool_name),
             acp::PermissionOptionKind::AllowAlways,
-        )];
+            acp::PermissionOptionKind::RejectAlways,
+        );
 
         if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
             let button_text = match tool_name.as_str() {
@@ -646,27 +665,31 @@ impl ToolPermissionContext {
                 "fetch" => format!("Always for `{}`", display),
                 _ => format!("Always for `{}`", display),
             };
-            options.push(acp::PermissionOption::new(
-                acp::PermissionOptionId::new(format!("always_pattern:{}:{}", tool_name, pattern)),
+            push_choice(
                 button_text,
+                format!("always_allow_pattern:{}:{}", tool_name, pattern),
+                format!("always_deny_pattern:{}:{}", tool_name, pattern),
                 acp::PermissionOptionKind::AllowAlways,
-            ));
+                acp::PermissionOptionKind::RejectAlways,
+            );
         }
 
-        options.push(acp::PermissionOption::new(
-            acp::PermissionOptionId::new("once"),
-            "Only this time",
+        push_choice(
+            "Only this time".to_string(),
+            "allow".to_string(),
+            "deny".to_string(),
             acp::PermissionOptionKind::AllowOnce,
-        ));
+            acp::PermissionOptionKind::RejectOnce,
+        );
 
-        options
+        acp_thread::PermissionOptions::Dropdown(choices)
     }
 }
 
 #[derive(Debug)]
 pub struct ToolCallAuthorization {
     pub tool_call: acp::ToolCallUpdate,
-    pub options: Vec<acp::PermissionOption>,
+    pub options: acp_thread::PermissionOptions,
     pub response: oneshot::Sender<acp::PermissionOptionId>,
     pub context: Option<ToolPermissionContext>,
 }
@@ -2937,10 +2960,9 @@ impl ToolCallEventStream {
     /// Unlike built-in tools, third-party tools don't support pattern-based permissions.
     /// They only support `default_mode` (allow/deny/confirm) per tool.
     ///
-    /// Shows 3 buttons:
-    /// - "Always allow <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"`
-    /// - "Allow" → approve once
-    /// - "Deny" → reject once
+    /// Uses the dropdown authorization flow with two granularities:
+    /// - "Always for <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"` or "deny"
+    /// - "Only this time" → allow/deny once
     pub fn authorize_third_party_tool(
         &self,
         title: impl Into<String>,
@@ -2967,23 +2989,38 @@ impl ToolCallEventStream {
                         self.tool_use_id.to_string(),
                         acp::ToolCallUpdateFields::new().title(title.into()),
                     ),
-                    options: vec![
-                        acp::PermissionOption::new(
-                            acp::PermissionOptionId::new(format!("always_allow_mcp:{}", tool_id)),
-                            format!("Always allow {} MCP tool", display_name),
-                            acp::PermissionOptionKind::AllowAlways,
-                        ),
-                        acp::PermissionOption::new(
-                            acp::PermissionOptionId::new("allow"),
-                            "Allow once",
-                            acp::PermissionOptionKind::AllowOnce,
-                        ),
-                        acp::PermissionOption::new(
-                            acp::PermissionOptionId::new("deny"),
-                            "Deny",
-                            acp::PermissionOptionKind::RejectOnce,
-                        ),
-                    ],
+                    options: acp_thread::PermissionOptions::Dropdown(vec![
+                        acp_thread::PermissionOptionChoice {
+                            allow: acp::PermissionOption::new(
+                                acp::PermissionOptionId::new(format!(
+                                    "always_allow_mcp:{}",
+                                    tool_id
+                                )),
+                                format!("Always for {} MCP tool", display_name),
+                                acp::PermissionOptionKind::AllowAlways,
+                            ),
+                            deny: acp::PermissionOption::new(
+                                acp::PermissionOptionId::new(format!(
+                                    "always_deny_mcp:{}",
+                                    tool_id
+                                )),
+                                format!("Always for {} MCP tool", display_name),
+                                acp::PermissionOptionKind::RejectAlways,
+                            ),
+                        },
+                        acp_thread::PermissionOptionChoice {
+                            allow: acp::PermissionOption::new(
+                                acp::PermissionOptionId::new("allow"),
+                                "Only this time",
+                                acp::PermissionOptionKind::AllowOnce,
+                            ),
+                            deny: acp::PermissionOption::new(
+                                acp::PermissionOptionId::new("deny"),
+                                "Only this time",
+                                acp::PermissionOptionKind::RejectOnce,
+                            ),
+                        },
+                    ]),
                     response: response_tx,
                     context: None,
                 },
@@ -3006,6 +3043,19 @@ impl ToolCallEventStream {
                     });
                 }
                 return Ok(());
+            }
+            if response_str == format!("always_deny_mcp:{}", tool_id) {
+                if let Some(fs) = fs.clone() {
+                    cx.update(|cx| {
+                        update_settings_file(fs, cx, move |settings, _| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Deny);
+                        });
+                    });
+                }
+                return Err(anyhow!("Permission to run tool denied by user"));
             }
 
             if response_str == "allow" {
