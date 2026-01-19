@@ -117,6 +117,12 @@ message DeleteProjectEntry {
   bool use_trash = 3;
 }
 
+message RestoreProjectEntry {
+  uint64 project_id = 1;
+  uint64 worktree_id = 2;
+  string path = 3;
+}
+
 message ExpandProjectEntry {
   uint64 project_id = 1;
   uint64 entry_id = 2;

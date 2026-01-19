@@ -840,10 +840,7 @@ impl Worktree {
     ) -> Option<Task<Result<()>>> {
         match self {
             Worktree::Local(this) => this.restore_entry(path, cx),
-            Worktree::Remote(_) => {
-                // TODO: Implement remote restore support
-                None
-            }
+            Worktree::Remote(this) => this.restore_entry(path, cx),
         }
     }
 
@@ -973,6 +970,23 @@ impl Worktree {
                     cx,
                 ),
             )
+        });
+        task.ok_or_else(|| anyhow::anyhow!("invalid entry"))?
+            .await?;
+        Ok(proto::ProjectEntryResponse {
+            entry: None,
+            worktree_scan_id: scan_id as u64,
+        })
+    }
+
+    pub async fn handle_restore_entry(
+        this: Entity<Self>,
+        request: proto::RestoreProjectEntry,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let path = RelPath::from_proto(&request.path)?;
+        let (scan_id, task) = this.update(&mut cx, |this, cx| {
+            (this.scan_id(), this.restore_entry(&path, cx))
         });
         task.ok_or_else(|| anyhow::anyhow!("invalid entry"))?
             .await?;
@@ -2063,6 +2077,25 @@ impl RemoteWorktree {
                 snapshot.delete_entry(entry_id);
                 this.snapshot = snapshot.clone();
             })?;
+
+            Ok(())
+        }))
+    }
+
+    fn restore_entry(&self, path: &RelPath, cx: &Context<Worktree>) -> Option<Task<Result<()>>> {
+        let response = self.client.request(proto::RestoreProjectEntry {
+            project_id: self.project_id,
+            worktree_id: self.id().to_proto(),
+            path: path.to_proto(),
+        });
+        Some(cx.spawn(async move |this, cx| {
+            let response = response.await?;
+            let scan_id = response.worktree_scan_id as usize;
+
+            this.update(cx, move |this, _| {
+                this.as_remote_mut().unwrap().wait_for_snapshot(scan_id)
+            })?
+            .await?;
 
             Ok(())
         }))
