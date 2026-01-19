@@ -25,7 +25,7 @@ use workspace::{
 };
 
 use crate::{
-    Autoscroll, DisplayMap, Editor, EditorEvent,
+    Autoscroll, DisplayMap, Editor, EditorEvent, ToggleSoftWrap,
     display_map::{Companion, convert_lhs_rows_to_rhs, convert_rhs_rows_to_lhs},
 };
 
@@ -548,6 +548,24 @@ impl SplittableEditor {
             self.unsplit(&UnsplitDiff, window, cx);
         } else {
             self.split(&SplitDiff, window, cx);
+        }
+    }
+
+    fn toggle_soft_wrap(
+        &mut self,
+        _: &ToggleSoftWrap,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(secondary) = &self.secondary {
+            cx.stop_propagation();
+            self.primary_editor
+                .update(cx, |editor, cx| editor.toggle_soft_wrap(&ToggleSoftWrap, window, cx));
+            secondary
+                .editor
+                .update(cx, |editor, cx| editor.toggle_soft_wrap(&ToggleSoftWrap, window, cx));
+        } else {
+            cx.propagate();
         }
     }
 
@@ -1193,6 +1211,7 @@ impl Render for SplittableEditor {
             .on_action(cx.listener(Self::activate_pane_left))
             .on_action(cx.listener(Self::activate_pane_right))
             .on_action(cx.listener(Self::jump_to_corresponding_row))
+            .capture_action(cx.listener(Self::toggle_soft_wrap))
             .size_full()
             .child(inner)
     }
