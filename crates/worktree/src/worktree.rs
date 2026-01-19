@@ -1634,19 +1634,12 @@ impl LocalWorktree {
         let delete = cx.background_spawn(async move {
             if entry.is_file() {
                 if trash {
-                    fs.trash_file(&abs_path, Default::default()).await?;
+                    fs.trash_file(&abs_path).await?;
                 } else {
                     fs.remove_file(&abs_path, Default::default()).await?;
                 }
             } else if trash {
-                fs.trash_dir(
-                    &abs_path,
-                    RemoveOptions {
-                        recursive: true,
-                        ignore_if_not_exists: false,
-                    },
-                )
-                .await?;
+                fs.trash_dir(&abs_path).await?;
             } else {
                 fs.remove_dir(
                     &abs_path,
