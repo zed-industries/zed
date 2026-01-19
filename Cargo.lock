@@ -17525,6 +17525,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "trash"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "log",
+ "objc2",
+ "objc2-foundation",
+ "once_cell",
+ "percent-encoding",
+ "scopeguard",
+ "urlencoding",
+ "windows 0.61.3",
+]
+
+[[package]]
 name = "tree-sitter"
 version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
