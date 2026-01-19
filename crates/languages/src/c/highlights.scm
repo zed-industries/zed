@@ -142,7 +142,6 @@
     (identifier) @attribute))
 
 ; C23 [[attributes]]
-(attribute_declaration) @attribute
 (attribute
   prefix: (identifier) @attribute)
 (attribute
