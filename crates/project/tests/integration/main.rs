@@ -1,5 +1,11 @@
 #![allow(clippy::format_collect)]
 
+mod image_store;
+mod lsp_command;
+mod lsp_store;
+mod project_search;
+mod search;
+mod search_history;
 mod task_inventory;
 mod trusted_worktrees;
 mod yarn;
