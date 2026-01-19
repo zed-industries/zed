@@ -2287,7 +2287,7 @@ pub struct Corners<T: Clone + Debug + Default + PartialEq> {
 
 impl<T> Corners<T>
 where
-    T: Clone + Debug + Default + PartialEq,
+    T: Add<T, Output = T> + Half + Clone + Debug + Default + PartialEq,
 {
     /// Constructs `Corners` where all sides are set to the same specified value.
     ///
@@ -2322,47 +2322,51 @@ where
         }
     }
 
-    /// Returns the requested corner (only supports the four basic corners).
-    /// For center positions, use the `corner_with_center` method on types that implement `Half` and `Add`.
+    /// Returns the requested corner value, supporting all eight corner positions.
+    ///
+    /// For the four basic corners (TopLeft, TopRight, BottomLeft, BottomRight),
+    /// this returns the corresponding field value directly.
+    ///
+    /// For the center positions (TopCenter, BottomCenter, LeftCenter, RightCenter),
+    /// this calculates the average of the two adjacent corners.
     ///
     /// # Returns
     ///
-    /// A `Point<T>` representing the corner requested by the parameter.
+    /// A value of type `T` representing the corner requested by the parameter.
     ///
     /// # Examples
+    ///
+    /// Basic corner positions:
     ///
     /// ```
     /// # use gpui::{Corner, Corners};
     /// let corners = Corners {
-    ///     top_left: 1,
-    ///     top_right: 2,
-    ///     bottom_left: 3,
-    ///     bottom_right: 4
+    ///     top_left: 10,
+    ///     top_right: 20,
+    ///     bottom_left: 30,
+    ///     bottom_right: 40
     /// };
-    /// assert_eq!(corners.corner(Corner::BottomLeft), 3);
+    /// assert_eq!(corners.corner(Corner::TopLeft), 10);
+    /// assert_eq!(corners.corner(Corner::BottomRight), 40);
+    /// ```
+    ///
+    /// Center positions (calculated as average of adjacent corners):
+    ///
+    /// ```
+    /// # use gpui::{Corner, Corners};
+    /// let corners = Corners {
+    ///     top_left: 10,
+    ///     top_right: 20,
+    ///     bottom_left: 30,
+    ///     bottom_right: 40
+    /// };
+    /// assert_eq!(corners.corner(Corner::TopCenter), 15);
+    /// assert_eq!(corners.corner(Corner::BottomCenter), 35);
+    /// assert_eq!(corners.corner(Corner::LeftCenter), 20);
+    /// assert_eq!(corners.corner(Corner::RightCenter), 30);
     /// ```
     #[must_use]
     pub fn corner(&self, corner: Corner) -> T {
-        match corner {
-            Corner::TopLeft => self.top_left.clone(),
-            Corner::TopRight => self.top_right.clone(),
-            Corner::BottomLeft => self.bottom_left.clone(),
-            Corner::BottomRight => self.bottom_right.clone(),
-            Corner::TopCenter | Corner::BottomCenter | Corner::LeftCenter | Corner::RightCenter => {
-                self.top_left.clone()
-            }
-        }
-    }
-}
-
-impl<T> Corners<T>
-where
-    T: Add<T, Output = T> + Half + Clone + Debug + Default + PartialEq,
-{
-    /// Returns the requested corner, with support for center positions.
-    /// For center positions, returns the average of the two adjacent corners.
-    #[must_use]
-    pub fn corner_with_center(&self, corner: Corner) -> T {
         match corner {
             Corner::TopLeft => self.top_left.clone(),
             Corner::TopRight => self.top_right.clone(),
