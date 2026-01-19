@@ -42,14 +42,15 @@ use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatu
 use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
-    DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, FontWeight,
+    DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
     KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
     MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
     Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
-    Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
-    TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop,
-    linear_gradient, outline, point, px, quad, relative, size, solid_background, transparent_black,
+    Size, StatefulInteractiveElement, Style, Styled, TextAlign, TextRun, TextStyleRefinement,
+    WeakEntity, Window, anchored, deferred, div, fill, hsla, linear_color_stop, linear_gradient,
+    outline, pattern_slash, point, px, quad, relative, rgba, size, solid_background,
+    transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
@@ -216,7 +217,6 @@ pub enum SplitSide {
     Right,
 }
 
-
 impl EditorElement {
     pub(crate) const SCROLLBAR_WIDTH: Pixels = px(15.);
 
@@ -228,7 +228,7 @@ impl EditorElement {
             overlay_painter: None,
         }
     }
-    
+
     pub fn set_split_side(&mut self, side: SplitSide) {
         self.split_side = Some(side);
     }
@@ -3908,8 +3908,8 @@ impl EditorElement {
                         cx,
                     ));
                 } else {
-                    result = result
-                        .child(div().h(FILE_HEADER_HEIGHT as f32 * window.line_height()));
+                    result =
+                        result.child(div().h(FILE_HEADER_HEIGHT as f32 * window.line_height()));
                 }
 
                 result.into_any_element()
@@ -3969,7 +3969,7 @@ impl EditorElement {
                 .id(block_id)
                 .w_full()
                 .h((*height as f32) * line_height)
-                .debug_bg_magenta()
+                .bg(pattern_slash(rgba(0xFFFFFF10), 8.0, 8.0))
                 .into_any(),
         };
 
@@ -10806,7 +10806,6 @@ impl Element for EditorElement {
                         if let Some(mut sticky_header) = layout.sticky_buffer_header.take() {
                             sticky_header.paint(window, cx)
                         }
-
                     });
 
                     self.paint_sticky_headers(layout, window, cx);
