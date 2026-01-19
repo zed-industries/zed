@@ -4,11 +4,11 @@ use collections::HashSet;
 use file_icons::FileIcons;
 use git::status::FileStatus;
 use gpui::{
-    Action, AnyElement, App, AvailableSpace, Bounds, ClickEvent, ClipboardItem, Context,
-    DragMoveEvent, Element, Entity, Focusable, GlobalElementId, Hsla, InspectorElementId,
+    AbsoluteLength, Action, AnyElement, App, AvailableSpace, Bounds, ClickEvent, ClipboardItem,
+    Context, DragMoveEvent, Element, Entity, Focusable, GlobalElementId, Hsla, InspectorElementId,
     IntoElement, LayoutId, Length, Modifiers, MouseButton, ParentElement, Pixels,
-    StatefulInteractiveElement, Styled, Window, div, linear_color_stop, linear_gradient, point, px,
-    size,
+    StatefulInteractiveElement, Styled, TextStyleRefinement, Window, div, linear_color_stop,
+    linear_gradient, point, px, size,
 };
 use multi_buffer::{Anchor, ExcerptId, ExcerptInfo};
 use project::Entry;
@@ -177,7 +177,7 @@ impl RenderOnce for SplitEditorView {
         let state_for_drag = self.split_state.downgrade();
         let state_for_drop = self.split_state.downgrade();
 
-        let buffer_headers = SplitBufferHeadersElement::new(rhs_editor);
+        let buffer_headers = SplitBufferHeadersElement::new(rhs_editor, self.style.clone());
 
         div()
             .id("split-editor-view-container")
@@ -229,11 +229,12 @@ impl RenderOnce for SplitEditorView {
 
 struct SplitBufferHeadersElement {
     editor: Entity<Editor>,
+    style: EditorStyle,
 }
 
 impl SplitBufferHeadersElement {
-    fn new(editor: Entity<Editor>) -> Self {
-        Self { editor }
+    fn new(editor: Entity<Editor>, style: EditorStyle) -> Self {
+        Self { editor, style }
     }
 }
 
@@ -292,14 +293,90 @@ impl Element for SplitBufferHeadersElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        let line_height = window.line_height();
-
         if bounds.size.width <= px(0.) || bounds.size.height <= px(0.) {
             return SplitBufferHeadersPrepaintState {
                 sticky_header: None,
                 non_sticky_headers: Vec::new(),
             };
         }
+
+        let rem_size = self.rem_size();
+        let text_style = TextStyleRefinement {
+            font_size: Some(self.style.text.font_size),
+            line_height: Some(self.style.text.line_height),
+            ..Default::default()
+        };
+
+        window.with_rem_size(rem_size, |window| {
+            window.with_text_style(Some(text_style), |window| {
+                Self::prepaint_inner(self, bounds, window, cx)
+            })
+        })
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let rem_size = self.rem_size();
+        let text_style = TextStyleRefinement {
+            font_size: Some(self.style.text.font_size),
+            line_height: Some(self.style.text.line_height),
+            ..Default::default()
+        };
+
+        window.with_rem_size(rem_size, |window| {
+            window.with_text_style(Some(text_style), |window| {
+                for header_layout in &mut prepaint.non_sticky_headers {
+                    header_layout.element.paint(window, cx);
+                }
+
+                if let Some(mut sticky_header) = prepaint.sticky_header.take() {
+                    sticky_header.paint(window, cx);
+                }
+            });
+        });
+    }
+}
+
+impl SplitBufferHeadersElement {
+    fn rem_size(&self) -> Option<Pixels> {
+        let buffer_font_size = self.style.text.font_size;
+        match buffer_font_size {
+            AbsoluteLength::Pixels(pixels) => {
+                let rem_size_scale = {
+                    // Our default UI font size is 14px on a 16px base scale.
+                    // This means the default UI font size is 0.875rems.
+                    let default_font_size_scale = 14. / ui::BASE_REM_SIZE_IN_PX;
+
+                    // We then determine the delta between a single rem and the default font
+                    // size scale.
+                    let default_font_size_delta = 1. - default_font_size_scale;
+
+                    // Finally, we add this delta to 1rem to get the scale factor that
+                    // should be used to scale up the UI.
+                    1. + default_font_size_delta
+                };
+
+                Some(pixels * rem_size_scale)
+            }
+            AbsoluteLength::Rems(rems) => Some(rems.to_pixels(ui::BASE_REM_SIZE_IN_PX.into())),
+        }
+    }
+
+    fn prepaint_inner(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> SplitBufferHeadersPrepaintState {
+        let line_height = window.line_height();
 
         let snapshot = self
             .editor
@@ -376,27 +453,6 @@ impl Element for SplitBufferHeadersElement {
         }
     }
 
-    fn paint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
-        _bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
-        prepaint: &mut Self::PrepaintState,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        for header_layout in &mut prepaint.non_sticky_headers {
-            header_layout.element.paint(window, cx);
-        }
-
-        if let Some(mut sticky_header) = prepaint.sticky_header.take() {
-            sticky_header.paint(window, cx);
-        }
-    }
-}
-
-impl SplitBufferHeadersElement {
     fn compute_selection_info(
         &self,
         snapshot: &EditorSnapshot,
