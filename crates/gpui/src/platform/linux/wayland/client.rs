@@ -171,8 +171,9 @@ impl Globals {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InProgressOutput {
+    proxy: wl_output::WlOutput,
     name: Option<String>,
     description: Option<String>,
     scale: Option<i32>,
@@ -181,6 +182,17 @@ pub struct InProgressOutput {
 }
 
 impl InProgressOutput {
+    fn new(proxy: wl_output::WlOutput) -> Self {
+        Self {
+            proxy,
+            name: None,
+            description: None,
+            scale: None,
+            position: None,
+            size: None,
+        }
+    }
+
     fn complete(&self) -> Option<Output> {
         if let Some((position, size)) = self.position.zip(self.size) {
             let scale = self.scale.unwrap_or(1);
@@ -189,6 +201,7 @@ impl InProgressOutput {
                 description: self.description.clone(),
                 scale,
                 bounds: Bounds::new(position, size),
+                proxy: self.proxy.clone(),
             })
         } else {
             None
@@ -202,6 +215,7 @@ pub struct Output {
     pub description: Option<String>,
     pub scale: i32,
     pub bounds: Bounds<DevicePixels>,
+    pub proxy: wl_output::WlOutput,
 }
 
 pub(crate) struct WaylandClientState {
@@ -484,7 +498,7 @@ impl WaylandClient {
                             &qh,
                             (),
                         );
-                        in_progress_outputs.insert(output.id(), InProgressOutput::default());
+                        in_progress_outputs.insert(output.id(), InProgressOutput::new(output));
                     }
                     _ => {}
                 }
@@ -723,6 +737,11 @@ impl LinuxClient for WaylandClient {
         let mut state = self.0.borrow_mut();
 
         let parent = state.keyboard_focused_window.clone();
+        let output = params.display_id.and_then(|id| {
+            state.outputs.iter().find_map(|(object_id, output)| {
+                (id == DisplayId(object_id.protocol_id())).then(|| &output.proxy)
+            })
+        });
 
         let (window, surface_id) = WaylandWindow::new(
             handle,
@@ -732,6 +751,7 @@ impl LinuxClient for WaylandClient {
             params,
             state.common.appearance,
             parent,
+            output,
         )?;
         state.windows.insert(surface_id, window.0.clone());
 
@@ -953,7 +973,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
 
                     state
                         .in_progress_outputs
-                        .insert(output.id(), InProgressOutput::default());
+                        .insert(output.id(), InProgressOutput::new(output));
                 }
                 _ => {}
             },
