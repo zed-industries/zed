@@ -3559,14 +3559,7 @@ impl Pane {
                     .overflow_x_scroll()
                     .w_full()
                     .children(pinned_tabs)
-                    .child(
-                        div()
-                            .id("pinned_tabs_border")
-                            .debug_selector(|| "pinned_tabs_border".into())
-                            .h(Tab::container_height(cx))
-                            .border_r_1()
-                            .border_color(cx.theme().colors().border),
-                    ),
+                    .child(self.render_pinned_tab_bar_drop_target(cx)),
             );
         let pinned_tab_bar = Self::configure_tab_bar_end(
             pinned_tab_bar,
@@ -3651,6 +3644,48 @@ impl Pane {
                 if event.click_count() == 2 {
                     window.dispatch_action(this.double_click_dispatch_action.boxed_clone(), cx);
                 }
+            }))
+    }
+
+    fn render_pinned_tab_bar_drop_target(&self, cx: &mut Context<Pane>) -> impl IntoElement {
+        div()
+            .id("pinned_tabs_border")
+            .debug_selector(|| "pinned_tabs_border".into())
+            .min_w_6()
+            // HACK: This empty child is currently necessary to force the drop target to appear
+            // despite us setting a min width above.
+            .child("")
+            // HACK: h_full doesn't occupy the complete height, using fixed height instead
+            .h(Tab::container_height(cx))
+            .flex_grow()
+            .border_l_1()
+            .border_color(cx.theme().colors().border)
+            .drag_over::<DraggedTab>(|bar, _, _, cx| {
+                bar.bg(cx.theme().colors().drop_target_background)
+            })
+            .drag_over::<DraggedSelection>(|bar, _, _, cx| {
+                bar.bg(cx.theme().colors().drop_target_background)
+            })
+            .on_drop(
+                cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
+                    this.drag_split_direction = None;
+                    this.handle_pinned_tab_bar_drop(dragged_tab, window, cx)
+                }),
+            )
+            .on_drop(
+                cx.listener(move |this, selection: &DraggedSelection, window, cx| {
+                    this.drag_split_direction = None;
+                    this.handle_project_entry_drop(
+                        &selection.active_selection.entry_id,
+                        Some(this.pinned_tab_count),
+                        window,
+                        cx,
+                    )
+                }),
+            )
+            .on_drop(cx.listener(move |this, paths, window, cx| {
+                this.drag_split_direction = None;
+                this.handle_external_paths_drop(paths, window, cx)
             }))
     }
 
@@ -3812,6 +3847,61 @@ impl Pane {
 
                             if should_remain_pinned {
                                 this.pinned_tab_count += 1;
+                            }
+                        }
+                    });
+                });
+            })
+            .log_err();
+    }
+
+    fn handle_pinned_tab_bar_drop(
+        &mut self,
+        dragged_tab: &DraggedTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let item_id = dragged_tab.item.item_id();
+        let pinned_count = self.pinned_tab_count;
+
+        self.handle_tab_drop(dragged_tab, pinned_count, window, cx);
+
+        // Ensure the tab is pinned after the drop.
+        // handle_tab_drop uses defer_in, so we also defer this check.
+        let to_pane = cx.entity();
+        self.workspace
+            .update(cx, |_, cx| {
+                cx.defer_in(window, move |_, _, cx| {
+                    to_pane.update(cx, |this, cx| {
+                        if let Some(actual_ix) = this.index_for_item_id(item_id) {
+                            // If the tab ended up at or after pinned_tab_count, it's not pinned
+                            // so we pin it now
+                            if actual_ix >= this.pinned_tab_count {
+                                let was_active = this.active_item_index == actual_ix;
+                                let destination_ix = this.pinned_tab_count;
+
+                                // Move item to pinned area if needed
+                                if actual_ix != destination_ix {
+                                    let item = this.items.remove(actual_ix);
+                                    this.items.insert(destination_ix, item);
+
+                                    // Update active_item_index to follow the moved item
+                                    if was_active {
+                                        this.active_item_index = destination_ix;
+                                    } else if this.active_item_index > actual_ix
+                                        && this.active_item_index <= destination_ix
+                                    {
+                                        // Item moved left past the active item
+                                        this.active_item_index -= 1;
+                                    } else if this.active_item_index >= destination_ix
+                                        && this.active_item_index < actual_ix
+                                    {
+                                        // Item moved right past the active item
+                                        this.active_item_index += 1;
+                                    }
+                                }
+                                this.pinned_tab_count += 1;
+                                cx.notify();
                             }
                         }
                     });
