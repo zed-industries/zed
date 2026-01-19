@@ -399,9 +399,13 @@ impl BufferDiffSnapshot {
         {
             cursor.prev();
         }
-        cursor
+        let result = cursor
             .item()
-            .filter(|hunk| target >= hunk.diff_base_byte_range.start)
+            .filter(|hunk| target >= hunk.diff_base_byte_range.start);
+        if cursor.item().is_none() {
+            cursor.reset();
+        }
+        result
     }
 
     fn hunk_before_buffer_anchor<'a>(
@@ -417,9 +421,13 @@ impl BufferDiffSnapshot {
         {
             cursor.prev();
         }
-        cursor
+        let result = cursor
             .item()
-            .filter(|hunk| target.cmp(&hunk.buffer_range.start, buffer).is_ge())
+            .filter(|hunk| target.cmp(&hunk.buffer_range.start, buffer).is_ge());
+        if cursor.item().is_none() {
+            cursor.reset();
+        }
+        result
     }
 
     fn translate_anchor_to_base_text(

@@ -631,37 +631,79 @@ impl SplittableEditor {
 impl SplittableEditor {
     fn check_invariants(&self, quiesced: bool, cx: &mut App) {
         use buffer_diff::DiffHunkStatusKind;
-        use collections::HashSet;
         use multi_buffer::MultiBufferOffset;
-        use multi_buffer::MultiBufferRow;
-        use multi_buffer::MultiBufferSnapshot;
+        use text::Bias;
 
-        let Some(secondary) = &self.secondary else {
-            return;
-        };
+        self.debug_print(cx);
 
+        let secondary = self.secondary.as_ref().unwrap();
         let primary_excerpts = self.primary_multibuffer.read(cx).excerpt_ids();
         let secondary_excerpts = secondary.multibuffer.read(cx).excerpt_ids();
-        assert_eq!(secondary_excerpts.len(), primary_excerpts.len());
+        assert_eq!(
+            secondary_excerpts.len(),
+            primary_excerpts.len(),
+            "mismatch in excerpt count"
+        );
+
+        let rhs_snapshot = secondary
+            .editor
+            .update(cx, |editor, cx| editor.display_snapshot(cx));
+        let lhs_snapshot = self
+            .primary_editor
+            .update(cx, |editor, cx| editor.display_snapshot(cx));
 
         if quiesced {
-            self.check_sides_match(cx, |snapshot| snapshot.max_point().row());
+            assert_eq!(
+                lhs_snapshot.max_point().row(),
+                rhs_snapshot.max_point().row(),
+                "mismatch in display row count"
+            );
 
-            self.check_sides_match(cx, |snapshot| {
-                snapshot
-                    .buffer_snapshot()
-                    .diff_hunks()
-                    .map(|hunk| {
-                        let display_row = snapshot
-                            .point_to_display_point(
-                                Point::new(hunk.row_range.end.0, 0),
-                                text::Bias::Left,
-                            )
-                            .row();
-                        (hunk.diff_base_byte_range.clone(), display_row)
-                    })
-                    .collect::<Vec<_>>()
-            });
+            for (lhs_excerpt, rhs_excerpt) in lhs_snapshot
+                .excerpt_boundaries_in_range(MultibufferOffset(0)..)
+                .zip(rhs_snapshot.excerpt_boundaries_in_range(MultiBufferOffset(0)..))
+            {
+                let lhs_point = lhs_snapshot
+                    .point_to_display_point(Point::new(lhs_excerpt.row.0, 0), Bias::Left);
+                let rhs_point = rhs_snapshot
+                    .point_to_display_point(Point::new(rhs_excerpt.row.0, 0), Bias::Left);
+                assert_eq!(lhs_point, rhs_point, "mismatch in excerpt position");
+            }
+
+            for (lhs_hunk, rhs_hunk) in lhs_snapshot.diff_hunks().zip(rhs_snapshot.diff_hunks()) {
+                assert_eq!(
+                    lhs_hunk.diff_base_byte_range, rhs_hunk.diff_base_byte_range,
+                    "mismatch in hunks"
+                );
+                assert_eq!(
+                    lhs_hunk.status, rhs_hunk.status,
+                    "mismatch in hunk statuses"
+                );
+                match lhs_hunk.status.kind {
+                    DiffHunkStatusKind::Added | DiffHunkStatusKind::Deleted => {
+                        let lhs_point = lhs_snapshot.point_to_display_point(
+                            Point::new(lhs_hunk.row_range.end.0, 0),
+                            Bias::Left,
+                        );
+                        let rhs_point = rhs_snapshot.point_to_display_point(
+                            Point::new(rhs_hunk.row_range.end.0, 0),
+                            Bias::Left,
+                        );
+                        assert_eq!(lhs_point, rhs_point, "mismatch in hunk position");
+                    }
+                    DiffHunkStatusKind::Modified => {
+                        let lhs_point = lhs_snapshot.point_to_display_point(
+                            Point::new(lhs_hunk.row_range.start.0, 0),
+                            Bias::Left,
+                        );
+                        let rhs_point = rhs_snapshot.point_to_display_point(
+                            Point::new(rhs_hunk.row_range.start.0, 0),
+                            Bias::Left,
+                        );
+                        assert_eq!(lhs_point, rhs_point, "mismatch in hunk position");
+                    }
+                }
+            }
 
             // Filtering out empty lines is a bit of a hack, to work around a case where
             // the base text has a trailing newline but the current text doesn't, or vice versa.
@@ -1494,9 +1536,6 @@ mod tests {
 
             editor.update(cx, |editor, cx| {
                 editor.check_invariants(quiesced, cx);
-                if quiesced {
-                    editor.debug_print(cx);
-                };
             });
         }
     }
