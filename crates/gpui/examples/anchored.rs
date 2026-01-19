@@ -162,7 +162,7 @@ impl Render for PopoverDemo {
                                                 .shadow_sm()
                                                 .min_w(px(100.0))
                                                 .text_sm()
-                                                .child(format!("Anchor: {:?}", button.corner)),
+                                                .child(button.label.clone()),
                                         ),
                                 ))
                             })
