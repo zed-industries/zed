@@ -22,9 +22,6 @@ pub mod toolchain_store;
 pub mod trusted_worktrees;
 pub mod worktree_store;
 
-#[cfg(test)]
-mod project_tests;
-
 mod environment;
 use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
@@ -70,8 +67,7 @@ use debugger::{
 };
 use encoding_rs;
 pub use environment::ProjectEnvironment;
-#[cfg(test)]
-use futures::future::join_all;
+
 use futures::{
     StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
@@ -699,7 +695,7 @@ impl LspAction {
         }
     }
 
-    fn action_kind(&self) -> Option<lsp::CodeActionKind> {
+    pub fn action_kind(&self) -> Option<lsp::CodeActionKind> {
         match self {
             Self::Action(action) => action.kind.clone(),
             Self::Command(_) => Some(lsp::CodeActionKind::new("command")),
@@ -5499,8 +5495,9 @@ impl Project {
         &self.agent_server_store
     }
 
-    #[cfg(test)]
-    fn git_scans_complete(&self, cx: &Context<Self>) -> Task<()> {
+    #[cfg(feature = "test-support")]
+    pub fn git_scans_complete(&self, cx: &Context<Self>) -> Task<()> {
+        use futures::future::join_all;
         cx.spawn(async move |this, cx| {
             let scans_complete = this
                 .read_with(cx, |this, cx| {

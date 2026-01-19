@@ -11,6 +11,12 @@ workspace = true
 [lib]
 path = "src/project.rs"
 doctest = false
+test = false
+
+[[test]]
+name = "integration"
+required-features = ["test-support"]
+path = "tests/integration/main.rs"
 
 [features]
 test-support = [

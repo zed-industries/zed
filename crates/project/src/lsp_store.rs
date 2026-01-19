@@ -3010,7 +3010,7 @@ impl LocalLspStore {
     }
 
     #[allow(clippy::type_complexity)]
-    pub(crate) fn edits_from_lsp(
+    pub fn edits_from_lsp(
         &mut self,
         buffer: &Entity<Buffer>,
         lsp_edits: impl 'static + Send + IntoIterator<Item = lsp::TextEdit>,
@@ -8428,7 +8428,7 @@ impl LspStore {
             .collect();
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub fn update_diagnostic_entries(
         &mut self,
         server_id: LanguageServerId,

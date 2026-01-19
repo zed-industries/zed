@@ -1,61 +1,71 @@
 #![allow(clippy::format_collect)]
 
-use crate::{
-    Event,
-    git_store::{GitStoreEvent, RepositoryEvent, StatusEntry, pending_op},
-    task_inventory::TaskContexts,
-    task_store::TaskSettingsLocation,
-    *,
-};
+use anyhow::Result;
 use async_trait::async_trait;
 use buffer_diff::{
     BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind, assert_hunks,
 };
+use collections::{BTreeSet, HashMap, HashSet};
 use fs::FakeFs;
 use futures::{StreamExt, future};
 use git::{
     GitHostingProviderRegistry,
     repository::{RepoPath, repo_path},
-    status::{StatusCode, TrackedStatus},
+    status::{FileStatus, StatusCode, TrackedStatus},
 };
 use git2::RepositoryInitOptions;
-use gpui::{App, BackgroundExecutor, FutureExt, UpdateGlobal};
+use gpui::{
+    App, AppContext, BackgroundExecutor, BorrowAppContext, Entity, FutureExt, SharedString, Task,
+    UpdateGlobal,
+};
 use itertools::Itertools;
 use language::{
-    Diagnostic, DiagnosticEntry, DiagnosticEntryRef, DiagnosticSet, DiagnosticSourceKind,
-    DiskState, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageName, LineEnding,
-    ManifestName, ManifestProvider, ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainList,
-    ToolchainLister,
+    Buffer, BufferEvent, Diagnostic, DiagnosticEntry, DiagnosticEntryRef, DiagnosticSet,
+    DiagnosticSourceKind, DiskState, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
+    LanguageName, LineEnding, ManifestName, ManifestProvider, ManifestQuery, OffsetRangeExt, Point,
+    ToPoint, Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata,
     language_settings::{LanguageSettingsContent, language_settings},
     rust_lang, tree_sitter_typescript,
 };
 use lsp::{
-    DiagnosticSeverity, DocumentChanges, FileOperationFilter, NumberOrString, TextDocumentEdit,
-    Uri, WillRenameFiles, notification::DidRenameFiles,
+    CodeActionKind, DiagnosticSeverity, DocumentChanges, FileOperationFilter, LanguageServerId,
+    LanguageServerName, NumberOrString, TextDocumentEdit, Uri, WillRenameFiles,
+    notification::DidRenameFiles,
 };
 use parking_lot::Mutex;
 use paths::{config_dir, global_gitignore_path, tasks_file};
 use postage::stream::Stream as _;
 use pretty_assertions::{assert_eq, assert_matches};
+use project::{
+    Event, TaskContexts,
+    git_store::{GitStoreEvent, Repository, RepositoryEvent, StatusEntry, pending_op},
+    search::{SearchQuery, SearchResult},
+    task_store::{TaskSettingsLocation, TaskStore},
+    *,
+};
 use rand::{Rng as _, rngs::StdRng};
 use serde_json::json;
+use settings::SettingsStore;
 #[cfg(not(windows))]
 use std::os;
 use std::{
     env, mem,
     num::NonZeroU32,
     ops::Range,
+    path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, OnceLock},
     task::Poll,
+    time::Duration,
 };
 use sum_tree::SumTree;
 use task::{ResolvedTask, ShellKind, TaskContext};
+use text::{Anchor, PointUtf16, ReplicaId, ToOffset, Unclipped};
 use unindent::Unindent as _;
 use util::{
     TryFutureExt as _, assert_set_eq, maybe, path,
-    paths::PathMatcher,
-    rel_path::rel_path,
+    paths::{PathMatcher, PathStyle},
+    rel_path::{RelPath, rel_path},
     test::{TempTree, marked_text_offsets},
     uri,
 };
@@ -426,7 +436,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         .expect("should have one global task");
     project.update(cx, |project, cx| {
         let task_inventory = project
-            .task_store
+            .task_store()
             .read(cx)
             .task_inventory()
             .cloned()
@@ -688,7 +698,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
         .unwrap();
     cx.executor().run_until_parked();
     let servers = project.update(cx, |project, cx| {
-        project.lsp_store.update(cx, |this, cx| {
+        project.lsp_store().update(cx, |this, cx| {
             first_buffer.update(cx, |buffer, cx| {
                 this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
@@ -717,7 +727,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
         .unwrap();
     cx.executor().run_until_parked();
     let servers = project.update(cx, |project, cx| {
-        project.lsp_store.update(cx, |this, cx| {
+        project.lsp_store().update(cx, |this, cx| {
             second_project_buffer.update(cx, |buffer, cx| {
                 this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
@@ -788,7 +798,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
         .unwrap();
     cx.run_until_parked();
     let servers = project.update(cx, |project, cx| {
-        project.lsp_store.update(cx, |this, cx| {
+        project.lsp_store().update(cx, |this, cx| {
             second_project_buffer.update(cx, |buffer, cx| {
                 this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
@@ -2768,7 +2778,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     project.update(cx, |project, cx| {
-        project.lsp_store.update(cx, |lsp_store, cx| {
+        project.lsp_store().update(cx, |lsp_store, cx| {
             lsp_store
                 .update_diagnostic_entries(
                     LanguageServerId(0),
@@ -2833,7 +2843,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
         .await;
 
     let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store.clone());
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store().clone());
 
     lsp_store.update(cx, |lsp_store, cx| {
         lsp_store
@@ -9934,7 +9944,7 @@ async fn test_repos_in_invisible_worktrees(
 
     let (_invisible_worktree, _) = project
         .update(cx, |project, cx| {
-            project.worktree_store.update(cx, |worktree_store, cx| {
+            project.worktree_store().update(cx, |worktree_store, cx| {
                 worktree_store.find_or_create_worktree(path!("/root/dir1/b.txt"), false, cx)
             })
         })
@@ -10589,7 +10599,7 @@ fn get_all_tasks(
     cx: &mut App,
 ) -> Task<Vec<(TaskSourceKind, ResolvedTask)>> {
     let new_tasks = project.update(cx, |project, cx| {
-        project.task_store.update(cx, |task_store, cx| {
+        project.task_store().update(cx, |task_store, cx| {
             task_store.task_inventory().unwrap().update(cx, |this, cx| {
                 this.used_and_current_resolved_tasks(task_contexts, cx)
             })

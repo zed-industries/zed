@@ -639,7 +639,7 @@ impl Inventory {
     /// Will fail if the JSON is not a valid array of objects, but will continue if any object will not parse into a [`TaskTemplate`].
     ///
     /// Global tasks are updated for no worktree provided, otherwise the worktree metadata for a given path will be updated.
-    pub(crate) fn update_file_based_tasks(
+    pub fn update_file_based_tasks(
         &mut self,
         location: TaskSettingsLocation<'_>,
         raw_tasks_json: Option<&str>,
