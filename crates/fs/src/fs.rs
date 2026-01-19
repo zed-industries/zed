@@ -1617,50 +1617,58 @@ impl FakeFs {
         new_content: Vec<u8>,
         recreate_inode: bool,
     ) -> Result<()> {
-        let mut state = self.state.lock();
-        let path_buf = path.as_ref().to_path_buf();
-        *state.path_write_counts.entry(path_buf).or_insert(0) += 1;
-        let new_inode = state.get_and_increment_inode();
-        let new_mtime = state.get_and_increment_mtime();
-        let new_len = new_content.len() as u64;
-        let mut kind = None;
-        state.write_path(path.as_ref(), |entry| {
-            match entry {
-                btree_map::Entry::Vacant(e) => {
-                    kind = Some(PathEventKind::Created);
-                    e.insert(FakeFsEntry::File {
-                        inode: new_inode,
-                        mtime: new_mtime,
-                        len: new_len,
-                        content: new_content,
-                        git_dir_path: None,
-                    });
-                }
-                btree_map::Entry::Occupied(mut e) => {
-                    kind = Some(PathEventKind::Changed);
-                    if let FakeFsEntry::File {
-                        inode,
-                        mtime,
-                        len,
-                        content,
-                        ..
-                    } = e.get_mut()
-                    {
-                        *mtime = new_mtime;
-                        *content = new_content;
-                        *len = new_len;
-                        if recreate_inode {
-                            *inode = new_inode;
+        fn inner(
+            this: &FakeFs,
+            path: &Path,
+            new_content: Vec<u8>,
+            recreate_inode: bool,
+        ) -> Result<()> {
+            let mut state = this.state.lock();
+            let path_buf = path.to_path_buf();
+            *state.path_write_counts.entry(path_buf).or_insert(0) += 1;
+            let new_inode = state.get_and_increment_inode();
+            let new_mtime = state.get_and_increment_mtime();
+            let new_len = new_content.len() as u64;
+            let mut kind = None;
+            state.write_path(path, |entry| {
+                match entry {
+                    btree_map::Entry::Vacant(e) => {
+                        kind = Some(PathEventKind::Created);
+                        e.insert(FakeFsEntry::File {
+                            inode: new_inode,
+                            mtime: new_mtime,
+                            len: new_len,
+                            content: new_content,
+                            git_dir_path: None,
+                        });
+                    }
+                    btree_map::Entry::Occupied(mut e) => {
+                        kind = Some(PathEventKind::Changed);
+                        if let FakeFsEntry::File {
+                            inode,
+                            mtime,
+                            len,
+                            content,
+                            ..
+                        } = e.get_mut()
+                        {
+                            *mtime = new_mtime;
+                            *content = new_content;
+                            *len = new_len;
+                            if recreate_inode {
+                                *inode = new_inode;
+                            }
+                        } else {
+                            anyhow::bail!("not a file")
                         }
-                    } else {
-                        anyhow::bail!("not a file")
                     }
                 }
-            }
+                Ok(())
+            })?;
+            state.emit_event([(path, kind)]);
             Ok(())
-        })?;
-        state.emit_event([(path.as_ref(), kind)]);
-        Ok(())
+        }
+        inner(self, path.as_ref(), new_content, recreate_inode)
     }
 
     pub fn read_file_sync(&self, path: impl AsRef<Path>) -> Result<Vec<u8>> {
@@ -1725,30 +1733,35 @@ impl FakeFs {
         use futures::FutureExt as _;
         use serde_json::Value::*;
 
-        async move {
-            let path = path.as_ref();
-
-            match tree {
-                Object(map) => {
-                    self.create_dir(path).await.unwrap();
-                    for (name, contents) in map {
-                        let mut path = PathBuf::from(path);
-                        path.push(name);
-                        self.insert_tree(&path, contents).await;
+        fn inner<'a>(
+            this: &'a FakeFs,
+            path: Arc<Path>,
+            tree: serde_json::Value,
+        ) -> futures::future::BoxFuture<'a, ()> {
+            async move {
+                match tree {
+                    Object(map) => {
+                        this.create_dir(&path).await.unwrap();
+                        for (name, contents) in map {
+                            let mut path = PathBuf::from(path.as_ref());
+                            path.push(name);
+                            this.insert_tree(&path, contents).await;
+                        }
+                    }
+                    Null => {
+                        this.create_dir(&path).await.unwrap();
+                    }
+                    String(contents) => {
+                        this.insert_file(&path, contents.into_bytes()).await;
+                    }
+                    _ => {
+                        panic!("JSON object must contain only objects, strings, or null");
                     }
                 }
-                Null => {
-                    self.create_dir(path).await.unwrap();
-                }
-                String(contents) => {
-                    self.insert_file(&path, contents.into_bytes()).await;
-                }
-                _ => {
-                    panic!("JSON object must contain only objects, strings, or null");
-                }
             }
+            .boxed()
         }
-        .boxed()
+        inner(self, Arc::from(path.as_ref()), tree)
     }
 
     pub fn insert_tree_from_real_fs<'a>(
