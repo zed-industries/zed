@@ -3669,12 +3669,14 @@ impl ProjectSettingsUpdateQueue {
 
         let buffer_store = project.read_with(cx, |project, _cx| project.buffer_store().clone())?;
 
-        let cached_buffer = settings_window.read_with(cx, |settings_window, _| {
-            settings_window
-                .project_setting_file_buffers
-                .get(&project_path)
-                .cloned()
-        })?;
+        let cached_buffer = settings_window
+            .read_with(cx, |settings_window, _| {
+                settings_window
+                    .project_setting_file_buffers
+                    .get(&project_path)
+                    .cloned()
+            })
+            .unwrap_or_default();
 
         let buffer = if let Some(cached_buffer) = cached_buffer {
             let needs_reload = cached_buffer.read_with(cx, |buffer, _| buffer.has_conflict());
