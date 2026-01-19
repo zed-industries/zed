@@ -14,7 +14,6 @@
 pub mod actions;
 pub mod blink_manager;
 mod bracket_colorization;
-pub mod buffer_header_view;
 mod clangd_ext;
 pub mod code_context_menus;
 pub mod display_map;
@@ -58,7 +57,6 @@ pub use editor_settings::{
     CompletionDetailAlignment, CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings,
     HideMouseMode, ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
 };
-pub use buffer_header_view::BufferHeadersView;
 pub use split_editor_view::SplitEditorView;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, OverlayPainter,
