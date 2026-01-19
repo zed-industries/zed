@@ -1,5 +1,9 @@
 #![allow(clippy::format_collect)]
 
+mod task_inventory;
+mod trusted_worktrees;
+mod yarn;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use buffer_diff::{

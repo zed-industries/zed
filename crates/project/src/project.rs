@@ -14,7 +14,7 @@ pub mod prettier_store;
 pub mod project_search;
 pub mod project_settings;
 pub mod search;
-mod task_inventory;
+pub mod task_inventory;
 pub mod task_store;
 pub mod telemetry_snapshot;
 pub mod terminals;
@@ -29,7 +29,7 @@ pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
 pub mod search_history;
-mod yarn;
+pub mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 use itertools::Either;
