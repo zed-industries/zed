@@ -676,6 +676,8 @@ pub mod simple_message_notification {
 
     impl Notification for MessageNotification {}
 
+    impl FluentBuilder for MessageNotification {}
+
     impl MessageNotification {
         pub fn new<S>(message: S, cx: &mut App) -> MessageNotification
         where

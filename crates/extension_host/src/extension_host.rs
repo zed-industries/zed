@@ -21,6 +21,7 @@ use extension::{
     ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions};
+
 use futures::future::join_all;
 use futures::{
     AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
@@ -47,7 +48,7 @@ use remote::RemoteClient;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::ops::RangeInclusive;
+use std::ops::{Not, RangeInclusive};
 use std::str::FromStr;
 use std::{
     cmp::Ordering,
@@ -55,6 +56,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use thiserror::Error;
+use toml_edit::value;
 use url::Url;
 use util::{ResultExt, paths::RemotePathBuf};
 use wasm_host::{
@@ -183,6 +186,25 @@ pub struct ExtensionIndexLanguageEntry {
     pub matcher: LanguageMatcher,
     pub hidden: bool,
     pub grammar: Option<Arc<str>>,
+}
+
+#[derive(Error, Debug)]
+pub enum DevExtensionError {
+    #[error("Could not find repository in manifest")]
+    MissingManifestRepository {
+        extension_source_path: PathBuf,
+        found_remote: Option<String>,
+    },
+    #[error("Extension {0} is still installed")]
+    StillInstalled(Arc<str>),
+    #[error("Failed to install dev extension: {0:?}")]
+    Other(anyhow::Error),
+}
+
+impl From<anyhow::Error> for DevExtensionError {
+    fn from(err: anyhow::Error) -> Self {
+        DevExtensionError::Other(err)
+    }
 }
 
 actions!(
@@ -930,7 +952,7 @@ impl ExtensionStore {
         &mut self,
         extension_source_path: PathBuf,
         cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<(), DevExtensionError>> {
         let extensions_dir = self.extensions_dir();
         let fs = self.fs.clone();
         let builder = self.builder.clone();
@@ -973,6 +995,8 @@ impl ExtensionStore {
                 }
             });
 
+            let manifest_has_repository = extension_manifest.has_repository();
+
             cx.background_spawn({
                 let extension_source_path = extension_source_path.clone();
                 let fs = fs.clone();
@@ -1004,11 +1028,11 @@ impl ExtensionStore {
                     )
                     .await?;
                 } else {
-                    bail!("extension {extension_id} is still installed");
+                    return Err(DevExtensionError::StillInstalled(extension_id));
                 }
             }
 
-            fs.create_symlink(output_path, extension_source_path)
+            fs.create_symlink(output_path, &extension_source_path)
                 .await?;
 
             this.update(cx, |this, cx| this.reload(None, cx))?.await;
@@ -1023,7 +1047,16 @@ impl ExtensionStore {
                 }
             })?;
 
-            Ok(())
+            if manifest_has_repository {
+                Ok(())
+            } else {
+                Err(DevExtensionError::MissingManifestRepository {
+                    found_remote: parse_extension_git_remote(&extension_source_path)
+                        .await
+                        .ok(),
+                    extension_source_path,
+                })
+            }
         })
     }
 
@@ -1066,6 +1099,30 @@ impl ExtensionStore {
             result
         })
         .detach_and_log_err(cx)
+    }
+
+    pub fn add_remote_to_manifest(
+        extension_source_path: PathBuf,
+        remote: String,
+        fs: Arc<dyn Fs>,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let manifest_path = extension_source_path.join("extension.toml");
+        cx.spawn(async move |_| {
+            let mut manifest_file = fs
+                .load(&manifest_path)
+                .await
+                .context("Failed to load extension.toml")?
+                .as_str()
+                .parse::<toml_edit::DocumentMut>()
+                .context("Failed to parse extension.toml")?;
+
+            manifest_file["repository"] = value(remote);
+
+            fs.write(&manifest_path, manifest_file.to_string().as_bytes())
+                .await
+                .context("Failed to write to extension.toml")
+        })
     }
 
     /// Updates the set of installed extensions.
@@ -1876,4 +1933,30 @@ fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
         }
     }
     result
+}
+
+async fn parse_extension_git_remote(extension_path: &Path) -> Result<String> {
+    let output = util::command::new_smol_command("git")
+        .args(["config", "--get", "remote.origin.url"])
+        .current_dir(extension_path)
+        .output()
+        .await
+        .context("Failed to spawn command")?;
+
+    if output.status.success() {
+        String::from_utf8(output.stdout)
+            .context("Failed to parse remote from output")
+            .and_then(|remote| {
+                let remote = remote.trim();
+                if remote.is_empty().not() {
+                    Ok(remote.to_owned())
+                } else {
+                    Err(anyhow::anyhow!("Did not find valid remote"))
+                }
+            })
+    } else {
+        Err(anyhow::anyhow!(
+            "git remote returned with non-zero exit code"
+        ))
+    }
 }

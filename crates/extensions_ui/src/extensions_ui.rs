@@ -2,6 +2,7 @@ mod components;
 mod extension_suggest;
 mod extension_version_selector;
 
+use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
@@ -10,7 +11,8 @@ use anyhow::Context as _;
 use client::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
-use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
+use extension_host::{DevExtensionError, ExtensionManifest, ExtensionOperation, ExtensionStore};
+use fs::Fs;
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
     Action, App, ClipboardItem, Context, Corner, Entity, EventEmitter, Focusable,
@@ -29,6 +31,8 @@ use ui::{
     prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
+use workspace::notifications::NotificationId;
+use workspace::notifications::simple_message_notification::MessageNotification;
 use workspace::{
     Workspace,
     item::{Item, ItemEvent},
@@ -151,15 +155,21 @@ pub fn init(cx: &mut App) {
                         match install_task.await {
                             Ok(_) => {}
                             Err(err) => {
-                                log::error!("Failed to install dev extension: {:?}", err);
+                                log::error!("{err:?}");
                                 workspace_handle
-                                    .update(cx, |workspace, cx| {
-                                        workspace.show_error(
-                                            // NOTE: using `anyhow::context` here ends up not printing
-                                            // the error
-                                            &format!("Failed to install dev extension: {}", err),
-                                            cx,
-                                        );
+                                    .update(cx, move |workspace, cx| {
+                                        match display_dev_extension_error(err) {
+                                            DisplayType::Notification(build_notification) => {
+                                                workspace.show_notification(
+                                                    NotificationId::unique::<DevExtensionError>(),
+                                                    cx,
+                                                    |cx| build_notification(cx),
+                                                )
+                                            }
+                                            DisplayType::BasicError(error) => {
+                                                workspace.show_error(&error, cx)
+                                            }
+                                        }
                                     })
                                     .ok();
                             }
@@ -178,6 +188,47 @@ pub fn init(cx: &mut App) {
         .detach();
     })
     .detach();
+}
+
+pub enum DisplayType {
+    Notification(Box<dyn FnOnce(&mut App) -> Entity<MessageNotification>>),
+    BasicError(DevExtensionError),
+}
+
+fn display_dev_extension_error(error: DevExtensionError) -> DisplayType {
+    fn render_missing_manifest_error(
+        extension_source_path: PathBuf,
+        found_remote: Option<String>,
+        cx: &mut App,
+    ) -> Entity<MessageNotification> {
+        cx.new(|cx| {
+            MessageNotification::new("Missing repository in extension manifest", cx).when_some(
+                found_remote,
+                |this, remote| {
+                    this.primary_message("Add repository")
+                        .primary_on_click(move |_, cx| {
+                            ExtensionStore::add_remote_to_manifest(
+                                extension_source_path.clone(),
+                                remote.clone(),
+                                <dyn Fs>::global(cx),
+                                cx,
+                            )
+                            .detach_and_log_err(cx);
+                        })
+                },
+            )
+        })
+    }
+
+    match error {
+        DevExtensionError::MissingManifestRepository {
+            extension_source_path,
+            found_remote,
+        } => DisplayType::Notification(Box::new(move |cx| {
+            render_missing_manifest_error(extension_source_path, found_remote, cx)
+        })),
+        _ => DisplayType::BasicError(error),
+    }
 }
 
 fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
