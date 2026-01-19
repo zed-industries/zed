@@ -13,6 +13,7 @@ use gpui::{
 use multi_buffer::{Anchor, ExcerptId, ExcerptInfo};
 use project::Entry;
 use settings::Settings;
+use ui::scrollbars::ShowScrollbar;
 use text::BufferId;
 use theme::ActiveTheme;
 use ui::{
@@ -22,7 +23,7 @@ use ui::{
 use workspace::{ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel};
 
 use crate::{
-    DisplayRow, Editor, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT, JumpData,
+    DisplayRow, Editor, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT, JumpData,
     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, RowExt, StickyHeaderExcerpt, ToggleFold,
     ToggleFoldAll,
     display_map::Block,
@@ -237,15 +238,12 @@ impl SplitBufferHeadersElement {
 }
 
 struct BufferHeaderLayout {
-    row: DisplayRow,
     element: AnyElement,
 }
 
 struct SplitBufferHeadersPrepaintState {
     sticky_header: Option<AnyElement>,
     non_sticky_headers: Vec<BufferHeaderLayout>,
-    line_height: Pixels,
-    scroll_position_y: f64,
 }
 
 impl IntoElement for SplitBufferHeadersElement {
@@ -294,20 +292,29 @@ impl Element for SplitBufferHeadersElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
+        let line_height = window.line_height();
+
         if bounds.size.width <= px(0.) || bounds.size.height <= px(0.) {
             return SplitBufferHeadersPrepaintState {
                 sticky_header: None,
                 non_sticky_headers: Vec::new(),
-                line_height: px(0.),
-                scroll_position_y: 0.0,
             };
         }
 
-        let line_height = window.line_height();
         let snapshot = self
             .editor
             .update(cx, |editor, cx| editor.snapshot(window, cx));
         let scroll_position = snapshot.scroll_position();
+
+        // Compute right margin to avoid overlapping the scrollbar
+        let settings = EditorSettings::get_global(cx);
+        let scrollbars_shown = settings.scrollbar.show != ShowScrollbar::Never;
+        let vertical_scrollbar_width = (scrollbars_shown
+            && settings.scrollbar.axes.vertical
+            && self.editor.read(cx).show_scrollbars.vertical)
+            .then_some(EditorElement::SCROLLBAR_WIDTH)
+            .unwrap_or_default();
+        let available_width = bounds.size.width - vertical_scrollbar_width;
 
         let visible_height_in_lines = bounds.size.height / line_height;
         let max_row = snapshot.max_point().row();
@@ -317,18 +324,6 @@ impl Element for SplitBufferHeadersElement {
             max_row.next_row().0,
         );
         let end_row = DisplayRow(end_row);
-
-        let mut block_info = Vec::new();
-        for (row, block) in snapshot.blocks_in_range(start_row..end_row) {
-            let block_type = match block {
-                Block::BufferHeader { .. } => "BufferHeader",
-                Block::ExcerptBoundary { .. } => "ExcerptBoundary",
-                Block::FoldedBuffer { .. } => "FoldedBuffer",
-                Block::Custom(_) => "Custom",
-                Block::Spacer { .. } => "Spacer",
-            };
-            block_info.push(format!("row {}:{}", row.0, block_type));
-        }
 
         let (selected_buffer_ids, latest_selection_anchors) =
             self.compute_selection_info(&snapshot, cx);
@@ -342,6 +337,7 @@ impl Element for SplitBufferHeadersElement {
                         &snapshot,
                         scroll_position,
                         bounds,
+                        available_width,
                         line_height,
                         &selected_buffer_ids,
                         &latest_selection_anchors,
@@ -363,6 +359,7 @@ impl Element for SplitBufferHeadersElement {
             &snapshot,
             scroll_position,
             bounds,
+            available_width,
             line_height,
             start_row,
             end_row,
@@ -376,8 +373,6 @@ impl Element for SplitBufferHeadersElement {
         SplitBufferHeadersPrepaintState {
             sticky_header,
             non_sticky_headers,
-            line_height,
-            scroll_position_y: scroll_position.y,
         }
     }
 
@@ -452,6 +447,7 @@ impl SplitBufferHeadersElement {
         snapshot: &EditorSnapshot,
         scroll_position: gpui::Point<ScrollOffset>,
         bounds: Bounds<Pixels>,
+        available_width: Pixels,
         line_height: Pixels,
         selected_buffer_ids: &HashSet<BufferId>,
         latest_selection_anchors: &HashMap<BufferId, Anchor>,
@@ -472,11 +468,11 @@ impl SplitBufferHeadersElement {
         let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
 
         let mut header = v_flex()
-            .w_full()
+            .w(available_width)
             .relative()
             .child(
                 div()
-                    .w_full()
+                    .w(available_width)
                     .h(FILE_HEADER_HEIGHT as f32 * line_height)
                     .bg(linear_gradient(
                         0.,
@@ -513,7 +509,7 @@ impl SplitBufferHeadersElement {
         }
 
         let available_size = size(
-            AvailableSpace::Definite(bounds.size.width),
+            AvailableSpace::Definite(available_width),
             AvailableSpace::MinContent,
         );
 
@@ -527,6 +523,7 @@ impl SplitBufferHeadersElement {
         snapshot: &EditorSnapshot,
         scroll_position: gpui::Point<ScrollOffset>,
         bounds: Bounds<Pixels>,
+        available_width: Pixels,
         line_height: Pixels,
         start_row: DisplayRow,
         end_row: DisplayRow,
@@ -539,19 +536,18 @@ impl SplitBufferHeadersElement {
         let mut headers = Vec::new();
 
         for (block_row, block) in snapshot.blocks_in_range(start_row..end_row) {
-            let excerpt = match block {
+            let (excerpt, is_folded) = match block {
                 Block::BufferHeader { excerpt, .. } => {
                     if sticky_header_excerpt_id == Some(excerpt.id) {
                         continue;
                     }
-                    excerpt
+                    (excerpt, false)
                 }
-                Block::ExcerptBoundary { excerpt, .. } => excerpt,
-                Block::FoldedBuffer { first_excerpt, .. } => first_excerpt,
-                _ => continue,
+                Block::FoldedBuffer { first_excerpt, .. } => (first_excerpt, true),
+                // ExcerptBoundary is just a separator line, not a buffer header
+                Block::ExcerptBoundary { .. } | Block::Custom(_) | Block::Spacer { .. } => continue,
             };
 
-            let is_folded = matches!(block, Block::FoldedBuffer { .. });
             let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
             let jump_data = header_jump_data(
                 snapshot,
@@ -565,20 +561,18 @@ impl SplitBufferHeadersElement {
                 .render_buffer_header(excerpt, is_folded, selected, false, jump_data, window, cx)
                 .into_any_element();
 
-            let y_offset = (block_row.0 as f64 - scroll_position.y) * f64::from(line_height);
+            let y_offset =
+                (block_row.0 as f64 - scroll_position.y) * f64::from(line_height);
             let origin = point(bounds.origin.x, bounds.origin.y + Pixels::from(y_offset));
 
             let available_size = size(
-                AvailableSpace::Definite(bounds.size.width),
+                AvailableSpace::Definite(available_width),
                 AvailableSpace::MinContent,
             );
 
             header.prepaint_as_root(origin, available_size, window, cx);
 
-            headers.push(BufferHeaderLayout {
-                row: block_row,
-                element: header,
-            });
+            headers.push(BufferHeaderLayout { element: header });
         }
 
         headers
