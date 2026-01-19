@@ -138,16 +138,24 @@ impl Vim {
                     surrounding_markers(display_map, cursor, true, true, open_marker, close_marker)
                 {
                     let open_start = range.start.to_offset(display_map, Bias::Left);
-                    let open_end = open_start + open_marker.len_utf8();
                     let close_end = range.end.to_offset(display_map, Bias::Left);
-                    let close_start = close_end - close_marker.len_utf8();
-
-                    edits.push((close_start..close_end, new_pair.end.clone()));
-                    edits.push((open_start..open_end, new_pair.start.clone()));
-
                     let cursor_offset = cursor.to_offset(display_map, Bias::Left);
-                    let anchor = display_map.buffer_snapshot().anchor_before(cursor_offset);
-                    anchors.push(anchor..anchor);
+
+                    // Only act if the cursor is within the found pair
+                    if cursor_offset >= open_start && cursor_offset <= close_end {
+                        let open_end = open_start + open_marker.len_utf8();
+                        let close_start = close_end - close_marker.len_utf8();
+
+                        edits.push((close_start..close_end, new_pair.end.clone()));
+                        edits.push((open_start..open_end, new_pair.start.clone()));
+
+                        let anchor = display_map.buffer_snapshot().anchor_before(cursor_offset);
+                        anchors.push(anchor..anchor);
+                    } else {
+                        let offset = selection.head().to_offset(display_map, Bias::Left);
+                        let anchor = display_map.buffer_snapshot().anchor_before(offset);
+                        anchors.push(anchor..anchor);
+                    }
                 } else {
                     let offset = selection.head().to_offset(display_map, Bias::Left);
                     let anchor = display_map.buffer_snapshot().anchor_before(offset);
@@ -192,16 +200,24 @@ impl Vim {
                     surrounding_markers(display_map, cursor, true, true, open_marker, close_marker)
                 {
                     let open_start = range.start.to_offset(display_map, Bias::Left);
-                    let open_end = open_start + open_marker.len_utf8();
                     let close_end = range.end.to_offset(display_map, Bias::Left);
-                    let close_start = close_end - close_marker.len_utf8();
-
-                    edits.push((close_start..close_end, String::new()));
-                    edits.push((open_start..open_end, String::new()));
-
                     let cursor_offset = cursor.to_offset(display_map, Bias::Left);
-                    let anchor = display_map.buffer_snapshot().anchor_before(cursor_offset);
-                    anchors.push(anchor..anchor);
+
+                    // Only act if the cursor is within the found pair
+                    if cursor_offset >= open_start && cursor_offset <= close_end {
+                        let open_end = open_start + open_marker.len_utf8();
+                        let close_start = close_end - close_marker.len_utf8();
+
+                        edits.push((close_start..close_end, String::new()));
+                        edits.push((open_start..open_end, String::new()));
+
+                        let anchor = display_map.buffer_snapshot().anchor_before(cursor_offset);
+                        anchors.push(anchor..anchor);
+                    } else {
+                        let offset = selection.head().to_offset(display_map, Bias::Left);
+                        let anchor = display_map.buffer_snapshot().anchor_before(offset);
+                        anchors.push(anchor..anchor);
+                    }
                 } else {
                     let offset = selection.head().to_offset(display_map, Bias::Left);
                     let anchor = display_map.buffer_snapshot().anchor_before(offset);
@@ -432,5 +448,48 @@ mod test {
         cx.set_state("([woˇrld])", Mode::HelixNormal);
         cx.simulate_keystrokes("m r m {");
         cx.assert_state("({woˇrld})", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_surround_ignores_pairs_not_containing_cursor(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // When cursor is inside quotes and we try to delete parens,
+        // it should do nothing - not delete parens from a later line
+        cx.set_state(
+            indoc! {"
+            \"ˇword\"
+            fn f1() {
+            }"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("m d (");
+        cx.assert_state(
+            indoc! {"
+            \"ˇword\"
+            fn f1() {
+            }"},
+            Mode::HelixNormal,
+        );
+
+        // Same for replace
+        cx.set_state(
+            indoc! {"
+            \"ˇword\"
+            fn f1() {
+            }"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("m r ( [");
+        cx.assert_state(
+            indoc! {"
+            \"ˇword\"
+            fn f1() {
+            }"},
+            Mode::HelixNormal,
+        );
     }
 }
