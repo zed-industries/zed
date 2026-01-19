@@ -387,6 +387,56 @@ impl AgentModelList {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct PermissionOptionChoice {
+    pub allow: acp::PermissionOption,
+    pub deny: acp::PermissionOption,
+}
+
+impl PermissionOptionChoice {
+    pub fn label(&self) -> SharedString {
+        self.allow.name.clone().into()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum PermissionOptions {
+    Flat(Vec<acp::PermissionOption>),
+    Dropdown(Vec<PermissionOptionChoice>),
+}
+
+impl PermissionOptions {
+    pub fn is_empty(&self) -> bool {
+        match self {
+            PermissionOptions::Flat(options) => options.is_empty(),
+            PermissionOptions::Dropdown(options) => options.is_empty(),
+        }
+    }
+
+    pub fn first_option_of_kind(
+        &self,
+        kind: acp::PermissionOptionKind,
+    ) -> Option<&acp::PermissionOption> {
+        match self {
+            PermissionOptions::Flat(options) => options.iter().find(|option| option.kind == kind),
+            PermissionOptions::Dropdown(options) => options.iter().find_map(|choice| {
+                if choice.allow.kind == kind {
+                    Some(&choice.allow)
+                } else if choice.deny.kind == kind {
+                    Some(&choice.deny)
+                } else {
+                    None
+                }
+            }),
+        }
+    }
+
+    pub fn allow_once_option_id(&self) -> Option<acp::PermissionOptionId> {
+        self.first_option_of_kind(acp::PermissionOptionKind::AllowOnce)
+            .map(|option| option.option_id.clone())
+    }
+}
+
 #[cfg(feature = "test-support")]
 mod test_support {
     //! Test-only stubs and helpers for acp_thread.
@@ -435,7 +485,7 @@ mod test_support {
     #[derive(Clone, Default)]
     pub struct StubAgentConnection {
         sessions: Arc<Mutex<HashMap<acp::SessionId, Session>>>,
-        permission_requests: HashMap<acp::ToolCallId, Vec<acp::PermissionOption>>,
+        permission_requests: HashMap<acp::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<acp::SessionUpdate>>>,
     }
 
@@ -459,7 +509,7 @@ mod test_support {
 
         pub fn with_permission_requests(
             mut self,
-            permission_requests: HashMap<acp::ToolCallId, Vec<acp::PermissionOption>>,
+            permission_requests: HashMap<acp::ToolCallId, PermissionOptions>,
         ) -> Self {
             self.permission_requests = permission_requests;
             self
