@@ -7,7 +7,9 @@ use gpui::{
     Action, AppContext as _, Entity, EventEmitter, Focusable, NoAction, Subscription, WeakEntity,
 };
 use language::{Buffer, Capability};
-use multi_buffer::{Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, PathKey};
+use multi_buffer::{
+    Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, PathKey, ToPoint as _,
+};
 use project::Project;
 use rope::Point;
 use text::{OffsetRangeExt as _, ToPoint as _};
@@ -577,6 +579,163 @@ impl SplittableEditor {
         } else {
             cx.propagate();
         }
+    }
+
+    fn jump_to_corresponding_row(
+        &mut self,
+        _: &JumpToCorrespondingRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(secondary) = &self.secondary else {
+            return;
+        };
+
+        let is_on_left = secondary.has_latest_selection;
+        let (source_editor, target_editor) = if is_on_left {
+            (&secondary.editor, &self.primary_editor)
+        } else {
+            (&self.primary_editor, &secondary.editor)
+        };
+
+        let (source_multibuffer, target_multibuffer) = if is_on_left {
+            (&secondary.multibuffer, &self.primary_multibuffer)
+        } else {
+            (&self.primary_multibuffer, &secondary.multibuffer)
+        };
+
+        let source_snapshot = source_multibuffer.read(cx).snapshot(cx);
+        let target_snapshot = target_multibuffer.read(cx).snapshot(cx);
+
+        let source_point = source_editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(window, cx).display_snapshot;
+            editor.selections.newest::<Point>(&snapshot).head()
+        });
+
+        let Some(source_excerpt) = source_snapshot.excerpt_containing(source_point..source_point)
+        else {
+            return;
+        };
+
+        let source_excerpt_id = source_excerpt.id();
+        let source_buffer = source_excerpt.buffer();
+
+        let Some(source_context_range) = source_snapshot.context_range_for_excerpt(source_excerpt_id)
+        else {
+            return;
+        };
+
+        let source_context_start =
+            language::ToPoint::to_point(&source_context_range.start, source_buffer);
+
+        let source_excerpt_start_row = source_excerpt.start_anchor().to_point(&source_snapshot).row;
+
+        let row_within_excerpt = source_point.row.saturating_sub(source_excerpt_start_row);
+        let local_buffer_row = source_context_start.row + row_within_excerpt;
+
+        let Some(diff_snapshot) = source_snapshot.diff_for_buffer_id(source_buffer.remote_id())
+        else {
+            return;
+        };
+
+        let target_row_range = if is_on_left {
+            // For inverted diffs (LHS showing base text), the diff's anchors still refer to the
+            // main buffer (RHS), not the base text buffer. We need to use the main buffer when
+            // seeking in the diff's sum tree.
+            let Some(main_buffer) =
+                source_snapshot.inverted_diff_main_buffer(source_buffer.remote_id())
+            else {
+                return;
+            };
+            diff_snapshot
+                .base_text_rows_to_rows(local_buffer_row..local_buffer_row, main_buffer)
+                .next()
+        } else {
+            diff_snapshot
+                .rows_to_base_text_rows(local_buffer_row..local_buffer_row, source_buffer)
+                .next()
+        };
+
+        let Some(target_row_range) = target_row_range else {
+            return;
+        };
+
+        let target_local_row = target_row_range.start;
+
+        let Some(target_path) = source_multibuffer.read(cx).path_for_excerpt(source_excerpt_id)
+        else {
+            return;
+        };
+
+        let target_excerpt_id = target_multibuffer
+            .read(cx)
+            .excerpts_for_path(&target_path)
+            .find(|excerpt_id| {
+                if let Some(context_range) = target_snapshot.context_range_for_excerpt(*excerpt_id) {
+                    if let Some(buffer) = target_snapshot.buffer_for_excerpt(*excerpt_id) {
+                        let start =
+                            language::ToPoint::to_point(&context_range.start, buffer).row;
+                        let end = language::ToPoint::to_point(&context_range.end, buffer).row;
+                        return target_local_row >= start && target_local_row <= end;
+                    }
+                }
+                false
+            });
+
+        let Some(target_excerpt_id) = target_excerpt_id else {
+            return;
+        };
+
+        let Some(target_buffer) = target_snapshot.buffer_for_excerpt(target_excerpt_id) else {
+            return;
+        };
+
+        let Some(target_context_range) =
+            target_snapshot.context_range_for_excerpt(target_excerpt_id)
+        else {
+            return;
+        };
+
+        let target_context_start =
+            language::ToPoint::to_point(&target_context_range.start, target_buffer);
+
+        let Some(target_anchor) =
+            target_snapshot.anchor_in_excerpt(target_excerpt_id, text::Anchor::MIN)
+        else {
+            return;
+        };
+        let Some(target_excerpt) =
+            target_snapshot.excerpt_containing(target_anchor..target_anchor)
+        else {
+            return;
+        };
+        let target_excerpt_start_row = target_excerpt.start_anchor().to_point(&target_snapshot).row;
+
+        let row_within_target_excerpt = target_local_row.saturating_sub(target_context_start.row);
+        let target_multibuffer_row = target_excerpt_start_row + row_within_target_excerpt;
+
+        let target_column = if target_row_range.start == target_row_range.end {
+            let target_line_len = target_buffer.line_len(target_local_row);
+            source_point.column.min(target_line_len)
+        } else {
+            0
+        };
+
+        let target_point = Point::new(target_multibuffer_row, target_column);
+
+        target_editor.update(cx, |editor, cx| {
+            editor.change_selections(
+                crate::SelectionEffects::scroll(crate::Autoscroll::center()),
+                window,
+                cx,
+                |s| {
+                    s.select_ranges([target_point..target_point]);
+                },
+            );
+        });
+
+        target_editor.read(cx).focus_handle(cx).focus(window, cx);
+        cx.notify();
     }
 
     fn unsplit(&mut self, _: &UnsplitDiff, _: &mut Window, cx: &mut Context<Self>) {
@@ -1264,6 +1423,7 @@ impl Render for SplittableEditor {
             .on_action(cx.listener(Self::unsplit))
             .on_action(cx.listener(Self::activate_pane_left))
             .on_action(cx.listener(Self::activate_pane_right))
+            .on_action(cx.listener(Self::jump_to_corresponding_row))
             .size_full()
             .child(inner)
     }
