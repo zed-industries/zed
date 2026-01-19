@@ -89,28 +89,19 @@ impl SplitEditorView {
 
 fn render_resize_handle(
     state: &Entity<SplitEditorState>,
-    handle_color: Hsla,
-    handle_hover_color: Hsla,
-    window: &mut Window,
-    cx: &mut App,
+    separator_color: Hsla,
+    _window: &mut Window,
+    _cx: &mut App,
 ) -> AnyElement {
     let state_for_click = state.clone();
-
-    let hovered = window.use_state(cx, |_, _| false);
-    let is_hovered = *hovered.read(cx);
-
-    let divider_color = if is_hovered {
-        handle_hover_color
-    } else {
-        handle_color
-    };
 
     div()
         .id("split-resize-container")
         .relative()
         .h_full()
+        .flex_shrink_0()
         .w(px(1.))
-        .bg(divider_color)
+        .bg(separator_color)
         .child(
             div()
                 .id("split-resize-handle")
@@ -119,7 +110,6 @@ fn render_resize_handle(
                 .w(px(RESIZE_HANDLE_WIDTH))
                 .h_full()
                 .cursor_col_resize()
-                .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
                 .on_click(move |event, _, cx| {
                     if event.click_count() >= 2 {
                         state_for_click.update(cx, |state, _| {
@@ -155,13 +145,11 @@ impl RenderOnce for SplitEditorView {
         let left_ratio = self.split_state.read(cx).left_ratio();
         let right_ratio = self.split_state.read(cx).right_ratio();
 
-        let handle_color = cx.theme().colors().border;
-        let handle_hover_color = cx.theme().colors().border_focused;
+        let separator_color = cx.theme().colors().border_variant;
 
         let resize_handle = render_resize_handle(
             &self.split_state,
-            handle_color,
-            handle_hover_color,
+            separator_color,
             window,
             cx,
         );
@@ -189,9 +177,10 @@ impl RenderOnce for SplitEditorView {
             .child(
                 div()
                     .id("split-editor-left")
-                    .flex_shrink_0()
+                    .flex_shrink()
+                    .min_w_0()
                     .h_full()
-                    .w(DefiniteLength::Fraction(left_ratio))
+                    .flex_basis(DefiniteLength::Fraction(left_ratio))
                     .overflow_hidden()
                     .child(lhs),
             )
@@ -199,9 +188,10 @@ impl RenderOnce for SplitEditorView {
             .child(
                 div()
                     .id("split-editor-right")
-                    .flex_shrink_0()
+                    .flex_shrink()
+                    .min_w_0()
                     .h_full()
-                    .w(DefiniteLength::Fraction(right_ratio))
+                    .flex_basis(DefiniteLength::Fraction(right_ratio))
                     .overflow_hidden()
                     .child(rhs),
             )

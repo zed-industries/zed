@@ -195,6 +195,7 @@ pub struct EditorElement {
     split_side: Option<SplitSide>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitSide {
     Left,
     Right,
@@ -1857,6 +1858,10 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EditorScrollbars> {
+        if self.split_side == Some(SplitSide::Left) {
+            return None;
+        }
+
         let show_scrollbars = self.editor.read(cx).show_scrollbars;
         if (!show_scrollbars.horizontal && !show_scrollbars.vertical)
             || self.style.scrollbar_width.is_zero()
@@ -6473,7 +6478,7 @@ impl EditorElement {
                     GitGutterSetting::TrackedFiles
                 )
             });
-        if show_git_gutter {
+        if show_git_gutter && self.split_side.is_none() {
             Self::paint_gutter_diff_hunks(layout, window, cx)
         }
 
