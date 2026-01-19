@@ -109,6 +109,8 @@ impl FromStr for TestRunner {
 /// Decided to ignore Pyright's sortText() completely and to manually sort all entries
 fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
     for item in items {
+        let is_named_argument = item.label.ends_with('=');
+
         let is_dunder = item.label.starts_with("__") && item.label.ends_with("__");
 
         let visibility_priority = if is_dunder {
@@ -135,9 +137,12 @@ fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
             _ => '8',
         };
 
+        // Named arguments get higher priority
+        let argument_priority = if is_named_argument { '0' } else { '1' };
+
         item.sort_text = Some(format!(
-            "{}{}{}",
-            visibility_priority, kind_priority, item.label
+            "{}{}{}{}",
+            argument_priority, visibility_priority, kind_priority, item.label
         ));
     }
 }
