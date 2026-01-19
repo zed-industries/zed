@@ -1312,10 +1312,42 @@ impl MentionCompletion {
         offset_to_line: usize,
         supported_modes: &[PromptContextType],
     ) -> Option<Self> {
-        let last_mention_start = line.rfind('@')?;
+        // Collect all '@' positions that have valid word boundaries before them.
+        // We need this because URLs can contain '@' characters (e.g., npm scoped packages),
+        // and we don't want those to be mistaken for mention starts.
+        let mut valid_at_positions: Vec<usize> = Vec::new();
+        let mut prev_char: Option<char> = None;
+        for (i, c) in line.char_indices() {
+            if c == '@' {
+                let has_boundary =
+                    prev_char.is_none() || prev_char.is_some_and(|ch| ch.is_whitespace());
+                if has_boundary {
+                    valid_at_positions.push(i);
+                }
+            }
+            prev_char = Some(c);
+        }
 
+        // Try each valid position from last to first
+        for &mention_start in valid_at_positions.iter().rev() {
+            if let Some(completion) =
+                Self::try_parse_at_position(line, mention_start, offset_to_line, supported_modes)
+            {
+                return Some(completion);
+            }
+        }
+
+        None
+    }
+
+    fn try_parse_at_position(
+        line: &str,
+        mention_start: usize,
+        offset_to_line: usize,
+        supported_modes: &[PromptContextType],
+    ) -> Option<Self> {
         // No whitespace immediately after '@'
-        if line[last_mention_start + 1..]
+        if line[mention_start + 1..]
             .chars()
             .next()
             .is_some_and(|c| c.is_whitespace())
@@ -1323,23 +1355,13 @@ impl MentionCompletion {
             return None;
         }
 
-        //  Must be a word boundary before '@'
-        if last_mention_start > 0
-            && line[..last_mention_start]
-                .chars()
-                .last()
-                .is_some_and(|c| !c.is_whitespace())
-        {
-            return None;
-        }
-
-        let rest_of_line = &line[last_mention_start + 1..];
+        let rest_of_line = &line[mention_start + 1..];
 
         let mut mode = None;
         let mut argument = None;
 
         let mut parts = rest_of_line.split_whitespace();
-        let mut end = last_mention_start + 1;
+        let mut end = mention_start + 1;
 
         if let Some(mode_text) = parts.next() {
             // Safe since we check no leading whitespace above
@@ -1352,28 +1374,48 @@ impl MentionCompletion {
             } else {
                 argument = Some(mode_text.to_string());
             }
-            match rest_of_line[mode_text.len()..].find(|c: char| !c.is_whitespace()) {
-                Some(whitespace_count) => {
-                    if let Some(argument_text) = parts.next() {
-                        // If mode wasn't recognized but we have an argument, don't suggest completions
-                        // (e.g. '@something word')
-                        if mode.is_none() && !argument_text.is_empty() {
-                            return None;
-                        }
 
+            // For Fetch mode, consume the entire rest of line as the argument.
+            // This allows URLs containing '@' characters (like npm scoped packages).
+            if mode == Some(PromptContextType::Fetch) {
+                let after_mode = &rest_of_line[mode_text.len()..];
+                let trimmed_start = after_mode.trim_start();
+                if !trimmed_start.is_empty() {
+                    let whitespace_len = after_mode.len() - trimmed_start.len();
+                    let argument_text = trimmed_start.trim_end();
+                    if !argument_text.is_empty() {
                         argument = Some(argument_text.to_string());
-                        end += whitespace_count + argument_text.len();
+                        end += whitespace_len + argument_text.len();
+                    } else {
+                        end += after_mode.len();
                     }
+                } else {
+                    end += after_mode.len();
                 }
-                None => {
-                    // Rest of line is entirely whitespace
-                    end += rest_of_line.len() - mode_text.len();
+            } else {
+                match rest_of_line[mode_text.len()..].find(|c: char| !c.is_whitespace()) {
+                    Some(whitespace_count) => {
+                        if let Some(argument_text) = parts.next() {
+                            // If mode wasn't recognized but we have an argument, don't suggest completions
+                            // (e.g. '@something word')
+                            if mode.is_none() && !argument_text.is_empty() {
+                                return None;
+                            }
+
+                            argument = Some(argument_text.to_string());
+                            end += whitespace_count + argument_text.len();
+                        }
+                    }
+                    None => {
+                        // Rest of line is entirely whitespace
+                        end += rest_of_line.len() - mode_text.len();
+                    }
                 }
             }
         }
 
         Some(Self {
-            source_range: last_mention_start + offset_to_line..end + offset_to_line,
+            source_range: mention_start + offset_to_line..end + offset_to_line,
             mode,
             argument,
         })
@@ -1967,6 +2009,75 @@ mod tests {
             MentionCompletion::try_parse("@ file", 0, &supported_modes),
             None,
             "Should not parse with a space after @ at the start of the line"
+        );
+
+        // Fetch mode with URLs containing @ characters
+        let fetch_modes = vec![
+            PromptContextType::File,
+            PromptContextType::Symbol,
+            PromptContextType::Fetch,
+        ];
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://www.npmjs.com/package/@matterport/sdk",
+                0,
+                &fetch_modes
+            ),
+            Some(MentionCompletion {
+                source_range: 0..52,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://www.npmjs.com/package/@matterport/sdk".to_string()),
+            }),
+            "Should handle URLs with @ in the path"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://example.com/@org/@repo/file",
+                0,
+                &fetch_modes
+            ),
+            Some(MentionCompletion {
+                source_range: 0..42,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://example.com/@org/@repo/file".to_string()),
+            }),
+            "Should handle URLs with multiple @ characters"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("@fetch https://example.com", 0, &fetch_modes),
+            Some(MentionCompletion {
+                source_range: 0..26,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://example.com".to_string()),
+            }),
+            "Should handle regular URLs without @"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("@fetch ", 0, &fetch_modes),
+            Some(MentionCompletion {
+                source_range: 0..7,
+                mode: Some(PromptContextType::Fetch),
+                argument: None,
+            }),
+            "Should handle @fetch with trailing space but no URL"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "Lorem @fetch https://npmjs.com/@scope/pkg",
+                0,
+                &fetch_modes
+            ),
+            Some(MentionCompletion {
+                source_range: 6..41,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://npmjs.com/@scope/pkg".to_string()),
+            }),
+            "Should handle @fetch with prefix text and URL with @"
         );
     }
 
