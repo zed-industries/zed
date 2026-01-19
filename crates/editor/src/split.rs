@@ -1,4 +1,4 @@
-use std::ops::{Bound, Range};
+use std::{cell::Cell, ops::Range, rc::Rc};
 
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
@@ -254,6 +254,7 @@ pub struct SplittableEditor {
     panes: PaneGroup,
     workspace: WeakEntity<Workspace>,
     split_state: Entity<SplitEditorState>,
+    is_syncing_scroll: Rc<Cell<bool>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -317,11 +318,13 @@ impl SplittableEditor {
             pane
         });
         let panes = PaneGroup::new(pane);
+        let is_syncing_scroll = Rc::new(Cell::new(false));
+        let is_syncing_scroll_for_primary = is_syncing_scroll.clone();
         // TODO(split-diff) we might want to tag editor events with whether they came from primary/secondary
         let subscriptions = vec![cx.subscribe_in(
             &primary_editor,
             window,
-            |this, primary_editor, event: &EditorEvent, window, cx| match event {
+            move |this, _, event: &EditorEvent, window, cx| match event {
                 EditorEvent::ExpandExcerptsRequested {
                     excerpt_ids,
                     lines,
@@ -335,13 +338,24 @@ impl SplittableEditor {
                     }
                     cx.emit(event.clone());
                 }
-                EditorEvent::ScrollPositionChanged { .. } => {
-                    let scroll_position = primary_editor
-                        .update(cx, |primary_editor, cx| primary_editor.scroll_position(cx));
-                    if let Some(secondary) = &this.secondary {
-                        secondary.editor.update(cx, |secondary_editor, cx| {
-                            secondary_editor.set_scroll_position(scroll_position, window, cx);
-                        })
+                EditorEvent::ScrollPositionChanged { local, .. } => {
+                    if *local && !is_syncing_scroll_for_primary.get() {
+                        if let Some(secondary) = &this.secondary {
+                            let scroll_position = this.primary_editor.update(cx, |editor, cx| {
+                                editor.scroll_position(cx)
+                            });
+                            is_syncing_scroll_for_primary.set(true);
+                            secondary.editor.update(cx, |editor, cx| {
+                                editor.set_scroll_position_internal(
+                                    scroll_position,
+                                    false,
+                                    false,
+                                    window,
+                                    cx,
+                                );
+                            });
+                            is_syncing_scroll_for_primary.set(false);
+                        }
                     }
                     cx.emit(event.clone());
                 }
@@ -370,6 +384,7 @@ impl SplittableEditor {
             panes,
             workspace: workspace.downgrade(),
             split_state,
+            is_syncing_scroll,
             _subscriptions: subscriptions,
         }
     }
@@ -425,10 +440,11 @@ impl SplittableEditor {
             pane
         });
 
+        let is_syncing_scroll = self.is_syncing_scroll.clone();
         let subscriptions = vec![cx.subscribe_in(
             &secondary_editor,
             window,
-            |this, secondary_editor, event: &EditorEvent, window, cx| match event {
+            move |this, _, event: &EditorEvent, window, cx| match event {
                 EditorEvent::ExpandExcerptsRequested {
                     excerpt_ids,
                     lines,
@@ -451,13 +467,25 @@ impl SplittableEditor {
                     }
                     cx.emit(event.clone());
                 }
-                EditorEvent::ScrollPositionChanged { .. } => {
-                    let scroll_position = secondary_editor.update(cx, |secondary_editor, cx| {
-                        secondary_editor.scroll_position(cx)
-                    });
-                    this.primary_editor.update(cx, |primary_editor, cx| {
-                        primary_editor.set_scroll_position(scroll_position, window, cx);
-                    });
+                EditorEvent::ScrollPositionChanged { local, .. } => {
+                    if *local && !is_syncing_scroll.get() {
+                        if let Some(secondary) = &this.secondary {
+                            let scroll_position = secondary.editor.update(cx, |editor, cx| {
+                                editor.scroll_position(cx)
+                            });
+                            is_syncing_scroll.set(true);
+                            this.primary_editor.update(cx, |editor, cx| {
+                                editor.set_scroll_position_internal(
+                                    scroll_position,
+                                    false,
+                                    false,
+                                    window,
+                                    cx,
+                                );
+                            });
+                            is_syncing_scroll.set(false);
+                        }
+                    }
                     cx.emit(event.clone());
                 }
                 _ => cx.emit(event.clone()),
@@ -527,6 +555,19 @@ impl SplittableEditor {
         });
         secondary_display_map.update(cx, |dm, cx| {
             dm.set_companion(Some((primary_display_map.downgrade(), companion)), cx);
+        });
+
+        let primary_scroll_position = self.primary_editor.update(cx, |editor, cx| {
+            editor.scroll_position(cx)
+        });
+        secondary.editor.update(cx, |editor, cx| {
+            editor.set_scroll_position_internal(
+                primary_scroll_position,
+                false,
+                false,
+                window,
+                cx,
+            );
         });
 
         self.secondary = Some(secondary);
