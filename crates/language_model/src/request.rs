@@ -92,6 +92,9 @@ const DEFAULT_IMAGE_MAX_BYTES: usize = 5 * 1024 * 1024;
 const MAX_IMAGE_DOWNSCALE_PASSES: usize = 8;
 
 impl LanguageModelImage {
+    // All language model images are encoded as PNGs.
+    pub const FORMAT: ImageFormat = ImageFormat::Png;
+
     pub fn empty() -> Self {
         Self {
             source: "".into(),
