@@ -682,7 +682,7 @@ toml_edit = { version = "0.22", default-features = false, features = ["display",
 tower-http = "0.4.4"
 tree-sitter = { version = "0.26", features = ["wasm"] }
 tree-sitter-bash = "0.25.1"
-tree-sitter-c = "0.23"
+tree-sitter-c = "0.24.1"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
 tree-sitter-css = "0.23"
 tree-sitter-diff = "0.1.0"
