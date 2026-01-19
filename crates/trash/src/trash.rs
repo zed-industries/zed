@@ -4,7 +4,7 @@
     not(target_os = "ios"),
     not(target_os = "android")
 ))]
-mod freedesktop;
+mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(windows)]
