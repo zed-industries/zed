@@ -1787,7 +1787,7 @@ impl ProjectPanel {
                 return None;
             }
             edited_entry_id = entry.id;
-            edit_task = self.confirm_rename_entry(entry.id, (worktree_id, new_path).into(), cx);
+            edit_task = self.rename_entry(entry.id, (worktree_id, new_path).into(), cx);
         };
 
         // Reborrow so lifetime does not overlap `self.confirm_undoable_rename_entry()`
@@ -2041,7 +2041,7 @@ impl ProjectPanel {
 
     pub fn undo(&mut self, _: &Undo, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(operation) = self.undo_stack.pop() {
-            let task = self.do_operation(operation, cx);
+            let task = self.revert_operation(operation, cx);
             cx.spawn(async move |this, cx| {
                 let reverse_operation = task.await?;
                 this.update(cx, |this, _cx| this.redo_stack.push(reverse_operation))
@@ -2052,7 +2052,7 @@ impl ProjectPanel {
 
     fn redo(&mut self, _: &Redo, _window: &mut Window, cx: &mut Context<Self>) -> () {
         if let Some(operation) = self.redo_stack.pop() {
-            let task = self.do_operation(operation, cx);
+            let task = self.revert_operation(operation, cx);
             cx.spawn(async |this, cx| {
                 let reverse_operation = task.await?;
                 this.update(cx, |this, _cx| this.undo_stack.push(reverse_operation))
@@ -2061,8 +2061,7 @@ impl ProjectPanel {
         }
     }
 
-    /// Does an undoable operation and returns the reverse operation.
-    fn do_operation(
+    fn revert_operation(
         &self,
         operation: ProjectPanelOperation,
         cx: &mut Context<'_, Self>,
@@ -2135,7 +2134,7 @@ impl ProjectPanel {
         }
     }
 
-    fn confirm_rename_entry(
+    fn rename_entry(
         &self,
         entry_id: ProjectEntryId,
         new_path: ProjectPath,
@@ -3100,11 +3099,7 @@ impl ProjectPanel {
                     self.create_paste_path(clipboard_entry, self.selected_sub_entry(cx)?, cx)?;
                 let clip_entry_id = clipboard_entry.entry_id;
                 let task = if clipboard_entries.is_cut() {
-                    let task = self.confirm_rename_entry(
-                        clip_entry_id,
-                        (worktree_id, new_path).into(),
-                        cx,
-                    );
+                    let task = self.rename_entry(clip_entry_id, (worktree_id, new_path).into(), cx);
                     PasteTask::Rename(task)
                 } else {
                     let task = self.project.update(cx, |project, cx| {
@@ -3467,7 +3462,7 @@ impl ProjectPanel {
                 ))
             })?;
 
-        let rename_task = self.confirm_rename_entry(
+        let rename_task = self.rename_entry(
             entry_to_move,
             (destination_worktree_id, new_path).into(),
             cx,
