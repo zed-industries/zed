@@ -17528,8 +17528,9 @@ dependencies = [
 name = "trash"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "collections",
  "libc",
- "log",
  "objc2",
  "objc2-foundation",
  "once_cell",
