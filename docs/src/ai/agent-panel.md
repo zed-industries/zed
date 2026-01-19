@@ -34,6 +34,11 @@ To choose another agent, go to the plus button in the top-right of the Agent Pan
 Any message that you send to the model is editable.
 You can click on the card that contains your message and re-submit it with an adjusted prompt and/or new pieces of context.
 
+### Queueing Messages
+
+If you want to queue a message while the agent is going through a generation, you can do so through the `cmd/ctrl-shift-enter` keybinding.
+A queued up message gets sent as soon as the current generation wraps up.
+
 ### Checkpoints {#checkpoints}
 
 Every time the model performs an edit, you should see a "Restore Checkpoint" button at the top of your message, allowing you to return your code base to the state it was in prior to that message.
