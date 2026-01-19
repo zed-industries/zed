@@ -1870,13 +1870,14 @@ impl FakeLanguageServer {
 
     /// Simulate that the server has started work and notifies about its progress with the specified token.
     pub async fn start_progress(&self, token: impl Into<String>) {
-        self.start_progress_with(token, Default::default()).await
+        self.start_progress_with(token, Default::default(), Default::default()).await
     }
 
     pub async fn start_progress_with(
         &self,
         token: impl Into<String>,
         progress: WorkDoneProgressBegin,
+        request_timeout: Duration,
     ) {
         let token = token.into();
         self.request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams {
