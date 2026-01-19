@@ -37,6 +37,10 @@ pub use wit::{
     zed::extension::slash_command::{
         SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
     },
+    zed::extension::task::{
+        HideStrategy, RevealStrategy, RevealTarget, Shell, ShellWithArguments, TaskContextFile,
+        TaskContextLocation, TaskDefinition, TaskVariable,
+    },
 };
 
 // Undocumented WIT re-exports.
@@ -175,7 +179,27 @@ pub trait Extension: Send + Sync {
         Ok(None)
     }
 
-    /// Returns a list of package names as suggestions to be included in the
+    /// Returns custom task variables for a given location in a file.
+    fn build_context(
+        &mut self,
+        _language_name: String,
+        _location: &TaskContextLocation,
+        _worktree: &Worktree,
+    ) -> Result<Vec<TaskVariable>> {
+        Ok(Vec::new())
+    }
+
+    /// Returns task definitions associated with the current file or project.
+    fn associated_tasks(
+        &mut self,
+        _language_name: String,
+        _file: Option<&TaskContextFile>,
+        _worktree: &Worktree,
+    ) -> Result<Vec<TaskDefinition>> {
+        Ok(Vec::new())
+    }
+
+    /// Returns a list of packages as suggestions to be included in the `/docs`
     /// search results of the `/docs` slash command.
     ///
     /// This can be used to provide completions for known packages (e.g., from the
@@ -516,6 +540,22 @@ impl wit::Guest for Component {
         build_task: TaskTemplate,
     ) -> Result<DebugRequest, String> {
         extension().run_dap_locator(locator_name, build_task)
+    }
+
+    fn build_context(
+        language_name: String,
+        location: TaskContextLocation,
+        worktree: &Worktree,
+    ) -> Result<Vec<TaskVariable>, String> {
+        extension().build_context(language_name, &location, worktree)
+    }
+
+    fn associated_tasks(
+        language_name: String,
+        file: Option<TaskContextFile>,
+        worktree: &Worktree,
+    ) -> Result<Vec<TaskDefinition>, String> {
+        extension().associated_tasks(language_name, file.as_ref(), worktree)
     }
 }
 

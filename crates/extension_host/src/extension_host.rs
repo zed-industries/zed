@@ -11,12 +11,12 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::ExtensionProvides;
 use client::{Client, ExtensionMetadata, GetExtensionsResponse, proto, telemetry::Telemetry};
-use collections::{BTreeMap, BTreeSet, HashSet, btree_map};
+use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
-    ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
-    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
+    ExtensionContextProvider, ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy,
+    ExtensionEvents, ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
     ExtensionLanguageServerProxy, ExtensionSlashCommandProxy, ExtensionSnippetProxy,
     ExtensionThemeProxy,
 };
@@ -41,7 +41,8 @@ use language::{
     QUERY_FILENAME_PREFIXES, Rope,
 };
 use node_runtime::NodeRuntime;
-use project::ContextProviderWithTasks;
+use parking_lot::RwLock;
+
 use release_channel::ReleaseChannel;
 use remote::RemoteClient;
 use semver::Version;
@@ -68,6 +69,20 @@ pub use extension::{
 pub use extension_settings::ExtensionSettings;
 
 pub const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
+
+#[derive(Clone)]
+struct ExtensionProvider {
+    wasm_extensions: Arc<RwLock<HashMap<Arc<str>, Arc<WasmExtension>>>>,
+}
+
+impl extension::ExtensionProviderProxy for ExtensionProvider {
+    fn extension_by_id(&self, extension_id: &str) -> Option<Arc<dyn extension::Extension>> {
+        self.wasm_extensions
+            .read()
+            .get(extension_id)
+            .map(|extension| extension.clone() as Arc<dyn extension::Extension>)
+    }
+}
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
 /// The current extension [`SchemaVersion`] supported by Zed.
@@ -121,7 +136,8 @@ pub struct ExtensionStore {
     pub index_path: PathBuf,
     pub modified_extensions: HashSet<Arc<str>>,
     pub wasm_host: Arc<WasmHost>,
-    pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
+    extension_provider: Arc<ExtensionProvider>,
+    pub wasm_extensions: Vec<(Arc<ExtensionManifest>, Arc<WasmExtension>)>,
     pub tasks: Vec<Task<()>>,
     pub remote_clients: Vec<WeakEntity<RemoteClient>>,
     pub ssh_registered_tx: UnboundedSender<()>,
@@ -267,6 +283,9 @@ impl ExtensionStore {
                 work_dir,
                 cx,
             ),
+            extension_provider: Arc::new(ExtensionProvider {
+                wasm_extensions: Arc::new(RwLock::new(HashMap::default())),
+            }),
             wasm_extensions: Vec::new(),
             fs,
             http_client,
@@ -289,6 +308,9 @@ impl ExtensionStore {
                     this.fs.metadata(&this.installed_dir),
                 )
             });
+
+        let proxy = ExtensionHostProxy::global(cx);
+        proxy.register_extension_provider_proxy((*this.extension_provider).clone());
 
         // Normally, there is no need to rebuild the index. But if the index file
         // is invalid or is out-of-date according to the filesystem mtimes, then
@@ -1215,6 +1237,11 @@ impl ExtensionStore {
 
         self.wasm_extensions
             .retain(|(extension, _)| !extensions_to_unload.contains(&extension.id));
+        let mut wasm_extensions = self.extension_provider.wasm_extensions.write();
+        for id in &extensions_to_unload {
+            wasm_extensions.remove(id);
+        }
+        drop(wasm_extensions);
         self.proxy.remove_user_themes(themes_to_remove);
         self.proxy.remove_icon_themes(icon_themes_to_remove);
         self.proxy
@@ -1264,6 +1291,7 @@ impl ExtensionStore {
             .languages
             .iter()
             .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
+            .map(|(name, language)| (name.clone(), language.clone()))
             .collect::<Vec<_>>();
         for (language_name, language) in languages_to_add {
             let mut language_path = self.installed_dir.clone();
@@ -1271,6 +1299,11 @@ impl ExtensionStore {
                 Path::new(language.extension.as_ref()),
                 language.path.as_path(),
             ]);
+            let extension_id = language.extension.clone();
+            // let grammar = language.grammar.clone();
+            // let matcher = language.matcher.clone();
+            // let hidden = language.hidden;
+            let language_name = language_name.clone();
             self.proxy.register_language(
                 language_name.clone(),
                 language.grammar.clone(),
@@ -1280,14 +1313,17 @@ impl ExtensionStore {
                     let config = std::fs::read_to_string(language_path.join("config.toml"))?;
                     let config: LanguageConfig = ::toml::from_str(&config)?;
                     let queries = load_plugin_queries(&language_path);
-                    let context_provider =
+                    let static_templates =
                         std::fs::read_to_string(language_path.join("tasks.json"))
                             .ok()
-                            .and_then(|contents| {
-                                let definitions =
-                                    serde_json_lenient::from_str(&contents).log_err()?;
-                                Some(Arc::new(ContextProviderWithTasks::new(definitions)) as Arc<_>)
-                            });
+                            .and_then(|contents| serde_json_lenient::from_str(&contents).log_err());
+
+                    let context_provider = Some(Arc::new(ExtensionContextProvider {
+                        extension_id: extension_id.clone(),
+                        language_name: language_name.clone(),
+                        static_templates,
+                    })
+                        as Arc<dyn language::ContextProvider>);
 
                     Ok(LoadedLanguage {
                         config,
@@ -1387,7 +1423,7 @@ impl ExtensionStore {
                 this.reload_complete_senders.clear();
 
                 for (manifest, wasm_extension) in &wasm_extensions {
-                    let extension = Arc::new(wasm_extension.clone());
+                    let extension = wasm_extension.clone();
 
                     for (language_server_id, language_server_config) in &manifest.language_servers {
                         for language in language_server_config.languages() {
@@ -1442,7 +1478,11 @@ impl ExtensionStore {
                     }
                 }
 
-                this.wasm_extensions.extend(wasm_extensions);
+                this.wasm_extensions.extend(wasm_extensions.clone());
+                this.extension_provider
+                    .wasm_extensions
+                    .write()
+                    .extend(wasm_extensions.into_iter().map(|(m, e)| (m.id.clone(), e)));
                 this.proxy.set_extensions_loaded();
                 this.proxy.reload_current_theme(cx);
                 this.proxy.reload_current_icon_theme(cx);
