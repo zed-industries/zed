@@ -454,12 +454,7 @@ async fn test_realfs_atomic_write_non_existing_file(executor: BackgroundExecutor
 async fn test_realfs_canonicalize(executor: BackgroundExecutor) {
     use util::paths::SanitizedPath;
 
-    let fs = RealFs {
-        bundled_git_binary_path: None,
-        executor,
-        next_job_id: Arc::new(AtomicUsize::new(0)),
-        job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
-    };
+    let fs = RealFs::new(None, executor);
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("test (1).txt");
     let file = SanitizedPath::new(&file);
