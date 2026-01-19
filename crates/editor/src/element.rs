@@ -189,10 +189,23 @@ struct RenderBlocksOutput {
     resized_blocks: Option<HashMap<CustomBlockId, u32>>,
 }
 
+/// Data passed to overlay painters during the paint phase.
+pub struct OverlayPainterData<'a> {
+    pub editor: &'a Entity<Editor>,
+    pub snapshot: &'a EditorSnapshot,
+    pub scroll_position: gpui::Point<ScrollOffset>,
+    pub line_height: Pixels,
+    pub visible_row_range: Range<DisplayRow>,
+    pub hitbox: &'a Hitbox,
+}
+
+pub type OverlayPainter = Box<dyn FnOnce(OverlayPainterData<'_>, &mut Window, &mut App)>;
+
 pub struct EditorElement {
     editor: Entity<Editor>,
     style: EditorStyle,
     split_side: Option<SplitSide>,
+    overlay_painter: Option<OverlayPainter>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,11 +223,16 @@ impl EditorElement {
             editor: editor.clone(),
             style,
             split_side: None,
+            overlay_painter: None,
         }
     }
     
     pub fn set_split_side(&mut self, side: SplitSide) {
         self.split_side = Some(side);
+    }
+
+    pub fn set_overlay_painter(&mut self, painter: OverlayPainter) {
+        self.overlay_painter = Some(painter);
     }
 
     fn should_show_buffer_headers(&self) -> bool {
@@ -10384,6 +10402,7 @@ impl Element for EditorElement {
                         if let Some(mut sticky_header) = layout.sticky_buffer_header.take() {
                             sticky_header.paint(window, cx)
                         }
+
                     });
 
                     self.paint_sticky_headers(layout, window, cx);
@@ -10391,6 +10410,18 @@ impl Element for EditorElement {
                     self.paint_scrollbars(layout, window, cx);
                     self.paint_edit_prediction_popover(layout, window, cx);
                     self.paint_mouse_context_menu(layout, window, cx);
+
+                    if let Some(overlay_painter) = self.overlay_painter.take() {
+                        let data = OverlayPainterData {
+                            editor: &self.editor,
+                            snapshot: &layout.position_map.snapshot,
+                            scroll_position: layout.position_map.snapshot.scroll_position(),
+                            line_height: layout.position_map.line_height,
+                            visible_row_range: layout.visible_display_row_range.clone(),
+                            hitbox: &layout.hitbox,
+                        };
+                        overlay_painter(data, window, cx);
+                    }
                 });
             })
         })

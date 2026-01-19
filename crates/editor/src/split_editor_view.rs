@@ -1,11 +1,14 @@
 use gpui::{
-    AnyElement, App, AppContext, Context, DragMoveEvent, Entity, Hsla, IntoElement, Pixels,
-    Window, div, px,
+    AnyElement, App, Context, DragMoveEvent, Entity, Hsla, IntoElement, Pixels, Window, div, px,
 };
 use theme::ActiveTheme;
-use ui::{prelude::*, h_flex};
+use ui::{h_flex, prelude::*};
 
-use crate::{EditorStyle, element::{EditorElement, SplitSide}, split::SplittableEditor};
+use crate::{
+    EditorStyle,
+    element::{EditorElement, SplitSide},
+    split::SplittableEditor,
+};
 
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 
@@ -110,6 +113,7 @@ fn render_resize_handle(
                 .w(px(RESIZE_HANDLE_WIDTH))
                 .h_full()
                 .cursor_col_resize()
+                .block_mouse_except_scroll()
                 .on_click(move |event, _, cx| {
                     if event.click_count() >= 2 {
                         state_for_click.update(cx, |state, _| {
@@ -118,9 +122,7 @@ fn render_resize_handle(
                     }
                     cx.stop_propagation();
                 })
-                .on_drag(DraggedSplitHandle, |_, _, _, cx| {
-                    cx.new(|_| gpui::Empty)
-                }),
+                .on_drag(DraggedSplitHandle, |_, _, _, cx| cx.new(|_| gpui::Empty)),
         )
         .into_any_element()
 }
@@ -129,11 +131,12 @@ impl RenderOnce for SplitEditorView {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let splittable_editor = self.splittable_editor.read(cx);
 
-        let lhs_editor = splittable_editor
-            .secondary_editor()
-            .expect("SplitEditorView requires a secondary editor to be present")
-            .clone();
+        assert!(
+            splittable_editor.secondary_editor().is_some(),
+            "`SplitEditorView` requires `SplittableEditor` to be in split mode"
+        );
 
+        let lhs_editor = splittable_editor.secondary_editor().unwrap().clone();
         let rhs_editor = splittable_editor.primary_editor().clone();
 
         let mut lhs = EditorElement::new(&lhs_editor, self.style.clone());
@@ -147,12 +150,7 @@ impl RenderOnce for SplitEditorView {
 
         let separator_color = cx.theme().colors().border_variant;
 
-        let resize_handle = render_resize_handle(
-            &self.split_state,
-            separator_color,
-            window,
-            cx,
-        );
+        let resize_handle = render_resize_handle(&self.split_state, separator_color, window, cx);
 
         let state_for_drag = self.split_state.downgrade();
         let state_for_drop = self.split_state.downgrade();

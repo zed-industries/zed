@@ -61,7 +61,8 @@ pub use editor_settings::{
 pub use buffer_header_view::BufferHeadersView;
 pub use split_editor_view::SplitEditorView;
 pub use element::{
-    CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
+    CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, OverlayPainter,
+    OverlayPainterData, PointForPosition,
 };
 pub use git::blame::BlameRenderer;
 pub use hover_popover::hover_markdown_style;
