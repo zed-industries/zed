@@ -121,7 +121,7 @@ impl RenderOnce for Callout {
             Severity::Info => (
                 IconName::Info,
                 Color::Muted,
-                cx.theme().colors().panel_background.opacity(0.),
+                cx.theme().status().info_background.opacity(0.1),
             ),
             Severity::Success => (
                 IconName::Check,
@@ -164,6 +164,7 @@ impl RenderOnce for Callout {
             .child(
                 v_flex()
                     .min_w_0()
+                    .min_h_0()
                     .w_full()
                     .child(
                         h_flex()
@@ -189,20 +190,19 @@ impl RenderOnce for Callout {
                             }),
                     )
                     .map(|this| {
+                        let base_desc_container = div()
+                            .id("callout-description-slot")
+                            .w_full()
+                            .max_h_32()
+                            .flex_1()
+                            .overflow_y_scroll()
+                            .text_ui_sm(cx);
+
                         if let Some(description_slot) = self.description_slot {
-                            this.child(
-                                div()
-                                    .w_full()
-                                    .flex_1()
-                                    .text_ui_sm(cx)
-                                    .child(description_slot),
-                            )
+                            this.child(base_desc_container.child(description_slot))
                         } else if let Some(description) = self.description {
                             this.child(
-                                div()
-                                    .w_full()
-                                    .flex_1()
-                                    .text_ui_sm(cx)
+                                base_desc_container
                                     .text_color(cx.theme().colors().text_muted)
                                     .child(description),
                             )
@@ -273,6 +273,39 @@ impl Component for Callout {
                     .title("Upgrade to Pro")
                     .description("• Unlimited threads\n• Priority support\n• Advanced analytics")
                     .actions_slot(multiple_actions())
+                    .into_any_element(),
+            )
+            .width(px(580.)),
+            single_example(
+                "Scrollable Long Description",
+                Callout::new()
+                    .severity(Severity::Error)
+                    .icon(IconName::XCircle)
+                    .title("Very Long API Error Description")
+                    .description_slot(
+                        v_flex().gap_1().children(
+                            [
+                                "You exceeded your current quota.",
+                                "For more information, visit the docs.",
+                                "Error details:",
+                                "• Quota exceeded for metric",
+                                "• Limit: 0",
+                                "• Model: gemini-3-pro",
+                                "Please retry in 26.33s.",
+                                "Additional details:",
+                                "- Request ID: abc123def456",
+                                "- Timestamp: 2024-01-15T10:30:00Z",
+                                "- Region: us-central1",
+                                "- Service: generativelanguage.googleapis.com",
+                                "- Error Code: RESOURCE_EXHAUSTED",
+                                "- Retry After: 26s",
+                                "This error occurs when you have exceeded your API quota.",
+                            ]
+                            .into_iter()
+                            .map(|t| Label::new(t).size(LabelSize::Small).color(Color::Muted)),
+                        ),
+                    )
+                    .actions_slot(single_action())
                     .into_any_element(),
             )
             .width(px(580.)),

@@ -54,6 +54,10 @@ pub fn setup_sentry() -> Step<Use> {
     .add_with(("token", vars::SENTRY_AUTH_TOKEN))
 }
 
+pub fn prettier() -> Step<Run> {
+    named::bash("./script/prettier")
+}
+
 pub fn cargo_fmt() -> Step<Run> {
     named::bash("cargo fmt --all -- --check")
 }
@@ -101,12 +105,10 @@ pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     }
 }
 
-pub const CLIPPY_STEP_ID: &str = "clippy";
-
 pub fn clippy(platform: Platform) -> Step<Run> {
     match platform {
-        Platform::Windows => named::pwsh("./script/clippy.ps1").id(CLIPPY_STEP_ID),
-        _ => named::bash("./script/clippy").id(CLIPPY_STEP_ID),
+        Platform::Windows => named::pwsh("./script/clippy.ps1"),
+        _ => named::bash("./script/clippy"),
     }
 }
 

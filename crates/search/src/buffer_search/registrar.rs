@@ -149,16 +149,16 @@ impl<A: Action> ActionExecutor<A> for ForDeployed<A> {
     }
 }
 
-/// Run an action when the search bar has any matches, regardless of whether it
-/// is visible or not.
-pub struct WithResults<A>(pub(super) SearchBarActionCallback<A>);
-impl<A> Clone for WithResults<A> {
+/// Run an action when the search bar has any matches or a pending external query,
+/// regardless of whether it is visible or not.
+pub struct WithResultsOrExternalQuery<A>(pub(super) SearchBarActionCallback<A>);
+impl<A> Clone for WithResultsOrExternalQuery<A> {
     fn clone(&self) -> Self {
         Self(self.0)
     }
 }
 
-impl<A: Action> ActionExecutor<A> for WithResults<A> {
+impl<A: Action> ActionExecutor<A> for WithResultsOrExternalQuery<A> {
     fn execute(
         &self,
         search_bar: &mut BufferSearchBar,
@@ -166,7 +166,13 @@ impl<A: Action> ActionExecutor<A> for WithResults<A> {
         window: &mut Window,
         cx: &mut Context<BufferSearchBar>,
     ) -> DidHandleAction {
-        if search_bar.active_match_index.is_some() {
+        #[cfg(not(target_os = "macos"))]
+        let has_external_query = false;
+
+        #[cfg(target_os = "macos")]
+        let has_external_query = search_bar.pending_external_query.is_some();
+
+        if has_external_query || search_bar.active_match_index.is_some() {
             self.0(search_bar, action, window, cx);
             true
         } else {

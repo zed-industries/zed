@@ -6,6 +6,9 @@ prHygiene({
   rules: {
     // Don't enable this rule just yet, as it can have false positives.
     useImperativeMood: "off",
+    noConventionalCommits: {
+      bannedTypes: ["feat", "fix", "style", "refactor", "perf", "test", "chore", "build", "revert"],
+    },
   },
 });
 
@@ -56,42 +59,6 @@ if (includesIssueUrl) {
       "If this PR aims to close an issue, please include a `Closes #ISSUE` line at the top of the PR body.",
     ].join("\n"),
   );
-}
-
-const PROMPT_PATHS = [
-  "assets/prompts/content_prompt.hbs",
-  "assets/prompts/terminal_assistant_prompt.hbs",
-  "crates/agent_settings/src/prompts/summarize_thread_detailed_prompt.txt",
-  "crates/agent_settings/src/prompts/summarize_thread_prompt.txt",
-  "crates/agent/src/templates/create_file_prompt.hbs",
-  "crates/agent/src/templates/edit_file_prompt_xml.hbs",
-  "crates/agent/src/templates/edit_file_prompt_diff_fenced.hbs",
-  "crates/git_ui/src/commit_message_prompt.txt",
-];
-
-const PROMPT_CHANGE_ATTESTATION = "I have ensured the LLM Worker works with these prompt changes.";
-
-const modifiedPrompts = danger.git.modified_files.filter((file) =>
-  PROMPT_PATHS.some((promptPath) => file.includes(promptPath)),
-);
-
-for (const promptPath of modifiedPrompts) {
-  if (body.includes(PROMPT_CHANGE_ATTESTATION)) {
-    message(
-      [
-        `This PR contains changes to "${promptPath}".`,
-        "The author has attested the LLM Worker works with the changes to this prompt.",
-      ].join("\n"),
-    );
-  } else {
-    fail(
-      [
-        `Modifying the "${promptPath}" prompt may require corresponding changes in the LLM Worker.`,
-        "If you are ensure what this entails, talk to @maxdeviant or another AI team member.",
-        `Once you have made the changes—or determined that none are necessary—add "${PROMPT_CHANGE_ATTESTATION}" to the PR description.`,
-      ].join("\n"),
-    );
-  }
 }
 
 const FIXTURE_CHANGE_ATTESTATION = "Changes to test fixtures are intentional and necessary.";

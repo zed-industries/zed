@@ -70,12 +70,6 @@ pub(crate) mod m_2025_05_08 {
     pub(crate) use settings::SETTINGS_PATTERNS;
 }
 
-pub(crate) mod m_2025_05_29 {
-    mod settings;
-
-    pub(crate) use settings::SETTINGS_PATTERNS;
-}
-
 pub(crate) mod m_2025_06_16 {
     mod settings;
 

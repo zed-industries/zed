@@ -717,7 +717,7 @@ mod test {
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.project.all_languages.languages.0.insert(
-                    LanguageName::new_static("Rust").0,
+                    LanguageName::new_static("Rust").0.to_string(),
                     LanguageSettingsContent {
                         auto_indent_on_paste: Some(false),
                         ..Default::default()

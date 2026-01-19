@@ -566,22 +566,22 @@ impl Model {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::Gemini25FlashLite => 1_048_576,
-            Self::Gemini25Flash => 1_048_576,
-            Self::Gemini25Pro => 1_048_576,
-            Self::Gemini3Pro => 1_048_576,
-            Self::Gemini3Flash => 1_048_576,
+            Self::Gemini25FlashLite
+            | Self::Gemini25Flash
+            | Self::Gemini25Pro
+            | Self::Gemini3Pro
+            | Self::Gemini3Flash => 1_048_576,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
-            Model::Gemini25FlashLite => Some(65_536),
-            Model::Gemini25Flash => Some(65_536),
-            Model::Gemini25Pro => Some(65_536),
-            Model::Gemini3Pro => Some(65_536),
-            Model::Gemini3Flash => Some(65_536),
+            Model::Gemini25FlashLite
+            | Model::Gemini25Flash
+            | Model::Gemini25Pro
+            | Model::Gemini3Pro
+            | Model::Gemini3Flash => Some(65_536),
             Model::Custom { .. } => None,
         }
     }

@@ -9,7 +9,7 @@ use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor,
-    actions::{GoToHunk, GoToPreviousHunk},
+    actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
@@ -41,7 +41,7 @@ use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
+    item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
@@ -70,6 +70,7 @@ pub struct ProjectDiff {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
+    review_comment_count: usize,
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
@@ -182,6 +183,37 @@ impl ProjectDiff {
         }
     }
 
+    pub fn deploy_at_project_path(
+        workspace: &mut Workspace,
+        project_path: ProjectPath,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        telemetry::event!("Git Diff Opened", source = "Agent Panel");
+        let existing = workspace
+            .items_of_type::<Self>(cx)
+            .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Head));
+        let project_diff = if let Some(existing) = existing {
+            workspace.activate_item(&existing, true, true, window, cx);
+            existing
+        } else {
+            let workspace_handle = cx.entity();
+            let project_diff =
+                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
+            workspace.add_item_to_active_pane(
+                Box::new(project_diff.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+            project_diff
+        };
+        project_diff.update(cx, |project_diff, cx| {
+            project_diff.move_to_project_path(&project_path, window, cx);
+        });
+    }
+
     pub fn autoscroll(&self, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
             editor.primary_editor().update(cx, |editor, cx| {
@@ -199,7 +231,7 @@ impl ProjectDiff {
         let Some(repo) = project.read(cx).git_store().read(cx).active_repository() else {
             return Task::ready(Err(anyhow!("No active repository")));
         };
-        let main_branch = repo.update(cx, |repo, _| repo.default_branch());
+        let main_branch = repo.update(cx, |repo, _| repo.default_branch(true));
         window.spawn(cx, async move |cx| {
             let main_branch = main_branch
                 .await??
@@ -258,6 +290,7 @@ impl ProjectDiff {
                 .primary_editor()
                 .update(cx, |editor, cx| {
                     editor.disable_diagnostics(cx);
+                    editor.set_show_diff_review_button(true, cx);
 
                     match branch_diff.read(cx).diff_base() {
                         DiffBase::Head => {
@@ -279,8 +312,16 @@ impl ProjectDiff {
                 });
             diff_display_editor
         });
-        cx.subscribe_in(&editor, window, Self::handle_editor_event)
-            .detach();
+        let editor_subscription = cx.subscribe_in(&editor, window, Self::handle_editor_event);
+
+        let primary_editor = editor.read(cx).primary_editor().clone();
+        let review_comment_subscription =
+            cx.subscribe(&primary_editor, |this, _editor, event: &EditorEvent, cx| {
+                if let EditorEvent::ReviewCommentsChanged { total_count } = event {
+                    this.review_comment_count = *total_count;
+                    cx.notify();
+                }
+            });
 
         let branch_diff_subscription = cx.subscribe_in(
             &branch_diff,
@@ -331,8 +372,12 @@ impl ProjectDiff {
             multibuffer,
             buffer_diff_subscriptions: Default::default(),
             pending_scroll: None,
+            review_comment_count: 0,
             _task: task,
-            _subscription: branch_diff_subscription,
+            _subscription: Subscription::join(
+                branch_diff_subscription,
+                Subscription::join(editor_subscription, review_comment_subscription),
+            ),
         }
     }
 
@@ -353,6 +398,31 @@ impl ProjectDiff {
         let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
         let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
 
+        self.move_to_path(path_key, window, cx)
+    }
+
+    pub fn move_to_project_path(
+        &mut self,
+        project_path: &ProjectPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(git_repo) = self.branch_diff.read(cx).repo() else {
+            return;
+        };
+        let Some(repo_path) = git_repo
+            .read(cx)
+            .project_path_to_repo_path(project_path, cx)
+        else {
+            return;
+        };
+        let status = git_repo
+            .read(cx)
+            .status_for_path(&repo_path)
+            .map(|entry| entry.status)
+            .unwrap_or(FileStatus::Untracked);
+        let sort_prefix = sort_prefix(&git_repo.read(cx), &repo_path, status, cx);
+        let path_key = PathKey::with_sort_prefix(sort_prefix, repo_path.as_ref().clone());
         self.move_to_path(path_key, window, cx)
     }
 
@@ -396,6 +466,16 @@ impl ProjectDiff {
         }
     }
 
+    /// Returns the total count of review comments across all hunks/files.
+    pub fn total_review_comment_count(&self) -> usize {
+        self.review_comment_count
+    }
+
+    /// Returns a reference to the splittable editor.
+    pub fn editor(&self) -> &Entity<SplittableEditor> {
+        &self.editor
+    }
+
     fn button_states(&self, cx: &App) -> ButtonStates {
         let editor = self.editor.read(cx).primary_editor().read(cx);
         let snapshot = self.multibuffer.read(cx).snapshot(cx);
@@ -423,7 +503,7 @@ impl ProjectDiff {
         let mut has_staged_hunks = false;
         let mut has_unstaged_hunks = false;
         for hunk in editor.diff_hunks_in_ranges(&ranges, &snapshot) {
-            match hunk.secondary_status {
+            match hunk.status.secondary {
                 DiffHunkSecondaryStatus::HasSecondaryHunk
                 | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
                     has_unstaged_hunks = true;
@@ -525,14 +605,13 @@ impl ProjectDiff {
             .expect("project diff editor should have a conflict addon");
 
         let snapshot = buffer.read(cx).snapshot();
-        let diff_read = diff.read(cx);
+        let diff_snapshot = diff.read(cx).snapshot(cx);
 
         let excerpt_ranges = {
-            let diff_hunk_ranges = diff_read
+            let diff_hunk_ranges = diff_snapshot
                 .hunks_intersecting_range(
-                    Anchor::min_max_range_for_buffer(diff_read.buffer_id),
+                    Anchor::min_max_range_for_buffer(snapshot.remote_id()),
                     &snapshot,
-                    cx,
                 )
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot));
             let conflicts = conflict_addon
@@ -551,18 +630,21 @@ impl ProjectDiff {
             }
         };
 
-        let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
-            let was_empty = multibuffer.is_empty();
-            let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
+        let (was_empty, is_excerpt_newly_added) = self.editor.update(cx, |editor, cx| {
+            let was_empty = editor
+                .primary_editor()
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .is_empty();
+            let (_, is_newly_added) = editor.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
                 excerpt_ranges,
                 multibuffer_context_lines(cx),
+                diff,
                 cx,
             );
-            if self.branch_diff.read(cx).diff_base().is_merge_base() {
-                multibuffer.add_diff(diff.clone(), cx);
-            }
             (was_empty, is_newly_added)
         });
 
@@ -608,6 +690,7 @@ impl ProjectDiff {
         }
     }
 
+    #[instrument(skip_all)]
     pub async fn refresh(
         this: WeakEntity<Self>,
         reason: RefreshReason,
@@ -639,9 +722,9 @@ impl ProjectDiff {
                 }
             }
 
-            this.multibuffer.update(cx, |multibuffer, cx| {
+            this.editor.update(cx, |editor, cx| {
                 for path in previous_paths {
-                    if let Some(buffer) = multibuffer.buffer_for_path(&path, cx) {
+                    if let Some(buffer) = this.multibuffer.read(cx).buffer_for_path(&path, cx) {
                         let skip = match reason {
                             RefreshReason::DiffChanged | RefreshReason::EditorSaved => {
                                 buffer.read(cx).is_dirty()
@@ -654,7 +737,7 @@ impl ProjectDiff {
                     }
 
                     this.buffer_diff_subscriptions.remove(&path.path);
-                    multibuffer.remove_excerpts_for_path(path.clone(), cx);
+                    editor.remove_excerpts_for_path(path, cx);
                 }
             });
             buffers_to_load
@@ -714,8 +797,7 @@ impl ProjectDiff {
 fn sort_prefix(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: &App) -> u64 {
     let settings = GitPanelSettings::get_global(cx);
 
-    // Tree view can only sort by path
-    if settings.sort_by_path || settings.tree_view {
+    if settings.sort_by_path && !settings.tree_view {
         TRACKED_SORT_PREFIX
     } else if repo.had_conflict_on_last_merge_head_change(repo_path) {
         CONFLICT_SORT_PREFIX
@@ -759,7 +841,7 @@ impl Item for ProjectDiff {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -908,18 +990,6 @@ impl Item for ProjectDiff {
         } else {
             None
         }
-    }
-
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
-    }
-
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor
-            .read(cx)
-            .last_selected_editor()
-            .read(cx)
-            .breadcrumbs(theme, cx)
     }
 
     fn added_to_workspace(
@@ -1232,6 +1302,7 @@ impl Render for ProjectDiffToolbar {
         };
         let focus_handle = project_diff.focus_handle(cx);
         let button_states = project_diff.read(cx).button_states(cx);
+        let review_count = project_diff.read(cx).total_review_comment_count();
 
         h_group_xl()
             .my_neg_1()
@@ -1373,6 +1444,109 @@ impl Render for ProjectDiffToolbar {
                             })),
                     ),
             )
+            // "Send Review to Agent" button (only shown when there are review comments)
+            .when(review_count > 0, |el| {
+                el.child(vertical_divider()).child(
+                    render_send_review_to_agent_button(review_count, &focus_handle).on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.dispatch_action(&SendReviewToAgent, window, cx)
+                        }),
+                    ),
+                )
+            })
+    }
+}
+
+fn render_send_review_to_agent_button(review_count: usize, focus_handle: &FocusHandle) -> Button {
+    Button::new(
+        "send-review",
+        format!("Send Review to Agent ({})", review_count),
+    )
+    .icon(IconName::ZedAssistant)
+    .icon_position(IconPosition::Start)
+    .tooltip(Tooltip::for_action_title_in(
+        "Send all review comments to the Agent panel",
+        &SendReviewToAgent,
+        focus_handle,
+    ))
+}
+
+pub struct BranchDiffToolbar {
+    project_diff: Option<WeakEntity<ProjectDiff>>,
+}
+
+impl BranchDiffToolbar {
+    pub fn new(_: &mut Context<Self>) -> Self {
+        Self { project_diff: None }
+    }
+
+    fn project_diff(&self, _: &App) -> Option<Entity<ProjectDiff>> {
+        self.project_diff.as_ref()?.upgrade()
+    }
+
+    fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(project_diff) = self.project_diff(cx) {
+            project_diff.focus_handle(cx).focus(window, cx);
+        }
+        let action = action.boxed_clone();
+        cx.defer(move |cx| {
+            cx.dispatch_action(action.as_ref());
+        })
+    }
+}
+
+impl EventEmitter<ToolbarItemEvent> for BranchDiffToolbar {}
+
+impl ToolbarItemView for BranchDiffToolbar {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ToolbarItemLocation {
+        self.project_diff = active_pane_item
+            .and_then(|item| item.act_as::<ProjectDiff>(cx))
+            .filter(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Merge { .. }))
+            .map(|entity| entity.downgrade());
+        if self.project_diff.is_some() {
+            ToolbarItemLocation::PrimaryRight
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+
+    fn pane_focus_update(
+        &mut self,
+        _pane_focused: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+}
+
+impl Render for BranchDiffToolbar {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(project_diff) = self.project_diff(cx) else {
+            return div();
+        };
+        let focus_handle = project_diff.focus_handle(cx);
+        let review_count = project_diff.read(cx).total_review_comment_count();
+
+        h_group_xl()
+            .my_neg_1()
+            .py_1()
+            .items_center()
+            .flex_wrap()
+            .justify_end()
+            .when(review_count > 0, |el| {
+                el.child(
+                    render_send_review_to_agent_button(review_count, &focus_handle).on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.dispatch_action(&SendReviewToAgent, window, cx)
+                        }),
+                    ),
+                )
+            })
     }
 }
 
@@ -1689,12 +1863,6 @@ mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
-        });
-        cx.run_until_parked();
 
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
@@ -1705,6 +1873,12 @@ mod tests {
             path!("/project/.git").as_ref(),
             &[("foo.txt", "foo\n".into())],
         );
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
         cx.run_until_parked();
 
         let editor = diff.read_with(cx, |diff, cx| diff.editor.read(cx).primary_editor().clone());
@@ -1712,8 +1886,8 @@ mod tests {
             &editor,
             cx,
             &"
-                - foo
-                + ˇFOO
+                - ˇfoo
+                + FOO
             "
             .unindent(),
         );
@@ -1820,6 +1994,12 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("foo", "original\n".into())],
+            "deadbeef",
+        );
+
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer(path!("/project/foo"), cx)
@@ -1834,13 +2014,6 @@ mod tests {
         });
         cx.run_until_parked();
 
-        fs.set_head_for_repo(
-            path!("/project/.git").as_ref(),
-            &[("foo", "original\n".into())],
-            "deadbeef",
-        );
-        cx.run_until_parked();
-
         let diff_editor =
             diff.read_with(cx, |diff, cx| diff.editor.read(cx).primary_editor().clone());
 
@@ -1848,8 +2021,8 @@ mod tests {
             &diff_editor,
             cx,
             &"
-                - original
-                + ˇmodified
+                - ˇoriginal
+                + modified
             "
             .unindent(),
         );
@@ -1912,9 +2085,9 @@ mod tests {
             &diff_editor,
             cx,
             &"
-                - original
+                - ˇoriginal
                 + different
-                  ˇ"
+            "
             .unindent(),
         );
     }

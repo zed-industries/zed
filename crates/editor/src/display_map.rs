@@ -232,8 +232,6 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(tab_snapshot, edits, cx));
         let block_snapshot = self.block_map.read(wrap_snapshot, edits).snapshot;
 
-        // todo word diff here?
-
         DisplaySnapshot {
             block_snapshot,
             diagnostics_max_severity: self.diagnostics_max_severity,
@@ -1613,6 +1611,12 @@ impl Sub for DisplayPoint {
 #[derive(Debug, Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq, Deserialize, Hash)]
 #[serde(transparent)]
 pub struct DisplayRow(pub u32);
+
+impl DisplayRow {
+    pub(crate) fn as_display_point(&self) -> DisplayPoint {
+        DisplayPoint::new(*self, 0)
+    }
+}
 
 impl Add<DisplayRow> for DisplayRow {
     type Output = Self;
