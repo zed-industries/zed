@@ -1,4 +1,4 @@
-use std::{cell::Cell, ops::Range, rc::Rc};
+use std::ops::Range;
 
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
@@ -20,11 +20,14 @@ use ui::{
 };
 
 use crate::split_editor_view::{SplitEditorState, SplitEditorView};
-use workspace::{Item, ItemHandle, Pane, PaneGroup, SplitDirection, Workspace};
+use workspace::{
+    ActivatePaneLeft, ActivatePaneRight, Item, ItemHandle, Pane, PaneGroup, SplitDirection,
+    Workspace,
+};
 
 use crate::{
-    DisplayMap, Editor, EditorEvent,
-    display_map::{Companion, MultiBufferRowMapping},
+    Autoscroll, DisplayMap, Editor, EditorEvent,
+    display_map::{Companion, convert_lhs_rows_to_rhs, convert_rhs_rows_to_lhs},
 };
 
 pub(crate) fn convert_lhs_rows_to_rhs(
@@ -254,7 +257,6 @@ pub struct SplittableEditor {
     panes: PaneGroup,
     workspace: WeakEntity<Workspace>,
     split_state: Entity<SplitEditorState>,
-    is_syncing_scroll: Rc<Cell<bool>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -318,13 +320,10 @@ impl SplittableEditor {
             pane
         });
         let panes = PaneGroup::new(pane);
-        let is_syncing_scroll = Rc::new(Cell::new(false));
-        let is_syncing_scroll_for_primary = is_syncing_scroll.clone();
         // TODO(split-diff) we might want to tag editor events with whether they came from primary/secondary
-        let subscriptions = vec![cx.subscribe_in(
+        let subscriptions = vec![cx.subscribe(
             &primary_editor,
-            window,
-            move |this, _, event: &EditorEvent, window, cx| match event {
+            |this, _, event: &EditorEvent, cx| match event {
                 EditorEvent::ExpandExcerptsRequested {
                     excerpt_ids,
                     lines,
@@ -335,27 +334,6 @@ impl SplittableEditor {
                 EditorEvent::SelectionsChanged { .. } => {
                     if let Some(secondary) = &mut this.secondary {
                         secondary.has_latest_selection = false;
-                    }
-                    cx.emit(event.clone());
-                }
-                EditorEvent::ScrollPositionChanged { local, .. } => {
-                    if *local && !is_syncing_scroll_for_primary.get() {
-                        if let Some(secondary) = &this.secondary {
-                            let scroll_position = this.primary_editor.update(cx, |editor, cx| {
-                                editor.scroll_position(cx)
-                            });
-                            is_syncing_scroll_for_primary.set(true);
-                            secondary.editor.update(cx, |editor, cx| {
-                                editor.set_scroll_position_internal(
-                                    scroll_position,
-                                    false,
-                                    false,
-                                    window,
-                                    cx,
-                                );
-                            });
-                            is_syncing_scroll_for_primary.set(false);
-                        }
                     }
                     cx.emit(event.clone());
                 }
@@ -384,7 +362,6 @@ impl SplittableEditor {
             panes,
             workspace: workspace.downgrade(),
             split_state,
-            is_syncing_scroll,
             _subscriptions: subscriptions,
         }
     }
@@ -440,11 +417,9 @@ impl SplittableEditor {
             pane
         });
 
-        let is_syncing_scroll = self.is_syncing_scroll.clone();
-        let subscriptions = vec![cx.subscribe_in(
+        let subscriptions = vec![cx.subscribe(
             &secondary_editor,
-            window,
-            move |this, _, event: &EditorEvent, window, cx| match event {
+            |this, _, event: &EditorEvent, cx| match event {
                 EditorEvent::ExpandExcerptsRequested {
                     excerpt_ids,
                     lines,
@@ -464,27 +439,6 @@ impl SplittableEditor {
                 EditorEvent::SelectionsChanged { .. } => {
                     if let Some(secondary) = &mut this.secondary {
                         secondary.has_latest_selection = true;
-                    }
-                    cx.emit(event.clone());
-                }
-                EditorEvent::ScrollPositionChanged { local, .. } => {
-                    if *local && !is_syncing_scroll.get() {
-                        if let Some(secondary) = &this.secondary {
-                            let scroll_position = secondary.editor.update(cx, |editor, cx| {
-                                editor.scroll_position(cx)
-                            });
-                            is_syncing_scroll.set(true);
-                            this.primary_editor.update(cx, |editor, cx| {
-                                editor.set_scroll_position_internal(
-                                    scroll_position,
-                                    false,
-                                    false,
-                                    window,
-                                    cx,
-                                );
-                            });
-                            is_syncing_scroll.set(false);
-                        }
                     }
                     cx.emit(event.clone());
                 }
@@ -557,6 +511,16 @@ impl SplittableEditor {
             dm.set_companion(Some((primary_display_map.downgrade(), companion)), cx);
         });
 
+        let primary_weak = self.primary_editor.downgrade();
+        let secondary_weak = secondary.editor.downgrade();
+
+        self.primary_editor.update(cx, |editor, _cx| {
+            editor.set_scroll_companion(Some(secondary_weak));
+        });
+        secondary.editor.update(cx, |editor, _cx| {
+            editor.set_scroll_companion(Some(primary_weak));
+        });
+
         let primary_scroll_position = self.primary_editor.update(cx, |editor, cx| {
             editor.scroll_position(cx)
         });
@@ -579,12 +543,55 @@ impl SplittableEditor {
         cx.notify();
     }
 
+    fn activate_pane_left(
+        &mut self,
+        _: &ActivatePaneLeft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(secondary) = &self.secondary {
+            if !secondary.has_latest_selection {
+                secondary.editor.read(cx).focus_handle(cx).focus(window, cx);
+                secondary.editor.update(cx, |editor, cx| {
+                    editor.request_autoscroll(Autoscroll::fit(), cx);
+                });
+                cx.notify();
+            } else {
+                cx.propagate();
+            }
+        } else {
+            cx.propagate();
+        }
+    }
+
+    fn activate_pane_right(
+        &mut self,
+        _: &ActivatePaneRight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(secondary) = &self.secondary {
+            if secondary.has_latest_selection {
+                self.primary_editor.read(cx).focus_handle(cx).focus(window, cx);
+                self.primary_editor.update(cx, |editor, cx| {
+                    editor.request_autoscroll(Autoscroll::fit(), cx);
+                });
+                cx.notify();
+            } else {
+                cx.propagate();
+            }
+        } else {
+            cx.propagate();
+        }
+    }
+
     fn unsplit(&mut self, _: &UnsplitDiff, _: &mut Window, cx: &mut Context<Self>) {
         let Some(secondary) = self.secondary.take() else {
             return;
         };
         self.panes.remove(&secondary.pane, cx).unwrap();
         self.primary_editor.update(cx, |primary, cx| {
+            primary.set_scroll_companion(None);
             primary.set_delegate_expand_excerpts(false);
             primary.buffer().update(cx, |buffer, cx| {
                 buffer.set_show_deleted_hunks(true, cx);
@@ -593,6 +600,9 @@ impl SplittableEditor {
             primary.display_map.update(cx, |dm, cx| {
                 dm.set_companion(None, cx);
             });
+        });
+        secondary.editor.update(cx, |editor, _cx| {
+            editor.set_scroll_companion(None);
         });
         cx.notify();
     }
@@ -1230,6 +1240,8 @@ impl Render for SplittableEditor {
             .id("splittable-editor")
             .on_action(cx.listener(Self::split))
             .on_action(cx.listener(Self::unsplit))
+            .on_action(cx.listener(Self::activate_pane_left))
+            .on_action(cx.listener(Self::activate_pane_right))
             .size_full()
             .child(inner)
     }

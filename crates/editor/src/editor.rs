@@ -1314,6 +1314,7 @@ pub struct Editor {
     folding_newlines: Task<()>,
     select_next_is_case_sensitive: Option<bool>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
+    scroll_companion: Option<WeakEntity<Editor>>,
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
     accent_data: Option<AccentData>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
@@ -2519,6 +2520,7 @@ impl Editor {
             folding_newlines: Task::ready(()),
             lookup_key: None,
             select_next_is_case_sensitive: None,
+            scroll_companion: None,
             applicable_language_settings: HashMap::default(),
             accent_data: None,
             fetched_tree_sitter_chunks: HashMap::default(),
@@ -21024,6 +21026,14 @@ impl Editor {
 
     pub fn set_delegate_expand_excerpts(&mut self, delegate: bool) {
         self.delegate_expand_excerpts = delegate;
+    }
+
+    pub fn set_scroll_companion(&mut self, companion: Option<WeakEntity<Editor>>) {
+        self.scroll_companion = companion;
+    }
+
+    pub fn scroll_companion(&self) -> Option<&WeakEntity<Editor>> {
+        self.scroll_companion.as_ref()
     }
 
     pub fn set_show_git_diff_gutter(&mut self, show_git_diff_gutter: bool, cx: &mut Context<Self>) {
