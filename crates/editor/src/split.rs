@@ -18,7 +18,7 @@ use ui::{
     Styled as _, Window, div,
 };
 
-use crate::split_editor_view::SplitEditorView;
+use crate::split_editor_view::{SplitEditorState, SplitEditorView};
 use workspace::{Item, ItemHandle, Pane, PaneGroup, SplitDirection, Workspace};
 
 use crate::{
@@ -54,6 +54,7 @@ pub struct SplittableEditor {
     secondary: Option<SecondaryEditor>,
     panes: PaneGroup,
     workspace: WeakEntity<Workspace>,
+    split_state: Entity<SplitEditorState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -151,12 +152,14 @@ impl SplittableEditor {
                     .ok();
             }
         });
+        let split_state = cx.new(|cx| SplitEditorState::new(cx));
         Self {
             primary_editor,
             primary_multibuffer,
             secondary: None,
             panes,
             workspace: workspace.downgrade(),
+            split_state,
             _subscriptions: subscriptions,
         }
     }
@@ -936,11 +939,9 @@ impl Render for SplittableEditor {
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
         let inner = if self.secondary.is_some() {
-            // In split mode: use SplitEditorView to render both editors side-by-side
             let style = self.primary_editor.read(cx).create_style(cx);
-            SplitEditorView::new(cx.entity().clone(), style).into_any_element()
+            SplitEditorView::new(cx.entity().clone(), style, self.split_state.clone()).into_any_element()
         } else {
-            // Not in split mode: render just the primary editor
             self.primary_editor.clone().into_any_element()
         };
         div()
