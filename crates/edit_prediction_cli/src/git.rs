@@ -68,11 +68,26 @@ pub async fn ensure_repo_cloned(repo_url: &str) -> Result<PathBuf> {
     let repo_path = repo_path_for_url(repo_url)?;
     let _lock = lock_repo(&repo_path).await;
 
-    if !repo_path.is_dir() {
+    // Validate existing repo has correct origin, otherwise remove and re-init.
+    let mut git_repo_exists = false;
+    if repo_path.is_dir() {
+        if run_git(&repo_path, &["remote", "get-url", "origin"])
+            .await
+            .map_or(false, |origin| origin.trim() == repo_url)
+        {
+            git_repo_exists = true;
+        } else {
+            std::fs::remove_dir_all(&repo_path).ok();
+        }
+    }
+
+    if !git_repo_exists {
         log::info!("Cloning {} into {:?}", repo_url, repo_path);
         std::fs::create_dir_all(&repo_path)?;
         run_git(&repo_path, &["init"]).await?;
-        run_git(&repo_path, &["remote", "add", "origin", repo_url]).await?;
+        run_git(&repo_path, &["remote", "add", "origin", repo_url])
+            .await
+            .ok();
     }
 
     // Always fetch to get latest commits
