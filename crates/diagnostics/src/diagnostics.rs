@@ -55,8 +55,8 @@ actions!(
     [
         /// Opens the project diagnostics view.
         Deploy,
-        /// Toggles the display of warning-level diagnostics.
-        ToggleWarnings,
+        /// Cycles the maximum severity of diagnostics shown in the diagnostics views.
+        CycleDiagnosticsSeverity,
         /// Toggles automatic refresh of diagnostics.
         ToggleDiagnosticsRefresh
     ]
@@ -111,9 +111,11 @@ impl Render for ProjectDiagnosticsEditor {
             let label = if total_diagnostic_count == 0 {
                 SharedString::new_static("No problems in workspace")
             } else {
-                SharedString::new_static("No errors in workspace")
+                SharedString::new_static("No diagnostics at this severity")
             };
+
             let hidden_count = total_diagnostic_count - visible_diagnostic_count;
+
             v_flex()
                 .key_context("EmptyPane")
                 .size_full()
@@ -128,7 +130,7 @@ impl Render for ProjectDiagnosticsEditor {
                     let label = format!("Show {} more diagnostic{}", hidden_count, plural_suffix);
                     this.child(Button::new("diagnostics-show-more-label", label).on_click(
                         cx.listener(|this, _, window, cx| {
-                            this.toggle_warnings(&Default::default(), window, cx);
+                            this.reveal_all_diagnostics(window, cx);
                             cx.notify();
                         }),
                     ))
@@ -141,7 +143,7 @@ impl Render for ProjectDiagnosticsEditor {
             .key_context("Diagnostics")
             .track_focus(&self.focus_handle(cx))
             .size_full()
-            .on_action(cx.listener(Self::toggle_warnings))
+            .on_action(cx.listener(Self::cycle_diagnostics_severity))
             .on_action(cx.listener(Self::toggle_diagnostics_refresh))
             .child(child)
     }
@@ -397,7 +399,12 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
-    fn toggle_warnings(&mut self, _: &ToggleWarnings, _: &mut Window, cx: &mut Context<Self>) {
+    fn cycle_diagnostics_severity(
+        &mut self,
+        _: &CycleDiagnosticsSeverity,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let new_severity = self.max_severity.cycle_next();
         cx.set_global(DiagnosticsMaxSeverity(new_severity));
     }
@@ -414,6 +421,18 @@ impl ProjectDiagnosticsEditor {
             count += self.summary.hint_count;
         }
         count
+    }
+
+    fn reveal_all_diagnostics(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if self.summary.hint_count > 0 {
+            cx.set_global(DiagnosticsMaxSeverity(DiagnosticSeverity::Hint));
+        } else if self.summary.info_count > 0 {
+            cx.set_global(DiagnosticsMaxSeverity(DiagnosticSeverity::Info));
+        } else if self.summary.warning_count > 0 {
+            cx.set_global(DiagnosticsMaxSeverity(DiagnosticSeverity::Warning));
+        } else {
+            cx.set_global(DiagnosticsMaxSeverity(DiagnosticSeverity::Error));
+        }
     }
 
     fn toggle_diagnostics_refresh(
@@ -977,7 +996,7 @@ impl DiagnosticsToolbarEditor for WeakEntity<ProjectDiagnosticsEditor> {
 
     fn cycle_severity(&self, window: &mut Window, cx: &mut App) {
         let _ = self.update(cx, |project_diagnostics_editor, cx| {
-            project_diagnostics_editor.toggle_warnings(&Default::default(), window, cx);
+            project_diagnostics_editor.cycle_diagnostics_severity(&Default::default(), window, cx);
         });
     }
 

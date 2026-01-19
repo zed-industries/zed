@@ -1,5 +1,6 @@
 use crate::{
-    DIAGNOSTICS_UPDATE_DEBOUNCE, DiagnosticsMaxSeverity, ToggleWarnings, context_range_for_entry,
+    CycleDiagnosticsSeverity, DIAGNOSTICS_UPDATE_DEBOUNCE, DiagnosticsMaxSeverity,
+    context_range_for_entry,
     diagnostic_renderer::{DiagnosticBlock, DiagnosticRenderer},
     toolbar_controls::DiagnosticsToolbarEditor,
 };
@@ -627,9 +628,9 @@ impl BufferDiagnosticsEditor {
         }
     }
 
-    pub fn toggle_warnings(
+    pub fn cycle_diagnostics_severity(
         &mut self,
-        _: &ToggleWarnings,
+        _: &CycleDiagnosticsSeverity,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -928,7 +929,7 @@ impl Render for BufferDiagnosticsEditor {
                     div.child(
                         Button::new("diagnostics-show-warning-label", label).on_click(cx.listener(
                             |buffer_diagnostics_editor, _, window, cx| {
-                                buffer_diagnostics_editor.toggle_warnings(
+                                buffer_diagnostics_editor.cycle_diagnostics_severity(
                                     &Default::default(),
                                     window,
                                     cx,
@@ -986,7 +987,7 @@ impl DiagnosticsToolbarEditor for WeakEntity<BufferDiagnosticsEditor> {
 
     fn cycle_severity(&self, window: &mut Window, cx: &mut App) {
         let _ = self.update(cx, |buffer_diagnostics_editor, cx| {
-            buffer_diagnostics_editor.toggle_warnings(&Default::default(), window, cx);
+            buffer_diagnostics_editor.cycle_diagnostics_severity(&Default::default(), window, cx);
         });
     }
 
