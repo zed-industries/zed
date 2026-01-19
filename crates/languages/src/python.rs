@@ -1658,7 +1658,14 @@ impl LspAdapter for PyLspAdapter {
         Self::SERVER_NAME
     }
 
-    async fn process_completions(&self, _items: &mut [lsp::CompletionItem]) {}
+    async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
+        for item in items {
+            let is_named_argument = item.label.ends_with('=');
+            let priority = if is_named_argument { '0' } else { '1' };
+            let sort_text = item.sort_text.take().unwrap_or_else(|| item.label.clone());
+            item.sort_text = Some(format!("{}{}", priority, sort_text));
+        }
+    }
 
     async fn label_for_completion(
         &self,
