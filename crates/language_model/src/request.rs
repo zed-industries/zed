@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use base64::write::EncoderWriter;
-use cloud_llm_client::{CompletionIntent, CompletionMode};
+use cloud_llm_client::CompletionIntent;
 use gpui::{
     App, AppContext as _, DevicePixels, Image, ImageFormat, ObjectFit, SharedString, Size, Task,
     point, px, size,
@@ -442,7 +442,6 @@ pub struct LanguageModelRequest {
     pub thread_id: Option<String>,
     pub prompt_id: Option<String>,
     pub intent: Option<CompletionIntent>,
-    pub mode: Option<CompletionMode>,
     pub messages: Vec<LanguageModelRequestMessage>,
     pub tools: Vec<LanguageModelRequestTool>,
     pub tool_choice: Option<LanguageModelToolChoice>,

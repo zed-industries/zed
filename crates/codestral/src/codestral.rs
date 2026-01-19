@@ -1,5 +1,5 @@
-use anyhow::{Context as _, Result};
-use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
+use anyhow::Result;
+use edit_prediction::cursor_excerpt;
 use edit_prediction_types::{EditPrediction, EditPredictionDelegate};
 use futures::AsyncReadExt;
 use gpui::{App, Context, Entity, Task};
@@ -15,15 +15,9 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use text::ToOffset;
+use text::{OffsetRangeExt as _, ToOffset};
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
-
-const EXCERPT_OPTIONS: EditPredictionExcerptOptions = EditPredictionExcerptOptions {
-    max_bytes: 1050,
-    min_bytes: 525,
-    target_before_cursor_over_total_bytes: 0.66,
-};
 
 /// Represents a completion that has been received and processed from Codestral.
 /// This struct maintains the state needed to interpolate the completion as the user types.
@@ -235,19 +229,27 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
 
             let cursor_offset = cursor_position.to_offset(&snapshot);
             let cursor_point = cursor_offset.to_point(&snapshot);
-            let excerpt = EditPredictionExcerpt::select_from_buffer(
-                cursor_point,
-                &snapshot,
-                &EXCERPT_OPTIONS,
-            )
-            .context("Line containing cursor doesn't fit in excerpt max bytes")?;
 
-            let excerpt_text = excerpt.text(&snapshot);
+            const MAX_CONTEXT_TOKENS: usize = 150;
+            const MAX_REWRITE_TOKENS: usize = 350;
+
+            let (_, context_range) =
+                cursor_excerpt::editable_and_context_ranges_for_cursor_position(
+                    cursor_point,
+                    &snapshot,
+                    MAX_REWRITE_TOKENS,
+                    MAX_CONTEXT_TOKENS,
+                );
+
+            let context_range = context_range.to_offset(&snapshot);
+            let excerpt_text = snapshot
+                .text_for_range(context_range.clone())
+                .collect::<String>();
             let cursor_within_excerpt = cursor_offset
-                .saturating_sub(excerpt.range.start)
-                .min(excerpt_text.body.len());
-            let prompt = excerpt_text.body[..cursor_within_excerpt].to_string();
-            let suffix = excerpt_text.body[cursor_within_excerpt..].to_string();
+                .saturating_sub(context_range.start)
+                .min(excerpt_text.len());
+            let prompt = excerpt_text[..cursor_within_excerpt].to_string();
+            let suffix = excerpt_text[cursor_within_excerpt..].to_string();
 
             let completion_text = match Self::fetch_completion(
                 http_client,

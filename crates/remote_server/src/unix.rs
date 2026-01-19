@@ -1,7 +1,7 @@
 use crate::HeadlessProject;
 use crate::headless_project::HeadlessAppState;
 use anyhow::{Context as _, Result, anyhow};
-use client::{ProjectId, ProxySettings};
+use client::ProxySettings;
 use collections::HashMap;
 use project::trusted_worktrees;
 use util::ResultExt;
@@ -115,7 +115,18 @@ fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
 
     let old_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        log::error!("Panic occurred: {:?}", info);
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let message = info.payload_as_str().unwrap_or("Box<Any>").to_owned();
+        let location = info
+            .location()
+            .map_or_else(|| "<unknown>".to_owned(), |location| location.to_string());
+        let current_thread = std::thread::current();
+        let thread_name = current_thread.name().unwrap_or("<unnamed>");
+
+        let msg = format!("thread '{thread_name}' panicked at {location}:\n{message}\n{backtrace}");
+        // NOTE: This log never reaches the client, as the communication is handled on a main thread task
+        // which will never run once we panic.
+        log::error!("{msg}");
         old_hook(info);
     }));
     env_logger::Builder::new()
@@ -211,7 +222,7 @@ fn start_server(
     is_wsl_interop: bool,
 ) -> AnyProtoClient {
     // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
-    const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+    const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(6);
 
     let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
     let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
@@ -238,8 +249,10 @@ fn start_server(
             let result = select! {
                 streams = streams.fuse() => {
                     let (Some(Ok(stdin_stream)), Some(Ok(stdout_stream)), Some(Ok(stderr_stream))) = streams else {
+                        log::error!("failed to accept new connections");
                         break;
                     };
+                    log::info!("accepted new connections");
                     anyhow::Ok((stdin_stream, stdout_stream, stderr_stream))
                 }
                 _ = futures::FutureExt::fuse(cx.background_executor().timer(IDLE_TIMEOUT)) => {
@@ -253,6 +266,7 @@ fn start_server(
                     break;
                 }
                 _ = app_quit_rx.next().fuse() => {
+                    log::info!("app quit requested");
                     break;
                 }
             };
@@ -405,7 +419,7 @@ pub fn execute_run(
         .detach();
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
-    app.run(move |cx| {
+    let run = move |cx: &mut _| {
         settings::init(cx);
         let app_commit_sha = option_env!("ZED_COMMIT_SHA").map(|s| AppCommitSha::new(s.to_owned()));
         let app_version = AppVersion::load(
@@ -427,7 +441,7 @@ pub fn execute_run(
 
         log::info!("gpui app started, initializing server");
         let session = start_server(listeners, log_rx, cx, is_wsl_interop);
-        trusted_worktrees::init(HashMap::default(), Some((session.clone(), ProjectId(REMOTE_SERVER_PROJECT_ID))), None, cx);
+        trusted_worktrees::init(HashMap::default(), cx);
 
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
         git_hosting_providers::init(cx);
@@ -490,9 +504,18 @@ pub fn execute_run(
             .detach();
 
         mem::forget(project);
-    });
-    log::info!("gpui app is shut down. quitting.");
-    Ok(())
+    };
+    // We do not reuse any of the state after unwinding, so we don't run risk of observing broken invariants.
+    let app = std::panic::AssertUnwindSafe(app);
+    let run = std::panic::AssertUnwindSafe(run);
+    let res = std::panic::catch_unwind(move || { app }.0.run({ run }.0));
+    if let Err(_) = res {
+        log::error!("app panicked. quitting.");
+        Err(anyhow::anyhow!("panicked"))
+    } else {
+        log::info!("gpui app is shut down. quitting.");
+        Ok(())
+    }
 }
 
 #[derive(Debug, Error)]
@@ -531,7 +554,7 @@ impl ServerPaths {
         })?;
         let log_dir = logs_dir();
         std::fs::create_dir_all(log_dir).map_err(|source| ServerPathError::CreateLogsDir {
-            source: source,
+            source,
             path: log_dir.clone(),
         })?;
 

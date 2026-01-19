@@ -2248,7 +2248,6 @@ impl BufferSnapshot {
         A: 'a + IntoIterator<Item = (&'a Anchor, T)>,
     {
         let anchors = anchors.into_iter();
-        let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>(());
         let mut fragment_cursor = self
             .fragments
             .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
@@ -2262,24 +2261,7 @@ impl BufferSnapshot {
                 return (D::from_text_summary(&self.visible_text.summary()), payload);
             }
 
-            let anchor_key = InsertionFragmentKey {
-                timestamp: anchor.timestamp,
-                split_offset: anchor.offset,
-            };
-            insertion_cursor.seek(&anchor_key, anchor.bias);
-            if let Some(insertion) = insertion_cursor.item() {
-                let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
-                if comparison == Ordering::Greater
-                    || (anchor.bias == Bias::Left
-                        && comparison == Ordering::Equal
-                        && anchor.offset > 0)
-                {
-                    insertion_cursor.prev();
-                }
-            } else {
-                insertion_cursor.prev();
-            }
-            let Some(insertion) = insertion_cursor.item() else {
+            let Some(insertion) = self.try_find_fragment(anchor) else {
                 panic!(
                     "invalid insertion for buffer {}@{:?} with anchor {:?}",
                     self.remote_id(),
@@ -2328,28 +2310,8 @@ impl BufferSnapshot {
                 anchor.timestamp,
                 self.version
             );
-            let anchor_key = InsertionFragmentKey {
-                timestamp: anchor.timestamp,
-                split_offset: anchor.offset,
-            };
-            let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>(());
-            insertion_cursor.seek(&anchor_key, anchor.bias);
-            if let Some(insertion) = insertion_cursor.item() {
-                let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
-                if comparison == Ordering::Greater
-                    || (anchor.bias == Bias::Left
-                        && comparison == Ordering::Equal
-                        && anchor.offset > 0)
-                {
-                    insertion_cursor.prev();
-                }
-            } else {
-                insertion_cursor.prev();
-            }
-
-            let Some(insertion) = insertion_cursor
-                .item()
-                .filter(|insertion| insertion.timestamp == anchor.timestamp)
+            let item = self.try_find_fragment(anchor);
+            let Some(insertion) = item.filter(|insertion| insertion.timestamp == anchor.timestamp)
             else {
                 self.panic_bad_anchor(anchor);
             };
@@ -2401,31 +2363,37 @@ impl BufferSnapshot {
         } else if anchor.is_max() {
             Some(Locator::max_ref())
         } else {
-            let anchor_key = InsertionFragmentKey {
-                timestamp: anchor.timestamp,
-                split_offset: anchor.offset,
-            };
-            let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>(());
-            insertion_cursor.seek(&anchor_key, anchor.bias);
-            if let Some(insertion) = insertion_cursor.item() {
+            let item = self.try_find_fragment(anchor);
+            item.filter(|insertion| {
+                !cfg!(debug_assertions) || insertion.timestamp == anchor.timestamp
+            })
+            .map(|insertion| &insertion.fragment_id)
+        }
+    }
+
+    fn try_find_fragment(&self, anchor: &Anchor) -> Option<&InsertionFragment> {
+        let anchor_key = InsertionFragmentKey {
+            timestamp: anchor.timestamp,
+            split_offset: anchor.offset,
+        };
+        match self.insertions.find_with_prev::<InsertionFragmentKey, _>(
+            (),
+            &anchor_key,
+            anchor.bias,
+        ) {
+            (_, _, Some((prev, insertion))) => {
                 let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
                 if comparison == Ordering::Greater
                     || (anchor.bias == Bias::Left
                         && comparison == Ordering::Equal
                         && anchor.offset > 0)
                 {
-                    insertion_cursor.prev();
+                    prev
+                } else {
+                    Some(insertion)
                 }
-            } else {
-                insertion_cursor.prev();
             }
-
-            insertion_cursor
-                .item()
-                .filter(|insertion| {
-                    !cfg!(debug_assertions) || insertion.timestamp == anchor.timestamp
-                })
-                .map(|insertion| &insertion.fragment_id)
+            _ => self.insertions.last(),
         }
     }
 

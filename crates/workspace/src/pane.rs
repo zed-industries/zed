@@ -247,6 +247,10 @@ actions!(
         GoBack,
         /// Navigates forward in history.
         GoForward,
+        /// Navigates back in the tag stack.
+        GoToOlderTag,
+        /// Navigates forward in the tag stack.
+        GoToNewerTag,
         /// Joins this pane into the next pane.
         JoinIntoNext,
         /// Joins all panes into one.
@@ -429,6 +433,7 @@ pub struct ActivationHistoryEntry {
     pub timestamp: usize,
 }
 
+#[derive(Clone)]
 pub struct ItemNavHistory {
     history: NavHistory,
     item: Arc<dyn WeakItemHandle>,
@@ -438,11 +443,14 @@ pub struct ItemNavHistory {
 #[derive(Clone)]
 pub struct NavHistory(Arc<Mutex<NavHistoryState>>);
 
+#[derive(Clone)]
 struct NavHistoryState {
     mode: NavigationMode,
     backward_stack: VecDeque<NavigationEntry>,
     forward_stack: VecDeque<NavigationEntry>,
     closed_stack: VecDeque<NavigationEntry>,
+    tag_stack: VecDeque<TagStackEntry>,
+    tag_stack_pos: usize,
     paths_by_item: HashMap<EntityId, (ProjectPath, Option<PathBuf>)>,
     pane: WeakEntity<Pane>,
     next_timestamp: Arc<AtomicUsize>,
@@ -459,11 +467,25 @@ pub enum NavigationMode {
     Disabled,
 }
 
+#[derive(Debug, Default, Copy, Clone)]
+pub enum TagNavigationMode {
+    #[default]
+    Older,
+    Newer,
+}
+
+#[derive(Clone)]
 pub struct NavigationEntry {
-    pub item: Arc<dyn WeakItemHandle>,
-    pub data: Option<Box<dyn Any + Send>>,
+    pub item: Arc<dyn WeakItemHandle + Send + Sync>,
+    pub data: Option<Arc<dyn Any + Send + Sync>>,
     pub timestamp: usize,
     pub is_preview: bool,
+}
+
+#[derive(Clone)]
+pub struct TagStackEntry {
+    pub origin: NavigationEntry,
+    pub target: NavigationEntry,
 }
 
 #[derive(Clone)]
@@ -534,6 +556,8 @@ impl Pane {
                 backward_stack: Default::default(),
                 forward_stack: Default::default(),
                 closed_stack: Default::default(),
+                tag_stack: Default::default(),
+                tag_stack_pos: Default::default(),
                 paths_by_item: Default::default(),
                 pane: handle,
                 next_timestamp,
@@ -839,6 +863,16 @@ impl Pane {
         &mut self.nav_history
     }
 
+    pub fn fork_nav_history(&self) -> NavHistory {
+        let history = self.nav_history.0.lock().clone();
+        NavHistory(Arc::new(Mutex::new(history)))
+    }
+
+    pub fn set_nav_history(&mut self, history: NavHistory, cx: &Context<Self>) {
+        self.nav_history = history;
+        self.nav_history().0.lock().pane = cx.entity().downgrade();
+    }
+
     pub fn disable_history(&mut self) {
         self.nav_history.disable();
     }
@@ -873,6 +907,42 @@ impl Pane {
                 workspace.update(cx, |workspace, cx| {
                     workspace
                         .go_forward(pane, window, cx)
+                        .detach_and_log_err(cx)
+                })
+            })
+        }
+    }
+
+    pub fn go_to_older_tag(
+        &mut self,
+        _: &GoToOlderTag,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let pane = cx.entity().downgrade();
+            window.defer(cx, move |window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .navigate_tag_history(pane, TagNavigationMode::Older, window, cx)
+                        .detach_and_log_err(cx)
+                })
+            })
+        }
+    }
+
+    pub fn go_to_newer_tag(
+        &mut self,
+        _: &GoToNewerTag,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let pane = cx.entity().downgrade();
+            window.defer(cx, move |window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .navigate_tag_history(pane, TagNavigationMode::Newer, window, cx)
                         .detach_and_log_err(cx)
                 })
             })
@@ -2765,7 +2835,7 @@ impl Pane {
             .on_drop(
                 cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
                     this.drag_split_direction = None;
-                    this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
+                    this.handle_tab_drop(dragged_tab, ix, window, cx)
                 }),
             )
             .on_drop(
@@ -4159,6 +4229,8 @@ impl Render for Pane {
             .on_action(cx.listener(Pane::zoom_out))
             .on_action(cx.listener(Self::navigate_backward))
             .on_action(cx.listener(Self::navigate_forward))
+            .on_action(cx.listener(Self::go_to_older_tag))
+            .on_action(cx.listener(Self::go_to_newer_tag))
             .on_action(
                 cx.listener(|pane: &mut Pane, action: &ActivateItem, window, cx| {
                     pane.activate_item(
@@ -4391,7 +4463,7 @@ impl Render for Pane {
 }
 
 impl ItemNavHistory {
-    pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, cx: &mut App) {
+    pub fn push<D: 'static + Any + Send + Sync>(&mut self, data: Option<D>, cx: &mut App) {
         if self
             .item
             .upgrade()
@@ -4399,6 +4471,21 @@ impl ItemNavHistory {
         {
             self.history
                 .push(data, self.item.clone(), self.is_preview, cx);
+        }
+    }
+
+    pub fn navigation_entry(&self, data: Option<Arc<dyn Any + Send + Sync>>) -> NavigationEntry {
+        NavigationEntry {
+            item: self.item.clone(),
+            data: data,
+            timestamp: 0, // not used
+            is_preview: self.is_preview,
+        }
+    }
+
+    pub fn push_tag(&mut self, origin: Option<NavigationEntry>, target: Option<NavigationEntry>) {
+        if let (Some(origin_entry), Some(target_entry)) = (origin, target) {
+            self.history.push_tag(origin_entry, target_entry);
         }
     }
 
@@ -4459,6 +4546,7 @@ impl NavHistory {
             && state.forward_stack.is_empty()
             && state.closed_stack.is_empty()
             && state.paths_by_item.is_empty()
+            && state.tag_stack.is_empty()
         {
             return;
         }
@@ -4468,6 +4556,8 @@ impl NavHistory {
         state.forward_stack.clear();
         state.closed_stack.clear();
         state.paths_by_item.clear();
+        state.tag_stack.clear();
+        state.tag_stack_pos = 0;
         state.did_update(cx);
     }
 
@@ -4488,10 +4578,10 @@ impl NavHistory {
         entry
     }
 
-    pub fn push<D: 'static + Send + Any>(
+    pub fn push<D: 'static + Any + Send + Sync>(
         &mut self,
         data: Option<D>,
-        item: Arc<dyn WeakItemHandle>,
+        item: Arc<dyn WeakItemHandle + Send + Sync>,
         is_preview: bool,
         cx: &mut App,
     ) {
@@ -4504,7 +4594,7 @@ impl NavHistory {
                 }
                 state.backward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                    data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send + Sync>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
                 });
@@ -4516,7 +4606,7 @@ impl NavHistory {
                 }
                 state.forward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                    data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send + Sync>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
                 });
@@ -4527,7 +4617,7 @@ impl NavHistory {
                 }
                 state.backward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                    data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send + Sync>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
                 });
@@ -4539,7 +4629,7 @@ impl NavHistory {
                 }
                 state.closed_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                    data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send + Sync>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
                 });
@@ -4560,6 +4650,9 @@ impl NavHistory {
         state
             .closed_stack
             .retain(|entry| entry.item.id() != item_id);
+        state
+            .tag_stack
+            .retain(|entry| entry.origin.item.id() != item_id && entry.target.item.id() != item_id);
     }
 
     pub fn rename_item(
@@ -4578,6 +4671,41 @@ impl NavHistory {
 
     pub fn path_for_item(&self, item_id: EntityId) -> Option<(ProjectPath, Option<PathBuf>)> {
         self.0.lock().paths_by_item.get(&item_id).cloned()
+    }
+
+    pub fn push_tag(&mut self, origin: NavigationEntry, target: NavigationEntry) {
+        let mut state = self.0.lock();
+        let truncate_to = state.tag_stack_pos;
+        state.tag_stack.truncate(truncate_to);
+        state.tag_stack.push_back(TagStackEntry { origin, target });
+        state.tag_stack_pos = state.tag_stack.len();
+    }
+
+    pub fn pop_tag(&mut self, mode: TagNavigationMode) -> Option<NavigationEntry> {
+        let mut state = self.0.lock();
+        match mode {
+            TagNavigationMode::Older => {
+                if state.tag_stack_pos > 0 {
+                    state.tag_stack_pos -= 1;
+                    state
+                        .tag_stack
+                        .get(state.tag_stack_pos)
+                        .map(|e| e.origin.clone())
+                } else {
+                    None
+                }
+            }
+            TagNavigationMode::Newer => {
+                let entry = state
+                    .tag_stack
+                    .get(state.tag_stack_pos)
+                    .map(|e| e.target.clone());
+                if state.tag_stack_pos < state.tag_stack.len() {
+                    state.tag_stack_pos += 1;
+                }
+                entry
+            }
+        }
     }
 }
 
@@ -6223,6 +6351,57 @@ mod tests {
 
         // C should be at the beginning
         assert_item_labels(&pane_a, ["C*", "A", "B"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_drag_tab_to_middle_tab_with_mouse_events(cx: &mut TestAppContext) {
+        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        add_labeled_item(&pane, "D", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+        cx.run_until_parked();
+
+        let tab_a_bounds = cx
+            .debug_bounds("TAB-0")
+            .expect("Tab A (index 0) should have debug bounds");
+        let tab_c_bounds = cx
+            .debug_bounds("TAB-2")
+            .expect("Tab C (index 2) should have debug bounds");
+
+        cx.simulate_event(MouseDownEvent {
+            position: tab_a_bounds.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        });
+        cx.run_until_parked();
+        cx.simulate_event(MouseMoveEvent {
+            position: tab_c_bounds.center(),
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::default(),
+        });
+        cx.run_until_parked();
+        cx.simulate_event(MouseUpEvent {
+            position: tab_c_bounds.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        });
+        cx.run_until_parked();
+
+        assert_item_labels(&pane, ["B", "C", "A*", "D"], cx);
     }
 
     #[gpui::test]

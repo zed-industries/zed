@@ -899,6 +899,11 @@ impl RemoteClient {
             .map_or(false, |connection| connection.shares_network_interface())
     }
 
+    pub fn has_wsl_interop(&self) -> bool {
+        self.remote_connection()
+            .map_or(false, |connection| connection.has_wsl_interop())
+    }
+
     pub fn build_command(
         &self,
         program: Option<String>,
@@ -1255,7 +1260,13 @@ impl RemoteConnectionOptions {
         match self {
             RemoteConnectionOptions::Ssh(opts) => opts.host.to_string(),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
-            RemoteConnectionOptions::Docker(opts) => opts.name.clone(),
+            RemoteConnectionOptions::Docker(opts) => {
+                if opts.use_podman {
+                    format!("[podman] {}", opts.name)
+                } else {
+                    opts.name.clone()
+                }
+            }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(opts) => format!("mock-{}", opts.id),
         }

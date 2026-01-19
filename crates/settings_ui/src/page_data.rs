@@ -14,11 +14,6 @@ const DEFAULT_STRING: String = String::new();
 /// to avoid the "NO DEFAULT" case.
 const DEFAULT_EMPTY_STRING: Option<&String> = Some(&DEFAULT_STRING);
 
-const DEFAULT_SHARED_STRING: SharedString = SharedString::new_static("");
-/// A default empty string reference. Useful in `pick` functions for cases either in dynamic item fields, or when dealing with `settings::Maybe`
-/// to avoid the "NO DEFAULT" case.
-const DEFAULT_EMPTY_SHARED_STRING: Option<&SharedString> = Some(&DEFAULT_SHARED_STRING);
-
 macro_rules! concat_sections {
     (@vec, $($arr:expr),+ $(,)?) => {{
         let total_len = 0_usize $(+ $arr.len())+;
@@ -5667,7 +5662,7 @@ fn terminal_page() -> SettingsPage {
                                         pick: |settings_content| {
                                             match settings_content.terminal.as_ref()?.project.shell.as_ref() {
                                                 Some(settings::Shell::WithArguments { title_override, .. }) => {
-                                                    title_override.as_ref().or(DEFAULT_EMPTY_SHARED_STRING)
+                                                    title_override.as_ref().or(DEFAULT_EMPTY_STRING)
                                                 }
                                                 _ => None,
                                             }
@@ -7187,7 +7182,11 @@ fn language_settings_field<T>(
 ) -> Option<&T> {
     let all_languages = &settings_content.project.all_languages;
     if let Some(current_language_name) = current_language() {
-        if let Some(current_language) = all_languages.languages.0.get(&current_language_name) {
+        if let Some(current_language) = all_languages
+            .languages
+            .0
+            .get(current_language_name.as_ref())
+        {
             let value = get(current_language);
             if value.is_some() {
                 return value;
@@ -7208,7 +7207,7 @@ fn language_settings_field_mut<T>(
         all_languages
             .languages
             .0
-            .entry(current_language)
+            .entry(current_language.to_string())
             .or_default()
     } else {
         &mut all_languages.defaults

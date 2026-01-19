@@ -609,6 +609,10 @@ impl AgentServerStore {
                     .gemini
                     .clone()
                     .and_then(|settings| settings.custom_command()),
+                settings_env: new_settings
+                    .gemini
+                    .as_ref()
+                    .and_then(|settings| settings.env.clone()),
                 ignore_system_version: new_settings
                     .gemini
                     .as_ref()
@@ -625,6 +629,10 @@ impl AgentServerStore {
                     .codex
                     .clone()
                     .and_then(|settings| settings.custom_command()),
+                settings_env: new_settings
+                    .codex
+                    .as_ref()
+                    .and_then(|settings| settings.env.clone()),
                 http_client: http_client.clone(),
                 no_browser: downstream_client
                     .as_ref()
@@ -641,6 +649,10 @@ impl AgentServerStore {
                     .claude
                     .clone()
                     .and_then(|settings| settings.custom_command()),
+                settings_env: new_settings
+                    .claude
+                    .as_ref()
+                    .and_then(|settings| settings.env.clone()),
             }),
         );
         self.external_agents
@@ -650,7 +662,7 @@ impl AgentServerStore {
                     .iter()
                     .filter_map(|(name, settings)| match settings {
                         CustomAgentServerSettings::Custom { command, .. } => Some((
-                            ExternalAgentServerName(name.clone()),
+                            ExternalAgentServerName(name.clone().into()),
                             Box::new(LocalCustomAgent {
                                 command: command.clone(),
                                 project_environment: project_environment.clone(),
@@ -1347,6 +1359,7 @@ struct LocalGemini {
     node_runtime: NodeRuntime,
     project_environment: Entity<ProjectEnvironment>,
     custom_command: Option<AgentServerCommand>,
+    settings_env: Option<HashMap<String, String>>,
     ignore_system_version: bool,
 }
 
@@ -1363,6 +1376,7 @@ impl ExternalAgentServer for LocalGemini {
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
         let custom_command = self.custom_command.clone();
+        let settings_env = self.settings_env.clone();
         let ignore_system_version = self.ignore_system_version;
         let root_dir: Arc<Path> = root_dir
             .map(|root_dir| Path::new(root_dir))
@@ -1381,8 +1395,9 @@ impl ExternalAgentServer for LocalGemini {
                 .await
                 .unwrap_or_default();
 
+            env.extend(settings_env.unwrap_or_default());
+
             let mut command = if let Some(mut custom_command) = custom_command {
-                env.extend(custom_command.env.unwrap_or_default());
                 custom_command.env = Some(env);
                 custom_command
             } else if !ignore_system_version
@@ -1445,6 +1460,7 @@ struct LocalClaudeCode {
     node_runtime: NodeRuntime,
     project_environment: Entity<ProjectEnvironment>,
     custom_command: Option<AgentServerCommand>,
+    settings_env: Option<HashMap<String, String>>,
 }
 
 impl ExternalAgentServer for LocalClaudeCode {
@@ -1460,6 +1476,7 @@ impl ExternalAgentServer for LocalClaudeCode {
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
         let custom_command = self.custom_command.clone();
+        let settings_env = self.settings_env.clone();
         let root_dir: Arc<Path> = root_dir
             .map(|root_dir| Path::new(root_dir))
             .unwrap_or(paths::home_dir())
@@ -1478,8 +1495,9 @@ impl ExternalAgentServer for LocalClaudeCode {
                 .unwrap_or_default();
             env.insert("ANTHROPIC_API_KEY".into(), "".into());
 
+            env.extend(settings_env.unwrap_or_default());
+
             let (mut command, login_command) = if let Some(mut custom_command) = custom_command {
-                env.extend(custom_command.env.unwrap_or_default());
                 custom_command.env = Some(env);
                 (custom_command, None)
             } else {
@@ -1537,6 +1555,7 @@ struct LocalCodex {
     project_environment: Entity<ProjectEnvironment>,
     http_client: Arc<dyn HttpClient>,
     custom_command: Option<AgentServerCommand>,
+    settings_env: Option<HashMap<String, String>>,
     no_browser: bool,
 }
 
@@ -1553,6 +1572,7 @@ impl ExternalAgentServer for LocalCodex {
         let project_environment = self.project_environment.downgrade();
         let http = self.http_client.clone();
         let custom_command = self.custom_command.clone();
+        let settings_env = self.settings_env.clone();
         let root_dir: Arc<Path> = root_dir
             .map(|root_dir| Path::new(root_dir))
             .unwrap_or(paths::home_dir())
@@ -1574,8 +1594,9 @@ impl ExternalAgentServer for LocalCodex {
                 env.insert("NO_BROWSER".to_owned(), "1".to_owned());
             }
 
+            env.extend(settings_env.unwrap_or_default());
+
             let mut command = if let Some(mut custom_command) = custom_command {
-                env.extend(custom_command.env.unwrap_or_default());
                 custom_command.env = Some(env);
                 custom_command
             } else {
@@ -2014,7 +2035,7 @@ pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,
     pub codex: Option<BuiltinAgentServerSettings>,
-    pub custom: HashMap<SharedString, CustomAgentServerSettings>,
+    pub custom: HashMap<String, CustomAgentServerSettings>,
 }
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
 pub struct BuiltinAgentServerSettings {
@@ -2030,11 +2051,12 @@ pub struct BuiltinAgentServerSettings {
 }
 
 impl BuiltinAgentServerSettings {
-    pub(crate) fn custom_command(self) -> Option<AgentServerCommand> {
+    fn custom_command(self) -> Option<AgentServerCommand> {
         self.path.map(|path| AgentServerCommand {
             path,
             args: self.args.unwrap_or_default(),
-            env: self.env,
+            // Settings env are always applied, so we don't need to supply them here as well
+            env: None,
         })
     }
 }

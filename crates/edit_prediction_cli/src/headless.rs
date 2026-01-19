@@ -37,6 +37,10 @@ impl ProjectCache {
     pub fn get(&self, repository_url: &String) -> Option<Entity<Project>> {
         self.0.lock().unwrap().get(repository_url).cloned()
     }
+
+    pub fn remove(&self, repository_url: &String) {
+        self.0.lock().unwrap().remove(repository_url);
+    }
 }
 
 pub fn init(cx: &mut App) -> EpAppState {

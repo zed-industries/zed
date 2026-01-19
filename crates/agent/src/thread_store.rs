@@ -141,7 +141,6 @@ mod tests {
             cumulative_token_usage: Default::default(),
             request_token_usage: HashMap::default(),
             model: None,
-            completion_mode: None,
             profile: None,
             imported: false,
         }

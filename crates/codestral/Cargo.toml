@@ -11,7 +11,7 @@ path = "src/codestral.rs"
 [dependencies]
 anyhow.workspace = true
 edit_prediction_types.workspace = true
-edit_prediction_context.workspace = true
+edit_prediction.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true

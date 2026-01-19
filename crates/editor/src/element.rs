@@ -3112,9 +3112,18 @@ impl EditorElement {
         let display_row = indicator.display_row;
         let row_index = (display_row.0.saturating_sub(range.start.0)) as usize;
 
-        // Don't show on rows with expand excerpt buttons
         let row_info = row_infos.get(row_index);
         if row_info.is_some_and(|row_info| row_info.expand_info.is_some()) {
+            return None;
+        }
+
+        let buffer_id = row_info.and_then(|info| info.buffer_id);
+        if buffer_id.is_none() {
+            return None;
+        }
+
+        let editor = self.editor.read(cx);
+        if buffer_id.is_some_and(|buffer_id| editor.is_buffer_folded(buffer_id, cx)) {
             return None;
         }
 

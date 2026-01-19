@@ -92,43 +92,38 @@ pub fn init(cx: &mut App) {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        workspace
-            .with_local_workspace(window, cx, |workspace, window, cx| {
-                let existing = workspace
-                    .active_pane()
-                    .read(cx)
-                    .items()
-                    .find_map(|item| item.downcast::<KeymapEditor>());
+        let existing = workspace
+            .active_pane()
+            .read(cx)
+            .items()
+            .find_map(|item| item.downcast::<KeymapEditor>());
 
-                let keymap_editor = if let Some(existing) = existing {
-                    workspace.activate_item(&existing, true, true, window, cx);
-                    existing
-                } else {
-                    let keymap_editor =
-                        cx.new(|cx| KeymapEditor::new(workspace.weak_handle(), window, cx));
-                    workspace.add_item_to_active_pane(
-                        Box::new(keymap_editor.clone()),
-                        None,
-                        true,
-                        window,
-                        cx,
-                    );
-                    keymap_editor
-                };
+        let keymap_editor = if let Some(existing) = existing {
+            workspace.activate_item(&existing, true, true, window, cx);
+            existing
+        } else {
+            let keymap_editor = cx.new(|cx| KeymapEditor::new(workspace.weak_handle(), window, cx));
+            workspace.add_item_to_active_pane(
+                Box::new(keymap_editor.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+            keymap_editor
+        };
 
-                if let Some(filter) = filter {
-                    keymap_editor.update(cx, |editor, cx| {
-                        editor.filter_editor.update(cx, |editor, cx| {
-                            editor.clear(window, cx);
-                            editor.insert(&filter, window, cx);
-                        });
-                        if !editor.has_binding_for(&filter) {
-                            open_binding_modal_after_loading(cx)
-                        }
-                    })
+        if let Some(filter) = filter {
+            keymap_editor.update(cx, |editor, cx| {
+                editor.filter_editor.update(cx, |editor, cx| {
+                    editor.clear(window, cx);
+                    editor.insert(&filter, window, cx);
+                });
+                if !editor.has_binding_for(&filter) {
+                    open_binding_modal_after_loading(cx)
                 }
             })
-            .detach_and_log_err(cx);
+        }
     }
 
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {

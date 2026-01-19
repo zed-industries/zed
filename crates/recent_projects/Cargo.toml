@@ -21,6 +21,7 @@ anyhow.workspace = true
 askpass.workspace = true
 auto_update.workspace = true
 db.workspace = true
+dev_container.workspace = true
 editor.workspace = true
 extension_host.workspace = true
 file_finder.workspace = true

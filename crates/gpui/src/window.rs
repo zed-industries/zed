@@ -942,6 +942,7 @@ pub struct Window {
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
+    focus_before_deactivation: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
@@ -1253,6 +1254,14 @@ impl Window {
             move |active| {
                 handle
                     .update(&mut cx, |_, window, cx| {
+                        if active {
+                            if let Some(focus_id) = window.focus_before_deactivation.take() {
+                                window.focus = Some(focus_id);
+                            }
+                        } else {
+                            window.focus_before_deactivation = window.focus.take();
+                        }
+
                         window.active.set(active);
                         window.modifiers = window.platform_window.modifiers();
                         window.capslock = window.platform_window.capslock();
@@ -1410,6 +1419,7 @@ impl Window {
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
+            focus_before_deactivation: None,
             focus_enabled: true,
             pending_input: None,
             pending_modifier: ModifierState::default(),

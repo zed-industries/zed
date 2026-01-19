@@ -119,14 +119,12 @@ actions!(
         ResetTrialEndUpsell,
         /// Continues the current thread.
         ContinueThread,
-        /// Continues the thread with burn mode enabled.
-        ContinueWithBurnMode,
-        /// Toggles burn mode for faster responses.
-        ToggleBurnMode,
         /// Interrupts the current generation and sends the message immediately.
         SendImmediately,
         /// Sends the next queued message immediately.
         SendNextQueuedMessage,
+        /// Removes the first message from the queue (the next one to be sent).
+        RemoveFirstQueuedMessage,
         /// Clears all messages from the queue.
         ClearMessageQueue,
         /// Opens the permission granularity dropdown for the current tool call.
@@ -460,7 +458,7 @@ fn register_slash_commands(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
+    use agent_settings::{AgentProfileId, AgentSettings};
     use command_palette_hooks::CommandPaletteFilter;
     use editor::actions::AcceptEditPrediction;
     use gpui::{BorrowAppContext, TestAppContext, px};
@@ -503,7 +501,6 @@ mod tests {
             play_sound_when_agent_done: false,
             single_file_review: false,
             model_parameters: vec![],
-            preferred_completion_mode: CompletionMode::Normal,
             enable_feedback: false,
             expand_edit_card: true,
             expand_terminal_card: true,

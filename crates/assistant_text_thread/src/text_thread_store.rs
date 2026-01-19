@@ -383,7 +383,6 @@ impl TextThreadStore {
         let context = cx.new(|cx| {
             TextThread::local(
                 self.languages.clone(),
-                Some(self.project.clone()),
                 self.prompt_builder.clone(),
                 self.slash_commands.clone(),
                 cx,
@@ -405,7 +404,6 @@ impl TextThreadStore {
         let replica_id = project.replica_id();
         let capability = project.capability();
         let language_registry = self.languages.clone();
-        let project = self.project.clone();
 
         let prompt_builder = self.prompt_builder.clone();
         let slash_commands = self.slash_commands.clone();
@@ -422,7 +420,6 @@ impl TextThreadStore {
                     language_registry,
                     prompt_builder,
                     slash_commands,
-                    Some(project),
                     cx,
                 )
             });
@@ -459,7 +456,6 @@ impl TextThreadStore {
 
         let fs = self.fs.clone();
         let languages = self.languages.clone();
-        let project = self.project.clone();
         let load = cx.background_spawn({
             let path = path.clone();
             async move {
@@ -479,7 +475,6 @@ impl TextThreadStore {
                     languages,
                     prompt_builder,
                     slash_commands,
-                    Some(project),
                     cx,
                 )
             });
@@ -598,7 +593,6 @@ impl TextThreadStore {
         let replica_id = project.replica_id();
         let capability = project.capability();
         let language_registry = self.languages.clone();
-        let project = self.project.clone();
         let request = self.client.request(proto::OpenContext {
             project_id,
             context_id: text_thread_id.to_proto(),
@@ -616,7 +610,6 @@ impl TextThreadStore {
                     language_registry,
                     prompt_builder,
                     slash_commands,
-                    Some(project),
                     cx,
                 )
             });

@@ -33,6 +33,7 @@ impl Into<gpui::SurfaceSource> for RemoteVideoFrame {
 }
 pub(crate) fn play_remote_video_track(
     _track: &crate::RemoteVideoTrack,
+    _: &gpui::BackgroundExecutor,
 ) -> impl futures::Stream<Item = RemoteVideoFrame> + use<> {
     futures::stream::pending()
 }

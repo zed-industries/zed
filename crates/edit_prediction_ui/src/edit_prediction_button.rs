@@ -1344,7 +1344,7 @@ fn toggle_show_edit_predictions_for_language(
             .all_languages
             .languages
             .0
-            .entry(language.name().0)
+            .entry(language.name().0.to_string())
             .or_default()
             .show_edit_predictions = Some(!show_edit_predictions);
     });

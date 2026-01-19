@@ -6,9 +6,7 @@ use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, PredictEditsBody, PredictEditsResponse,
     RejectEditPredictionsBody,
-    predict_edits_v3::{
-        RawCompletionChoice, RawCompletionRequest, RawCompletionResponse, RawCompletionUsage,
-    },
+    predict_edits_v3::{PredictEditsV3Request, PredictEditsV3Response},
 };
 use futures::{
     AsyncReadExt, StreamExt,
@@ -72,7 +70,7 @@ async fn test_current_state(cx: &mut TestAppContext) {
 
     respond_tx
         .send(model_response(
-            request,
+            &request,
             indoc! {r"
                 --- a/root/1.txt
                 +++ b/root/1.txt
@@ -129,7 +127,7 @@ async fn test_current_state(cx: &mut TestAppContext) {
     let (request, respond_tx) = requests.predict.next().await.unwrap();
     respond_tx
         .send(model_response(
-            request,
+            &request,
             indoc! {r#"
                 --- a/root/2.txt
                 +++ b/root/2.txt
@@ -213,7 +211,7 @@ async fn test_simple_request(cx: &mut TestAppContext) {
 
     respond_tx
         .send(model_response(
-            request,
+            &request,
             indoc! { r"
                 --- a/root/foo.md
                 +++ b/root/foo.md
@@ -290,7 +288,7 @@ async fn test_request_events(cx: &mut TestAppContext) {
 
     respond_tx
         .send(model_response(
-            request,
+            &request,
             indoc! {r#"
                 --- a/root/foo.md
                 +++ b/root/foo.md
@@ -622,8 +620,8 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
     });
 
     let (request, respond_tx) = requests.predict.next().await.unwrap();
-    let response = model_response(request, "");
-    let id = response.id.clone();
+    let response = model_response(&request, "");
+    let id = response.request_id.clone();
     respond_tx.send(response).unwrap();
 
     cx.run_until_parked();
@@ -682,8 +680,8 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
         buffer.set_text("Hello!\nHow are you?\nBye", cx);
     });
 
-    let response = model_response(request, SIMPLE_DIFF);
-    let id = response.id.clone();
+    let response = model_response(&request, SIMPLE_DIFF);
+    let id = response.request_id.clone();
     respond_tx.send(response).unwrap();
 
     cx.run_until_parked();
@@ -747,8 +745,8 @@ async fn test_replace_current(cx: &mut TestAppContext) {
     });
 
     let (request, respond_tx) = requests.predict.next().await.unwrap();
-    let first_response = model_response(request, SIMPLE_DIFF);
-    let first_id = first_response.id.clone();
+    let first_response = model_response(&request, SIMPLE_DIFF);
+    let first_id = first_response.request_id.clone();
     respond_tx.send(first_response).unwrap();
 
     cx.run_until_parked();
@@ -770,8 +768,8 @@ async fn test_replace_current(cx: &mut TestAppContext) {
     });
 
     let (request, respond_tx) = requests.predict.next().await.unwrap();
-    let second_response = model_response(request, SIMPLE_DIFF);
-    let second_id = second_response.id.clone();
+    let second_response = model_response(&request, SIMPLE_DIFF);
+    let second_id = second_response.request_id.clone();
     respond_tx.send(second_response).unwrap();
 
     cx.run_until_parked();
@@ -829,8 +827,8 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
     });
 
     let (request, respond_tx) = requests.predict.next().await.unwrap();
-    let first_response = model_response(request, SIMPLE_DIFF);
-    let first_id = first_response.id.clone();
+    let first_response = model_response(&request, SIMPLE_DIFF);
+    let first_id = first_response.request_id.clone();
     respond_tx.send(first_response).unwrap();
 
     cx.run_until_parked();
@@ -854,7 +852,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
     let (request, respond_tx) = requests.predict.next().await.unwrap();
     // worse than current prediction
     let second_response = model_response(
-        request,
+        &request,
         indoc! { r"
             --- a/root/foo.md
             +++ b/root/foo.md
@@ -865,7 +863,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
              Bye
         "},
     );
-    let second_id = second_response.id.clone();
+    let second_id = second_response.request_id.clone();
     respond_tx.send(second_response).unwrap();
 
     cx.run_until_parked();
@@ -935,8 +933,8 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     // second responds first
-    let second_response = model_response(request, SIMPLE_DIFF);
-    let second_id = second_response.id.clone();
+    let second_response = model_response(&request, SIMPLE_DIFF);
+    let second_id = second_response.request_id.clone();
     respond_second.send(second_response).unwrap();
 
     cx.run_until_parked();
@@ -953,8 +951,8 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
         );
     });
 
-    let first_response = model_response(request1, SIMPLE_DIFF);
-    let first_id = first_response.id.clone();
+    let first_response = model_response(&request1, SIMPLE_DIFF);
+    let first_id = first_response.request_id.clone();
     respond_first.send(first_response).unwrap();
 
     cx.run_until_parked();
@@ -1046,8 +1044,8 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 
     let (request3, respond_third) = requests.predict.next().await.unwrap();
 
-    let first_response = model_response(request1, SIMPLE_DIFF);
-    let first_id = first_response.id.clone();
+    let first_response = model_response(&request1, SIMPLE_DIFF);
+    let first_id = first_response.request_id.clone();
     respond_first.send(first_response).unwrap();
 
     cx.run_until_parked();
@@ -1064,8 +1062,8 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
         );
     });
 
-    let cancelled_response = model_response(request2, SIMPLE_DIFF);
-    let cancelled_id = cancelled_response.id.clone();
+    let cancelled_response = model_response(&request2, SIMPLE_DIFF);
+    let cancelled_id = cancelled_response.request_id.clone();
     respond_second.send(cancelled_response).unwrap();
 
     cx.run_until_parked();
@@ -1082,8 +1080,8 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
         );
     });
 
-    let third_response = model_response(request3, SIMPLE_DIFF);
-    let third_response_id = third_response.id.clone();
+    let third_response = model_response(&request3, SIMPLE_DIFF);
+    let third_response_id = third_response.request_id.clone();
     respond_third.send(third_response).unwrap();
 
     cx.run_until_parked();
@@ -1327,50 +1325,26 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
 // }
 
 // Generate a model response that would apply the given diff to the active file.
-fn model_response(request: RawCompletionRequest, diff_to_apply: &str) -> RawCompletionResponse {
-    let prompt = &request.prompt;
+fn model_response(request: &PredictEditsV3Request, diff_to_apply: &str) -> PredictEditsV3Response {
+    let excerpt =
+        request.input.cursor_excerpt[request.input.editable_range_in_excerpt.clone()].to_string();
+    let new_excerpt = apply_diff_to_string(diff_to_apply, &excerpt).unwrap();
 
-    let current_marker = "<|fim_middle|>current\n";
-    let updated_marker = "<|fim_middle|>updated\n";
-    let suffix_marker = "<|fim_suffix|>\n";
-    let cursor = "<|user_cursor|>";
-
-    let start_ix = current_marker.len() + prompt.find(current_marker).unwrap();
-    let end_ix = start_ix + &prompt[start_ix..].find(updated_marker).unwrap();
-    let excerpt = prompt[start_ix..end_ix].replace(cursor, "");
-    // In v0113_ordered format, the excerpt contains <|fim_suffix|> and suffix content.
-    // Strip that out to get just the editable region.
-    let excerpt = if let Some(suffix_pos) = excerpt.find(suffix_marker) {
-        &excerpt[..suffix_pos]
-    } else {
-        &excerpt
-    };
-    let new_excerpt = apply_diff_to_string(diff_to_apply, excerpt).unwrap();
-
-    RawCompletionResponse {
-        id: Uuid::new_v4().to_string(),
-        object: "text_completion".into(),
-        created: 0,
-        model: "model".into(),
-        choices: vec![RawCompletionChoice {
-            text: new_excerpt,
-            finish_reason: None,
-        }],
-        usage: RawCompletionUsage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        },
+    PredictEditsV3Response {
+        request_id: Uuid::new_v4().to_string(),
+        output: new_excerpt,
     }
 }
 
-fn prompt_from_request(request: &RawCompletionRequest) -> &str {
-    &request.prompt
+fn prompt_from_request(request: &PredictEditsV3Request) -> String {
+    zeta_prompt::format_zeta_prompt(&request.input, request.prompt_version)
 }
 
 struct RequestChannels {
-    predict:
-        mpsc::UnboundedReceiver<(RawCompletionRequest, oneshot::Sender<RawCompletionResponse>)>,
+    predict: mpsc::UnboundedReceiver<(
+        PredictEditsV3Request,
+        oneshot::Sender<PredictEditsV3Response>,
+    )>,
     reject: mpsc::UnboundedReceiver<(RejectEditPredictionsBody, oneshot::Sender<()>)>,
 }
 
@@ -1397,7 +1371,7 @@ fn init_test_with_fake_client(
                             "token": "test"
                         }))
                         .unwrap(),
-                        "/predict_edits/raw" => {
+                        "/predict_edits/v3" => {
                             let mut buf = Vec::new();
                             body.read_to_end(&mut buf).await.ok();
                             let req = serde_json::from_slice(&buf).unwrap();
@@ -1677,20 +1651,9 @@ async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppConte
 
     // Model returns output WITH a trailing newline, even though the buffer doesn't have one.
     // Zeta2 should normalize both sides before diffing, so no spurious newline is inserted.
-    let response = RawCompletionResponse {
-        id: Uuid::new_v4().to_string(),
-        object: "text_completion".into(),
-        created: 0,
-        model: "model".into(),
-        choices: vec![RawCompletionChoice {
-            text: "hello world\n".to_string(),
-            finish_reason: None,
-        }],
-        usage: RawCompletionUsage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        },
+    let response = PredictEditsV3Response {
+        request_id: Uuid::new_v4().to_string(),
+        output: "hello world\n".to_string(),
     };
     respond_tx.send(response).unwrap();
 

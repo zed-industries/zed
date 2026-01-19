@@ -1220,6 +1220,21 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         })
     }
 
+    fn supports_load_session(&self, _cx: &App) -> bool {
+        true
+    }
+
+    fn load_session(
+        self: Rc<Self>,
+        session: AgentSessionInfo,
+        _project: Entity<Project>,
+        _cwd: &Path,
+        cx: &mut App,
+    ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
+        self.0
+            .update(cx, |agent, cx| agent.open_thread(session.session_id, cx))
+    }
+
     fn auth_methods(&self) -> &[acp::AuthMethod] {
         &[] // No auth for in-process
     }

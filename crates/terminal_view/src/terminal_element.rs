@@ -844,11 +844,8 @@ impl Element for TerminalElement {
             } => {
                 let rem_size = window.rem_size();
                 let line_height = f32::from(window.text_style().font_size.to_pixels(rem_size))
-                    * TerminalSettings::get_global(cx)
-                        .line_height
-                        .value()
-                        .to_pixels(rem_size);
-                (displayed_lines * line_height).into()
+                    * TerminalSettings::get_global(cx).line_height.value();
+                px(displayed_lines as f32 * line_height).into()
             }
             ContentMode::Scrollable => {
                 if let TerminalMode::Embedded { .. } = &self.mode {
@@ -956,7 +953,7 @@ impl Element for TerminalElement {
                     font_fallbacks,
                     font_size: font_size.into(),
                     font_style: FontStyle::Normal,
-                    line_height: line_height.into(),
+                    line_height: px(line_height).into(),
                     background_color: Some(theme.colors().terminal_ansi_background),
                     white_space: WhiteSpace::Normal,
                     // These are going to be overridden per-cell
@@ -971,8 +968,7 @@ impl Element for TerminalElement {
                 let (dimensions, line_height_px) = {
                     let rem_size = window.rem_size();
                     let font_pixels = text_style.font_size.to_pixels(rem_size);
-                    // TODO: line_height should be an f32 not an AbsoluteLength.
-                    let line_height = f32::from(font_pixels) * line_height.to_pixels(rem_size);
+                    let line_height = f32::from(font_pixels) * line_height;
                     let font_id = cx.text_system().resolve_font(&text_style.font());
 
                     let cell_width = text_system
@@ -995,7 +991,7 @@ impl Element for TerminalElement {
                     origin.x += gutter;
 
                     (
-                        TerminalBounds::new(line_height, cell_width, Bounds { origin, size }),
+                        TerminalBounds::new(px(line_height), cell_width, Bounds { origin, size }),
                         line_height,
                     )
                 };
@@ -1106,9 +1102,10 @@ impl Element for TerminalElement {
                     // internal line number (which can be negative in Scrollable mode for
                     // scrollback history).
                     let rows_above_viewport =
-                        ((intersection.top() - bounds.top()).max(px(0.)) / line_height_px) as usize;
+                        f32::from((intersection.top() - bounds.top()).max(px(0.)) / line_height_px)
+                            as usize;
                     let visible_row_count =
-                        (intersection.size.height / line_height_px).ceil() as usize + 1;
+                        f32::from((intersection.size.height / line_height_px).ceil()) as usize + 1;
 
                     TerminalElement::layout_grid(
                         // Group cells by line and filter to only the visible screen rows.

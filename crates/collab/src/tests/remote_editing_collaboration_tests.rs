@@ -857,11 +857,11 @@ async fn test_slow_adapter_startup_retries(
 async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &mut TestAppContext) {
     cx_a.update(|cx| {
         release_channel::init(semver::Version::new(0, 0, 0), cx);
-        project::trusted_worktrees::init(HashMap::default(), None, None, cx);
+        project::trusted_worktrees::init(HashMap::default(), cx);
     });
     server_cx.update(|cx| {
         release_channel::init(semver::Version::new(0, 0, 0), cx);
-        project::trusted_worktrees::init(HashMap::default(), None, None, cx);
+        project::trusted_worktrees::init(HashMap::default(), cx);
     });
 
     let mut server = TestServer::start(cx_a.executor().clone()).await;

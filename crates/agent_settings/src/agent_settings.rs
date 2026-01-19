@@ -43,7 +43,6 @@ pub struct AgentSettings {
     pub play_sound_when_agent_done: bool,
     pub single_file_review: bool,
     pub model_parameters: Vec<LanguageModelParameters>,
-    pub preferred_completion_mode: CompletionMode,
     pub enable_feedback: bool,
     pub expand_edit_card: bool,
     pub expand_terminal_card: bool,
@@ -106,33 +105,6 @@ impl AgentSettings {
             .iter()
             .map(|sel| ModelId::new(format!("{}/{}", sel.provider.0, sel.model)))
             .collect()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum CompletionMode {
-    #[default]
-    Normal,
-    #[serde(alias = "max")]
-    Burn,
-}
-
-impl From<CompletionMode> for cloud_llm_client::CompletionMode {
-    fn from(value: CompletionMode) -> Self {
-        match value {
-            CompletionMode::Normal => cloud_llm_client::CompletionMode::Normal,
-            CompletionMode::Burn => cloud_llm_client::CompletionMode::Max,
-        }
-    }
-}
-
-impl From<settings::CompletionMode> for CompletionMode {
-    fn from(value: settings::CompletionMode) -> Self {
-        match value {
-            settings::CompletionMode::Normal => CompletionMode::Normal,
-            settings::CompletionMode::Burn => CompletionMode::Burn,
-        }
     }
 }
 
@@ -281,7 +253,6 @@ impl Settings for AgentSettings {
             play_sound_when_agent_done: agent.play_sound_when_agent_done.unwrap(),
             single_file_review: agent.single_file_review.unwrap(),
             model_parameters: agent.model_parameters,
-            preferred_completion_mode: agent.preferred_completion_mode.unwrap().into(),
             enable_feedback: agent.enable_feedback.unwrap(),
             expand_edit_card: agent.expand_edit_card.unwrap(),
             expand_terminal_card: agent.expand_terminal_card.unwrap(),

@@ -899,7 +899,6 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
-            mode: None,
             stop: vec![],
             thinking_allowed: true,
         };
@@ -933,7 +932,6 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
-            mode: None,
             stop: vec![],
             thinking_allowed: true,
         };

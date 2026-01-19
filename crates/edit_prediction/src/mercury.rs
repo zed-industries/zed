@@ -15,8 +15,8 @@ use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
 use zeta_prompt::ZetaPromptInput;
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
-const MAX_CONTEXT_TOKENS: usize = 150;
-const MAX_REWRITE_TOKENS: usize = 350;
+const MAX_REWRITE_TOKENS: usize = 150;
+const MAX_CONTEXT_TOKENS: usize = 350;
 
 pub struct Mercury {
     pub api_token: Entity<ApiKeyState>,
