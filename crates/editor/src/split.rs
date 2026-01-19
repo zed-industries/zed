@@ -49,6 +49,10 @@ struct UnsplitDiff;
 
 #[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
 #[action(namespace = editor)]
+struct ToggleSplitDiff;
+
+#[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
+#[action(namespace = editor)]
 struct JumpToCorrespondingRow;
 
 pub struct SplittableEditor {
@@ -537,6 +541,14 @@ impl SplittableEditor {
 
         target_editor.read(cx).focus_handle(cx).focus(window, cx);
         cx.notify();
+    }
+
+    fn toggle_split(&mut self, _: &ToggleSplitDiff, window: &mut Window, cx: &mut Context<Self>) {
+        if self.secondary.is_some() {
+            self.unsplit(&UnsplitDiff, window, cx);
+        } else {
+            self.split(&SplitDiff, window, cx);
+        }
     }
 
     fn unsplit(&mut self, _: &UnsplitDiff, _: &mut Window, cx: &mut Context<Self>) {
@@ -1177,6 +1189,7 @@ impl Render for SplittableEditor {
             .id("splittable-editor")
             .on_action(cx.listener(Self::split))
             .on_action(cx.listener(Self::unsplit))
+            .on_action(cx.listener(Self::toggle_split))
             .on_action(cx.listener(Self::activate_pane_left))
             .on_action(cx.listener(Self::activate_pane_right))
             .on_action(cx.listener(Self::jump_to_corresponding_row))
