@@ -178,7 +178,7 @@ pub fn run_split_commit(
                                 e
                             );
                             match failed {
-                                FailedHandling::Skip => {
+                                FailedHandling::Skip | FailedHandling::SkipNoFiles => {
                                     eprintln!("{}", err_msg);
                                     continue;
                                 }
@@ -219,7 +219,7 @@ pub fn run_split_commit(
                             e
                         );
                         match failed {
-                            FailedHandling::Skip => {
+                            FailedHandling::Skip | FailedHandling::SkipNoFiles => {
                                 eprintln!("{}", err_msg);
                                 continue;
                             }
