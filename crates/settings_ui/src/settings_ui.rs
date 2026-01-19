@@ -743,6 +743,9 @@ impl Drop for SubPage {
     fn drop(&mut self) {
         if self.link.r#type == SubPageType::Language
             && let Some(mut active_language_global) = active_language_mut()
+            && active_language_global
+                .as_ref()
+                .is_some_and(|language_name| language_name == &self.link.title)
         {
             active_language_global.take();
         }
