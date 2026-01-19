@@ -7898,7 +7898,7 @@ fn file_status_label_color(file_status: Option<FileStatus>) -> Color {
     })
 }
 
-fn header_jump_data(
+pub(crate) fn header_jump_data(
     editor_snapshot: &EditorSnapshot,
     block_row_start: DisplayRow,
     height: u32,
@@ -11165,15 +11165,15 @@ impl PositionMap {
     }
 }
 
-struct BlockLayout {
-    id: BlockId,
-    x_offset: Pixels,
-    row: Option<DisplayRow>,
-    element: AnyElement,
-    available_space: Size<AvailableSpace>,
-    style: BlockStyle,
-    overlaps_gutter: bool,
-    is_buffer_header: bool,
+pub(crate) struct BlockLayout {
+    pub(crate) id: BlockId,
+    pub(crate) x_offset: Pixels,
+    pub(crate) row: Option<DisplayRow>,
+    pub(crate) element: AnyElement,
+    pub(crate) available_space: Size<AvailableSpace>,
+    pub(crate) style: BlockStyle,
+    pub(crate) overlaps_gutter: bool,
+    pub(crate) is_buffer_header: bool,
 }
 
 pub fn layout_line(

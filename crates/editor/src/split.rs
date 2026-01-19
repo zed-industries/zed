@@ -17,9 +17,9 @@ use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
     Styled as _, Window, div,
 };
-use workspace::{
-    ActivePaneDecorator, Item, ItemHandle, Pane, PaneGroup, SplitDirection, Workspace,
-};
+
+use crate::split_editor_view::SplitEditorView;
+use workspace::{Item, ItemHandle, Pane, PaneGroup, SplitDirection, Workspace};
 
 use crate::{
     DisplayMap, Editor, EditorEvent,
@@ -68,6 +68,10 @@ struct SecondaryEditor {
 impl SplittableEditor {
     pub fn primary_editor(&self) -> &Entity<Editor> {
         &self.primary_editor
+    }
+
+    pub fn secondary_editor(&self) -> Option<&Entity<Editor>> {
+        self.secondary.as_ref().map(|s| &s.editor)
     }
 
     pub fn last_selected_editor(&self) -> &Entity<Editor> {
@@ -928,22 +932,16 @@ impl Focusable for SplittableEditor {
 impl Render for SplittableEditor {
     fn render(
         &mut self,
-        window: &mut ui::Window,
+        _window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
-        let inner = if self.secondary.is_none() {
-            self.primary_editor.clone().into_any_element()
-        } else if let Some(active) = self.panes.panes().into_iter().next() {
-            self.panes
-                .render(
-                    None,
-                    &ActivePaneDecorator::new(active, &self.workspace),
-                    window,
-                    cx,
-                )
-                .into_any_element()
+        let inner = if self.secondary.is_some() {
+            // In split mode: use SplitEditorView to render both editors side-by-side
+            let style = self.primary_editor.read(cx).create_style(cx);
+            SplitEditorView::new(cx.entity().clone(), style).into_any_element()
         } else {
-            div().into_any_element()
+            // Not in split mode: render just the primary editor
+            self.primary_editor.clone().into_any_element()
         };
         div()
             .id("splittable-editor")

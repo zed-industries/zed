@@ -14,6 +14,7 @@
 pub mod actions;
 pub mod blink_manager;
 mod bracket_colorization;
+pub mod buffer_header_view;
 mod clangd_ext;
 pub mod code_context_menus;
 pub mod display_map;
@@ -37,6 +38,7 @@ mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
 mod split;
+pub mod split_editor_view;
 pub mod tasks;
 
 #[cfg(test)]
@@ -56,6 +58,8 @@ pub use editor_settings::{
     CompletionDetailAlignment, CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings,
     HideMouseMode, ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
 };
+pub use buffer_header_view::BufferHeadersView;
+pub use split_editor_view::SplitEditorView;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
 };
@@ -1704,7 +1708,7 @@ pub(crate) struct FocusedBlock {
 }
 
 #[derive(Clone, Debug)]
-enum JumpData {
+pub enum JumpData {
     MultiBufferRow {
         row: MultiBufferRow,
         line_offset_from_top: u32,
@@ -22405,7 +22409,7 @@ impl Editor {
         self.open_excerpts_common(None, false, window, cx)
     }
 
-    fn open_excerpts_common(
+    pub(crate) fn open_excerpts_common(
         &mut self,
         jump_data: Option<JumpData>,
         split: bool,
@@ -23285,7 +23289,7 @@ impl Editor {
         self.active_diagnostics == ActiveDiagnostic::All || !self.mode().is_full()
     }
 
-    fn create_style(&self, cx: &App) -> EditorStyle {
+    pub(crate) fn create_style(&self, cx: &App) -> EditorStyle {
         let settings = ThemeSettings::get_global(cx);
 
         let mut text_style = match self.mode {
