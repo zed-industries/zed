@@ -1113,7 +1113,7 @@ impl RunningState {
                             task_with_shell.clone(),
                             cx,
                         )
-                    })?.await?;
+                    }).await?;
 
                 let terminal_view = cx.new_window_entity(|window, cx| {
                     TerminalView::new(
@@ -1135,7 +1135,7 @@ impl RunningState {
                 })?;
 
                 let exit_status = terminal
-                    .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
+                    .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))
                     .await
                     .context("Failed to wait for completed task")?;
 
@@ -1302,7 +1302,7 @@ impl RunningState {
                     .pid()
                     .map(|pid| pid.as_u32())
                     .context("Terminal was spawned but PID was not available")
-            })?
+            })
         });
 
         cx.background_spawn(async move { anyhow::Ok(sender.send(terminal_task.await).await?) })

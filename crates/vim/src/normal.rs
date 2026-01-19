@@ -1867,6 +1867,24 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_percent_in_comment(cx: &mut TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate_at_each_offset("%", "// ˇconsole.logˇ(ˇvaˇrˇ)ˇ;")
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("%", "// ˇ{ ˇ{ˇ}ˇ }ˇ")
+            .await
+            .assert_matches();
+        // Template-style brackets (like Liquid {% %} and {{ }})
+        cx.simulate_at_each_offset("%", "ˇ{ˇ% block %ˇ}ˇ")
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("%", "ˇ{ˇ{ˇ var ˇ}ˇ}ˇ")
+            .await
+            .assert_matches();
+    }
+
+    #[gpui::test]
     async fn test_end_of_line_with_neovim(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -1931,6 +1949,19 @@ mod test {
         );
 
         cx.assert_binding_normal("e", indoc! {"ˇassert_binding"}, indoc! {"asserˇt_binding"});
+
+        // Subword end should stop at EOL
+        cx.assert_binding_normal("e", indoc! {"foo_bˇar\nbaz"}, indoc! {"foo_baˇr\nbaz"});
+
+        // Already at subword end, should move to next subword on next line
+        cx.assert_binding_normal(
+            "e",
+            indoc! {"foo_barˇ\nbaz_qux"},
+            indoc! {"foo_bar\nbaˇz_qux"},
+        );
+
+        // CamelCase at EOL
+        cx.assert_binding_normal("e", indoc! {"fooˇBar\nbaz"}, indoc! {"fooBaˇr\nbaz"});
 
         cx.assert_binding_normal("b", indoc! {"assert_ˇbinding"}, indoc! {"ˇassert_binding"});
 

@@ -74,18 +74,11 @@ jobs:
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
         version: '9'
-    - id: prettier
-      name: steps::prettier
+    - name: steps::prettier
       run: ./script/prettier
       shell: bash -euxo pipefail {0}
-    - id: cargo_fmt
-      name: steps::cargo_fmt
+    - name: steps::cargo_fmt
       run: cargo fmt --all -- --check
-      shell: bash -euxo pipefail {0}
-    - id: record_style_failure
-      name: steps::record_style_failure
-      if: always()
-      run: echo "failed=${{ steps.prettier.outcome == 'failure' || steps.cargo_fmt.outcome == 'failure' }}" >> "$GITHUB_OUTPUT"
       shell: bash -euxo pipefail {0}
     - name: ./script/check-todos
       run: ./script/check-todos
@@ -97,8 +90,76 @@ jobs:
       uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06
       with:
         config: ./typos.toml
-    outputs:
-      style_failed: ${{ steps.record_style_failure.outputs.failed == 'true' }}
+    timeout-minutes: 60
+  clippy_windows:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: self-32vcpu-windows-2022
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        New-Item -ItemType Directory -Path "./../.cargo" -Force
+        Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
+      shell: pwsh
+    - name: steps::clippy
+      run: ./script/clippy.ps1
+      shell: pwsh
+    timeout-minutes: 60
+  clippy_linux:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+    - name: steps::setup_linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: steps::install_mold
+      run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+      shell: bash -euxo pipefail {0}
+    - name: steps::clippy
+      run: ./script/clippy
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+  clippy_mac:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: self-mini-macos
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::clippy
+      run: ./script/clippy
+      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_windows:
     needs:
@@ -119,10 +180,6 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - id: clippy
-      name: steps::clippy
-      run: ./script/clippy.ps1
-      shell: pwsh
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
@@ -167,15 +224,6 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - id: clippy
-      name: steps::clippy
-      run: ./script/clippy
-      shell: bash -euxo pipefail {0}
-    - id: record_clippy_failure
-      name: steps::record_clippy_failure
-      if: always()
-      run: echo "failed=${{ steps.clippy.outcome == 'failure' }}" >> "$GITHUB_OUTPUT"
-      shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
@@ -189,8 +237,6 @@ jobs:
       run: |
         rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
-    outputs:
-      clippy_failed: ${{ steps.record_clippy_failure.outputs.failed == 'true' }}
     timeout-minutes: 60
   run_tests_mac:
     needs:
@@ -211,10 +257,6 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - id: clippy
-      name: steps::clippy
-      run: ./script/clippy
-      shell: bash -euxo pipefail {0}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
       shell: bash -euxo pipefail {0}
@@ -371,6 +413,9 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
+      shell: bash -euxo pipefail {0}
+    - name: ./script/generate-action-metadata
+      run: ./script/generate-action-metadata
       shell: bash -euxo pipefail {0}
     - name: run_tests::check_docs::install_mdbook
       uses: peaceiris/actions-mdbook@ee69d230fe19748b7abf22df32acaa93833fad08
@@ -552,6 +597,9 @@ jobs:
     needs:
     - orchestrate
     - check_style
+    - clippy_windows
+    - clippy_linux
+    - clippy_mac
     - run_tests_windows
     - run_tests_linux
     - run_tests_mac
@@ -578,6 +626,9 @@ jobs:
 
         check_result "orchestrate" "${{ needs.orchestrate.result }}"
         check_result "check_style" "${{ needs.check_style.result }}"
+        check_result "clippy_windows" "${{ needs.clippy_windows.result }}"
+        check_result "clippy_linux" "${{ needs.clippy_linux.result }}"
+        check_result "clippy_mac" "${{ needs.clippy_mac.result }}"
         check_result "run_tests_windows" "${{ needs.run_tests_windows.result }}"
         check_result "run_tests_linux" "${{ needs.run_tests_linux.result }}"
         check_result "run_tests_mac" "${{ needs.run_tests_mac.result }}"
@@ -592,24 +643,6 @@ jobs:
 
         exit $EXIT_CODE
       shell: bash -euxo pipefail {0}
-  call_autofix:
-    needs:
-    - check_style
-    - run_tests_linux
-    if: always() && (needs.check_style.outputs.style_failed == 'true' || needs.run_tests_linux.outputs.clippy_failed == 'true') && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'
-    runs-on: namespace-profile-2x4-ubuntu-2404
-    steps:
-    - id: get-app-token
-      name: steps::authenticate_as_zippy
-      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
-      with:
-        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
-        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
-    - name: run_tests::call_autofix::dispatch_autofix
-      run: gh workflow run autofix_pr.yml -f pr_number=${{ github.event.pull_request.number }} -f run_clippy=${{ needs.run_tests_linux.outputs.clippy_failed == 'true' }}
-      shell: bash -euxo pipefail {0}
-      env:
-        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true

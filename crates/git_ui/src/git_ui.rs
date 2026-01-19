@@ -1,5 +1,6 @@
 use std::any::Any;
 
+use anyhow::anyhow;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
@@ -10,6 +11,7 @@ use ui::{
 };
 
 mod blame_ui;
+pub mod clone;
 
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -39,6 +41,7 @@ pub mod file_diff_view;
 pub mod file_history_view;
 pub mod git_panel;
 mod git_panel_settings;
+pub mod git_picker;
 pub mod onboarding;
 pub mod picker_prompt;
 pub mod project_diff;
@@ -71,15 +74,22 @@ pub fn init(cx: &mut App) {
         CommitModal::register(workspace);
         git_panel::register(workspace);
         repository_selector::register(workspace);
-        branch_picker::register(workspace);
-        worktree_picker::register(workspace);
-        stash_picker::register(workspace);
+        git_picker::register(workspace);
 
         let project = workspace.project().read(cx);
         if project.is_read_only(cx) {
             return;
         }
         if !project.is_via_collab() {
+            workspace.register_action(
+                |workspace, _: &zed_actions::git::CreatePullRequest, window, cx| {
+                    if let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.create_pull_request(window, cx);
+                        });
+                    }
+                },
+            );
             workspace.register_action(|workspace, _: &git::Fetch, window, cx| {
                 let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                     return;
@@ -343,12 +353,12 @@ impl RenameBranchModal {
             match repo
                 .update(cx, |repo, _| {
                     repo.rename_branch(current_branch, new_name.clone())
-                })?
+                })
                 .await
             {
                 Ok(Ok(_)) => Ok(()),
                 Ok(Err(error)) => Err(error),
-                Err(_) => Err(anyhow::anyhow!("Operation was canceled")),
+                Err(_) => Err(anyhow!("Operation was canceled")),
             }
         })
         .detach_and_prompt_err("Failed to rename branch", window, cx, |_, _, _| None);

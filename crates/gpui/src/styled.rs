@@ -75,10 +75,18 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Sets the truncate overflowing text with an ellipsis (…) if needed.
+    /// Sets the truncate overflowing text with an ellipsis (…) at the end if needed.
     /// [Docs](https://tailwindcss.com/docs/text-overflow#ellipsis)
     fn text_ellipsis(mut self) -> Self {
         self.text_style().text_overflow = Some(TextOverflow::Truncate(ELLIPSIS));
+        self
+    }
+
+    /// Sets the truncate overflowing text with an ellipsis (…) at the start if needed.
+    /// Typically more adequate for file paths where the end is more important than the beginning.
+    /// Note: This doesn't exist in Tailwind CSS.
+    fn text_ellipsis_start(mut self) -> Self {
+        self.text_style().text_overflow = Some(TextOverflow::TruncateStart(ELLIPSIS));
         self
     }
 
@@ -260,6 +268,13 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/align-items#baseline)
     fn items_baseline(mut self) -> Self {
         self.style().align_items = Some(AlignItems::Baseline);
+        self
+    }
+
+    /// Sets the element to stretch flex items to fill the available space along the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-items#stretch)
+    fn items_stretch(mut self) -> Self {
+        self.style().align_items = Some(AlignItems::Stretch);
         self
     }
 

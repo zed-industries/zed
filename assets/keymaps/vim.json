@@ -54,7 +54,7 @@
       "#": "vim::MoveToPrevious",
       "n": "vim::MoveToNextMatch",
       "shift-n": "vim::MoveToPreviousMatch",
-      "%": "vim::Matching",
+      "%": ["vim::Matching", { "match_quotes": true }],
       "f": ["vim::PushFindForward", { "before": false, "multiline": false }],
       "t": ["vim::PushFindForward", { "before": true, "multiline": false }],
       "shift-f": ["vim::PushFindBackward", { "after": false, "multiline": false }],
@@ -67,6 +67,7 @@
       "ctrl-o": "pane::GoBack",
       "ctrl-i": "pane::GoForward",
       "ctrl-]": "editor::GoToDefinition",
+      "ctrl-t": "pane::GoToOlderTag",
       "escape": "vim::SwitchToNormalMode",
       "ctrl-[": "vim::SwitchToNormalMode",
       "v": "vim::ToggleVisual",
@@ -642,7 +643,10 @@
   {
     "context": "vim_operator == helix_m",
     "bindings": {
-      "m": "vim::Matching",
+      "m": ["vim::Matching", { "match_quotes": true }],
+      "s": "vim::PushHelixSurroundAdd",
+      "r": "vim::PushHelixSurroundReplace",
+      "d": "vim::PushHelixSurroundDelete",
     },
   },
   {
@@ -1095,6 +1099,15 @@
       "ctrl-d": "markdown::ScrollPageDown",
       "ctrl-y": "markdown::ScrollUp",
       "ctrl-e": "markdown::ScrollDown",
+    },
+  },
+  {
+    "context": "FileHistoryView",
+    "bindings": {
+      "j": "menu::SelectNext",
+      "k": "menu::SelectPrevious",
+      "g g": "menu::SelectFirst",
+      "shift-g": "menu::SelectLast",
     },
   },
 ]

@@ -30,16 +30,19 @@ use util::{
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
-use crate::{
-    ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, ThemeName, VsCodeSettings, WorktreeId, fallible_options,
-    merge_from::MergeFrom,
-    settings_content::{
-        ExtensionsSettingsContent, ProjectSettingsContent, SettingsContent, UserSettingsContent,
-    },
+use crate::settings_content::{
+    ExtensionsSettingsContent, FontFamilyName, IconThemeName, LanguageSettingsContent,
+    LanguageToSettingsMap, LspSettings, LspSettingsMap, ProjectSettingsContent, SettingsContent,
+    ThemeName, UserSettingsContent,
 };
+use crate::{
+    ActiveSettingsProfileName, ParseStatus, UserSettingsContentExt, VsCodeSettings, WorktreeId,
+};
+use settings_content::{RootUserSettings, merge_from::MergeFrom};
 
-use settings_json::{infer_json_indent_size, parse_json_with_comments, update_value_in_json_text};
+use settings_json::{infer_json_indent_size, update_value_in_json_text};
+
+pub const LSP_SETTINGS_SCHEMA_URL_PREFIX: &str = "zed://schemas/settings/lsp/";
 
 pub trait SettingsKey: 'static + Send + Sync {
     /// The name of a key within the JSON file from which this setting should
@@ -256,13 +259,16 @@ pub struct SettingsJsonSchemaParams<'a> {
     pub font_names: &'a [String],
     pub theme_names: &'a [SharedString],
     pub icon_theme_names: &'a [SharedString],
+    pub lsp_adapter_names: &'a [String],
 }
 
 impl SettingsStore {
     pub fn new(cx: &App, default_settings: &str) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
         let default_settings: Rc<SettingsContent> =
-            parse_json_with_comments(default_settings).unwrap();
+            SettingsContent::parse_json_with_comments(default_settings)
+                .unwrap()
+                .into();
         let mut this = Self {
             setting_values: Default::default(),
             default_settings: default_settings.clone(),
@@ -504,9 +510,9 @@ impl SettingsStore {
         update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
     ) {
         _ = self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
-            cx.read_global(|store: &SettingsStore, cx| {
+            Ok(cx.read_global(|store: &SettingsStore, cx| {
                 store.new_text_for_update(old_text, |content| update(content, cx))
-            })
+            }))
         });
     }
 
@@ -516,9 +522,9 @@ impl SettingsStore {
         vscode_settings: VsCodeSettings,
     ) -> oneshot::Receiver<Result<()>> {
         self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
-            cx.read_global(|store: &SettingsStore, _cx| {
+            Ok(cx.read_global(|store: &SettingsStore, _cx| {
                 store.get_vscode_edits(old_text, &vscode_settings)
-            })
+            }))
         })
     }
 
@@ -661,14 +667,14 @@ impl SettingsStore {
     }
 
     #[inline(always)]
-    fn parse_and_migrate_zed_settings<SettingsContentType: serde::de::DeserializeOwned>(
+    fn parse_and_migrate_zed_settings<SettingsContentType: RootUserSettings>(
         &mut self,
         user_settings_content: &str,
         file: SettingsFile,
     ) -> (Option<SettingsContentType>, SettingsParseResult) {
         let mut migration_status = MigrationStatus::NotNeeded;
         let (settings, parse_status) = if user_settings_content.is_empty() {
-            fallible_options::parse_json("{}")
+            SettingsContentType::parse_json("{}")
         } else {
             let migration_res = migrator::migrate_settings(user_settings_content);
             migration_status = match &migration_res {
@@ -683,7 +689,7 @@ impl SettingsStore {
                 Ok(None) => user_settings_content,
                 Err(_) => user_settings_content,
             };
-            fallible_options::parse_json(content)
+            SettingsContentType::parse_json(content)
         };
 
         let result = SettingsParseResult {
@@ -731,8 +737,9 @@ impl SettingsStore {
         text: &str,
         update: impl FnOnce(&mut SettingsContent),
     ) -> Vec<(Range<usize>, String)> {
-        let old_content: UserSettingsContent =
-            parse_json_with_comments(text).log_err().unwrap_or_default();
+        let old_content = UserSettingsContent::parse_json_with_comments(text)
+            .log_err()
+            .unwrap_or_default();
         let mut new_content = old_content.clone();
         update(&mut new_content.content);
 
@@ -762,7 +769,8 @@ impl SettingsStore {
         default_settings_content: &str,
         cx: &mut App,
     ) -> Result<()> {
-        self.default_settings = parse_json_with_comments(default_settings_content)?;
+        self.default_settings =
+            SettingsContent::parse_json_with_comments(default_settings_content)?.into();
         self.recompute_values(None, cx);
         Ok(())
     }
@@ -810,10 +818,10 @@ impl SettingsStore {
         server_settings_content: &str,
         cx: &mut App,
     ) -> Result<()> {
-        let settings: Option<SettingsContent> = if server_settings_content.is_empty() {
+        let settings = if server_settings_content.is_empty() {
             None
         } else {
-            parse_json_with_comments(server_settings_content)?
+            Option::<SettingsContent>::parse_json_with_comments(server_settings_content)?
         };
 
         // Rewrite the server settings into a content type
@@ -1025,6 +1033,14 @@ impl SettingsStore {
             .subschema_for::<LanguageSettingsContent>()
             .to_value();
 
+        generator.subschema_for::<LspSettings>();
+
+        let lsp_settings_def = generator
+            .definitions()
+            .get("LspSettings")
+            .expect("LspSettings should be defined")
+            .clone();
+
         replace_subschema::<LanguageToSettingsMap>(&mut generator, || {
             json_schema!({
                 "type": "object",
@@ -1060,6 +1076,38 @@ impl SettingsStore {
             json_schema!({
                 "type": "string",
                 "enum": params.icon_theme_names,
+            })
+        });
+
+        replace_subschema::<LspSettingsMap>(&mut generator, || {
+            let mut lsp_properties = serde_json::Map::new();
+
+            for adapter_name in params.lsp_adapter_names {
+                let mut base_lsp_settings = lsp_settings_def
+                    .as_object()
+                    .expect("LspSettings should be an object")
+                    .clone();
+
+                if let Some(properties) = base_lsp_settings.get_mut("properties") {
+                    if let Some(props_obj) = properties.as_object_mut() {
+                        props_obj.insert(
+                            "initialization_options".to_string(),
+                            serde_json::json!({
+                                "$ref": format!("{LSP_SETTINGS_SCHEMA_URL_PREFIX}{adapter_name}")
+                            }),
+                        );
+                    }
+                }
+
+                lsp_properties.insert(
+                    adapter_name.clone(),
+                    serde_json::Value::Object(base_lsp_settings),
+                );
+            }
+
+            json_schema!({
+                "type": "object",
+                "properties": lsp_properties,
             })
         });
 
@@ -1171,14 +1219,6 @@ pub struct SettingsParseResult {
     pub parse_status: ParseStatus,
     /// The result of attempting to migrate the settings file
     pub migration_status: MigrationStatus,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ParseStatus {
-    /// Settings were parsed successfully
-    Success,
-    /// Settings failed to parse
-    Failed { error: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2303,5 +2343,40 @@ mod tests {
                 &SettingsFile::Default,
             ]
         )
+    }
+
+    #[gpui::test]
+    fn test_lsp_settings_schema_generation(cx: &mut App) {
+        let store = SettingsStore::test(cx);
+
+        let schema = store.json_schema(&SettingsJsonSchemaParams {
+            language_names: &["Rust".to_string(), "TypeScript".to_string()],
+            font_names: &["Zed Mono".to_string()],
+            theme_names: &["One Dark".into()],
+            icon_theme_names: &["Zed Icons".into()],
+            lsp_adapter_names: &[
+                "rust-analyzer".to_string(),
+                "typescript-language-server".to_string(),
+            ],
+        });
+
+        let properties = schema
+            .pointer("/$defs/LspSettingsMap/properties")
+            .expect("LspSettingsMap should have properties")
+            .as_object()
+            .unwrap();
+
+        assert!(properties.contains_key("rust-analyzer"));
+        assert!(properties.contains_key("typescript-language-server"));
+
+        let init_options_ref = properties
+            .get("rust-analyzer")
+            .unwrap()
+            .pointer("/properties/initialization_options/$ref")
+            .expect("initialization_options should have a $ref")
+            .as_str()
+            .unwrap();
+
+        assert_eq!(init_options_ref, "zed://schemas/settings/lsp/rust-analyzer");
     }
 }

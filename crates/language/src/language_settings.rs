@@ -9,6 +9,7 @@ use ec4rs::{
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers, SharedString};
 use itertools::{Either, Itertools};
+use settings::IntoGpui;
 
 pub use settings::{
     CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
@@ -122,6 +123,10 @@ pub struct LanguageSettings {
     pub whitespace_map: WhitespaceMap,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
+    /// Whether to continue markdown lists when pressing enter.
+    pub extend_list_on_newline: bool,
+    /// Whether to indent list items when pressing tab after a list marker.
+    pub indent_list_on_tab: bool,
     /// Inlay hint related settings.
     pub inlay_hints: InlayHintSettings,
     /// Whether to automatically close brackets.
@@ -388,6 +393,8 @@ pub struct EditPredictionSettings {
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
+    pub examples_dir: Option<Arc<Path>>,
+    pub example_capture_rate: Option<u16>,
 }
 
 impl EditPredictionSettings {
@@ -567,6 +574,8 @@ impl settings::Settings for AllLanguageSettings {
                     tab: SharedString::new(whitespace_map.tab.unwrap().to_string()),
                 },
                 extend_comment_on_newline: settings.extend_comment_on_newline.unwrap(),
+                extend_list_on_newline: settings.extend_list_on_newline.unwrap(),
+                indent_list_on_tab: settings.indent_list_on_tab.unwrap(),
                 inlay_hints: InlayHintSettings {
                     enabled: inlay_hints.enabled.unwrap(),
                     show_value_hints: inlay_hints.show_value_hints.unwrap(),
@@ -576,7 +585,9 @@ impl settings::Settings for AllLanguageSettings {
                     show_background: inlay_hints.show_background.unwrap(),
                     edit_debounce_ms: inlay_hints.edit_debounce_ms.unwrap(),
                     scroll_debounce_ms: inlay_hints.scroll_debounce_ms.unwrap(),
-                    toggle_on_modifiers_press: inlay_hints.toggle_on_modifiers_press,
+                    toggle_on_modifiers_press: inlay_hints
+                        .toggle_on_modifiers_press
+                        .map(|m| m.into_gpui()),
                 },
                 use_autoclose: settings.use_autoclose.unwrap(),
                 use_auto_surround: settings.use_auto_surround.unwrap(),
@@ -615,7 +626,7 @@ impl settings::Settings for AllLanguageSettings {
             let mut language_settings = all_languages.defaults.clone();
             settings::merge_from::MergeFrom::merge_from(&mut language_settings, settings);
             languages.insert(
-                LanguageName(language_name.clone()),
+                LanguageName(language_name.clone().into()),
                 load_from_content(language_settings),
             );
         }
@@ -693,6 +704,8 @@ impl settings::Settings for AllLanguageSettings {
                 copilot: copilot_settings,
                 codestral: codestral_settings,
                 enabled_in_text_threads,
+                examples_dir: edit_predictions.examples_dir,
+                example_capture_rate: edit_predictions.example_capture_rate,
             },
             defaults: default_language_settings,
             languages,

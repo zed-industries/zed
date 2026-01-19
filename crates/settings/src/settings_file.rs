@@ -7,6 +7,32 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 pub const EMPTY_THEME_NAME: &str = "empty-theme";
 
+/// Settings for visual tests that use proper fonts instead of Courier.
+/// Uses Helvetica Neue for UI (sans-serif) and Menlo for code (monospace),
+/// which are available on all macOS systems.
+#[cfg(any(test, feature = "test-support"))]
+pub fn visual_test_settings() -> String {
+    let mut value =
+        crate::parse_json_with_comments::<serde_json::Value>(crate::default_settings().as_ref())
+            .unwrap();
+    util::merge_non_null_json_value_into(
+        serde_json::json!({
+            "ui_font_family": ".SystemUIFont",
+            "ui_font_features": {},
+            "ui_font_size": 14,
+            "ui_font_fallback": [],
+            "buffer_font_family": "Menlo",
+            "buffer_font_features": {},
+            "buffer_font_size": 14,
+            "buffer_font_fallbacks": [],
+            "theme": EMPTY_THEME_NAME,
+        }),
+        &mut value,
+    );
+    value.as_object_mut().unwrap().remove("languages");
+    serde_json::to_string(&value).unwrap()
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub fn test_settings() -> String {
     let mut value =

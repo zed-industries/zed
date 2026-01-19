@@ -230,11 +230,22 @@ struct VimEdit {
     pub filename: String,
 }
 
+/// Pastes the specified file's contents.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = vim, no_json, no_register)]
+struct VimRead {
+    pub range: Option<CommandRange>,
+    pub filename: String,
+}
+
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = vim, no_json, no_register)]
 struct VimNorm {
     pub range: Option<CommandRange>,
     pub command: String,
+    /// Places cursors at beginning of each given row.
+    /// Overrides given range and current cursor.
+    pub override_rows: Option<Vec<u32>>,
 }
 
 #[derive(Debug)]
@@ -643,6 +654,107 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         });
     });
 
+    Vim::action(editor, cx, |vim, action: &VimRead, window, cx| {
+        vim.update_editor(cx, |vim, editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let end = if let Some(range) = action.range.clone() {
+                let Some(multi_range) = range.buffer_range(vim, editor, window, cx).log_err()
+                else {
+                    return;
+                };
+
+                match &range.start {
+                    // inserting text above the first line uses the command ":0r {name}"
+                    Position::Line { row: 0, offset: 0 } if range.end.is_none() => {
+                        snapshot.clip_point(Point::new(0, 0), Bias::Right)
+                    }
+                    _ => snapshot.clip_point(Point::new(multi_range.end.0 + 1, 0), Bias::Right),
+                }
+            } else {
+                let end_row = editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .range()
+                    .end
+                    .row;
+                snapshot.clip_point(Point::new(end_row + 1, 0), Bias::Right)
+            };
+            let is_end_of_file = end == snapshot.max_point();
+            let edit_range = snapshot.anchor_before(end)..snapshot.anchor_before(end);
+
+            let mut text = if is_end_of_file {
+                String::from('\n')
+            } else {
+                String::new()
+            };
+
+            let mut task = None;
+            if action.filename.is_empty() {
+                text.push_str(
+                    &editor
+                        .buffer()
+                        .read(cx)
+                        .as_singleton()
+                        .map(|buffer| buffer.read(cx).text())
+                        .unwrap_or_default(),
+                );
+            } else {
+                if let Some(project) = editor.project().cloned() {
+                    project.update(cx, |project, cx| {
+                        let Some(worktree) = project.visible_worktrees(cx).next() else {
+                            return;
+                        };
+                        let path_style = worktree.read(cx).path_style();
+                        let Some(path) =
+                            RelPath::new(Path::new(&action.filename), path_style).log_err()
+                        else {
+                            return;
+                        };
+                        task =
+                            Some(worktree.update(cx, |worktree, cx| worktree.load_file(&path, cx)));
+                    });
+                } else {
+                    return;
+                }
+            };
+
+            cx.spawn_in(window, async move |editor, cx| {
+                if let Some(task) = task {
+                    text.push_str(
+                        &task
+                            .await
+                            .log_err()
+                            .map(|loaded_file| loaded_file.text)
+                            .unwrap_or_default(),
+                    );
+                }
+
+                if !text.is_empty() && !is_end_of_file {
+                    text.push('\n');
+                }
+
+                let _ = editor.update_in(cx, |editor, window, cx| {
+                    editor.transact(window, cx, |editor, window, cx| {
+                        editor.edit([(edit_range.clone(), text)], cx);
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            let point = if is_end_of_file {
+                                Point::new(
+                                    edit_range.start.to_point(&snapshot).row.saturating_add(1),
+                                    0,
+                                )
+                            } else {
+                                Point::new(edit_range.start.to_point(&snapshot).row, 0)
+                            };
+                            s.select_ranges([point..point]);
+                        })
+                    });
+                });
+            })
+            .detach();
+        });
+    });
+
     Vim::action(editor, cx, |vim, action: &VimNorm, window, cx| {
         let keystrokes = action
             .command
@@ -650,9 +762,18 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             .map(|c| Keystroke::parse(&c.to_string()).unwrap())
             .collect();
         vim.switch_mode(Mode::Normal, true, window, cx);
-        let initial_selections =
-            vim.update_editor(cx, |_, editor, _| editor.selections.disjoint_anchors_arc());
-        if let Some(range) = &action.range {
+        if let Some(override_rows) = &action.override_rows {
+            vim.update_editor(cx, |_, editor, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.replace_cursors_with(|map| {
+                        override_rows
+                            .iter()
+                            .map(|row| Point::new(*row, 0).to_display_point(map))
+                            .collect()
+                    });
+                });
+            });
+        } else if let Some(range) = &action.range {
             let result = vim.update_editor(cx, |vim, editor, cx| {
                 let range = range.buffer_range(vim, editor, window, cx)?;
                 editor.change_selections(
@@ -681,37 +802,35 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             workspace.send_keystrokes_impl(keystrokes, window, cx)
         });
         let had_range = action.range.is_some();
+        let had_override = action.override_rows.is_some();
 
         cx.spawn_in(window, async move |vim, cx| {
             task.await;
             vim.update_in(cx, |vim, window, cx| {
-                vim.update_editor(cx, |_, editor, cx| {
-                    if had_range {
-                        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
-                            s.select_anchor_ranges([s.newest_anchor().range()]);
-                        })
-                    }
-                });
                 if matches!(vim.mode, Mode::Insert | Mode::Replace) {
                     vim.normal_before(&Default::default(), window, cx);
                 } else {
                     vim.switch_mode(Mode::Normal, true, window, cx);
                 }
-                vim.update_editor(cx, |_, editor, cx| {
-                    if let Some(first_sel) = initial_selections
-                        && let Some(tx_id) = editor
+                if had_override || had_range {
+                    vim.update_editor(cx, |_, editor, cx| {
+                        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+                            s.select_anchor_ranges([s.newest_anchor().range()]);
+                        });
+                        if let Some(tx_id) = editor
                             .buffer()
                             .update(cx, |multi, cx| multi.last_transaction_id(cx))
-                    {
-                        let last_sel = editor.selections.disjoint_anchors_arc();
-                        editor.modify_transaction_selection_history(tx_id, |old| {
-                            old.0 = first_sel;
-                            old.1 = Some(last_sel);
-                        });
-                    }
-                });
+                        {
+                            let last_sel = editor.selections.disjoint_anchors_arc();
+                            editor.modify_transaction_selection_history(tx_id, |old| {
+                                old.0 = old.0.get(..1).unwrap_or(&[]).into();
+                                old.1 = Some(last_sel);
+                            });
+                        }
+                    });
+                }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     });
@@ -901,6 +1020,7 @@ impl VimCommand {
         self
     }
 
+    /// Set argument handler. Trailing whitespace in arguments will be preserved.
     fn args(
         mut self,
         f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
@@ -909,6 +1029,8 @@ impl VimCommand {
         self
     }
 
+    /// Set argument handler. Trailing whitespace in arguments will be trimmed.
+    /// Supports filename autocompletion.
     fn filename(
         mut self,
         f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
@@ -1020,11 +1142,11 @@ impl VimCommand {
         let has_bang = rest.starts_with('!');
         let has_space = rest.starts_with("! ") || rest.starts_with(' ');
         let args = if has_bang {
-            rest.strip_prefix('!')?.trim().to_string()
+            rest.strip_prefix('!')?.trim_start().to_string()
         } else if rest.is_empty() {
             "".into()
         } else {
-            rest.strip_prefix(' ')?.trim().to_string()
+            rest.strip_prefix(' ')?.trim_start().to_string()
         };
         Some(ParsedQuery {
             args,
@@ -1054,10 +1176,13 @@ impl VimCommand {
             return None;
         };
 
+        // If the command does not accept args and we have args, we should do no
+        // action.
         let action = if args.is_empty() {
             action
+        } else if self.has_filename {
+            self.args.as_ref()?(action, args.trim().into())?
         } else {
-            // if command does not accept args and we have args then we should do no action
             self.args.as_ref()?(action, args)?
         };
 
@@ -1338,24 +1463,49 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("e", "dit"), editor::actions::ReloadFile)
             .bang(editor::actions::ReloadFile)
             .filename(|_, filename| Some(VimEdit { filename }.boxed_clone())),
-        VimCommand::new(("sp", "lit"), workspace::SplitHorizontal).filename(|_, filename| {
+        VimCommand::new(
+            ("r", "ead"),
+            VimRead {
+                range: None,
+                filename: "".into(),
+            },
+        )
+        .filename(|_, filename| {
             Some(
-                VimSplit {
-                    vertical: false,
+                VimRead {
+                    range: None,
                     filename,
                 }
                 .boxed_clone(),
             )
+        })
+        .range(|action, range| {
+            let mut action: VimRead = action.as_any().downcast_ref::<VimRead>().unwrap().clone();
+            action.range.replace(range.clone());
+            Some(Box::new(action))
         }),
-        VimCommand::new(("vs", "plit"), workspace::SplitVertical).filename(|_, filename| {
-            Some(
-                VimSplit {
-                    vertical: true,
-                    filename,
-                }
-                .boxed_clone(),
-            )
-        }),
+        VimCommand::new(("sp", "lit"), workspace::SplitHorizontal::default()).filename(
+            |_, filename| {
+                Some(
+                    VimSplit {
+                        vertical: false,
+                        filename,
+                    }
+                    .boxed_clone(),
+                )
+            },
+        ),
+        VimCommand::new(("vs", "plit"), workspace::SplitVertical::default()).filename(
+            |_, filename| {
+                Some(
+                    VimSplit {
+                        vertical: true,
+                        filename,
+                    }
+                    .boxed_clone(),
+                )
+            },
+        ),
         VimCommand::new(("tabe", "dit"), workspace::NewFile)
             .filename(|_action, filename| Some(VimEdit { filename }.boxed_clone())),
         VimCommand::new(("tabnew", ""), workspace::NewFile)
@@ -1472,6 +1622,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             VimNorm {
                 command: "".into(),
                 range: None,
+                override_rows: None,
             },
         )
         .args(|_, args| {
@@ -1479,6 +1630,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
                 VimNorm {
                     command: args,
                     range: None,
+                    override_rows: None,
                 }
                 .boxed_clone(),
             )
@@ -1666,7 +1818,7 @@ pub fn command_interceptor(
     let (range, query) = VimCommand::parse_range(input);
     let range_prefix = input[0..(input.len() - query.len())].to_string();
     let has_trailing_space = query.ends_with(" ");
-    let mut query = query.as_str().trim();
+    let mut query = query.as_str().trim_start();
 
     let on_matching_lines = (query.starts_with('g') || query.starts_with('v'))
         .then(|| {
@@ -1729,7 +1881,7 @@ pub fn command_interceptor(
     } else if on_matching_lines.is_some() {
         commands(cx)
             .iter()
-            .find_map(|command| command.parse(query, &range, cx))
+            .find_map(|command| command.parse(query, &None, cx))
     } else {
         None
     };
@@ -1836,7 +1988,7 @@ pub fn command_interceptor(
                 let (range, query) = VimCommand::parse_range(&string[1..]);
                 let action =
                     match cx.update(|cx| commands(cx).get(cmd_idx)?.parse(&query, &range, cx)) {
-                        Ok(Some(action)) => action,
+                        Some(action) => action,
                         _ => continue,
                     };
                 results.push(CommandInterceptItem {
@@ -2060,6 +2212,19 @@ impl OnMatchingLines {
                 if new_selections.is_empty() {
                     return;
                 }
+
+                if let Some(vim_norm) = action.as_any().downcast_ref::<VimNorm>() {
+                    let mut vim_norm = vim_norm.clone();
+                    vim_norm.override_rows =
+                        Some(new_selections.iter().map(|point| point.row().0).collect());
+                    editor
+                        .update_in(cx, |_, window, cx| {
+                            window.dispatch_action(vim_norm.boxed_clone(), cx);
+                        })
+                        .log_err();
+                    return;
+                }
+
                 editor
                     .update_in(cx, |editor, window, cx| {
                         editor.start_transaction_at(Instant::now(), window, cx);
@@ -2067,6 +2232,7 @@ impl OnMatchingLines {
                             s.replace_cursors_with(|_| new_selections);
                         });
                         window.dispatch_action(action, cx);
+
                         cx.defer_in(window, move |editor, window, cx| {
                             let newest = editor
                                 .selections
@@ -2082,7 +2248,7 @@ impl OnMatchingLines {
                             editor.end_transaction_at(Instant::now(), cx);
                         })
                     })
-                    .ok();
+                    .log_err();
             })
             .detach();
         });
@@ -2576,6 +2742,76 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_command_read(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        let path = Path::new(path!("/root/dir/other.rs"));
+        fs.as_fake().insert_file(path, "1\n2\n3".into()).await;
+
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/root/dir/file.rs"), "", cx);
+        });
+
+        // File without trailing newline
+        cx.set_state("one\ntwo\nthreeˇ", Mode::Normal);
+        cx.simulate_keystrokes(": r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes("enter");
+        cx.assert_state("one\ntwo\nthree\nˇ1\n2\n3", Mode::Normal);
+
+        cx.set_state("oneˇ\ntwo\nthree", Mode::Normal);
+        cx.simulate_keystrokes(": r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes("enter");
+        cx.assert_state("one\nˇ1\n2\n3\ntwo\nthree", Mode::Normal);
+
+        cx.set_state("one\nˇtwo\nthree", Mode::Normal);
+        cx.simulate_keystrokes(": 0 r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes("enter");
+        cx.assert_state("ˇ1\n2\n3\none\ntwo\nthree", Mode::Normal);
+
+        cx.set_state("one\n«ˇtwo\nthree\nfour»\nfive", Mode::Visual);
+        cx.simulate_keystrokes(": r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.assert_state("one\ntwo\nthree\nfour\nˇ1\n2\n3\nfive", Mode::Normal);
+
+        // Empty filename
+        cx.set_state("oneˇ\ntwo\nthree", Mode::Normal);
+        cx.simulate_keystrokes(": r");
+        cx.simulate_keystrokes("enter");
+        cx.assert_state("one\nˇone\ntwo\nthree\ntwo\nthree", Mode::Normal);
+
+        // File with trailing newline
+        fs.as_fake().insert_file(path, "1\n2\n3\n".into()).await;
+        cx.set_state("one\ntwo\nthreeˇ", Mode::Normal);
+        cx.simulate_keystrokes(": r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes("enter");
+        cx.assert_state("one\ntwo\nthree\nˇ1\n2\n3\n", Mode::Normal);
+
+        cx.set_state("oneˇ\ntwo\nthree", Mode::Normal);
+        cx.simulate_keystrokes(": r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes("enter");
+        cx.assert_state("one\nˇ1\n2\n3\n\ntwo\nthree", Mode::Normal);
+
+        cx.set_state("one\n«ˇtwo\nthree\nfour»\nfive", Mode::Visual);
+        cx.simulate_keystrokes(": r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes("enter");
+        cx.assert_state("one\ntwo\nthree\nfour\nˇ1\n2\n3\n\nfive", Mode::Normal);
+
+        cx.set_state("«one\ntwo\nthreeˇ»", Mode::Visual);
+        cx.simulate_keystrokes(": r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes("enter");
+        cx.assert_state("one\ntwo\nthree\nˇ1\n2\n3\n", Mode::Normal);
+
+        // Empty file
+        fs.as_fake().insert_file(path, "".into()).await;
+        cx.set_state("ˇone\ntwo\nthree", Mode::Normal);
+        cx.simulate_keystrokes(": r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes("enter");
+        cx.assert_state("one\nˇtwo\nthree", Mode::Normal);
+    }
+
+    #[gpui::test]
     async fn test_command_quit(cx: &mut TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
@@ -2946,7 +3182,78 @@ mod test {
             jumps over
             the lazy dog
         "});
+
+        cx.set_shared_state(indoc! {"
+            The« quick
+            brownˇ» fox
+            jumps over
+            the lazy dog
+        "})
+            .await;
+
+        cx.simulate_shared_keystrokes(": n o r m space I 1 2 3")
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.simulate_shared_keystrokes("u").await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇThe quick
+            brown fox
+            jumps over
+            the lazy dog
+        "});
+
+        cx.set_shared_state(indoc! {"
+            ˇquick
+            brown fox
+            jumps over
+            the lazy dog
+        "})
+            .await;
+
+        cx.simulate_shared_keystrokes(": n o r m space I T h e space")
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            Theˇ quick
+            brown fox
+            jumps over
+            the lazy dog
+        "});
+
         // Once ctrl-v to input character literals is added there should be a test for redo
+    }
+
+    #[gpui::test]
+    async fn test_command_g_normal(cx: &mut TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            ˇfoo
+
+            foo
+        "})
+            .await;
+
+        cx.simulate_shared_keystrokes(": % g / f o o / n o r m space A b a r")
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.run_until_parked();
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            foobar
+
+            foobaˇr
+        "});
+
+        cx.simulate_shared_keystrokes("u").await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            foˇo
+
+            foo
+        "});
     }
 
     #[gpui::test]
