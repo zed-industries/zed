@@ -6483,7 +6483,6 @@ name = "fs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ashpd",
  "async-tar",
  "async-trait",
  "collections",
@@ -6496,8 +6495,6 @@ dependencies = [
  "libc",
  "log",
  "notify 8.2.0",
- "objc2",
- "objc2-foundation",
  "parking_lot",
  "paths",
  "proto",
@@ -6508,6 +6505,7 @@ dependencies = [
  "tempfile",
  "text",
  "time",
+ "trash",
  "util",
  "uuid",
  "windows 0.61.3",
@@ -17536,6 +17534,7 @@ dependencies = [
  "once_cell",
  "percent-encoding",
  "scopeguard",
+ "smallvec",
  "urlencoding",
  "windows 0.61.3",
 ]

@@ -4,14 +4,12 @@ mod mac_watcher;
 #[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
-use collections::HashMap;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
+use trash::Trash;
 
 use anyhow::{Context as _, Result, anyhow};
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-use ashpd::desktop::trash;
 use futures::stream::iter;
 use gpui::App;
 use gpui::BackgroundExecutor;
@@ -106,9 +104,9 @@ pub trait Fs: Send + Sync {
     async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()>;
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
+    async fn trash_dir(&self, path: &Path) -> Result<()>;
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
-    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
+    async fn trash_file(&self, path: &Path) -> Result<()>;
     async fn restore_from_trash(&self, path: &Path) -> Result<()>;
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>>;
@@ -312,7 +310,7 @@ pub struct RealFs {
     executor: BackgroundExecutor,
     next_job_id: Arc<AtomicUsize>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
-    trash: Arc<Mutex<HashMap<PathBuf, PathBuf>>>,
+    trash: Arc<Mutex<trash::Trash>>,
 }
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
@@ -420,7 +418,7 @@ impl RealFs {
             executor,
             next_job_id: Arc::new(AtomicUsize::new(0)),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
-            trash: Arc::new(Mutex::new(HashMap::default())),
+            trash: Arc::new(Mutex::new(Trash::default())),
         }
     }
 
@@ -646,156 +644,25 @@ impl Fs for RealFs {
         }
     }
 
-    #[cfg(target_os = "macos")]
-    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        let path_buf = path.to_path_buf();
-        let trash_path = smol::unblock(move || {
-            use objc2_foundation::{NSFileManager, NSString, NSURL};
+    async fn trash_file(&self, path: &Path) -> Result<()> {
+        let path = path.to_path_buf();
+        let trash = self.trash.clone();
 
-            let path_str = path_buf.to_string_lossy();
-            let ns_string = NSString::from_str(&path_str);
-            let url = unsafe { NSURL::fileURLWithPath(&ns_string) };
-            let file_manager = unsafe { NSFileManager::defaultManager() };
-
-            let mut result_url: Option<objc2::rc::Retained<NSURL>> = None;
-
-            unsafe {
-                file_manager.trashItemAtURL_resultingItemURL_error(&url, Some(&mut result_url))
-            }
-            .map_err(|e| anyhow::anyhow!("Failed to trash file: {}", e.localizedDescription()))?;
-
-            let trash_path = result_url
-                .and_then(|url| unsafe { url.path() })
-                .map(|p| PathBuf::from(p.to_string()));
-
-            anyhow::Ok(trash_path)
-        })
-        .await?;
-
-        if let Some(trash_path) = trash_path {
-            self.trash.lock().insert(path.to_path_buf(), trash_path);
-        };
-
-        Ok(())
+        smol::unblock(move || trash.lock().trash_file(&path)).await
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        // TODO: We need to construct the trash path for proper restore support.
-        // Evaluate: https://github.com/Byron/trash-rs/blob/master/src/freedesktop.rs
-        if let Ok(Some(metadata)) = self.metadata(path).await
-            && metadata.is_symlink
-        {
-            // TODO: trash_file does not support trashing symlinks yet - https://github.com/bilelmoussaoui/ashpd/issues/255
-            return self
-                .remove_file(path, RemoveOptions::default())
-                .await
-                .map(|_| ());
-        }
-        let original_path = path.to_path_buf();
-        let file = smol::fs::File::open(path).await?;
-        match trash::trash_file(&file.as_fd()).await {
-            Ok(_) => {
-                // TODO: On Linux, ashpd doesn't return the trash path. We store an empty
-                // path_in_trash for now - restore won't work until this is properly implemented.
-                let trash_item = TrashItem {
-                    path_in_trash: PathBuf::new(),
-                    original_path: original_path.clone(),
-                };
-                self.trash.lock().insert(original_path, trash_item);
-                Ok(())
-            }
-            Err(err) => {
-                log::error!("Failed to trash file: {}", err);
-                // Trashing files can fail if you don't have a trashing dbus service configured.
-                // In that case, delete the file directly instead.
-                self.remove_file(path, RemoveOptions::default()).await
-            }
-        }
-    }
+    async fn trash_dir(&self, path: &Path) -> Result<()> {
+        let path = path.to_path_buf();
+        let trash = self.trash.clone();
 
-    #[cfg(target_os = "windows")]
-    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        // TODO: We need to construct the trash path for proper restore support.
-        // Evaluate: https://github.com/Byron/trash-rs/blob/master/src/windows.rs
-        use util::paths::SanitizedPath;
-        use windows::{
-            Storage::{StorageDeleteOption, StorageFile},
-            core::HSTRING,
-        };
-        // TODO(windows): When new version of `windows-rs` releases, make this operation `async`
-        let original_path = path.to_path_buf();
-        let canonical_path = path.canonicalize()?;
-        let sanitized_path = SanitizedPath::new(&canonical_path);
-        let path_string = sanitized_path.to_string();
-        let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path_string))?.get()?;
-        file.DeleteAsync(StorageDeleteOption::Default)?.get()?;
-
-        // TODO: On Windows, the API doesn't return the trash path. We store an empty
-        // path_in_trash for now - restore won't work until this is properly implemented.
-        let trash_item = TrashItem {
-            path_in_trash: PathBuf::new(),
-            original_path: original_path.clone(),
-        };
-        self.trash.lock().insert(original_path, trash_item);
-        Ok(())
-    }
-
-    #[cfg(target_os = "macos")]
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.trash_file(path, options).await
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.trash_file(path, options).await
-    }
-
-    #[cfg(target_os = "windows")]
-    async fn trash_dir(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        // TODO: We need to construct the trash path for proper restore support.
-        // Evaluate: https://github.com/Byron/trash-rs/blob/master/src/windows.rs
-        use util::paths::SanitizedPath;
-        use windows::{
-            Storage::{StorageDeleteOption, StorageFolder},
-            core::HSTRING,
-        };
-
-        // TODO(windows): When new version of `windows-rs` releases, make this operation `async`
-        let original_path = path.to_path_buf();
-        let canonical_path = path.canonicalize()?;
-        let sanitized_path = SanitizedPath::new(&canonical_path);
-        let path_string = sanitized_path.to_string();
-        let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path_string))?.get()?;
-        folder.DeleteAsync(StorageDeleteOption::Default)?.get()?;
-
-        // TODO: On Windows, the API doesn't return the trash path. We store an empty
-        // path_in_trash for now - restore won't work until this is properly implemented.
-        let trash_item = TrashItem {
-            path_in_trash: PathBuf::new(),
-            original_path: original_path.clone(),
-        };
-        self.trash.lock().insert(original_path, trash_item);
-        Ok(())
+        smol::unblock(move || trash.lock().trash_dir(&path)).await
     }
 
     async fn restore_from_trash(&self, path: &Path) -> Result<()> {
-        let trash_path = self
-            .trash
-            .lock()
-            .remove(path)
-            .ok_or_else(|| anyhow!("No trash item found for path: {}", path.display()))?;
+        let path = path.to_path_buf();
+        let trash = self.trash.clone();
 
-        self.rename(
-            &trash_path,
-            path,
-            RenameOptions {
-                overwrite: false,
-                ignore_if_exists: false,
-                create_parents: true,
-            },
-        )
-        .await
+        smol::unblock(move || trash.lock().restore(&path)).await
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
@@ -1308,7 +1175,7 @@ struct FakeFsState {
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     moves: std::collections::HashMap<u64, PathBuf>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
-    trash: HashMap<PathBuf, PathBuf>,
+    trash: std::collections::HashMap<PathBuf, PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1593,7 +1460,7 @@ impl FakeFs {
                 metadata_call_count: 0,
                 path_write_counts: Default::default(),
                 moves: Default::default(),
-                trash: HashMap::default(),
+                trash: Default::default(),
                 job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
             })),
         });
@@ -2599,8 +2466,8 @@ impl Fs for FakeFs {
         Ok(())
     }
 
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.trash_file(path, options).await
+    async fn trash_dir(&self, path: &Path) -> Result<()> {
+        self.trash_file(path).await
     }
 
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
@@ -2629,15 +2496,11 @@ impl Fs for FakeFs {
         Ok(())
     }
 
-    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+    async fn trash_file(&self, path: &Path) -> Result<()> {
         self.simulate_random_delay().await;
 
         let original_path = normalize_path(path);
-        if !options.ignore_if_not_exists {
-            self.state.lock().entry(&original_path)?;
-        } else if self.metadata(&original_path).await?.is_none() {
-            return Ok(());
-        }
+        self.state.lock().entry(&original_path)?;
 
         let trash_dir = PathBuf::from("/.trash");
         if !self.is_dir(&trash_dir).await {
@@ -3104,6 +2967,7 @@ mod tests {
     use super::*;
     use gpui::BackgroundExecutor;
     use serde_json::json;
+    use trash::Trash;
     use util::path;
 
     #[gpui::test]
@@ -3528,7 +3392,7 @@ mod tests {
             executor,
             next_job_id: Arc::new(AtomicUsize::new(0)),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
-            trash: Arc::new(Mutex::new(HashMap::default())),
+            trash: Arc::new(Mutex::new(Trash::default())),
         };
         let temp_dir = TempDir::new().unwrap();
         let file_to_be_replaced = temp_dir.path().join("file.txt");
@@ -3549,7 +3413,7 @@ mod tests {
             executor,
             next_job_id: Arc::new(AtomicUsize::new(0)),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
-            trash: Arc::new(Mutex::new(HashMap::default())),
+            trash: Arc::new(Mutex::new(Trash::default())),
         };
         let temp_dir = TempDir::new().unwrap();
         let file_to_be_replaced = temp_dir.path().join("file.txt");
@@ -3652,21 +3516,11 @@ mod tests {
         )
         .await;
         let file_a_path = path!("/root/src/file_a.txt");
-        fs.trash_file(file_a_path.as_ref(), RemoveOptions::default())
-            .await
-            .unwrap();
+        fs.trash_file(file_a_path.as_ref()).await.unwrap();
         assert!(!fs.is_file(file_a_path.as_ref()).await);
 
         let src_dir_path = path!("/root/src");
-        fs.trash_dir(
-            src_dir_path.as_ref(),
-            RemoveOptions {
-                recursive: true,
-                ignore_if_not_exists: false,
-            },
-        )
-        .await
-        .unwrap();
+        fs.trash_dir(src_dir_path.as_ref()).await.unwrap();
         assert!(!fs.is_dir(src_dir_path.as_ref()).await);
 
         fs.restore_from_trash(src_dir_path.as_ref()).await.unwrap();

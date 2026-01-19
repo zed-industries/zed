@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 use collections::HashMap;
+use smallvec::SmallVec;
 
 trait Platform: Send + Sync {
     /// Move a file to the platform's trash, returning the path in trash.
@@ -31,7 +32,8 @@ trait Platform: Send + Sync {
 
 pub struct Trash {
     platform: Box<dyn Platform>,
-    items: HashMap<PathBuf, Vec<TrashItem>>,
+    // Duplicate items are rare we can optimize by storing on stack
+    items: HashMap<PathBuf, SmallVec<[TrashItem; 1]>>,
 }
 
 #[derive(Clone)]
@@ -49,8 +51,8 @@ impl Default for Trash {
 impl Trash {
     pub fn new() -> Self {
         Self {
-            platform: create_platform(),
             items: HashMap::default(),
+            platform: create_platform(),
         }
     }
 
