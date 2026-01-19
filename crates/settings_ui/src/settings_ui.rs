@@ -666,8 +666,7 @@ fn active_language() -> Option<SharedString> {
     ACTIVE_LANGUAGE
         .read()
         .ok()
-        .map(|language| language.clone())
-        .flatten()
+        .and_then(|language| language.clone())
 }
 
 fn active_language_mut() -> Option<std::sync::RwLockWriteGuard<'static, Option<SharedString>>> {
