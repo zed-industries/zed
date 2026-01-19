@@ -364,8 +364,12 @@ async fn load_examples(
         }
     }
 
-    if let Some(path) = output_path {
-        resume_from_output(path, &mut examples);
+    // Skip resume logic for --in-place since input and output are the same file,
+    // which would incorrectly treat all input examples as already processed.
+    if !args.in_place {
+        if let Some(path) = output_path {
+            resume_from_output(path, &mut examples);
+        }
     }
 
     Progress::global().set_total_examples(examples.len());
