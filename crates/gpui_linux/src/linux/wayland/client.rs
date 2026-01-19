@@ -738,7 +738,6 @@ impl LinuxClient for WaylandClient {
         let mut state = self.0.borrow_mut();
 
         let parent = state.keyboard_focused_window.clone();
-
         let target_output = params.display_id.and_then(|display_id| {
             let target_protocol_id: u32 = display_id.into();
             state
