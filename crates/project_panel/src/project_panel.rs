@@ -2034,11 +2034,6 @@ impl ProjectPanel {
         }
     }
 
-    fn record_undoable(&mut self, operation: ProjectPanelOperation) {
-        self.redo_stack.clear();
-        self.undo_stack.push(operation);
-    }
-
     pub fn undo(&mut self, _: &Undo, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(operation) = self.undo_stack.pop() {
             let task = self.revert_operation(operation, cx);
@@ -2059,6 +2054,11 @@ impl ProjectPanel {
             })
             .detach();
         }
+    }
+
+    fn record_operation(&mut self, operation: ProjectPanelOperation) {
+        self.redo_stack.clear();
+        self.undo_stack.push(operation);
     }
 
     fn revert_operation(
@@ -2149,7 +2149,7 @@ impl ProjectPanel {
         cx.spawn(async move |this, cx| {
             let created_entry = rename_task.await?;
             this.update(cx, |this, _cx| {
-                this.record_undoable(ProjectPanelOperation::Rename {
+                this.record_operation(ProjectPanelOperation::Rename {
                     old_path: new_path,
                     new_path: old_path,
                 })
@@ -2438,7 +2438,7 @@ impl ProjectPanel {
                         .await?;
 
                     panel.update(cx, |panel, _| {
-                        panel.record_undoable(ProjectPanelOperation::Trash {
+                        panel.record_operation(ProjectPanelOperation::Trash {
                             project_path,
                             is_directory: is_dir,
                         });
