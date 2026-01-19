@@ -194,7 +194,14 @@ struct RenderBlocksOutput {
 pub struct EditorElement {
     editor: Entity<Editor>,
     style: EditorStyle,
+    split_side: Option<SplitSide>,
 }
+
+pub enum SplitSide {
+    Left,
+    Right,
+}
+
 
 impl EditorElement {
     pub(crate) const SCROLLBAR_WIDTH: Pixels = px(15.);
@@ -203,7 +210,16 @@ impl EditorElement {
         Self {
             editor: editor.clone(),
             style,
+            split_side: None,
         }
+    }
+    
+    pub fn set_split_side(&mut self, side: SplitSide) {
+        self.split_side = Some(side);
+    }
+
+    fn should_show_buffer_headers(&self) -> bool {
+        self.split_side.is_none()
     }
 
     fn register_actions(&self, window: &mut Window, cx: &mut App) {
@@ -3848,18 +3864,18 @@ impl EditorElement {
                 height,
                 ..
             } => {
-                let selected = selected_buffer_ids.contains(&first_excerpt.buffer_id);
-                let result = v_flex().id(block_id).w_full().pr(editor_margins.right);
+                let mut result = v_flex().id(block_id).w_full().pr(editor_margins.right);
 
-                let jump_data = header_jump_data(
-                    snapshot,
-                    block_row_start,
-                    *height,
-                    first_excerpt,
-                    latest_selection_anchors,
-                );
-                result
-                    .child(self.render_buffer_header(
+                if self.should_show_buffer_headers() {
+                    let selected = selected_buffer_ids.contains(&first_excerpt.buffer_id);
+                    let jump_data = header_jump_data(
+                        snapshot,
+                        block_row_start,
+                        *height,
+                        first_excerpt,
+                        latest_selection_anchors,
+                    );
+                    result = result.child(self.render_buffer_header(
                         first_excerpt,
                         true,
                         selected,
@@ -3867,8 +3883,13 @@ impl EditorElement {
                         jump_data,
                         window,
                         cx,
-                    ))
-                    .into_any_element()
+                    ));
+                } else {
+                    result = result
+                        .child(div().h(FILE_HEADER_HEIGHT as f32 * window.line_height()));
+                }
+
+                result.into_any_element()
             }
 
             Block::ExcerptBoundary { .. } => {
@@ -3892,22 +3913,27 @@ impl EditorElement {
             Block::BufferHeader { excerpt, height } => {
                 let mut result = v_flex().id(block_id).w_full();
 
-                let jump_data = header_jump_data(
-                    snapshot,
-                    block_row_start,
-                    *height,
-                    excerpt,
-                    latest_selection_anchors,
-                );
+                if self.should_show_buffer_headers() {
+                    let jump_data = header_jump_data(
+                        snapshot,
+                        block_row_start,
+                        *height,
+                        excerpt,
+                        latest_selection_anchors,
+                    );
 
-                if sticky_header_excerpt_id != Some(excerpt.id) {
-                    let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
+                    if sticky_header_excerpt_id != Some(excerpt.id) {
+                        let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
 
-                    result = result.child(div().pr(editor_margins.right).child(
-                        self.render_buffer_header(
-                            excerpt, false, selected, false, jump_data, window, cx,
-                        ),
-                    ));
+                        result = result.child(div().pr(editor_margins.right).child(
+                            self.render_buffer_header(
+                                excerpt, false, selected, false, jump_data, window, cx,
+                            ),
+                        ));
+                    } else {
+                        result =
+                            result.child(div().h(FILE_HEADER_HEIGHT as f32 * window.line_height()));
+                    }
                 } else {
                     result =
                         result.child(div().h(FILE_HEADER_HEIGHT as f32 * window.line_height()));
@@ -10077,23 +10103,27 @@ impl Element for EditorElement {
                         }
                     }
 
-                    let sticky_buffer_header = sticky_header_excerpt.map(|sticky_header_excerpt| {
-                        window.with_element_namespace("blocks", |window| {
-                            self.layout_sticky_buffer_header(
-                                sticky_header_excerpt,
-                                scroll_position,
-                                line_height,
-                                right_margin,
-                                &snapshot,
-                                &hitbox,
-                                &selected_buffer_ids,
-                                &blocks,
-                                &latest_selection_anchors,
-                                window,
-                                cx,
-                            )
+                    let sticky_buffer_header = if self.should_show_buffer_headers() {
+                        sticky_header_excerpt.map(|sticky_header_excerpt| {
+                            window.with_element_namespace("blocks", |window| {
+                                self.layout_sticky_buffer_header(
+                                    sticky_header_excerpt,
+                                    scroll_position,
+                                    line_height,
+                                    right_margin,
+                                    &snapshot,
+                                    &hitbox,
+                                    &selected_buffer_ids,
+                                    &blocks,
+                                    &latest_selection_anchors,
+                                    window,
+                                    cx,
+                                )
+                            })
                         })
-                    });
+                    } else {
+                        None
+                    };
 
                     let start_buffer_row =
                         MultiBufferRow(start_anchor.to_point(&snapshot.buffer_snapshot()).row);
