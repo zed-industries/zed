@@ -76,7 +76,7 @@ use crate::{
     SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage, ToggleProfileSelector,
 };
 
-const MAX_COLLAPSED_LINES: usize = 3;
+const MAX_COLLAPSED_TERMINAL_COMMAND_LINES: usize = 20;
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
 const TOKEN_THRESHOLD: u64 = 250;
 
@@ -4297,14 +4297,14 @@ impl AcpThreadView {
 
         let lines: Vec<&str> = command_source.lines().collect();
         let line_count = lines.len();
-        let extra_lines = line_count.saturating_sub(MAX_COLLAPSED_LINES);
+        let extra_lines = line_count.saturating_sub(MAX_COLLAPSED_TERMINAL_COMMAND_LINES);
 
         let show_expand_button = extra_lines > 0;
 
         let max_lines = if expanded || !show_expand_button {
             usize::MAX
         } else {
-            MAX_COLLAPSED_LINES
+            MAX_COLLAPSED_TERMINAL_COMMAND_LINES
         };
 
         let display_lines = lines.into_iter().take(max_lines);
