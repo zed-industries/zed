@@ -2,8 +2,8 @@ use std::fmt::Display;
 
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    KeyContext, ModifiersChangedEvent, MouseButton, ParentElement, Render, Styled, Subscription,
-    WeakEntity, Window, actions, rems,
+    KeyContext, ModifiersChangedEvent, MouseButton, ParentElement, Rems, Render, Styled,
+    Subscription, WeakEntity, Window, actions, rems,
 };
 use project::git_store::Repository;
 use ui::{
@@ -54,6 +54,17 @@ pub struct GitPicker {
 
 impl GitPicker {
     pub fn new(
+        workspace: WeakEntity<Workspace>,
+        repository: Option<Entity<Repository>>,
+        initial_tab: GitPickerTab,
+        width: Rems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_internal(workspace, repository, initial_tab, width, window, cx)
+    }
+
+    fn new_internal(
         workspace: WeakEntity<Workspace>,
         repository: Option<Entity<Repository>>,
         initial_tab: GitPickerTab,
@@ -582,7 +593,21 @@ fn open_with_tab(
     })
 }
 
-/// Register all git picker actions with the workspace.
+pub fn popover(
+    workspace: WeakEntity<Workspace>,
+    repository: Option<Entity<Repository>>,
+    initial_tab: GitPickerTab,
+    width: Rems,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<GitPicker> {
+    cx.new(|cx| {
+        let picker = GitPicker::new_internal(workspace, repository, initial_tab, width, window, cx);
+        picker.focus_handle(cx).focus(window, cx);
+        picker
+    })
+}
+
 pub fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &zed_actions::git::Branch, window, cx| {
         open_with_tab(workspace, GitPickerTab::Branches, window, cx);
