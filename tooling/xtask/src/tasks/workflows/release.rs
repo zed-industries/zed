@@ -3,26 +3,53 @@ use gh_workflow::{Event, Expression, Push, Run, Step, Use, Workflow};
 use crate::tasks::workflows::{
     run_bundling::{bundle_linux, bundle_mac, bundle_windows},
     run_tests,
-    runners::{self, Arch},
+    runners::{self, Arch, Platform},
     steps::{self, FluentBuilder, NamedJob, dependant_job, named, release_job},
     vars::{self, assets},
 };
 
 pub(crate) fn release() -> Workflow {
-    let macos_tests = run_tests::run_platform_tests(runners::Platform::Mac);
-    let linux_tests = run_tests::run_platform_tests(runners::Platform::Linux);
-    let windows_tests = run_tests::run_platform_tests(runners::Platform::Windows);
+    let macos_tests = run_tests::run_platform_tests(Platform::Mac);
+    let linux_tests = run_tests::run_platform_tests(Platform::Linux);
+    let windows_tests = run_tests::run_platform_tests(Platform::Windows);
+    let macos_clippy = run_tests::clippy(Platform::Mac);
+    let linux_clippy = run_tests::clippy(Platform::Linux);
+    let windows_clippy = run_tests::clippy(Platform::Windows);
     let check_scripts = run_tests::check_scripts();
 
     let create_draft_release = create_draft_release();
 
     let bundle = ReleaseBundleJobs {
-        linux_aarch64: bundle_linux(Arch::AARCH64, None, &[&linux_tests, &check_scripts]),
-        linux_x86_64: bundle_linux(Arch::X86_64, None, &[&linux_tests, &check_scripts]),
-        mac_aarch64: bundle_mac(Arch::AARCH64, None, &[&macos_tests, &check_scripts]),
-        mac_x86_64: bundle_mac(Arch::X86_64, None, &[&macos_tests, &check_scripts]),
-        windows_aarch64: bundle_windows(Arch::AARCH64, None, &[&windows_tests, &check_scripts]),
-        windows_x86_64: bundle_windows(Arch::X86_64, None, &[&windows_tests, &check_scripts]),
+        linux_aarch64: bundle_linux(
+            Arch::AARCH64,
+            None,
+            &[&linux_tests, &linux_clippy, &check_scripts],
+        ),
+        linux_x86_64: bundle_linux(
+            Arch::X86_64,
+            None,
+            &[&linux_tests, &linux_clippy, &check_scripts],
+        ),
+        mac_aarch64: bundle_mac(
+            Arch::AARCH64,
+            None,
+            &[&macos_tests, &macos_clippy, &check_scripts],
+        ),
+        mac_x86_64: bundle_mac(
+            Arch::X86_64,
+            None,
+            &[&macos_tests, &macos_clippy, &check_scripts],
+        ),
+        windows_aarch64: bundle_windows(
+            Arch::AARCH64,
+            None,
+            &[&windows_tests, &windows_clippy, &check_scripts],
+        ),
+        windows_x86_64: bundle_windows(
+            Arch::X86_64,
+            None,
+            &[&windows_tests, &windows_clippy, &check_scripts],
+        ),
     };
 
     let upload_release_assets = upload_release_assets(&[&create_draft_release], &bundle);
@@ -38,6 +65,9 @@ pub(crate) fn release() -> Workflow {
         .add_job(macos_tests.name, macos_tests.job)
         .add_job(linux_tests.name, linux_tests.job)
         .add_job(windows_tests.name, windows_tests.job)
+        .add_job(macos_clippy.name, macos_clippy.job)
+        .add_job(linux_clippy.name, linux_clippy.job)
+        .add_job(windows_clippy.name, windows_clippy.job)
         .add_job(check_scripts.name, check_scripts.job)
         .add_job(create_draft_release.name, create_draft_release.job)
         .map(|mut workflow| {
