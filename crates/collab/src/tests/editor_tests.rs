@@ -5004,8 +5004,6 @@ async fn test_semantic_token_refresh_is_forwarded(
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
-    cx_a.background_executor.start_waiting();
-
     let editor_a = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
             workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
@@ -5054,7 +5052,6 @@ async fn test_semantic_token_refresh_is_forwarded(
         .next()
         .await
         .unwrap();
-    executor.finish_waiting();
 
     executor.run_until_parked();
     editor_a.update(cx_a, |editor, cx| {
