@@ -203,6 +203,7 @@ impl ExampleInstance {
             app_state.fs.clone(),
             None,
             false,
+            true,
             cx,
         );
 

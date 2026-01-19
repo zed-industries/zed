@@ -161,6 +161,7 @@ fn main() -> Result<(), anyhow::Error> {
                     fs,
                     Some(Default::default()),
                     false,
+                    true,
                     cx,
                 ))
                 };

@@ -1660,6 +1660,7 @@ impl Workspace {
             app_state.fs.clone(),
             env,
             true,
+            true,
             cx,
         );
 

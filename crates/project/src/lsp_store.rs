@@ -11036,6 +11036,12 @@ impl LspStore {
     }
 
     pub fn stop_all_language_servers(&mut self, cx: &mut Context<Self>) {
+        self.shutdown_all_language_servers(cx).detach();
+    }
+
+    /// Stops all language servers and returns a task that resolves when all servers have shut down.
+    /// This is useful when you need to wait for cleanup to complete before continuing.
+    pub fn shutdown_all_language_servers(&mut self, cx: &mut Context<Self>) -> Task<()> {
         if let Some((client, project_id)) = self.upstream_client() {
             let request = client.request(proto::StopLanguageServers {
                 project_id,
@@ -11043,10 +11049,12 @@ impl LspStore {
                 also_servers: Vec::new(),
                 all: true,
             });
-            cx.background_spawn(request).detach_and_log_err(cx);
+            cx.background_spawn(async move {
+                request.await.ok();
+            })
         } else {
             let Some(local) = self.as_local_mut() else {
-                return;
+                return Task::ready(());
             };
             let language_servers_to_stop = local
                 .language_server_ids
@@ -11061,7 +11069,6 @@ impl LspStore {
             cx.background_spawn(async move {
                 futures::future::join_all(tasks).await;
             })
-            .detach();
         }
     }
 

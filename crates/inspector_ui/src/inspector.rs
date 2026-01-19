@@ -34,6 +34,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
         app_state.fs.clone(),
         None,
         false,
+        true,
         cx,
     );
 

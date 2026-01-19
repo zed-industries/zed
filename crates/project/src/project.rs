@@ -1089,6 +1089,7 @@ impl Project {
         fs: Arc<dyn Fs>,
         env: Option<HashMap<String, String>>,
         init_worktree_trust: bool,
+        watch_global_configs: bool,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
@@ -1185,6 +1186,7 @@ impl Project {
                     fs.clone(),
                     worktree_store.clone(),
                     task_store.clone(),
+                    watch_global_configs,
                     cx,
                 )
             });
@@ -1900,6 +1902,7 @@ impl Project {
                 fs,
                 None,
                 false,
+                true,
                 cx,
             )
         });
@@ -1957,6 +1960,7 @@ impl Project {
                 fs,
                 None,
                 init_worktree_trust,
+                true,
                 cx,
             )
         });

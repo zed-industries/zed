@@ -863,6 +863,7 @@ impl TestClient {
                 self.app_state.fs.clone(),
                 None,
                 init_worktree_trust,
+                true,
                 cx,
             )
         })

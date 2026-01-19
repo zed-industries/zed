@@ -83,6 +83,7 @@ pub async fn open_test_workspace(
             app_state.fs.clone(),
             None,
             false,
+            true,
             cx,
         )
     });

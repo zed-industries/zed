@@ -660,6 +660,7 @@ pub async fn open_remote_project(
                 app_state.fs.clone(),
                 None,
                 false,
+                true,
                 cx,
             );
             cx.new(|cx| {

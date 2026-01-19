@@ -93,6 +93,7 @@ pub fn run_component_preview() {
                         app_state.fs.clone(),
                         None,
                         false,
+                        true,
                         cx,
                     );
 
