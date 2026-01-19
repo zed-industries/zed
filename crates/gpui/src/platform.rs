@@ -321,6 +321,21 @@ pub trait PlatformDisplay: Send + Sync + Debug {
         let origin = point(center.x - offset.width, center.y - offset.height);
         Bounds::new(origin, clipped_window_size)
     }
+
+    /// Get the user-friendly name of this display. Guaranteed to be unique by the
+    /// compositor, but may change across restarts.
+    /// Examples: "HDMI-A-1", "DP-1", "eDP-1"
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    fn name(&self) -> Option<&str> {
+        None
+    }
+
+    /// Get a human-readable description of this display, usually a model name. This is not
+    /// guaranteed to be unique, and may not be present for all compositors.
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    fn description(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Metadata for a given [ScreenCaptureSource]

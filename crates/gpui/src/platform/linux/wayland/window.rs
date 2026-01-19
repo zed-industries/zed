@@ -1135,6 +1135,7 @@ impl PlatformWindow for WaylandWindow {
             Rc::new(WaylandDisplay {
                 id: id.clone(),
                 name: display.name.clone(),
+                description: display.description.clone(),
                 bounds: display.bounds.to_pixels(state.scale),
             }) as Rc<dyn PlatformDisplay>
         })
