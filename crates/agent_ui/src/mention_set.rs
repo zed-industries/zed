@@ -303,7 +303,7 @@ impl MentionSet {
                 if let Some(image) = image {
                     Ok(Mention::Image(MentionImage {
                         data: image.source,
-                        format: ImageFormat::Png,
+                        format: LanguageModelImage::FORMAT,
                     }))
                 } else {
                     Err(anyhow!("Failed to convert image"))
@@ -679,7 +679,7 @@ pub(crate) fn paste_images_as_context(
                     if let Some(image) = image {
                         Ok(Mention::Image(MentionImage {
                             data: image.source,
-                            format: ImageFormat::Png,
+                            format: LanguageModelImage::FORMAT,
                         }))
                     } else {
                         Err("Failed to convert image".into())
