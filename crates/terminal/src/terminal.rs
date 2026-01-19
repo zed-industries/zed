@@ -521,7 +521,7 @@ impl TerminalBuilder {
                 alacritty_terminal::tty::Options {
                     shell: alac_shell,
                     working_directory: working_directory.clone(),
-                    drain_on_exit: true,
+                    drain_on_exit: cfg!(target_os = "linux"),
                     env: env.clone().into_iter().collect(),
                     #[cfg(windows)]
                     escape_args: shell_kind.tty_escape_args(),
