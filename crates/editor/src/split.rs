@@ -251,7 +251,7 @@ struct UnsplitDiff;
 
 #[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
 #[action(namespace = editor)]
-struct ToggleSplitDiff;
+pub struct ToggleSplitDiff;
 
 #[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
 #[action(namespace = editor)]
@@ -282,6 +282,10 @@ impl SplittableEditor {
 
     pub fn secondary_editor(&self) -> Option<&Entity<Editor>> {
         self.secondary.as_ref().map(|s| &s.editor)
+    }
+
+    pub fn is_split(&self) -> bool {
+        self.secondary.is_some()
     }
 
     pub fn last_selected_editor(&self) -> &Entity<Editor> {
@@ -535,6 +539,13 @@ impl SplittableEditor {
             editor.set_scroll_position_internal(primary_scroll_position, false, false, window, cx);
         });
 
+        // Copy soft wrap state from primary (source of truth) to secondary
+        let primary_soft_wrap_override = self.primary_editor.read(cx).soft_wrap_mode_override.clone();
+        secondary.editor.update(cx, |editor, cx| {
+            editor.soft_wrap_mode_override = primary_soft_wrap_override;
+            cx.notify();
+        });
+
         self.secondary = Some(secondary);
 
         let primary_pane = self.panes.first_pane();
@@ -762,11 +773,26 @@ impl SplittableEditor {
     ) {
         if let Some(secondary) = &self.secondary {
             cx.stop_propagation();
-            self.primary_editor
-                .update(cx, |editor, cx| editor.toggle_soft_wrap(&ToggleSoftWrap, window, cx));
-            secondary
-                .editor
-                .update(cx, |editor, cx| editor.toggle_soft_wrap(&ToggleSoftWrap, window, cx));
+
+            let is_secondary_focused = secondary.has_latest_selection;
+            let (focused_editor, other_editor) = if is_secondary_focused {
+                (&secondary.editor, &self.primary_editor)
+            } else {
+                (&self.primary_editor, &secondary.editor)
+            };
+
+            // Toggle the focused editor
+            focused_editor.update(cx, |editor, cx| {
+                editor.toggle_soft_wrap(&ToggleSoftWrap, window, cx);
+            });
+
+            // Copy the soft wrap state from the focused editor to the other editor
+            let soft_wrap_override =
+                focused_editor.read(cx).soft_wrap_mode_override.clone();
+            other_editor.update(cx, |editor, cx| {
+                editor.soft_wrap_mode_override = soft_wrap_override;
+                cx.notify();
+            });
         } else {
             cx.propagate();
         }
