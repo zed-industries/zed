@@ -73,7 +73,7 @@ pub use multi_buffer::{
     MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
     ToPoint,
 };
-pub use split::SplittableEditor;
+pub use split::{SplittableEditor, ToggleSplitDiff};
 pub use text::Bias;
 
 use ::git::{Restore, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
