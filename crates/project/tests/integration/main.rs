@@ -1,5 +1,6 @@
 #![allow(clippy::format_collect)]
 
+mod color_extractor;
 mod image_store;
 mod lsp_command;
 mod lsp_store;
