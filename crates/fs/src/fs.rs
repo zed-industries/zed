@@ -6,8 +6,11 @@ pub mod fs_watcher;
 
 use collections::HashMap;
 use parking_lot::Mutex;
+use smallvec::{SmallVec, smallvec};
+use std::collections::hash_map::Entry;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
+use uuid::Uuid;
 
 use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -307,12 +310,34 @@ impl From<MTime> for proto::Timestamp {
     }
 }
 
+/// Tracks what can be restored and from where (original path → restore source)
+#[derive(Default)]
+pub struct TrashRegistry {
+    entries: HashMap<PathBuf, SmallVec<[PathBuf; 1]>>,
+}
+
+impl TrashRegistry {
+    pub fn register(&mut self, original: PathBuf, restore_from: PathBuf) {
+        match self.entries.entry(original) {
+            Entry::Occupied(mut entry) => entry.get_mut().push(restore_from),
+            Entry::Vacant(entry) => {
+                entry.insert(smallvec![restore_from]);
+            }
+        }
+    }
+
+    pub fn take(&mut self, original: &Path) -> Option<PathBuf> {
+        self.entries.get_mut(original).and_then(|paths| paths.pop())
+    }
+}
+
 pub struct RealFs {
     bundled_git_binary_path: Option<PathBuf>,
     executor: BackgroundExecutor,
     next_job_id: Arc<AtomicUsize>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
-    trash: Arc<Mutex<HashMap<PathBuf, PathBuf>>>,
+    trash_backup_dir: PathBuf,
+    trash_registry: Arc<Mutex<TrashRegistry>>,
 }
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
@@ -420,7 +445,8 @@ impl RealFs {
             executor,
             next_job_id: Arc::new(AtomicUsize::new(0)),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
-            trash: Arc::new(Mutex::new(HashMap::default())),
+            trash_backup_dir: paths::temp_dir().join("zed-trash"),
+            trash_registry: Arc::new(Mutex::new(TrashRegistry::default())),
         }
     }
 
@@ -673,8 +699,10 @@ impl Fs for RealFs {
         .await?;
 
         if let Some(trash_path) = trash_path {
-            self.trash.lock().insert(path.to_path_buf(), trash_path);
-        };
+            self.trash_registry
+                .lock()
+                .register(path.to_path_buf(), trash_path);
+        }
 
         Ok(())
     }
@@ -3528,7 +3556,8 @@ mod tests {
             executor,
             next_job_id: Arc::new(AtomicUsize::new(0)),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
-            trash: Arc::new(Mutex::new(HashMap::default())),
+            trash_backup_dir: paths::temp_dir().join("zed-trash"),
+            trash_registry: Arc::new(Mutex::new(TrashRegistry::default())),
         };
         let temp_dir = TempDir::new().unwrap();
         let file_to_be_replaced = temp_dir.path().join("file.txt");
@@ -3549,7 +3578,8 @@ mod tests {
             executor,
             next_job_id: Arc::new(AtomicUsize::new(0)),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
-            trash: Arc::new(Mutex::new(HashMap::default())),
+            trash_backup_dir: paths::temp_dir().join("zed-trash"),
+            trash_registry: Arc::new(Mutex::new(TrashRegistry::default())),
         };
         let temp_dir = TempDir::new().unwrap();
         let file_to_be_replaced = temp_dir.path().join("file.txt");
