@@ -1882,7 +1882,8 @@ impl FakeLanguageServer {
         let token = token.into();
         self.request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams {
             token: NumberOrString::String(token.clone()),
-        })
+            }, request_timeout
+        )
         .await
         .into_response()
         .unwrap();
@@ -1996,6 +1997,50 @@ mod tests {
         drop(server);
         cx.run_until_parked();
         fake.receive_notification::<notification::Exit>().await;
+    }
+
+    #[gpui::test]
+    async fn test_language_server_request_timeout(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        let (server, fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
+            LanguageServerBinary {
+                path: "path/to/language-server".into(),
+                arguments: vec![],
+                env: None,
+            },
+            "the-lsp".to_string(),
+            Default::default(),
+            &mut cx.to_async(),
+        );
+    
+        cx.update(|cx| {
+                let params = server.default_initialize_params(false, cx);
+                let configuration = DidChangeConfigurationParams {
+                    settings: Default::default(),
+                };
+                server.initialize(
+                    params,
+                    configuration.into(),
+                    DEFAULT_LSP_REQUEST_TIMEOUT,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let progress_token = 42;
+        // NB: I highly doubt any LSP operations will take under a nanosecond to complete
+        let short_timeout = Duration::from_nanos(1);
+        fake
+            .request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams {
+                token: ProgressToken::Number(progress_token),
+            }, short_timeout)
+            .await
+            .into_response()
+            .expect_err("work done request should have timed out");
     }
 
     #[gpui::test]
