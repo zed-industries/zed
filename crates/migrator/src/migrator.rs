@@ -236,6 +236,10 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_12_15::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_12_15,
         ),
+        MigrationType::TreeSitter(
+            migrations::m_2026_01_19::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2026_01_19,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -373,6 +377,11 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_12_15,
     migrations::m_2025_12_15::SETTINGS_PATTERNS
+);
+
+define_query!(
+    SETTINGS_QUERY_2026_01_19,
+    migrations::m_2026_01_19::SETTINGS_PATTERNS
 );
 
 // custom query
@@ -2424,6 +2433,51 @@ mod tests {
                     "preview_tabs": {
                         "other_setting_2": 2,
                         "enable_keep_preview_on_code_navigation": true
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_diagnostics_include_warnings_migrates_to_max_severity() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "diagnostics": {
+                    "include_warnings": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "diagnostics": {
+                        "max_severity": "warning"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings(
+            &r#"
+            {
+                "diagnostics": {
+                    "include_warnings": false
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "diagnostics": {
+                        "max_severity": "error"
                     }
                 }
                 "#
