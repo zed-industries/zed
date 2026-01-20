@@ -1,5 +1,7 @@
 use super::*;
-use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelList, UserMessageId};
+use acp_thread::{
+    AgentConnection, AgentModelGroupName, AgentModelList, PermissionOptions, UserMessageId,
+};
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
 use anyhow::Result;
@@ -905,198 +907,6 @@ async fn test_tool_hallucination(cx: &mut TestAppContext) {
     assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Failed));
 }
 
-#[gpui::test]
-async fn test_resume_after_tool_use_limit(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-
-    let events = thread
-        .update(cx, |thread, cx| {
-            thread.add_tool(EchoTool);
-            thread.send(UserMessageId::new(), ["abc"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-    let tool_use = LanguageModelToolUse {
-        id: "tool_id_1".into(),
-        name: EchoTool::name().into(),
-        raw_input: "{}".into(),
-        input: serde_json::to_value(&EchoToolInput { text: "def".into() }).unwrap(),
-        is_input_complete: true,
-        thought_signature: None,
-    };
-    fake_model
-        .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
-    fake_model.end_last_completion_stream();
-
-    cx.run_until_parked();
-    let completion = fake_model.pending_completions().pop().unwrap();
-    let tool_result = LanguageModelToolResult {
-        tool_use_id: "tool_id_1".into(),
-        tool_name: EchoTool::name().into(),
-        is_error: false,
-        content: "def".into(),
-        output: Some("def".into()),
-    };
-    assert_eq!(
-        completion.messages[1..],
-        vec![
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec!["abc".into()],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::Assistant,
-                content: vec![MessageContent::ToolUse(tool_use.clone())],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::ToolResult(tool_result.clone())],
-                cache: true,
-                reasoning_details: None,
-            },
-        ]
-    );
-
-    // Simulate reaching tool use limit.
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUseLimitReached);
-    fake_model.end_last_completion_stream();
-    let last_event = events.collect::<Vec<_>>().await.pop().unwrap();
-    assert!(
-        last_event
-            .unwrap_err()
-            .is::<language_model::ToolUseLimitReachedError>()
-    );
-
-    let events = thread.update(cx, |thread, cx| thread.resume(cx)).unwrap();
-    cx.run_until_parked();
-    let completion = fake_model.pending_completions().pop().unwrap();
-    assert_eq!(
-        completion.messages[1..],
-        vec![
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec!["abc".into()],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::Assistant,
-                content: vec![MessageContent::ToolUse(tool_use)],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::ToolResult(tool_result)],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec!["Continue where you left off".into()],
-                cache: true,
-                reasoning_details: None,
-            }
-        ]
-    );
-
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Text("Done".into()));
-    fake_model.end_last_completion_stream();
-    events.collect::<Vec<_>>().await;
-    thread.read_with(cx, |thread, _cx| {
-        assert_eq!(
-            thread.last_message().unwrap().to_markdown(),
-            indoc! {"
-                ## Assistant
-
-                Done
-            "}
-        )
-    });
-}
-
-#[gpui::test]
-async fn test_send_after_tool_use_limit(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-
-    let events = thread
-        .update(cx, |thread, cx| {
-            thread.add_tool(EchoTool);
-            thread.send(UserMessageId::new(), ["abc"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    let tool_use = LanguageModelToolUse {
-        id: "tool_id_1".into(),
-        name: EchoTool::name().into(),
-        raw_input: "{}".into(),
-        input: serde_json::to_value(&EchoToolInput { text: "def".into() }).unwrap(),
-        is_input_complete: true,
-        thought_signature: None,
-    };
-    let tool_result = LanguageModelToolResult {
-        tool_use_id: "tool_id_1".into(),
-        tool_name: EchoTool::name().into(),
-        is_error: false,
-        content: "def".into(),
-        output: Some("def".into()),
-    };
-    fake_model
-        .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUseLimitReached);
-    fake_model.end_last_completion_stream();
-    let last_event = events.collect::<Vec<_>>().await.pop().unwrap();
-    assert!(
-        last_event
-            .unwrap_err()
-            .is::<language_model::ToolUseLimitReachedError>()
-    );
-
-    thread
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), vec!["ghi"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-    let completion = fake_model.pending_completions().pop().unwrap();
-    assert_eq!(
-        completion.messages[1..],
-        vec![
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec!["abc".into()],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::Assistant,
-                content: vec![MessageContent::ToolUse(tool_use)],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::ToolResult(tool_result)],
-                cache: false,
-                reasoning_details: None,
-            },
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec!["ghi".into()],
-                cache: true,
-                reasoning_details: None,
-            }
-        ]
-    );
-}
-
 async fn expect_tool_call(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -> acp::ToolCall {
     let event = events
         .next()
@@ -1139,21 +949,130 @@ async fn next_tool_call_authorization(
         if let ThreadEvent::ToolCallAuthorization(tool_call_authorization) = event {
             let permission_kinds = tool_call_authorization
                 .options
-                .iter()
-                .map(|o| o.kind)
-                .collect::<Vec<_>>();
-            // Only 2 options now: AllowAlways (for tool) and AllowOnce (granularity only)
-            // Deny is handled by the UI buttons, not as a separate option
+                .first_option_of_kind(acp::PermissionOptionKind::AllowAlways)
+                .map(|option| option.kind);
+            let allow_once = tool_call_authorization
+                .options
+                .first_option_of_kind(acp::PermissionOptionKind::AllowOnce)
+                .map(|option| option.kind);
+
             assert_eq!(
                 permission_kinds,
-                vec![
-                    acp::PermissionOptionKind::AllowAlways,
-                    acp::PermissionOptionKind::AllowOnce,
-                ]
+                Some(acp::PermissionOptionKind::AllowAlways)
             );
+            assert_eq!(allow_once, Some(acp::PermissionOptionKind::AllowOnce));
             return tool_call_authorization;
         }
     }
+}
+
+#[test]
+fn test_permission_options_terminal_with_pattern() {
+    let permission_options =
+        ToolPermissionContext::new("terminal", "cargo build --release").build_permission_options();
+
+    let PermissionOptions::Dropdown(choices) = permission_options else {
+        panic!("Expected dropdown permission options");
+    };
+
+    assert_eq!(choices.len(), 3);
+    let labels: Vec<&str> = choices
+        .iter()
+        .map(|choice| choice.allow.name.as_ref())
+        .collect();
+    assert!(labels.contains(&"Always for terminal"));
+    assert!(labels.contains(&"Always for `cargo` commands"));
+    assert!(labels.contains(&"Only this time"));
+}
+
+#[test]
+fn test_permission_options_edit_file_with_path_pattern() {
+    let permission_options =
+        ToolPermissionContext::new("edit_file", "src/main.rs").build_permission_options();
+
+    let PermissionOptions::Dropdown(choices) = permission_options else {
+        panic!("Expected dropdown permission options");
+    };
+
+    let labels: Vec<&str> = choices
+        .iter()
+        .map(|choice| choice.allow.name.as_ref())
+        .collect();
+    assert!(labels.contains(&"Always for edit file"));
+    assert!(labels.contains(&"Always for `src/`"));
+}
+
+#[test]
+fn test_permission_options_fetch_with_domain_pattern() {
+    let permission_options =
+        ToolPermissionContext::new("fetch", "https://docs.rs/gpui").build_permission_options();
+
+    let PermissionOptions::Dropdown(choices) = permission_options else {
+        panic!("Expected dropdown permission options");
+    };
+
+    let labels: Vec<&str> = choices
+        .iter()
+        .map(|choice| choice.allow.name.as_ref())
+        .collect();
+    assert!(labels.contains(&"Always for fetch"));
+    assert!(labels.contains(&"Always for `docs.rs`"));
+}
+
+#[test]
+fn test_permission_options_without_pattern() {
+    let permission_options = ToolPermissionContext::new("terminal", "./deploy.sh --production")
+        .build_permission_options();
+
+    let PermissionOptions::Dropdown(choices) = permission_options else {
+        panic!("Expected dropdown permission options");
+    };
+
+    assert_eq!(choices.len(), 2);
+    let labels: Vec<&str> = choices
+        .iter()
+        .map(|choice| choice.allow.name.as_ref())
+        .collect();
+    assert!(labels.contains(&"Always for terminal"));
+    assert!(labels.contains(&"Only this time"));
+    assert!(!labels.iter().any(|label| label.contains("commands")));
+}
+
+#[test]
+fn test_permission_option_ids_for_terminal() {
+    let permission_options =
+        ToolPermissionContext::new("terminal", "cargo build --release").build_permission_options();
+
+    let PermissionOptions::Dropdown(choices) = permission_options else {
+        panic!("Expected dropdown permission options");
+    };
+
+    let allow_ids: Vec<String> = choices
+        .iter()
+        .map(|choice| choice.allow.option_id.0.to_string())
+        .collect();
+    let deny_ids: Vec<String> = choices
+        .iter()
+        .map(|choice| choice.deny.option_id.0.to_string())
+        .collect();
+
+    assert!(allow_ids.contains(&"always_allow:terminal".to_string()));
+    assert!(allow_ids.contains(&"allow".to_string()));
+    assert!(
+        allow_ids
+            .iter()
+            .any(|id| id.starts_with("always_allow_pattern:terminal:")),
+        "Missing allow pattern option"
+    );
+
+    assert!(deny_ids.contains(&"always_deny:terminal".to_string()));
+    assert!(deny_ids.contains(&"deny".to_string()));
+    assert!(
+        deny_ids
+            .iter()
+            .any(|id| id.starts_with("always_deny_pattern:terminal:")),
+        "Missing deny pattern option"
+    );
 }
 
 #[gpui::test]
@@ -3050,7 +2969,6 @@ async fn test_send_no_retry_on_success(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
@@ -3094,7 +3012,6 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
@@ -3159,7 +3076,6 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
 
     let events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.add_tool(EchoTool);
             thread.send(UserMessageId::new(), ["Call the echo tool!"], cx)
         })
@@ -3240,7 +3156,6 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
@@ -3839,7 +3754,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
         );
     }
 
-    // Test 3: Confirm rule forces confirmation even with always_allow_tool_actions=true
+    // Test 3: always_allow_tool_actions=true overrides always_confirm patterns
     {
         let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
         let environment = Rc::new(FakeThreadEnvironment {
@@ -3866,9 +3781,9 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
         #[allow(clippy::arc_with_non_send_sync)]
         let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
-        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
-        let _task = cx.update(|cx| {
+        let task = cx.update(|cx| {
             tool.run(
                 crate::TerminalToolInput {
                     command: "sudo rm file".to_string(),
@@ -3880,16 +3795,14 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             )
         });
 
-        let auth = rx.expect_authorization().await;
-        assert!(
-            auth.tool_call.fields.title.is_some(),
-            "expected authorization request for sudo command despite always_allow_tool_actions=true"
-        );
+        // With always_allow_tool_actions=true, confirm patterns are overridden
+        task.await
+            .expect("command should be allowed with always_allow_tool_actions=true");
     }
 
-    // Test 4: default_mode: Deny blocks commands when no pattern matches
+    // Test 4: always_allow_tool_actions=true overrides default_mode: Deny
     {
-        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
         let environment = Rc::new(FakeThreadEnvironment {
             handle: handle.clone(),
         });
@@ -3926,15 +3839,9 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             )
         });
 
-        let result = task.await;
-        assert!(
-            result.is_err(),
-            "expected command to be blocked by default_mode: Deny"
-        );
-        assert!(
-            result.unwrap_err().to_string().contains("disabled"),
-            "error should mention the tool is disabled"
-        );
+        // With always_allow_tool_actions=true, even default_mode: Deny is overridden
+        task.await
+            .expect("command should be allowed with always_allow_tool_actions=true");
     }
 }
 
@@ -5757,4 +5664,96 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
         !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
         "expected no authorization request for allowed docs.rs URL"
     );
+}
+
+#[gpui::test]
+async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    // Add a tool so we can simulate tool calls
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(EchoTool);
+    });
+
+    // Start a turn by sending a message
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Use the echo tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Simulate the model making a tool call
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "echo".into(),
+            raw_input: r#"{"text": "hello"}"#.into(),
+            input: json!({"text": "hello"}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::ToolUse));
+
+    // Queue a message before ending the stream
+    thread.update(cx, |thread, _cx| {
+        thread.queue_message(
+            vec![acp::ContentBlock::Text(acp::TextContent::new(
+                "This is my queued message".to_string(),
+            ))],
+            vec![],
+        );
+    });
+
+    // Now end the stream - tool will run, and the boundary check should see the queue
+    fake_model.end_last_completion_stream();
+
+    // Collect all events until the turn stops
+    let all_events = collect_events_until_stop(&mut events, cx).await;
+
+    // Verify we received the tool call event
+    let tool_call_ids: Vec<_> = all_events
+        .iter()
+        .filter_map(|e| match e {
+            Ok(ThreadEvent::ToolCall(tc)) => Some(tc.tool_call_id.to_string()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        tool_call_ids,
+        vec!["tool_1"],
+        "Should have received a tool call event for our echo tool"
+    );
+
+    // The turn should have stopped with EndTurn
+    let stop_reasons = stop_events(all_events);
+    assert_eq!(
+        stop_reasons,
+        vec![acp::StopReason::EndTurn],
+        "Turn should have ended after tool completion due to queued message"
+    );
+
+    // Verify the queued message is still there
+    thread.update(cx, |thread, _cx| {
+        let queued = thread.queued_messages();
+        assert_eq!(queued.len(), 1, "Should still have one queued message");
+        assert!(matches!(
+            &queued[0].content[0],
+            acp::ContentBlock::Text(t) if t.text == "This is my queued message"
+        ));
+    });
+
+    // Thread should be idle now
+    thread.update(cx, |thread, _cx| {
+        assert!(
+            thread.is_turn_complete(),
+            "Thread should not be running after turn ends"
+        );
+    });
 }

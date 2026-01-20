@@ -687,9 +687,9 @@ impl HeadlessProject {
     ) -> Result<proto::OpenBufferResponse> {
         let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
             let buffer_store = this.buffer_store.clone();
-            let buffer = this
-                .buffer_store
-                .update(cx, |buffer_store, cx| buffer_store.create_buffer(true, cx));
+            let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store.create_buffer(None, true, cx)
+            });
             (buffer_store, buffer)
         });
 

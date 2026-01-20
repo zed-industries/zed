@@ -1245,14 +1245,16 @@ impl Vim {
 
                 if should_extend_pending {
                     let snapshot = s.display_snapshot();
-                    if let Some(pending) = s.pending_anchor_mut() {
-                        let end = pending.end.to_point(&snapshot.buffer_snapshot());
-                        let end = end.to_display_point(&snapshot);
-                        let new_end = movement::right(&snapshot, end);
-                        pending.end = snapshot
-                            .buffer_snapshot()
-                            .anchor_before(new_end.to_point(&snapshot));
-                    }
+                    s.change_with(&snapshot, |map| {
+                        if let Some(pending) = map.pending_anchor_mut() {
+                            let end = pending.end.to_point(&snapshot.buffer_snapshot());
+                            let end = end.to_display_point(&snapshot);
+                            let new_end = movement::right(&snapshot, end);
+                            pending.end = snapshot
+                                .buffer_snapshot()
+                                .anchor_before(new_end.to_point(&snapshot));
+                        }
+                    });
                     vim.extended_pending_selection_id = s.pending_anchor().map(|p| p.id)
                 }
 

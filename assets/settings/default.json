@@ -913,8 +913,6 @@
     "inline_assistant_use_streaming_tools": true,
     // Whether the agent is enabled.
     "enabled": true,
-    // What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
-    "preferred_completion_mode": "normal",
     // Whether to show the agent panel button in the status bar.
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
@@ -956,7 +954,9 @@
       //   "temperature": 1.0
       // }
     ],
-    // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
+    // When enabled, the agent can run tool actions without asking for your confirmation.
+    // This setting takes precedence over `always_confirm` patterns and `default_mode` settings,
+    // but `always_deny` patterns still block actions for security.
     //
     // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
     //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.

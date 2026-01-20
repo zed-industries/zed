@@ -74,7 +74,11 @@ impl PromptCompletionProviderDelegate for Entity<MessageEditor> {
             if self.read(cx).thread_store.is_some() {
                 supported.push(PromptContextType::Thread);
             }
-            supported.extend(&[PromptContextType::Fetch, PromptContextType::Rules]);
+            supported.extend(&[
+                PromptContextType::Diagnostics,
+                PromptContextType::Fetch,
+                PromptContextType::Rules,
+            ]);
         }
         supported
     }
@@ -499,12 +503,11 @@ impl MessageEditor {
     }
 
     pub fn send(&mut self, cx: &mut Context<Self>) {
-        if self.is_empty(cx) {
-            return;
+        if !self.is_empty(cx) {
+            self.editor.update(cx, |editor, cx| {
+                editor.clear_inlay_hints(cx);
+            });
         }
-        self.editor.update(cx, |editor, cx| {
-            editor.clear_inlay_hints(cx);
-        });
         cx.emit(MessageEditorEvent::Send)
     }
 

@@ -649,6 +649,7 @@ pub struct WorktreeSettingsFile {
     pub path: String,
     pub content: String,
     pub kind: LocalSettingsKind,
+    pub outside_worktree: bool,
 }
 
 pub struct NewExtensionVersion {

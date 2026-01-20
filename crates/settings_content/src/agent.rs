@@ -1,5 +1,4 @@
 use collections::{HashMap, IndexMap};
-use gpui::SharedString;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
@@ -98,10 +97,6 @@ pub struct AgentSettingsContent {
     /// Default: []
     #[serde(default)]
     pub model_parameters: Vec<LanguageModelParameters>,
-    /// What completion mode to enable for new threads
-    ///
-    /// Default: normal
-    pub preferred_completion_mode: Option<CompletionMode>,
     /// Whether to show thumb buttons for feedback in the agent panel.
     ///
     /// Default: true
@@ -298,20 +293,11 @@ pub struct LanguageModelSelection {
     pub model: String,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum CompletionMode {
-    #[default]
-    Normal,
-    #[serde(alias = "max")]
-    Burn,
-}
-
 #[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct LanguageModelParameters {
     pub provider: Option<LanguageModelProviderSetting>,
-    pub model: Option<SharedString>,
+    pub model: Option<String>,
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub temperature: Option<f32>,
 }
@@ -375,7 +361,7 @@ pub struct AllAgentServersSettings {
 
     /// Custom agent servers configured by the user
     #[serde(flatten)]
-    pub custom: HashMap<SharedString, CustomAgentServerSettings>,
+    pub custom: HashMap<String, CustomAgentServerSettings>,
 }
 
 #[with_fallible_options]
@@ -482,6 +468,41 @@ pub enum CustomAgentServerSettings {
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
     Extension {
+        /// The default mode to use for this agent.
+        ///
+        /// Note: Not only all agents support modes.
+        ///
+        /// Default: None
+        default_mode: Option<String>,
+        /// The default model to use for this agent.
+        ///
+        /// This should be the model ID as reported by the agent.
+        ///
+        /// Default: None
+        default_model: Option<String>,
+        /// The favorite models for this agent.
+        ///
+        /// These are the model IDs as reported by the agent.
+        ///
+        /// Default: []
+        #[serde(default)]
+        favorite_models: Vec<String>,
+        /// Default values for session config options.
+        ///
+        /// This is a map from config option ID to value ID.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        default_config_options: HashMap<String, String>,
+        /// Favorited values for session config options.
+        ///
+        /// This is a map from config option ID to a list of favorited value IDs.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        favorite_config_option_values: HashMap<String, Vec<String>>,
+    },
+    Registry {
         /// The default mode to use for this agent.
         ///
         /// Note: Not only all agents support modes.

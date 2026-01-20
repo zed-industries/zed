@@ -1,13 +1,115 @@
 use collections::{HashMap, IndexMap};
-use gpui::{FontFallbacks, FontFeatures, FontStyle, FontWeight, Pixels, SharedString};
-use schemars::{JsonSchema, JsonSchema_repr};
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use serde_repr::{Deserialize_repr, Serialize_repr};
 use settings_macros::{MergeFrom, with_fallible_options};
-use std::{fmt::Display, sync::Arc};
+use std::{borrow::Cow, fmt::Display, sync::Arc};
 
 use crate::serialize_f32_with_two_decimal_places;
+
+/// OpenType font features as a map of feature tag to value.
+/// This is a content type that mirrors `gpui::FontFeatures` but without the Arc wrapper.
+/// Values can be specified as booleans (true=1, false=0) or integers.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, MergeFrom)]
+#[serde(transparent)]
+pub struct FontFeaturesContent(pub IndexMap<String, u32>);
+
+impl FontFeaturesContent {
+    pub fn new() -> Self {
+        Self(IndexMap::default())
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+enum FeatureValue {
+    Bool(bool),
+    Number(serde_json::Number),
+}
+
+fn is_valid_feature_tag(tag: &str) -> bool {
+    tag.len() == 4 && tag.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+impl<'de> Deserialize<'de> for FontFeaturesContent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::{MapAccess, Visitor};
+        use std::fmt;
+
+        struct FontFeaturesVisitor;
+
+        impl<'de> Visitor<'de> for FontFeaturesVisitor {
+            type Value = FontFeaturesContent;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a map of font features")
+            }
+
+            fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                let mut feature_map = IndexMap::default();
+
+                while let Some((key, value)) =
+                    access.next_entry::<String, Option<FeatureValue>>()?
+                {
+                    if !is_valid_feature_tag(&key) {
+                        log::error!("Incorrect font feature tag: {}", key);
+                        continue;
+                    }
+                    if let Some(value) = value {
+                        match value {
+                            FeatureValue::Bool(enable) => {
+                                feature_map.insert(key, if enable { 1 } else { 0 });
+                            }
+                            FeatureValue::Number(value) => {
+                                if value.is_u64() {
+                                    feature_map.insert(key, value.as_u64().unwrap() as u32);
+                                } else {
+                                    log::error!(
+                                        "Incorrect font feature value {} for feature tag {}",
+                                        value,
+                                        key
+                                    );
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Ok(FontFeaturesContent(feature_map))
+            }
+        }
+
+        deserializer.deserialize_map(FontFeaturesVisitor)
+    }
+}
+
+impl JsonSchema for FontFeaturesContent {
+    fn schema_name() -> Cow<'static, str> {
+        "FontFeaturesContent".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        use schemars::json_schema;
+        json_schema!({
+            "type": "object",
+            "patternProperties": {
+                "[0-9a-zA-Z]{4}$": {
+                    "type": ["boolean", "integer"],
+                    "minimum": 0,
+                    "multipleOf": 1
+                }
+            },
+            "additionalProperties": false
+        })
+    }
+}
 
 /// Settings for rendering text in UI and text buffers.
 
@@ -24,10 +126,10 @@ pub struct ThemeSettingsContent {
     pub ui_font_fallbacks: Option<Vec<FontFamilyName>>,
     /// The OpenType features to enable for text in the UI.
     #[schemars(default = "default_font_features")]
-    pub ui_font_features: Option<FontFeatures>,
+    pub ui_font_features: Option<FontFeaturesContent>,
     /// The weight of the UI font in CSS units from 100 to 900.
     #[schemars(default = "default_buffer_font_weight")]
-    pub ui_font_weight: Option<FontWeight>,
+    pub ui_font_weight: Option<FontWeightContent>,
     /// The name of a font to use for rendering in text buffers.
     pub buffer_font_family: Option<FontFamilyName>,
     /// The font fallbacks to use for rendering in text buffers.
@@ -37,12 +139,12 @@ pub struct ThemeSettingsContent {
     pub buffer_font_size: Option<FontSize>,
     /// The weight of the editor font in CSS units from 100 to 900.
     #[schemars(default = "default_buffer_font_weight")]
-    pub buffer_font_weight: Option<FontWeight>,
+    pub buffer_font_weight: Option<FontWeightContent>,
     /// The buffer's line height.
     pub buffer_line_height: Option<BufferLineHeight>,
     /// The OpenType features to enable for rendering in text buffers.
     #[schemars(default = "default_font_features")]
-    pub buffer_font_features: Option<FontFeatures>,
+    pub buffer_font_features: Option<FontFeaturesContent>,
     /// The font size for agent responses in the agent panel. Falls back to the UI font size if unset.
     pub agent_ui_font_size: Option<FontSize>,
     /// The font size for user messages in the agent panel.
@@ -103,18 +205,6 @@ impl From<f32> for FontSize {
     }
 }
 
-impl From<FontSize> for Pixels {
-    fn from(value: FontSize) -> Self {
-        value.0.into()
-    }
-}
-
-impl From<Pixels> for FontSize {
-    fn from(value: Pixels) -> Self {
-        Self(value.into())
-    }
-}
-
 #[derive(
     Clone,
     Copy,
@@ -142,16 +232,16 @@ impl From<f32> for CodeFade {
     }
 }
 
-fn default_font_features() -> Option<FontFeatures> {
-    Some(FontFeatures::default())
+fn default_font_features() -> Option<FontFeaturesContent> {
+    Some(FontFeaturesContent::default())
 }
 
-fn default_font_fallbacks() -> Option<FontFallbacks> {
-    Some(FontFallbacks::default())
+fn default_font_fallbacks() -> Option<Vec<FontFamilyName>> {
+    Some(Vec::new())
 }
 
-fn default_buffer_font_weight() -> Option<FontWeight> {
-    Some(FontWeight::default())
+fn default_buffer_font_weight() -> Option<FontWeightContent> {
+    Some(FontWeightContent::NORMAL)
 }
 
 /// Represents the selection of a theme, which can be either static or dynamic.
@@ -312,18 +402,6 @@ impl AsRef<str> for FontFamilyName {
     }
 }
 
-impl From<SharedString> for FontFamilyName {
-    fn from(value: SharedString) -> Self {
-        Self(Arc::from(value))
-    }
-}
-
-impl From<FontFamilyName> for SharedString {
-    fn from(value: FontFamilyName) -> Self {
-        SharedString::new(value.0)
-    }
-}
-
 impl From<String> for FontFamilyName {
     fn from(value: String) -> Self {
         Self(Arc::from(value))
@@ -401,7 +479,7 @@ pub struct ThemeStyleContent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
-pub struct AccentContent(pub Option<SharedString>);
+pub struct AccentContent(pub Option<String>);
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct PlayerColorContent {
@@ -1184,16 +1262,6 @@ pub enum WindowBackgroundContent {
     Blurred,
 }
 
-impl Into<gpui::WindowBackgroundAppearance> for WindowBackgroundContent {
-    fn into(self) -> gpui::WindowBackgroundAppearance {
-        match self {
-            WindowBackgroundContent::Opaque => gpui::WindowBackgroundAppearance::Opaque,
-            WindowBackgroundContent::Transparent => gpui::WindowBackgroundAppearance::Transparent,
-            WindowBackgroundContent::Blurred => gpui::WindowBackgroundAppearance::Blurred,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FontStyleContent {
@@ -1202,45 +1270,42 @@ pub enum FontStyleContent {
     Oblique,
 }
 
-impl From<FontStyleContent> for FontStyle {
-    fn from(value: FontStyleContent) -> Self {
-        match value {
-            FontStyleContent::Normal => FontStyle::Normal,
-            FontStyleContent::Italic => FontStyle::Italic,
-            FontStyleContent::Oblique => FontStyle::Oblique,
-        }
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize, Deserialize, MergeFrom)]
+#[serde(transparent)]
+pub struct FontWeightContent(pub f32);
+
+impl Default for FontWeightContent {
+    fn default() -> Self {
+        Self::NORMAL
     }
 }
 
-#[derive(
-    Debug, Clone, Copy, Serialize_repr, Deserialize_repr, JsonSchema_repr, PartialEq, MergeFrom,
-)]
-#[repr(u16)]
-pub enum FontWeightContent {
-    Thin = 100,
-    ExtraLight = 200,
-    Light = 300,
-    Normal = 400,
-    Medium = 500,
-    Semibold = 600,
-    Bold = 700,
-    ExtraBold = 800,
-    Black = 900,
+impl FontWeightContent {
+    pub const THIN: FontWeightContent = FontWeightContent(100.0);
+    pub const EXTRA_LIGHT: FontWeightContent = FontWeightContent(200.0);
+    pub const LIGHT: FontWeightContent = FontWeightContent(300.0);
+    pub const NORMAL: FontWeightContent = FontWeightContent(400.0);
+    pub const MEDIUM: FontWeightContent = FontWeightContent(500.0);
+    pub const SEMIBOLD: FontWeightContent = FontWeightContent(600.0);
+    pub const BOLD: FontWeightContent = FontWeightContent(700.0);
+    pub const EXTRA_BOLD: FontWeightContent = FontWeightContent(800.0);
+    pub const BLACK: FontWeightContent = FontWeightContent(900.0);
 }
 
-impl From<FontWeightContent> for FontWeight {
-    fn from(value: FontWeightContent) -> Self {
-        match value {
-            FontWeightContent::Thin => FontWeight::THIN,
-            FontWeightContent::ExtraLight => FontWeight::EXTRA_LIGHT,
-            FontWeightContent::Light => FontWeight::LIGHT,
-            FontWeightContent::Normal => FontWeight::NORMAL,
-            FontWeightContent::Medium => FontWeight::MEDIUM,
-            FontWeightContent::Semibold => FontWeight::SEMIBOLD,
-            FontWeightContent::Bold => FontWeight::BOLD,
-            FontWeightContent::ExtraBold => FontWeight::EXTRA_BOLD,
-            FontWeightContent::Black => FontWeight::BLACK,
-        }
+impl schemars::JsonSchema for FontWeightContent {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "FontWeightContent".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        use schemars::json_schema;
+        json_schema!({
+            "type": "number",
+            "minimum": Self::THIN.0,
+            "maximum": Self::BLACK.0,
+            "default": Self::NORMAL.0,
+            "description": "Font weight value between 100 (thin) and 900 (black)"
+        })
     }
 }
 
@@ -1312,27 +1377,27 @@ mod tests {
         let default_value = &buffer_font_weight["default"];
         assert_eq!(
             default_value.as_f64(),
-            Some(FontWeight::NORMAL.0 as f64),
-            "buffer_font_weight default should be 400.0 (FontWeight::NORMAL)"
+            Some(FontWeightContent::NORMAL.0 as f64),
+            "buffer_font_weight default should be 400.0 (FontWeightContent::NORMAL)"
         );
 
         let defs = &schema_value["$defs"];
-        let font_weight_def = &defs["FontWeight"];
+        let font_weight_def = &defs["FontWeightContent"];
 
         assert_eq!(
             font_weight_def["minimum"].as_f64(),
-            Some(FontWeight::THIN.0 as f64),
-            "FontWeight should have minimum of 100.0"
+            Some(FontWeightContent::THIN.0 as f64),
+            "FontWeightContent should have minimum of 100.0"
         );
         assert_eq!(
             font_weight_def["maximum"].as_f64(),
-            Some(FontWeight::BLACK.0 as f64),
-            "FontWeight should have maximum of 900.0"
+            Some(FontWeightContent::BLACK.0 as f64),
+            "FontWeightContent should have maximum of 900.0"
         );
         assert_eq!(
             font_weight_def["default"].as_f64(),
-            Some(FontWeight::NORMAL.0 as f64),
-            "FontWeight should have default of 400.0"
+            Some(FontWeightContent::NORMAL.0 as f64),
+            "FontWeightContent should have default of 400.0"
         );
     }
 }
