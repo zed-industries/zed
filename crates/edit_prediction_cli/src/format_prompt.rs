@@ -12,6 +12,7 @@ use language::{Buffer, OffsetRangeExt, Point};
 use similar::DiffableStr;
 use std::sync::Arc;
 use std::{fmt::Write as _, ops::Range};
+use zeta_prompt::ZetaVersion;
 use zeta_prompt::format_zeta_prompt;
 
 pub async fn run_format_prompt(
@@ -104,6 +105,7 @@ pub async fn run_format_prompt(
                     .first()
                     .context("expected patches is empty")?
                     .clone(),
+                version,
             )?;
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
@@ -118,7 +120,11 @@ pub async fn run_format_prompt(
     Ok(())
 }
 
-pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str) -> Result<String> {
+pub fn zeta2_output_for_patch(
+    input: &zeta_prompt::ZetaPromptInput,
+    patch: &str,
+    version: ZetaVersion,
+) -> Result<String> {
     let mut old_editable_region =
         input.cursor_excerpt[input.editable_range_in_excerpt.clone()].to_string();
 
@@ -126,12 +132,22 @@ pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str)
         old_editable_region.push('\n');
     }
 
-    edit_prediction::udiff::apply_diff_to_string(patch, &old_editable_region).with_context(|| {
-        format!(
-            "Patch:\n```\n{}```\n\nEditable region:\n```\n{}```",
-            patch, old_editable_region
-        )
-    })
+    let mut result = edit_prediction::udiff::apply_diff_to_string(patch, &old_editable_region)
+        .with_context(|| {
+            format!(
+                "Patch:\n```\n{}```\n\nEditable region:\n```\n{}```",
+                patch, old_editable_region
+            )
+        })?;
+
+    if version == ZetaVersion::V0120GitMergeMarkers {
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push_str(zeta_prompt::v0120_git_merge_markers::END_MARKER);
+    }
+
+    Ok(result)
 }
 
 pub struct TeacherPrompt;
