@@ -1168,6 +1168,7 @@ mod tests {
             tools: vec![],
             tool_choice: None,
             thinking_allowed: true,
+            bypass_rate_limit: false,
         };
 
         let anthropic_request = into_anthropic(

@@ -1427,6 +1427,7 @@ mod tests {
             stop: vec![],
             temperature: None,
             thinking_allowed: true,
+            bypass_rate_limit: false,
         };
 
         // Validate that all models are supported by tiktoken-rs
@@ -1563,6 +1564,7 @@ mod tests {
             stop: vec!["<STOP>".into()],
             temperature: None,
             thinking_allowed: false,
+            bypass_rate_limit: false,
         };
 
         let response = into_open_ai_response(
