@@ -415,12 +415,8 @@ async fn test_subagent_uses_edit_file_tool(cx: &mut TestAppContext) {
             BTreeMap::new();
         tools.insert(
             "read_file".into(),
-            crate::ReadFileTool::new(
-                parent_thread.downgrade(),
-                project.clone(),
-                action_log.clone(),
-            )
-            .erase(),
+            crate::ReadFileTool::new(parent_thread.downgrade(), project.clone(), action_log)
+                .erase(),
         );
         tools.insert(
             "edit_file".into(),
