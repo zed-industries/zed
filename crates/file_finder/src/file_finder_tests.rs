@@ -78,6 +78,7 @@ fn test_custom_project_search_ordering_in_file_finder() {
             score: 0.5,
             positions: Vec::new(),
             worktree_id: 0,
+            project_id: 0,
             path: rel_path("b0.5").into(),
             path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
@@ -87,6 +88,7 @@ fn test_custom_project_search_ordering_in_file_finder() {
             score: 1.0,
             positions: Vec::new(),
             worktree_id: 0,
+            project_id: 0,
             path: rel_path("c1.0").into(),
             path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
@@ -96,6 +98,7 @@ fn test_custom_project_search_ordering_in_file_finder() {
             score: 1.0,
             positions: Vec::new(),
             worktree_id: 0,
+            project_id: 0,
             path: rel_path("a1.0").into(),
             path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
@@ -105,6 +108,7 @@ fn test_custom_project_search_ordering_in_file_finder() {
             score: 0.5,
             positions: Vec::new(),
             worktree_id: 0,
+            project_id: 0,
             path: rel_path("a0.5").into(),
             path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
@@ -114,6 +118,7 @@ fn test_custom_project_search_ordering_in_file_finder() {
             score: 1.0,
             positions: Vec::new(),
             worktree_id: 0,
+            project_id: 0,
             path: rel_path("b1.0").into(),
             path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
@@ -129,6 +134,7 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 score: 1.0,
                 positions: Vec::new(),
                 worktree_id: 0,
+            project_id: 0,
                 path: rel_path("a1.0").into(),
                 path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
@@ -138,6 +144,7 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 score: 1.0,
                 positions: Vec::new(),
                 worktree_id: 0,
+            project_id: 0,
                 path: rel_path("b1.0").into(),
                 path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
@@ -147,6 +154,7 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 score: 1.0,
                 positions: Vec::new(),
                 worktree_id: 0,
+            project_id: 0,
                 path: rel_path("c1.0").into(),
                 path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
@@ -156,6 +164,7 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 score: 0.5,
                 positions: Vec::new(),
                 worktree_id: 0,
+            project_id: 0,
                 path: rel_path("a0.5").into(),
                 path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
@@ -165,6 +174,7 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 score: 0.5,
                 positions: Vec::new(),
                 worktree_id: 0,
+            project_id: 0,
                 path: rel_path("b0.5").into(),
                 path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
@@ -1171,7 +1181,7 @@ async fn test_history_items_uniqueness_for_multiple_worktree(cx: &mut TestAppCon
 
         if let Match::Search(path_match) = &matches[1] {
             assert_eq!(
-                WorktreeId::from_usize(path_match.0.worktree_id),
+                WorktreeId::from_usize(path_match.0.worktree_id, path_match.0.project_id),
                 worktree_id2
             );
             assert_eq!(path_match.0.path.as_ref(), rel_path("package.json"));
@@ -1211,8 +1221,8 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
     let (_worktree_id1, worktree_id2) = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
         (
-            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize),
-            WorktreeId::from_usize(worktrees[1].entity_id().as_u64() as usize),
+            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize, 0),
+            WorktreeId::from_usize(worktrees[1].entity_id().as_u64() as usize, 0),
         )
     });
 
@@ -1342,7 +1352,7 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
     let worktree_id = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1);
-        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
+        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize, 0)
     });
 
     // When workspace has an active item, sort items which are closer to that item
@@ -1430,7 +1440,7 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
     let worktree_id = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1);
-        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
+        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize, 0)
     });
 
     // Open and close panels, getting their history items afterwards.
@@ -1650,7 +1660,7 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1,);
 
-        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
+        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize, 0)
     });
     workspace
         .update_in(cx, |workspace, window, cx| {
@@ -1681,6 +1691,7 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
                 .expect("New worktree should have a different id")
                 .entity_id()
                 .as_u64() as usize,
+            0,
         )
     });
     cx.dispatch_action(workspace::CloseActiveItem {
@@ -1807,7 +1818,7 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1,);
 
-        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
+        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize, 0)
     });
 
     // generate some history to select from

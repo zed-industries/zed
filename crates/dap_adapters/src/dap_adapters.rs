@@ -60,7 +60,7 @@ mod test_mocks {
     #[async_trait::async_trait]
     impl adapters::DapDelegate for MockDelegate {
         fn worktree_id(&self) -> settings::WorktreeId {
-            settings::WorktreeId::from_usize(0)
+            settings::WorktreeId::from_usize(0, 0)
         }
 
         fn worktree_root_path(&self) -> &std::path::Path {

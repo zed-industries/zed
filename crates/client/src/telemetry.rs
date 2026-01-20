@@ -694,6 +694,7 @@ mod tests {
 
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
+    use rpc::proto::REMOTE_SERVER_PROJECT_ID;
     use std::collections::HashMap;
     use telemetry_events::FlexibleEvent;
     use util::rel_path::RelPath;
@@ -838,7 +839,13 @@ mod tests {
         let worktree_id = 1;
 
         // Scan of empty worktree finds nothing
-        test_project_discovery_helper(telemetry.clone(), vec![], Some(vec![]), worktree_id);
+        test_project_discovery_helper(
+            telemetry.clone(),
+            vec![],
+            Some(vec![]),
+            worktree_id,
+            REMOTE_SERVER_PROJECT_ID,
+        );
 
         // Files added, second scan of worktree 1 finds project type
         test_project_discovery_helper(
@@ -846,10 +853,17 @@ mod tests {
             vec!["package.json"],
             Some(vec!["node"]),
             worktree_id,
+            REMOTE_SERVER_PROJECT_ID,
         );
 
         // Third scan of worktree does not double report, as we already reported
-        test_project_discovery_helper(telemetry, vec!["package.json"], None, worktree_id);
+        test_project_discovery_helper(
+            telemetry,
+            vec!["package.json"],
+            None,
+            worktree_id,
+            REMOTE_SERVER_PROJECT_ID,
+        );
     }
 
     #[gpui::test]
@@ -865,6 +879,7 @@ mod tests {
             vec!["package.json", "pnpm-lock.yaml"],
             Some(vec!["node", "pnpm"]),
             1,
+            REMOTE_SERVER_PROJECT_ID,
         );
     }
 
@@ -881,6 +896,7 @@ mod tests {
             vec!["package.json", "yarn.lock"],
             Some(vec!["node", "yarn"]),
             1,
+            REMOTE_SERVER_PROJECT_ID,
         );
     }
 
@@ -900,32 +916,43 @@ mod tests {
             vec!["global.json"],
             Some(vec!["dotnet"]),
             1,
+            REMOTE_SERVER_PROJECT_ID,
         );
         test_project_discovery_helper(
             telemetry.clone(),
             vec!["Directory.Build.props"],
             Some(vec!["dotnet"]),
             2,
+            REMOTE_SERVER_PROJECT_ID,
         );
         test_project_discovery_helper(
             telemetry.clone(),
             vec!["file.csproj"],
             Some(vec!["dotnet"]),
             3,
+            REMOTE_SERVER_PROJECT_ID,
         );
         test_project_discovery_helper(
             telemetry.clone(),
             vec!["file.fsproj"],
             Some(vec!["dotnet"]),
             4,
+            REMOTE_SERVER_PROJECT_ID,
         );
         test_project_discovery_helper(
             telemetry.clone(),
             vec!["file.vbproj"],
             Some(vec!["dotnet"]),
             5,
+            REMOTE_SERVER_PROJECT_ID,
         );
-        test_project_discovery_helper(telemetry.clone(), vec!["file.sln"], Some(vec!["dotnet"]), 6);
+        test_project_discovery_helper(
+            telemetry.clone(),
+            vec!["file.sln"],
+            Some(vec!["dotnet"]),
+            6,
+            REMOTE_SERVER_PROJECT_ID,
+        );
 
         // Each worktree should only send a single project type event, even when
         // encountering multiple files associated with that project type
@@ -934,6 +961,7 @@ mod tests {
             vec!["global.json", "Directory.Build.props"],
             Some(vec!["dotnet"]),
             7,
+            REMOTE_SERVER_PROJECT_ID,
         );
     }
 
@@ -959,8 +987,9 @@ mod tests {
         file_paths: Vec<&str>,
         expected_project_types: Option<Vec<&str>>,
         worktree_id_num: usize,
+        project_id: u64,
     ) {
-        let worktree_id = WorktreeId::from_usize(worktree_id_num);
+        let worktree_id = WorktreeId::from_usize(worktree_id_num, project_id);
         let entries: Vec<_> = file_paths
             .into_iter()
             .enumerate()

@@ -44,6 +44,7 @@ impl DiagnosticsSlashCommand {
                         score: 0.,
                         positions: Vec::new(),
                         worktree_id: entry.worktree_id.to_usize(),
+                        project_id: entry.worktree_id.project_id(),
                         path: entry.path,
                         path_prefix: path_prefix.clone(),
                         is_dir: false, // Diagnostics can't be produced for directories

@@ -263,7 +263,8 @@ impl ToolchainStore {
                 as_json: serde_json::Value::from_str(&toolchain.raw_json)?,
                 language_name,
             };
-            let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+            let worktree_id =
+                WorktreeId::from_proto(envelope.payload.worktree_id, envelope.payload.project_id);
             let path = if let Some(path) = envelope.payload.path {
                 RelPath::from_proto(&path)?
             } else {
@@ -283,7 +284,10 @@ impl ToolchainStore {
         let toolchain = this
             .update(&mut cx, |this, cx| {
                 let language_name = LanguageName::from_proto(envelope.payload.language_name);
-                let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+                let worktree_id = WorktreeId::from_proto(
+                    envelope.payload.worktree_id,
+                    envelope.payload.project_id,
+                );
                 this.active_toolchain(
                     ProjectPath {
                         worktree_id,
@@ -315,7 +319,10 @@ impl ToolchainStore {
         let toolchains = this
             .update(&mut cx, |this, cx| {
                 let language_name = LanguageName::from_proto(envelope.payload.language_name);
-                let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+                let worktree_id = WorktreeId::from_proto(
+                    envelope.payload.worktree_id,
+                    envelope.payload.project_id,
+                );
                 let path = RelPath::from_proto(envelope.payload.path.as_deref().unwrap_or(""))?;
                 anyhow::Ok(this.list_toolchains(
                     ProjectPath { worktree_id, path },

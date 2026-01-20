@@ -180,7 +180,8 @@ impl RemoteBufferStore {
                 let buffer_result = maybe!({
                     let mut buffer_file = None;
                     if let Some(file) = state.file.take() {
-                        let worktree_id = worktree::WorktreeId::from_proto(file.worktree_id);
+                        let worktree_id =
+                            worktree::WorktreeId::from_proto(file.worktree_id, self.project_id);
                         let worktree = self
                             .worktree_store
                             .read(cx)
@@ -846,6 +847,10 @@ impl BufferStore {
         }
     }
 
+    fn remote_project_id(&self) -> Option<u64> {
+        self.as_remote().map(|r| r.project_id)
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn open_buffer(
         &mut self,
@@ -1346,10 +1351,11 @@ impl BufferStore {
             let payload = envelope.payload.clone();
             if let Some(buffer) = this.get_possibly_incomplete(buffer_id) {
                 let file = payload.file.context("invalid file")?;
+                let project_id = this.remote_project_id().context("not a remote project")?;
                 let worktree = this
                     .worktree_store
                     .read(cx)
-                    .worktree_for_id(WorktreeId::from_proto(file.worktree_id), cx)
+                    .worktree_for_id(WorktreeId::from_proto(file.worktree_id, project_id), cx)
                     .context("no such worktree")?;
                 let file = File::from_proto(file, worktree, cx)?;
                 let old_file = buffer.update(cx, |buffer, cx| {
@@ -1403,7 +1409,7 @@ impl BufferStore {
         let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id());
 
         if let Some(new_path) = envelope.payload.new_path
-            && let Some(new_path) = ProjectPath::from_proto(new_path)
+            && let Some(new_path) = ProjectPath::from_proto(new_path, project_id)
         {
             this.update(&mut cx, |this, cx| {
                 this.save_buffer_as(buffer.clone(), new_path, cx)

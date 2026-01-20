@@ -399,9 +399,9 @@ impl ProjectPath {
         }
     }
 
-    pub fn from_proto(p: proto::ProjectPath) -> Option<Self> {
+    pub fn from_proto(p: proto::ProjectPath, project_id: u64) -> Option<Self> {
         Some(Self {
-            worktree_id: WorktreeId::from_proto(p.worktree_id),
+            worktree_id: WorktreeId::from_proto(p.worktree_id, project_id),
             path: RelPath::from_proto(&p.path).log_err()?,
         })
     }
@@ -1801,6 +1801,7 @@ impl Project {
         lsp_store.update(&mut cx, |lsp_store, cx| {
             lsp_store.set_language_server_statuses_from_proto(
                 weak_project,
+                remote_id,
                 response.payload.language_servers,
                 response.payload.language_server_capabilities,
                 cx,
@@ -2572,10 +2573,14 @@ impl Project {
         message_id: u32,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        let project_id = self.remote_id().unwrap_or(0);
         cx.update_global::<SettingsStore, _>(|store, cx| {
             for worktree_metadata in &message.worktrees {
                 store
-                    .clear_local_settings(WorktreeId::from_proto(worktree_metadata.id), cx)
+                    .clear_local_settings(
+                        WorktreeId::from_proto(worktree_metadata.id, project_id),
+                        cx,
+                    )
                     .log_err();
             }
         });
@@ -2588,6 +2593,7 @@ impl Project {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.set_language_server_statuses_from_proto(
                 project,
+                project_id,
                 message.language_servers,
                 message.language_server_capabilities,
                 cx,
@@ -4868,7 +4874,13 @@ impl Project {
                 cx.update_global::<SettingsStore, _>(|store, cx| {
                     for worktree_metadata in &envelope.payload.worktrees {
                         store
-                            .clear_local_settings(WorktreeId::from_proto(worktree_metadata.id), cx)
+                            .clear_local_settings(
+                                WorktreeId::from_proto(
+                                    worktree_metadata.id,
+                                    envelope.payload.project_id,
+                                ),
+                                cx,
+                            )
                             .log_err();
                     }
                 });
@@ -4962,7 +4974,10 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |project, cx| {
-            let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+            let worktree_id = WorktreeId::from_proto(
+                envelope.payload.worktree_id,
+                envelope.payload.project_id,
+            );
             if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
@@ -5009,7 +5024,9 @@ impl Project {
                     .payload
                     .trusted_paths
                     .into_iter()
-                    .filter_map(|proto_path| PathTrust::from_proto(proto_path))
+                    .filter_map(|proto_path| {
+                        PathTrust::from_proto(proto_path, envelope.payload.project_id)
+                    })
                     .collect(),
                 cx,
             );
@@ -5031,11 +5048,12 @@ impl Project {
             .context("missing trusted worktrees")?;
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
             let worktree_store = this.read(cx).worktree_store().downgrade();
+            let project_id = envelope.payload.project_id;
             let restricted_paths = envelope
                 .payload
                 .worktree_ids
                 .into_iter()
-                .map(WorktreeId::from_proto)
+                .map(|id| WorktreeId::from_proto(id, project_id))
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
             trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
@@ -5259,7 +5277,8 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
-        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let worktree_id =
+            WorktreeId::from_proto(envelope.payload.worktree_id, envelope.payload.project_id);
         let path = RelPath::from_proto(&envelope.payload.path)?;
         let open_buffer = this
             .update(&mut cx, |this, cx| {
@@ -5663,6 +5682,10 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
 
     fn id(&self) -> usize {
         self.snapshot.id().to_usize()
+    }
+
+    fn project_id(&self) -> u64 {
+        self.snapshot.id().project_id()
     }
 
     fn len(&self) -> usize {

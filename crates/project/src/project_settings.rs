@@ -958,7 +958,8 @@ impl SettingsObserver {
                 SettingsObserverMode::Local(..) => false,
                 SettingsObserverMode::Remote { via_collab } => *via_collab,
             };
-            let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+            let worktree_id =
+                WorktreeId::from_proto(envelope.payload.worktree_id, envelope.payload.project_id);
             let Some(worktree) = this
                 .worktree_store
                 .read(cx)

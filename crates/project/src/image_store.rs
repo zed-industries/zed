@@ -566,7 +566,7 @@ impl RemoteImageStore {
                     let image = create_gpui_image(content)?;
 
                     let proto_file = loading.state.file.context("missing file in image state")?;
-                    let worktree_id = WorktreeId::from_proto(proto_file.worktree_id);
+                    let worktree_id = WorktreeId::from_proto(proto_file.worktree_id, self.project_id);
                     let worktree = worktree_store
                         .read(cx)
                         .worktree_for_id(worktree_id, cx)

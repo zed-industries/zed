@@ -982,7 +982,7 @@ impl SettingsStore {
             .range(
                 (root_id, RelPath::empty().into())
                     ..(
-                        WorktreeId::from_usize(root_id.to_usize() + 1),
+                        WorktreeId::from_usize(root_id.to_usize() + 1, root_id.project_id()),
                         RelPath::empty().into(),
                     ),
             )
@@ -1461,7 +1461,7 @@ mod tests {
 
         store
             .set_local_settings(
-                WorktreeId::from_usize(1),
+                WorktreeId::from_usize(1, 0),
                 LocalSettingsPath::InWorktree(rel_path("root1").into()),
                 LocalSettingsKind::Settings,
                 Some(r#"{ "tab_size": 5 }"#),
@@ -1470,7 +1470,7 @@ mod tests {
             .unwrap();
         store
             .set_local_settings(
-                WorktreeId::from_usize(1),
+                WorktreeId::from_usize(1, 0),
                 LocalSettingsPath::InWorktree(rel_path("root1/subdir").into()),
                 LocalSettingsKind::Settings,
                 Some(r#"{ "preferred_line_length": 50 }"#),
@@ -1480,7 +1480,7 @@ mod tests {
 
         store
             .set_local_settings(
-                WorktreeId::from_usize(1),
+                WorktreeId::from_usize(1, 0),
                 LocalSettingsPath::InWorktree(rel_path("root2").into()),
                 LocalSettingsKind::Settings,
                 Some(r#"{ "tab_size": 9, "auto_update": true}"#),
@@ -1490,7 +1490,7 @@ mod tests {
 
         assert_eq!(
             store.get::<DefaultLanguageSettings>(Some(SettingsLocation {
-                worktree_id: WorktreeId::from_usize(1),
+                worktree_id: WorktreeId::from_usize(1, 0),
                 path: rel_path("root1/something"),
             })),
             &DefaultLanguageSettings {
@@ -1500,7 +1500,7 @@ mod tests {
         );
         assert_eq!(
             store.get::<DefaultLanguageSettings>(Some(SettingsLocation {
-                worktree_id: WorktreeId::from_usize(1),
+                worktree_id: WorktreeId::from_usize(1, 0),
                 path: rel_path("root1/subdir/something"),
             })),
             &DefaultLanguageSettings {
@@ -1510,7 +1510,7 @@ mod tests {
         );
         assert_eq!(
             store.get::<DefaultLanguageSettings>(Some(SettingsLocation {
-                worktree_id: WorktreeId::from_usize(1),
+                worktree_id: WorktreeId::from_usize(1, 0),
                 path: rel_path("root2/something"),
             })),
             &DefaultLanguageSettings {
@@ -1520,7 +1520,7 @@ mod tests {
         );
         assert_eq!(
             store.get::<AutoUpdateSetting>(Some(SettingsLocation {
-                worktree_id: WorktreeId::from_usize(1),
+                worktree_id: WorktreeId::from_usize(1, 0),
                 path: rel_path("root2/something")
             })),
             &AutoUpdateSetting { auto_update: false }
@@ -1948,7 +1948,7 @@ mod tests {
         store
             .set_user_settings(r#"{"preferred_line_length": 0}"#, cx)
             .unwrap();
-        let local = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
+        let local = (WorktreeId::from_usize(0, 0), RelPath::empty().into_arc());
         store
             .set_local_settings(
                 local.0,
@@ -2008,10 +2008,10 @@ mod tests {
         store.register_setting::<DefaultLanguageSettings>();
         store.register_setting::<AutoUpdateSetting>();
 
-        let local_1 = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
+        let local_1 = (WorktreeId::from_usize(0, 0), RelPath::empty().into_arc());
 
         let local_1_child = (
-            WorktreeId::from_usize(0),
+            WorktreeId::from_usize(0, 0),
             RelPath::new(
                 std::path::Path::new("child1"),
                 util::paths::PathStyle::Posix,
@@ -2020,9 +2020,9 @@ mod tests {
             .into_arc(),
         );
 
-        let local_2 = (WorktreeId::from_usize(1), RelPath::empty().into_arc());
+        let local_2 = (WorktreeId::from_usize(1, 0), RelPath::empty().into_arc());
         let local_2_child = (
-            WorktreeId::from_usize(1),
+            WorktreeId::from_usize(1, 0),
             RelPath::new(
                 std::path::Path::new("child2"),
                 util::paths::PathStyle::Posix,
@@ -2141,12 +2141,12 @@ mod tests {
         let mut store = SettingsStore::new(cx, &test_settings());
         store.register_setting::<DefaultLanguageSettings>();
 
-        let wt0_root = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
-        let wt0_child1 = (WorktreeId::from_usize(0), rel_path("child1").into_arc());
-        let wt0_child2 = (WorktreeId::from_usize(0), rel_path("child2").into_arc());
+        let wt0_root = (WorktreeId::from_usize(0, 0), RelPath::empty().into_arc());
+        let wt0_child1 = (WorktreeId::from_usize(0, 0), rel_path("child1").into_arc());
+        let wt0_child2 = (WorktreeId::from_usize(0, 0), rel_path("child2").into_arc());
 
-        let wt1_root = (WorktreeId::from_usize(1), RelPath::empty().into_arc());
-        let wt1_subdir = (WorktreeId::from_usize(1), rel_path("subdir").into_arc());
+        let wt1_root = (WorktreeId::from_usize(1, 0), RelPath::empty().into_arc());
+        let wt1_subdir = (WorktreeId::from_usize(1, 0), rel_path("subdir").into_arc());
 
         fn get(content: &SettingsContent) -> &Option<u32> {
             &content.project.all_languages.defaults.preferred_line_length
@@ -2241,7 +2241,7 @@ mod tests {
         assert_eq!(overrides, vec![]);
 
         let wt0_deep_child = (
-            WorktreeId::from_usize(0),
+            WorktreeId::from_usize(0, 0),
             rel_path("child1/subdir").into_arc(),
         );
         store
@@ -2264,16 +2264,16 @@ mod tests {
     #[test]
     fn test_file_ord() {
         let wt0_root =
-            SettingsFile::Project((WorktreeId::from_usize(0), RelPath::empty().into_arc()));
+            SettingsFile::Project((WorktreeId::from_usize(0, 0), RelPath::empty().into_arc()));
         let wt0_child1 =
-            SettingsFile::Project((WorktreeId::from_usize(0), rel_path("child1").into_arc()));
+            SettingsFile::Project((WorktreeId::from_usize(0, 0), rel_path("child1").into_arc()));
         let wt0_child2 =
-            SettingsFile::Project((WorktreeId::from_usize(0), rel_path("child2").into_arc()));
+            SettingsFile::Project((WorktreeId::from_usize(0, 0), rel_path("child2").into_arc()));
 
         let wt1_root =
-            SettingsFile::Project((WorktreeId::from_usize(1), RelPath::empty().into_arc()));
+            SettingsFile::Project((WorktreeId::from_usize(1, 0), RelPath::empty().into_arc()));
         let wt1_subdir =
-            SettingsFile::Project((WorktreeId::from_usize(1), rel_path("subdir").into_arc()));
+            SettingsFile::Project((WorktreeId::from_usize(1, 0), rel_path("subdir").into_arc()));
 
         let mut files = vec![
             &wt1_root,

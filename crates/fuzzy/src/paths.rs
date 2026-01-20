@@ -25,6 +25,7 @@ pub struct PathMatch {
     pub score: f64,
     pub positions: Vec<usize>,
     pub worktree_id: usize,
+    pub project_id: u64,
     pub path: Arc<RelPath>,
     pub path_prefix: Arc<RelPath>,
     pub is_dir: bool,
@@ -36,6 +37,7 @@ pub struct PathMatch {
 pub trait PathMatchCandidateSet<'a>: Send + Sync {
     type Candidates: Iterator<Item = PathMatchCandidate<'a>>;
     fn id(&self) -> usize;
+    fn project_id(&self) -> u64;
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {
         self.len() == 0
@@ -88,6 +90,7 @@ impl Ord for PathMatch {
 pub fn match_fixed_path_set(
     candidates: Vec<PathMatchCandidate>,
     worktree_id: usize,
+    project_id: u64,
     worktree_root_name: Option<Arc<RelPath>>,
     query: &str,
     smart_case: bool,
@@ -131,6 +134,7 @@ pub fn match_fixed_path_set(
         |candidate, score, positions| PathMatch {
             score,
             worktree_id,
+            project_id,
             positions: positions.clone(),
             is_dir: candidate.is_dir,
             path: candidate.path.into(),
@@ -207,6 +211,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                             let candidates = candidate_set.candidates(start).take(end - start);
 
                             let worktree_id = candidate_set.id();
+                            let project_id = candidate_set.project_id();
                             let mut prefix = candidate_set
                                 .prefix()
                                 .as_unix_str()
@@ -228,6 +233,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                                 |candidate, score, positions| PathMatch {
                                     score,
                                     worktree_id,
+                                    project_id,
                                     positions: positions.clone(),
                                     path: Arc::from(candidate.path),
                                     is_dir: candidate.is_dir,

@@ -533,7 +533,8 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::RemoveWorktree>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let worktree_id =
+            WorktreeId::from_proto(envelope.payload.worktree_id, REMOTE_SERVER_PROJECT_ID);
         this.update(&mut cx, |this, cx| {
             this.worktree_store.update(cx, |worktree_store, cx| {
                 worktree_store.remove_worktree(worktree_id, cx);
@@ -547,7 +548,8 @@ impl HeadlessProject {
         message: TypedEnvelope<proto::OpenBufferByPath>,
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
-        let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
+        let worktree_id =
+            WorktreeId::from_proto(message.payload.worktree_id, REMOTE_SERVER_PROJECT_ID);
         let path = RelPath::from_proto(&message.payload.path)?;
         let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
             let buffer_store = this.buffer_store.clone();
@@ -576,7 +578,8 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::OpenImageResponse> {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-        let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
+        let worktree_id =
+            WorktreeId::from_proto(message.payload.worktree_id, REMOTE_SERVER_PROJECT_ID);
         let path = RelPath::from_proto(&message.payload.path)?;
         let project_id = message.payload.project_id;
         use proto::create_image_for_peer::Variant;
@@ -651,7 +654,7 @@ impl HeadlessProject {
                     .payload
                     .trusted_paths
                     .into_iter()
-                    .filter_map(PathTrust::from_proto)
+                    .filter_map(|p| PathTrust::from_proto(p, REMOTE_SERVER_PROJECT_ID))
                     .collect(),
                 cx,
             );
@@ -673,7 +676,7 @@ impl HeadlessProject {
                 .payload
                 .worktree_ids
                 .into_iter()
-                .map(WorktreeId::from_proto)
+                .map(|id| WorktreeId::from_proto(id, REMOTE_SERVER_PROJECT_ID))
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
             trusted_worktrees.restrict(worktree_store, restricted_paths, cx);

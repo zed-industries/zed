@@ -556,7 +556,10 @@ impl WorktreeStore {
                 .await?;
 
             if let Some(existing_worktree) = this.read_with(cx, |this, cx| {
-                this.worktree_for_id(WorktreeId::from_proto(response.worktree_id), cx)
+                this.worktree_for_id(
+                    WorktreeId::from_proto(response.worktree_id, REMOTE_SERVER_PROJECT_ID),
+                    cx,
+                )
             }) {
                 return Ok(existing_worktree);
             }
@@ -738,7 +741,7 @@ impl WorktreeStore {
 
         for worktree in worktrees {
             if let Some(old_worktree) =
-                old_worktrees_by_id.remove(&WorktreeId::from_proto(worktree.id))
+                old_worktrees_by_id.remove(&WorktreeId::from_proto(worktree.id, project_id))
             {
                 let push_strong_handle =
                     self.retain_worktrees || old_worktree.read(cx).is_visible();
@@ -940,7 +943,10 @@ impl WorktreeStore {
         mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let worktree = this.update(&mut cx, |this, cx| {
-            let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+            let worktree_id = WorktreeId::from_proto(
+                envelope.payload.worktree_id,
+                envelope.payload.project_id,
+            );
             this.worktree_for_id(worktree_id, cx)
                 .context("worktree not found")
         })?;
@@ -953,7 +959,10 @@ impl WorktreeStore {
         mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let new_worktree_id = WorktreeId::from_proto(envelope.payload.new_worktree_id);
+        let new_worktree_id = WorktreeId::from_proto(
+            envelope.payload.new_worktree_id,
+            envelope.payload.project_id,
+        );
         let new_project_path = (
             new_worktree_id,
             RelPath::from_proto(&envelope.payload.new_path)?,
@@ -1013,7 +1022,7 @@ impl WorktreeStore {
         mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(request.entry_id);
-        let new_worktree_id = WorktreeId::from_proto(request.new_worktree_id);
+        let new_worktree_id = WorktreeId::from_proto(request.new_worktree_id, request.project_id);
         let rel_path = RelPath::from_proto(&request.new_path)
             .with_context(|| format!("received invalid relative path {:?}", &request.new_path))?;
 

@@ -1034,6 +1034,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                     score: 1.,
                                     positions: Vec::new(),
                                     worktree_id: project_path.worktree_id.to_usize(),
+                                    project_id: project_path.worktree_id.project_id(),
                                     path: project_path.path,
                                     path_prefix,
                                     is_dir: false,
@@ -1353,7 +1354,10 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                             .filter_map(|mat| match mat {
                                 Match::File(FileMatch { mat, is_recent }) => {
                                     let project_path = ProjectPath {
-                                        worktree_id: WorktreeId::from_usize(mat.worktree_id),
+                                        worktree_id: WorktreeId::from_usize(
+                                            mat.worktree_id,
+                                            mat.project_id,
+                                        ),
                                         path: mat.path.clone(),
                                     };
 
@@ -1818,6 +1822,7 @@ pub(crate) fn search_files(
                         score: 0.,
                         positions: Vec::new(),
                         worktree_id: project_path.worktree_id.to_usize(),
+                        project_id: project_path.worktree_id.project_id(),
                         path: project_path.path,
                         path_prefix,
                         distance_to_relative_ancestor: 0,
@@ -1829,6 +1834,7 @@ pub(crate) fn search_files(
 
         let file_matches = visible_worktrees.into_iter().flat_map(|worktree| {
             let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
             let path_prefix: Arc<RelPath> = if include_root_name {
                 worktree.root_name().into()
             } else {
@@ -1838,7 +1844,8 @@ pub(crate) fn search_files(
                 mat: PathMatch {
                     score: 0.,
                     positions: Vec::new(),
-                    worktree_id: worktree.id().to_usize(),
+                    worktree_id: worktree_id.to_usize(),
+                    project_id: worktree_id.project_id(),
                     path: entry.path.clone(),
                     path_prefix: path_prefix.clone(),
                     distance_to_relative_ancestor: 0,
@@ -2461,7 +2468,7 @@ mod tests {
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1);
-            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
+            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize, 0)
         });
 
         // Open a file in dir2 to create navigation history.

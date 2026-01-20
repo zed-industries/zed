@@ -7801,8 +7801,9 @@ impl LspStore {
         let language_registry = self.languages.clone();
 
         if let Some((upstream_client, project_id)) = self.upstream_client().as_ref() {
+            let project_id = *project_id;
             let request = upstream_client.request(proto::GetProjectSymbols {
-                project_id: *project_id,
+                project_id,
                 query: query.to_string(),
             });
             cx.foreground_executor().spawn(async move {
@@ -7811,7 +7812,7 @@ impl LspStore {
                 let core_symbols = response
                     .symbols
                     .into_iter()
-                    .filter_map(|symbol| Self::deserialize_symbol(symbol).log_err())
+                    .filter_map(|symbol| Self::deserialize_symbol(symbol, project_id).log_err())
                     .collect::<Vec<_>>();
                 populate_labels_for_symbols(core_symbols, &language_registry, None, &mut symbols)
                     .await;
@@ -8419,6 +8420,7 @@ impl LspStore {
     pub(crate) fn set_language_server_statuses_from_proto(
         &mut self,
         project: WeakEntity<Project>,
+        project_id: u64,
         language_servers: Vec<proto::LanguageServer>,
         server_capabilities: Vec<String>,
         cx: &mut Context<Self>,
@@ -8438,7 +8440,9 @@ impl LspStore {
                 }
 
                 let name = LanguageServerName::from_proto(server.name);
-                let worktree = server.worktree_id.map(WorktreeId::from_proto);
+                let worktree = server
+                    .worktree_id
+                    .map(|id| WorktreeId::from_proto(id, project_id));
 
                 if let Some(lsp_logs) = &lsp_logs {
                     lsp_logs.update(cx, |lsp_logs, cx| {
@@ -9358,7 +9362,10 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let new_worktree_id = WorktreeId::from_proto(envelope.payload.new_worktree_id);
+        let new_worktree_id = WorktreeId::from_proto(
+            envelope.payload.new_worktree_id,
+            envelope.payload.project_id,
+        );
         let new_path =
             RelPath::from_proto(&envelope.payload.new_path).context("invalid relative path")?;
 
@@ -9418,7 +9425,8 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |lsp_store, cx| {
-            let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+            let worktree_id =
+                WorktreeId::from_proto(envelope.payload.worktree_id, envelope.payload.project_id);
             let mut updated_diagnostics_paths = HashMap::default();
             let mut diagnostics_summary = None::<proto::UpdateDiagnosticSummary>;
             for message_summary in envelope
@@ -9531,7 +9539,9 @@ impl LspStore {
                     pending_work: Default::default(),
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
-                    worktree: server.worktree_id.map(WorktreeId::from_proto),
+                    worktree: server
+                        .worktree_id
+                        .map(|id| WorktreeId::from_proto(id, envelope.payload.project_id)),
                     binary: None,
                     configuration: None,
                     workspace_folders: BTreeSet::new(),
@@ -9540,7 +9550,9 @@ impl LspStore {
             cx.emit(LspStoreEvent::LanguageServerAdded(
                 server_id,
                 server_name,
-                server.worktree_id.map(WorktreeId::from_proto),
+                server
+                    .worktree_id
+                    .map(|id| WorktreeId::from_proto(id, envelope.payload.project_id)),
             ));
             cx.notify();
         });
@@ -10464,7 +10476,7 @@ impl LspStore {
     ) -> Result<proto::OpenBufferForSymbolResponse> {
         let peer_id = envelope.original_sender_id().unwrap_or_default();
         let symbol = envelope.payload.symbol.context("invalid symbol")?;
-        let symbol = Self::deserialize_symbol(symbol)?;
+        let symbol = Self::deserialize_symbol(symbol, envelope.payload.project_id)?;
         this.read_with(&cx, |this, _| {
             if let SymbolLocation::OutsideProject {
                 abs_path,
@@ -11999,9 +12011,10 @@ impl LspStore {
         result
     }
 
-    fn deserialize_symbol(serialized_symbol: proto::Symbol) -> Result<CoreSymbol> {
-        let source_worktree_id = WorktreeId::from_proto(serialized_symbol.source_worktree_id);
-        let worktree_id = WorktreeId::from_proto(serialized_symbol.worktree_id);
+    fn deserialize_symbol(serialized_symbol: proto::Symbol, project_id: u64) -> Result<CoreSymbol> {
+        let source_worktree_id =
+            WorktreeId::from_proto(serialized_symbol.source_worktree_id, project_id);
+        let worktree_id = WorktreeId::from_proto(serialized_symbol.worktree_id, project_id);
         let kind = unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialized_symbol.kind) };
 
         let path = if serialized_symbol.signature.is_empty() {

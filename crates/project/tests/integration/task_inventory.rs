@@ -196,7 +196,7 @@ async fn test_task_list_sorting(cx: &mut TestAppContext) {
         "Most recently used task should be at the top"
     );
 
-    let worktree_id = WorktreeId::from_usize(0);
+    let worktree_id = WorktreeId::from_usize(0, 0);
     let local_worktree_location = SettingsLocation {
         worktree_id,
         path: rel_path("foo"),
@@ -414,8 +414,8 @@ async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
     init_test(cx);
     let inventory = cx.update(|cx| Inventory::new(cx));
     let common_name = "common_task_name";
-    let worktree_1 = WorktreeId::from_usize(1);
-    let worktree_2 = WorktreeId::from_usize(2);
+    let worktree_1 = WorktreeId::from_usize(1, 0);
+    let worktree_2 = WorktreeId::from_usize(2, 0);
 
     cx.run_until_parked();
     let worktree_independent_tasks = vec![
