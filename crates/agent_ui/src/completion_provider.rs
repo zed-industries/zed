@@ -230,9 +230,9 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         mention_set: WeakEntity<MentionSet>,
         workspace: &Entity<Workspace>,
         cx: &mut App,
-    ) -> Vec<Completion> {
+    ) -> Option<Completion> {
         match entry {
-            PromptContextEntry::Mode(mode) => vec![Completion {
+            PromptContextEntry::Mode(mode) => Some(Completion {
                 replace_range: source_range,
                 new_text: format!("@{} ", mode.keyword()),
                 label: CodeLabel::plain(mode.label().to_string(), None),
@@ -246,7 +246,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 // completion menu will still be shown after "@category " is
                 // inserted
                 confirm: Some(Arc::new(|_, _, _| true)),
-            }],
+            }),
             PromptContextEntry::Action(action) => Self::completion_for_action(
                 action,
                 source_range,
@@ -254,9 +254,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 mention_set,
                 workspace,
                 cx,
-            )
-            .into_iter()
-            .collect(),
+            ),
         }
     }
 
@@ -613,49 +611,32 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         .icon_path(cx);
 
         let mut completions = Vec::new();
-        if summary.error_count > 0 {
-            completions.push(Self::build_diagnostics_completion(
-                diagnostics_submenu_label(summary, true, false),
-                source_range.clone(),
-                source.clone(),
-                editor.clone(),
-                mention_set.clone(),
-                workspace.clone(),
-                icon_path.clone(),
-                true,
-                false,
-                summary,
-            ));
-        }
 
-        if summary.warning_count > 0 {
-            completions.push(Self::build_diagnostics_completion(
-                diagnostics_submenu_label(summary, false, true),
-                source_range.clone(),
-                source.clone(),
-                editor.clone(),
-                mention_set.clone(),
-                workspace.clone(),
-                icon_path.clone(),
-                false,
+        let cases = [
+            (summary.error_count > 0, true, false),
+            (summary.warning_count > 0, false, true),
+            (
+                summary.error_count > 0 && summary.warning_count > 0,
                 true,
-                summary,
-            ));
-        }
+                true,
+            ),
+        ];
 
-        if summary.error_count > 0 && summary.warning_count > 0 {
-            completions.push(Self::build_diagnostics_completion(
-                diagnostics_submenu_label(summary, true, true),
-                source_range,
-                source,
-                editor,
-                mention_set,
-                workspace,
-                icon_path,
-                true,
-                true,
-                summary,
-            ));
+        for (condition, include_errors, include_warnings) in cases {
+            if condition {
+                completions.push(Self::build_diagnostics_completion(
+                    diagnostics_submenu_label(summary, include_errors, include_warnings),
+                    source_range.clone(),
+                    source.clone(),
+                    editor.clone(),
+                    mention_set.clone(),
+                    workspace.clone(),
+                    icon_path.clone(),
+                    include_errors,
+                    include_warnings,
+                    summary,
+                ));
+            }
         }
 
         completions
@@ -1176,7 +1157,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                     let completions = cx.update(|cx| {
                         matches
                             .into_iter()
-                            .flat_map(|mat| match mat {
+                            .filter_map(|mat| match mat {
                                 Match::File(FileMatch { mat, is_recent }) => {
                                     let project_path = ProjectPath {
                                         worktree_id: WorktreeId::from_usize(mat.worktree_id),
@@ -1209,10 +1190,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         label_max_chars,
                                         cx,
                                     )
-                                    .into_iter()
-                                    .collect::<Vec<_>>()
                                 }
-
                                 Match::Symbol(SymbolMatch { symbol, .. }) => {
                                     Self::completion_for_symbol(
                                         symbol,
@@ -1224,11 +1202,8 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         label_max_chars,
                                         cx,
                                     )
-                                    .into_iter()
-                                    .collect::<Vec<_>>()
                                 }
-
-                                Match::Thread(thread) => vec![Self::completion_for_thread(
+                                Match::Thread(thread) => Some(Self::completion_for_thread(
                                     thread,
                                     source_range.clone(),
                                     false,
@@ -1237,9 +1212,8 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     mention_set.clone(),
                                     workspace.clone(),
                                     cx,
-                                )],
-
-                                Match::RecentThread(thread) => vec![Self::completion_for_thread(
+                                )),
+                                Match::RecentThread(thread) => Some(Self::completion_for_thread(
                                     thread,
                                     source_range.clone(),
                                     true,
@@ -1248,9 +1222,8 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     mention_set.clone(),
                                     workspace.clone(),
                                     cx,
-                                )],
-
-                                Match::Rules(user_rules) => vec![Self::completion_for_rules(
+                                )),
+                                Match::Rules(user_rules) => Some(Self::completion_for_rules(
                                     user_rules,
                                     source_range.clone(),
                                     source.clone(),
@@ -1258,8 +1231,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     mention_set.clone(),
                                     workspace.clone(),
                                     cx,
-                                )],
-
+                                )),
                                 Match::Fetch(url) => Self::completion_for_fetch(
                                     source_range.clone(),
                                     url,
@@ -1268,10 +1240,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     mention_set.clone(),
                                     workspace.clone(),
                                     cx,
-                                )
-                                .into_iter()
-                                .collect::<Vec<_>>(),
-
+                                ),
                                 Match::Entry(EntryMatch { entry, .. }) => {
                                     Self::completion_for_entry(
                                         entry,
@@ -1589,16 +1558,6 @@ fn diagnostics_submenu_label(
     include_warnings: bool,
 ) -> String {
     match (include_errors, include_warnings) {
-        (true, false) => format!(
-            "{} {}",
-            summary.error_count,
-            pluralize("error", summary.error_count)
-        ),
-        (false, true) => format!(
-            "{} {}",
-            summary.warning_count,
-            pluralize("warning", summary.warning_count)
-        ),
         (true, true) => format!(
             "{} {} & {} {}",
             summary.error_count,
@@ -1606,7 +1565,17 @@ fn diagnostics_submenu_label(
             summary.warning_count,
             pluralize("warning", summary.warning_count)
         ),
-        (false, false) => "Diagnostics".into(),
+        (true, _) => format!(
+            "{} {}",
+            summary.error_count,
+            pluralize("error", summary.error_count)
+        ),
+        (_, true) => format!(
+            "{} {}",
+            summary.warning_count,
+            pluralize("warning", summary.warning_count)
+        ),
+        _ => "Diagnostics".into(),
     }
 }
 
