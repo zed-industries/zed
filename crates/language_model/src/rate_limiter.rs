@@ -105,3 +105,177 @@ impl RateLimiter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::future::{Either, select};
+    use futures::stream;
+    use smol::lock::Barrier;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    /// Tests that nested requests without bypass_rate_limit cause deadlock,
+    /// while requests with bypass_rate_limit complete successfully.
+    ///
+    /// This test simulates the scenario where multiple "parent" requests each
+    /// try to spawn a "nested" request (like edit_file tool spawning an edit agent).
+    /// With a rate limit of 2 and 2 parent requests, without bypass the nested
+    /// requests would block forever waiting for permits that the parents hold.
+    #[test]
+    fn test_nested_requests_bypass_prevents_deadlock() {
+        smol::block_on(async {
+            // Use only 2 permits so we can guarantee deadlock conditions
+            let rate_limiter = RateLimiter::new(2);
+            let completed = Arc::new(AtomicUsize::new(0));
+            // Barrier ensures all parents acquire permits before any tries nested request
+            let barrier = Arc::new(Barrier::new(2));
+
+            // Spawn 2 "parent" requests that each try to make a "nested" request
+            let mut handles = Vec::new();
+            for _ in 0..2 {
+                let limiter = rate_limiter.clone();
+                let completed = completed.clone();
+                let barrier = barrier.clone();
+
+                let handle = smol::spawn(async move {
+                    // Parent request acquires a permit via stream_with_bypass (bypass=false)
+                    let parent_stream = limiter
+                        .stream_with_bypass(
+                            async {
+                                // Wait for all parents to acquire permits
+                                barrier.wait().await;
+
+                                // While holding the parent permit, make a nested request
+                                // WITH bypass=true (simulating EditAgent behavior)
+                                let nested_stream = limiter
+                                    .stream_with_bypass(
+                                        async { Ok(stream::iter(vec![1, 2, 3])) },
+                                        true, // bypass - this is the key!
+                                    )
+                                    .await?;
+
+                                // Consume the nested stream
+                                use futures::StreamExt;
+                                let _: Vec<_> = nested_stream.collect().await;
+
+                                Ok(stream::iter(vec!["done"]))
+                            },
+                            false, // parent does NOT bypass
+                        )
+                        .await
+                        .unwrap();
+
+                    // Consume parent stream
+                    use futures::StreamExt;
+                    let _: Vec<_> = parent_stream.collect().await;
+
+                    completed.fetch_add(1, Ordering::SeqCst);
+                });
+                handles.push(handle);
+            }
+
+            // With bypass=true for nested requests, this should complete quickly
+            let timeout = smol::Timer::after(Duration::from_secs(2));
+            let all_done = async {
+                for handle in handles {
+                    handle.await;
+                }
+            };
+
+            match select(Box::pin(all_done), Box::pin(timeout)).await {
+                Either::Left(_) => {
+                    assert_eq!(completed.load(Ordering::SeqCst), 2);
+                }
+                Either::Right(_) => {
+                    panic!(
+                        "Test timed out - deadlock detected! This means bypass_rate_limit is not working."
+                    );
+                }
+            }
+        });
+    }
+
+    /// Tests that without bypass, nested requests DO cause deadlock.
+    /// This test verifies the problem exists when bypass is not used.
+    #[test]
+    fn test_nested_requests_without_bypass_deadlocks() {
+        smol::block_on(async {
+            // Use only 2 permits so we can guarantee deadlock conditions
+            let rate_limiter = RateLimiter::new(2);
+            let completed = Arc::new(AtomicUsize::new(0));
+            // Barrier ensures all parents acquire permits before any tries nested request
+            let barrier = Arc::new(Barrier::new(2));
+
+            // Spawn 2 "parent" requests that each try to make a "nested" request
+            let mut handles = Vec::new();
+            for _ in 0..2 {
+                let limiter = rate_limiter.clone();
+                let completed = completed.clone();
+                let barrier = barrier.clone();
+
+                let handle = smol::spawn(async move {
+                    // Parent request acquires a permit
+                    let parent_stream = limiter
+                        .stream_with_bypass(
+                            async {
+                                // Wait for all parents to acquire permits - this guarantees
+                                // that all 2 permits are held before any nested request starts
+                                barrier.wait().await;
+
+                                // Nested request WITHOUT bypass - this will deadlock!
+                                // Both parents hold permits, so no permits available
+                                let nested_stream = limiter
+                                    .stream_with_bypass(
+                                        async { Ok(stream::iter(vec![1, 2, 3])) },
+                                        false, // NO bypass - will try to acquire permit
+                                    )
+                                    .await?;
+
+                                use futures::StreamExt;
+                                let _: Vec<_> = nested_stream.collect().await;
+
+                                Ok(stream::iter(vec!["done"]))
+                            },
+                            false,
+                        )
+                        .await
+                        .unwrap();
+
+                    use futures::StreamExt;
+                    let _: Vec<_> = parent_stream.collect().await;
+
+                    completed.fetch_add(1, Ordering::SeqCst);
+                });
+                handles.push(handle);
+            }
+
+            // This SHOULD timeout because of deadlock (both parents hold permits,
+            // both nested requests wait for permits)
+            let timeout = smol::Timer::after(Duration::from_millis(100));
+            let all_done = async {
+                for handle in handles {
+                    handle.await;
+                }
+            };
+
+            match select(Box::pin(all_done), Box::pin(timeout)).await {
+                Either::Left(_) => {
+                    panic!(
+                        "Test completed when it should have deadlocked! completed={}",
+                        completed.load(Ordering::SeqCst)
+                    );
+                }
+                Either::Right(_) => {
+                    // Expected - deadlock occurred, which proves the bypass is necessary
+                    let count = completed.load(Ordering::SeqCst);
+                    assert_eq!(
+                        count, 0,
+                        "Expected complete deadlock (0 completed) but {} requests completed",
+                        count
+                    );
+                }
+            }
+        });
+    }
+}
