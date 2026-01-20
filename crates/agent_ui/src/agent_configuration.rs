@@ -1172,7 +1172,7 @@ impl AgentConfiguration {
                     "The {} agent was installed from the ACP registry.",
                     display_name
                 )),
-                IconName::CloudDownload,
+                IconName::AcpRegistry,
             )),
             ExternalAgentSource::Builtin | ExternalAgentSource::Custom => None,
         };
