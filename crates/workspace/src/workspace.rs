@@ -1323,7 +1323,9 @@ impl Workspace {
                     }
                 }
 
-                project::Event::DisconnectedFromRemote => {
+                project::Event::DisconnectedFromRemote {
+                    server_not_running: _,
+                } => {
                     this.update_window_edited(window, cx);
                 }
 

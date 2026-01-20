@@ -324,7 +324,7 @@ pub struct RemoteClient {
 
 #[derive(Debug)]
 pub enum RemoteClientEvent {
-    Disconnected,
+    Disconnected { server_not_running: bool },
 }
 
 impl EventEmitter<RemoteClientEvent> for RemoteClient {}
@@ -881,7 +881,9 @@ impl RemoteClient {
         self.state.replace(state);
 
         if is_reconnect_exhausted || is_server_not_running {
-            cx.emit(RemoteClientEvent::Disconnected);
+            cx.emit(RemoteClientEvent::Disconnected {
+                server_not_running: is_server_not_running,
+            });
         }
         cx.notify();
     }
