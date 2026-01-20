@@ -1,6 +1,7 @@
 mod anthropic_client;
 mod distill;
 mod example;
+mod filter_languages;
 mod format_prompt;
 mod git;
 mod headless;
@@ -36,6 +37,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use crate::distill::run_distill;
 use crate::example::{Example, group_examples_by_repo, read_example_files};
+use crate::filter_languages::{FilterLanguagesArgs, run_filter_languages};
 use crate::format_prompt::run_format_prompt;
 use crate::load_project::run_load_project;
 use crate::paths::{FAILED_EXAMPLES_DIR, RUN_DIR};
@@ -153,6 +155,8 @@ enum Command {
     SplitCommit(SplitCommitArgs),
     /// Split a JSONL dataset into multiple files (stratified by repository_url if present)
     Split(SplitArgs),
+    /// Filter a JSONL dataset by programming language (based on cursor_path extension)
+    FilterLanguages(FilterLanguagesArgs),
 }
 
 impl Display for Command {
@@ -184,6 +188,7 @@ impl Display for Command {
             Command::Clean => write!(f, "clean"),
             Command::SplitCommit(_) => write!(f, "split-commit"),
             Command::Split(_) => write!(f, "split"),
+            Command::FilterLanguages(_) => write!(f, "filter-languages"),
         }
     }
 }
@@ -506,6 +511,15 @@ fn main() {
             }
             return;
         }
+        Command::FilterLanguages(filter_args) => {
+            if let Err(error) =
+                run_filter_languages(filter_args, &args.inputs, args.output.as_ref())
+            {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
         _ => {}
     }
 
@@ -634,7 +648,8 @@ fn main() {
                                         Command::Clean
                                         | Command::Synthesize(_)
                                         | Command::SplitCommit(_)
-                                        | Command::Split(_) => {
+                                        | Command::Split(_)
+                                        | Command::FilterLanguages(_) => {
                                             unreachable!()
                                         }
                                     }
