@@ -117,22 +117,6 @@ impl GoogleLanguageModelProvider {
         })
     }
 
-    pub fn api_key_for_gemini_cli(cx: &mut App) -> Task<Result<String>> {
-        if let Some(key) = API_KEY_ENV_VAR.value.clone() {
-            return Task::ready(Ok(key));
-        }
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = Self::api_url(cx).to_string();
-        cx.spawn(async move |cx| {
-            Ok(
-                ApiKey::load_from_system_keychain(&api_url, credentials_provider.as_ref(), cx)
-                    .await?
-                    .key()
-                    .to_string(),
-            )
-        })
-    }
-
     fn settings(cx: &App) -> &GoogleSettings {
         &crate::AllLanguageModelSettings::get_global(cx).google
     }

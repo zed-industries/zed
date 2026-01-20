@@ -24,7 +24,6 @@ use picker::{Picker, PickerDelegate};
 use project::{
     PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
 };
-use search::ToggleIncludeIgnored;
 use settings::Settings;
 use std::{
     borrow::Cow,
@@ -51,6 +50,7 @@ use workspace::{
     ModalView, OpenOptions, OpenVisible, SplitDirection, Workspace, item::PreviewTabsSettings,
     notifications::NotifyResultExt, pane,
 };
+use zed_actions::search::ToggleIncludeIgnored;
 
 actions!(
     file_finder,
