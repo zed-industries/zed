@@ -571,12 +571,22 @@ impl LspAdapter for RustLspAdapter {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", "();"),
             lsp::SymbolKind::STRUCT => ("struct ", ";"),
             lsp::SymbolKind::ENUM => ("enum ", "{}"),
-            lsp::SymbolKind::ENUM_MEMBER => ("enum E{", "}"),
             lsp::SymbolKind::INTERFACE => ("trait ", "{}"),
             lsp::SymbolKind::CONSTANT => ("const ", ":()=();"),
             lsp::SymbolKind::MODULE => ("mod ", ";"),
             lsp::SymbolKind::PACKAGE => ("extern crate ", ";"),
             lsp::SymbolKind::TYPE_PARAMETER => ("type ", "=();"),
+            lsp::SymbolKind::ENUM_MEMBER => {
+                let prefix = "enum E {";
+                return Some(CodeLabel::new(
+                    name.to_string(),
+                    0..name.len(),
+                    language.highlight_text(
+                        &Rope::from_iter([prefix, name, "}"]),
+                        prefix.len()..prefix.len() + name.len(),
+                    ),
+                ));
+            }
             _ => return None,
         };
 
@@ -1835,6 +1845,17 @@ mod tests {
                 "extern crate zed".to_string(),
                 13..16,
                 vec![(0..6, highlight_keyword), (7..12, highlight_keyword),],
+            ))
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_symbol("Variant", lsp::SymbolKind::ENUM_MEMBER, &language)
+                .await,
+            Some(CodeLabel::new(
+                "Variant".to_string(),
+                0..7,
+                vec![(0..7, highlight_type)],
             ))
         );
     }
