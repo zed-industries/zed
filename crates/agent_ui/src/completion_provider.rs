@@ -481,25 +481,19 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         cx: &mut App,
     ) -> Option<Completion> {
         let new_text = format!("@fetch {} ", url_to_fetch);
-        let url_to_fetch = url::Url::parse(url_to_fetch.as_ref())
+
+        // Try to parse the URL, but don't fail if it's incomplete (user may still be typing)
+        let parsed_url = url::Url::parse(url_to_fetch.as_ref())
             .or_else(|_| url::Url::parse(&format!("https://{url_to_fetch}")))
-            .ok()?;
-        let mention_uri = MentionUri::Fetch {
-            url: url_to_fetch.clone(),
-        };
-        let icon_path = mention_uri.icon_path(cx);
-        Some(Completion {
-            replace_range: source_range.clone(),
-            new_text: new_text.clone(),
-            label: CodeLabel::plain(url_to_fetch.to_string(), None),
-            documentation: None,
-            source: project::CompletionSource::Custom,
-            icon_path: Some(icon_path),
-            match_start: None,
-            snippet_deduplication_key: None,
-            insert_text_mode: None,
-            confirm: Some(confirm_completion_callback(
-                url_to_fetch.to_string().into(),
+            .ok();
+
+        // Use parsed URL for icon and confirm callback if available,
+        // otherwise show completion with raw text (allows typing URLs with @ characters)
+        let (icon_path, confirm) = if let Some(ref url) = parsed_url {
+            let mention_uri = MentionUri::Fetch { url: url.clone() };
+            let icon_path = mention_uri.icon_path(cx);
+            let confirm = confirm_completion_callback(
+                url.to_string().into(),
                 source_range.start,
                 new_text.len() - 1,
                 mention_uri,
@@ -507,7 +501,30 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 editor,
                 mention_set,
                 workspace,
-            )),
+            );
+            (Some(icon_path), Some(confirm))
+        } else {
+            // URL is incomplete/invalid - show completion but without confirm action
+            // This keeps the pill visible while user is typing URLs with @ characters
+            (Some(IconName::ToolWeb.path().into()), None)
+        };
+
+        let label = parsed_url
+            .as_ref()
+            .map(|u| u.to_string())
+            .unwrap_or_else(|| url_to_fetch.to_string());
+
+        Some(Completion {
+            replace_range: source_range.clone(),
+            new_text: new_text.clone(),
+            label: CodeLabel::plain(label, None),
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path,
+            match_start: None,
+            snippet_deduplication_key: None,
+            insert_text_mode: None,
+            confirm,
         })
     }
 
@@ -2078,6 +2095,19 @@ mod tests {
                 argument: Some("https://npmjs.com/@scope/pkg".to_string()),
             }),
             "Should handle @fetch with prefix text and URL with @"
+        );
+
+        // Test that incomplete URLs (ending with @) are still parsed by MentionCompletion
+        // Note: The completion_for_fetch function may still reject these as invalid URLs,
+        // but the parsing layer should handle them correctly.
+        assert_eq!(
+            MentionCompletion::try_parse("@fetch https://example.com/@", 0, &fetch_modes),
+            Some(MentionCompletion {
+                source_range: 0..28,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://example.com/@".to_string()),
+            }),
+            "Should parse URL ending with @ (even if URL is incomplete)"
         );
     }
 
