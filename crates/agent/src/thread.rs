@@ -490,6 +490,10 @@ impl AgentMessage {
             cache: false,
             reasoning_details: self.reasoning_details.clone(),
         };
+
+        // Track which tool_use IDs we include in the assistant message
+        let mut included_tool_use_ids = std::collections::HashSet::new();
+
         for chunk in &self.content {
             match chunk {
                 AgentMessageContent::Text(text) => {
@@ -515,6 +519,7 @@ impl AgentMessage {
                         assistant_message
                             .content
                             .push(language_model::MessageContent::ToolUse(tool_use.clone()));
+                        included_tool_use_ids.insert(tool_use.id.clone());
                     }
                 }
             };
@@ -528,6 +533,16 @@ impl AgentMessage {
         };
 
         for tool_result in self.tool_results.values() {
+            // Only include tool_results that have a corresponding tool_use in the assistant message.
+            // This prevents orphaned tool_result blocks that would cause API errors.
+            if !included_tool_use_ids.contains(&tool_result.tool_use_id) {
+                log::warn!(
+                    "Skipping orphaned tool_result with ID {} (no corresponding tool_use in assistant message)",
+                    tool_result.tool_use_id
+                );
+                continue;
+            }
+
             let mut tool_result = tool_result.clone();
             // Surprisingly, the API fails if we return an empty string here.
             // It thinks we are sending a tool use without a tool result.
@@ -3341,5 +3356,114 @@ fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
     LanguageModelImage {
         source: image_content.data.into(),
         size: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_to_request_with_valid_tool_pair() {
+        let id = LanguageModelToolUseId::from("tool_1");
+        let mut message = AgentMessage {
+            content: vec![AgentMessageContent::ToolUse(LanguageModelToolUse {
+                id: id.clone(),
+                name: "test_tool".into(),
+                raw_input: json!({}).to_string(),
+                input: json!({}),
+                is_input_complete: true,
+                thought_signature: None,
+            })],
+            tool_results: Default::default(),
+            reasoning_details: None,
+        };
+        message.tool_results.insert(
+            id.clone(),
+            LanguageModelToolResult {
+                tool_use_id: id,
+                tool_name: "test_tool".into(),
+                is_error: false,
+                content: LanguageModelToolResultContent::Text("result".into()),
+                output: None,
+            },
+        );
+
+        let messages = message.to_request();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, Role::Assistant);
+        assert_eq!(messages[1].role, Role::User);
+    }
+
+    #[test]
+    fn test_to_request_skips_orphaned_tool_result() {
+        let mut message = AgentMessage {
+            content: vec![AgentMessageContent::Text("text only".to_string())],
+            tool_results: Default::default(),
+            reasoning_details: None,
+        };
+        message.tool_results.insert(
+            LanguageModelToolUseId::from("orphaned"),
+            LanguageModelToolResult {
+                tool_use_id: LanguageModelToolUseId::from("orphaned"),
+                tool_name: "tool".into(),
+                is_error: false,
+                content: LanguageModelToolResultContent::Text("result".into()),
+                output: None,
+            },
+        );
+
+        let messages = message.to_request();
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, Role::Assistant);
+    }
+
+    #[test]
+    fn test_to_request_filters_orphaned_from_mixed() {
+        let valid_id = LanguageModelToolUseId::from("valid");
+        let orphaned_id = LanguageModelToolUseId::from("orphaned");
+        let mut message = AgentMessage {
+            content: vec![AgentMessageContent::ToolUse(LanguageModelToolUse {
+                id: valid_id.clone(),
+                name: "valid_tool".into(),
+                raw_input: json!({}).to_string(),
+                input: json!({}),
+                is_input_complete: true,
+                thought_signature: None,
+            })],
+            tool_results: Default::default(),
+            reasoning_details: None,
+        };
+        message.tool_results.insert(
+            valid_id.clone(),
+            LanguageModelToolResult {
+                tool_use_id: valid_id,
+                tool_name: "valid_tool".into(),
+                is_error: false,
+                content: LanguageModelToolResultContent::Text("valid".into()),
+                output: None,
+            },
+        );
+        message.tool_results.insert(
+            orphaned_id.clone(),
+            LanguageModelToolResult {
+                tool_use_id: orphaned_id,
+                tool_name: "orphaned_tool".into(),
+                is_error: false,
+                content: LanguageModelToolResultContent::Text("orphaned".into()),
+                output: None,
+            },
+        );
+
+        let messages = message.to_request();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1].content.len(), 1);
+        if let language_model::MessageContent::ToolResult(result) = &messages[1].content[0] {
+            assert_eq!(result.tool_name.as_ref(), "valid_tool");
+        }
     }
 }
