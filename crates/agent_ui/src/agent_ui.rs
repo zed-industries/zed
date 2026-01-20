@@ -128,6 +128,8 @@ actions!(
         SendNextQueuedMessage,
         /// Removes the first message from the queue (the next one to be sent).
         RemoveFirstQueuedMessage,
+        /// Edits the first message in the queue (the next one to be sent).
+        EditFirstQueuedMessage,
         /// Clears all messages from the queue.
         ClearMessageQueue,
         /// Opens the permission granularity dropdown for the current tool call.
