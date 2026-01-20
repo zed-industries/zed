@@ -24,7 +24,11 @@ pub async fn run_scoring(
     let progress = example_progress.start(Step::Score);
 
     progress.set_substatus("applying patches");
-    let original_text = &example.prompt_inputs.as_ref().unwrap().content;
+    let original_text = &example
+        .prompt_inputs
+        .as_ref()
+        .context("prompt_inputs is required for scoring - run prediction first or ensure JSON includes prompt_inputs")?
+        .content;
     let expected_texts: Vec<String> = example
         .spec
         .expected_patches

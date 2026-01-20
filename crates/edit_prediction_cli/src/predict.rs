@@ -31,21 +31,30 @@ pub async fn run_prediction(
     example_progress: &ExampleProgress,
     mut cx: AsyncApp,
 ) -> anyhow::Result<()> {
-    let provider = args.provider;
     let repetition_count = args.repetitions;
 
     if let Some(existing_prediction) = example.predictions.first() {
-        if existing_prediction.provider == provider {
-            return Ok(());
-        } else {
-            example.predictions.clear();
+        let has_prediction = existing_prediction.actual_patch.is_some()
+            || !existing_prediction.actual_output.is_empty();
+        if has_prediction {
+            match args.provider {
+                None => return Ok(()),
+                Some(provider) if existing_prediction.provider == provider => return Ok(()),
+                Some(_) => example.predictions.clear(),
+            }
         }
     }
+
+    let Some(provider) = args.provider else {
+        anyhow::bail!(
+            "No existing predictions found. Use --provider to specify which model to use for prediction."
+        );
+    };
 
     run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
 
     if let PredictionProvider::Teacher(version) | PredictionProvider::TeacherNonBatching(version) =
-        args.provider
+        provider
     {
         let _step_progress = example_progress.start(Step::Predict);
 
@@ -304,9 +313,9 @@ async fn predict_anthropic(
     Ok(())
 }
 
-pub async fn sync_batches(provider: &PredictionProvider) -> anyhow::Result<()> {
+pub async fn sync_batches(provider: Option<&PredictionProvider>) -> anyhow::Result<()> {
     match provider {
-        PredictionProvider::Teacher(..) => {
+        Some(PredictionProvider::Teacher(..)) => {
             let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
                 AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
                     .expect("Failed to create Anthropic client")
