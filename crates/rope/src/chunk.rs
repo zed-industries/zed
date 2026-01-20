@@ -728,6 +728,7 @@ fn log_err_char_boundary(text: &str, offset: usize) {
             text,
             text.len()
         );
+        return;
     }
     // find the character
     let char_start = text.floor_char_boundary(offset);
