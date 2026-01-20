@@ -104,6 +104,10 @@ impl AgentServer for CustomAgentServer {
                 | settings::CustomAgentServerSettings::Extension {
                     favorite_config_option_values,
                     ..
+                }
+                | settings::CustomAgentServerSettings::Registry {
+                    favorite_config_option_values,
+                    ..
                 } => {
                     let entry = favorite_config_option_values
                         .entry(config_id.clone())
@@ -142,7 +146,8 @@ impl AgentServer for CustomAgentServer {
 
             match settings {
                 settings::CustomAgentServerSettings::Custom { default_mode, .. }
-                | settings::CustomAgentServerSettings::Extension { default_mode, .. } => {
+                | settings::CustomAgentServerSettings::Extension { default_mode, .. }
+                | settings::CustomAgentServerSettings::Registry { default_mode, .. } => {
                     *default_mode = mode_id.map(|m| m.to_string());
                 }
             }
@@ -181,7 +186,8 @@ impl AgentServer for CustomAgentServer {
 
             match settings {
                 settings::CustomAgentServerSettings::Custom { default_model, .. }
-                | settings::CustomAgentServerSettings::Extension { default_model, .. } => {
+                | settings::CustomAgentServerSettings::Extension { default_model, .. }
+                | settings::CustomAgentServerSettings::Registry { default_model, .. } => {
                     *default_model = model_id.map(|m| m.to_string());
                 }
             }
@@ -235,6 +241,9 @@ impl AgentServer for CustomAgentServer {
                     favorite_models, ..
                 }
                 | settings::CustomAgentServerSettings::Extension {
+                    favorite_models, ..
+                }
+                | settings::CustomAgentServerSettings::Registry {
                     favorite_models, ..
                 } => favorite_models,
             };
@@ -296,6 +305,10 @@ impl AgentServer for CustomAgentServer {
                 | settings::CustomAgentServerSettings::Extension {
                     default_config_options,
                     ..
+                }
+                | settings::CustomAgentServerSettings::Registry {
+                    default_config_options,
+                    ..
                 } => {
                     if let Some(value) = value_id.clone() {
                         default_config_options.insert(config_id.clone(), value);
@@ -329,6 +342,10 @@ impl AgentServer for CustomAgentServer {
                         ..
                     }
                     | project::agent_server_store::CustomAgentServerSettings::Extension {
+                        default_config_options,
+                        ..
+                    }
+                    | project::agent_server_store::CustomAgentServerSettings::Registry {
                         default_config_options,
                         ..
                     } => default_config_options.clone(),

@@ -17,6 +17,7 @@ use crashes::InitCrashHandler;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use extension::ExtensionHostProxy;
+use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
@@ -617,6 +618,15 @@ fn main() {
         snippet_provider::init(cx);
         edit_prediction_registry::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
+        if cx.has_flag::<AcpBetaFeatureFlag>() {
+            project::AgentRegistryStore::init_global(cx);
+        }
+        cx.observe_flag::<AcpBetaFeatureFlag, _>(|is_enabled, cx| {
+            if is_enabled {
+                project::AgentRegistryStore::init_global(cx);
+            }
+        })
+        .detach();
         agent_ui::init(
             app_state.fs.clone(),
             app_state.client.clone(),

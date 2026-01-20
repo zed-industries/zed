@@ -30,6 +30,7 @@ use task::{Shell, SpawnInTerminal};
 use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
+use crate::agent_registry_store::{AgentRegistryStore, RegistryTargetConfig};
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 pub struct AgentServerCommand {
@@ -92,6 +93,15 @@ impl Borrow<str> for ExternalAgentServerName {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ExternalAgentSource {
+    Builtin,
+    #[default]
+    Custom,
+    Extension,
+    Registry,
+}
+
 pub trait ExternalAgentServer {
     fn get_command(
         &mut self,
@@ -126,7 +136,7 @@ enum AgentServerStoreState {
             HashMap<String, String>,
             Option<String>,
         )>,
-        _subscriptions: [Subscription; 1],
+        _subscriptions: Vec<Subscription>,
     },
     Remote {
         project_id: u64,
@@ -140,6 +150,7 @@ pub struct AgentServerStore {
     external_agents: HashMap<ExternalAgentServerName, Box<dyn ExternalAgentServer>>,
     agent_icons: HashMap<ExternalAgentServerName, SharedString>,
     agent_display_names: HashMap<ExternalAgentServerName, SharedString>,
+    agent_sources: HashMap<ExternalAgentServerName, ExternalAgentSource>, // BENTODO: Should we merge some of these?
 }
 
 pub struct AgentServersUpdated;
@@ -159,6 +170,7 @@ mod ext_agent_tests {
             external_agents: HashMap::default(),
             agent_icons: HashMap::default(),
             agent_display_names: HashMap::default(),
+            agent_sources: HashMap::default(),
         }
     }
 
@@ -495,6 +507,10 @@ impl AgentServerStore {
     pub fn agent_icon(&self, name: &ExternalAgentServerName) -> Option<SharedString> {
         self.agent_icons.get(name).cloned()
     }
+
+    pub fn agent_source(&self, name: &ExternalAgentServerName) -> Option<ExternalAgentSource> {
+        self.agent_sources.get(name).copied()
+    }
 }
 
 /// Safely resolves an extension icon path, ensuring it stays within the extension directory.
@@ -599,6 +615,7 @@ impl AgentServerStore {
             .clone();
 
         self.external_agents.clear();
+        self.agent_sources.clear();
         self.external_agents.insert(
             GEMINI_NAME.into(),
             Box::new(LocalGemini {
@@ -620,6 +637,8 @@ impl AgentServerStore {
                     .unwrap_or(true),
             }),
         );
+        self.agent_sources
+            .insert(GEMINI_NAME.into(), ExternalAgentSource::Builtin);
         self.external_agents.insert(
             CODEX_NAME.into(),
             Box::new(LocalCodex {
@@ -639,6 +658,8 @@ impl AgentServerStore {
                     .is_some_and(|(_, client)| !client.has_wsl_interop()),
             }),
         );
+        self.agent_sources
+            .insert(CODEX_NAME.into(), ExternalAgentSource::Builtin);
         self.external_agents.insert(
             CLAUDE_CODE_NAME.into(),
             Box::new(LocalClaudeCode {
@@ -655,49 +676,110 @@ impl AgentServerStore {
                     .and_then(|settings| settings.env.clone()),
             }),
         );
-        self.external_agents
-            .extend(
-                new_settings
-                    .custom
+        self.agent_sources
+            .insert(CLAUDE_CODE_NAME.into(), ExternalAgentSource::Builtin);
+
+        let registry_store = AgentRegistryStore::try_global(cx);
+        let registry_agents_by_id = registry_store
+            .as_ref()
+            .map(|store| {
+                store
+                    .read(cx)
+                    .agents()
                     .iter()
-                    .filter_map(|(name, settings)| match settings {
-                        CustomAgentServerSettings::Custom { command, .. } => Some((
-                            ExternalAgentServerName(name.clone().into()),
-                            Box::new(LocalCustomAgent {
-                                command: command.clone(),
-                                project_environment: project_environment.clone(),
-                            }) as Box<dyn ExternalAgentServer>,
-                        )),
-                        CustomAgentServerSettings::Extension { .. } => None,
-                    }),
-            );
-        self.external_agents.extend(extension_agents.iter().map(
-            |(agent_name, ext_id, targets, env, icon_path)| {
-                let name = ExternalAgentServerName(agent_name.clone().into());
+                    .cloned()
+                    .map(|agent| (agent.id.to_string(), agent))
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default();
 
-                // Restore icon if present
-                if let Some(icon) = icon_path {
-                    self.agent_icons
-                        .insert(name.clone(), SharedString::from(icon.clone()));
+        for (name, settings) in &new_settings.custom {
+            match settings {
+                CustomAgentServerSettings::Custom { command, .. } => {
+                    let agent_name = ExternalAgentServerName(name.clone().into());
+                    self.external_agents.insert(
+                        agent_name.clone(),
+                        Box::new(LocalCustomAgent {
+                            command: command.clone(),
+                            project_environment: project_environment.clone(),
+                        }) as Box<dyn ExternalAgentServer>,
+                    );
+                    self.agent_sources
+                        .insert(agent_name, ExternalAgentSource::Custom);
                 }
+                CustomAgentServerSettings::Registry { .. } => {
+                    let Some(agent) = registry_agents_by_id.get(name) else {
+                        if registry_store.is_some() {
+                            log::warn!("Registry agent '{}' not found in ACP registry", name);
+                        }
+                        continue;
+                    };
+                    if !agent.supports_current_platform {
+                        log::warn!(
+                            "Registry agent '{}' has no compatible binary for this platform",
+                            name
+                        );
+                        continue;
+                    }
 
-                (
-                    name,
-                    Box::new(LocalExtensionArchiveAgent {
-                        fs: fs.clone(),
-                        http_client: http_client.clone(),
-                        node_runtime: node_runtime.clone(),
-                        project_environment: project_environment.clone(),
-                        extension_id: Arc::from(&**ext_id),
-                        targets: targets.clone(),
-                        env: env.clone(),
-                        agent_id: agent_name.clone(),
-                    }) as Box<dyn ExternalAgentServer>,
-                )
-            },
-        ));
+                    let agent_name = ExternalAgentServerName(name.clone().into());
+                    if let Some(icon_path) = agent.icon_path.clone() {
+                        self.agent_icons.insert(agent_name.clone(), icon_path);
+                    }
+                    self.agent_display_names
+                        .insert(agent_name.clone(), agent.name.clone());
+                    self.external_agents.insert(
+                        agent_name.clone(),
+                        Box::new(LocalRegistryArchiveAgent {
+                            fs: fs.clone(),
+                            http_client: http_client.clone(),
+                            node_runtime: node_runtime.clone(),
+                            project_environment: project_environment.clone(),
+                            registry_id: Arc::from(name.as_str()),
+                            targets: agent.targets.clone(),
+                        }) as Box<dyn ExternalAgentServer>,
+                    );
+                    self.agent_sources
+                        .insert(agent_name, ExternalAgentSource::Registry);
+                }
+                CustomAgentServerSettings::Extension { .. } => {}
+            }
+        }
 
-        *old_settings = Some(new_settings.clone());
+        for (agent_name, ext_id, targets, env, icon_path) in extension_agents.iter() {
+            let name = ExternalAgentServerName(agent_name.clone().into());
+
+            // Restore icon if present
+            if let Some(icon) = icon_path {
+                self.agent_icons
+                    .insert(name.clone(), SharedString::from(icon.clone()));
+            }
+
+            self.external_agents.insert(
+                name.clone(),
+                Box::new(LocalExtensionArchiveAgent {
+                    fs: fs.clone(),
+                    http_client: http_client.clone(),
+                    node_runtime: node_runtime.clone(),
+                    project_environment: project_environment.clone(),
+                    extension_id: Arc::from(&**ext_id),
+                    targets: targets.clone(),
+                    env: env.clone(),
+                    agent_id: agent_name.clone(),
+                }) as Box<dyn ExternalAgentServer>,
+            );
+            self.agent_sources
+                .insert(name, ExternalAgentSource::Extension);
+        }
+
+        self.agent_icons
+            .retain(|name, _| self.external_agents.contains_key(name));
+        self.agent_display_names
+            .retain(|name, _| self.external_agents.contains_key(name));
+        self.agent_sources
+            .retain(|name, _| self.external_agents.contains_key(name));
+
+        *old_settings = Some(new_settings);
 
         if let Some((project_id, downstream_client)) = downstream_client {
             downstream_client
@@ -728,9 +810,14 @@ impl AgentServerStore {
         http_client: Arc<dyn HttpClient>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let subscription = cx.observe_global::<SettingsStore>(|this, cx| {
+        let mut subscriptions = vec![cx.observe_global::<SettingsStore>(|this, cx| {
             this.agent_servers_settings_changed(cx);
-        });
+        })];
+        if let Some(registry_store) = AgentRegistryStore::try_global(cx) {
+            subscriptions.push(cx.observe(&registry_store, |this, _, cx| {
+                this.reregister_agents(cx);
+            }));
+        }
         let mut this = Self {
             state: AgentServerStoreState::Local {
                 node_runtime,
@@ -740,11 +827,12 @@ impl AgentServerStore {
                 downstream_client: None,
                 settings: None,
                 extension_agents: vec![],
-                _subscriptions: [subscription],
+                _subscriptions: subscriptions,
             },
             external_agents: Default::default(),
             agent_icons: Default::default(),
             agent_display_names: Default::default(),
+            agent_sources: Default::default(),
         };
         if let Some(_events) = extension::ExtensionEvents::try_global(cx) {}
         this.agent_servers_settings_changed(cx);
@@ -787,6 +875,10 @@ impl AgentServerStore {
                 }) as Box<dyn ExternalAgentServer>,
             ),
         ];
+        let agent_sources = external_agents
+            .iter()
+            .map(|(name, _)| (name.clone(), ExternalAgentSource::Builtin))
+            .collect();
 
         Self {
             state: AgentServerStoreState::Remote {
@@ -796,6 +888,7 @@ impl AgentServerStore {
             external_agents: external_agents.into_iter().collect(),
             agent_icons: HashMap::default(),
             agent_display_names: HashMap::default(),
+            agent_sources,
         }
     }
 
@@ -805,6 +898,7 @@ impl AgentServerStore {
             external_agents: Default::default(),
             agent_icons: Default::default(),
             agent_display_names: Default::default(),
+            agent_sources: Default::default(),
         }
     }
 
@@ -983,10 +1077,10 @@ impl AgentServerStore {
                 })
                 .collect::<HashMap<_, _>>();
 
-            this.external_agents = envelope
-                .payload
-                .names
-                .into_iter()
+            let names = envelope.payload.names;
+            this.external_agents = names
+                .iter()
+                .cloned()
                 .map(|name| {
                     let agent = RemoteExternalAgentServer {
                         project_id: *project_id,
@@ -1003,6 +1097,22 @@ impl AgentServerStore {
                     )
                 })
                 .collect();
+            this.agent_sources = names
+                .into_iter()
+                .map(|name| {
+                    let source =
+                        if name == GEMINI_NAME || name == CLAUDE_CODE_NAME || name == CODEX_NAME {
+                            ExternalAgentSource::Builtin
+                        } else {
+                            ExternalAgentSource::Custom
+                        };
+                    (ExternalAgentServerName(name.into()), source) // BENTODO: do we need to know the source here? Or maybe it doesn't matter
+                })
+                .collect();
+            this.agent_icons
+                .retain(|name, _| this.external_agents.contains_key(name));
+            this.agent_display_names
+                .retain(|name, _| this.external_agents.contains_key(name));
             cx.emit(AgentServersUpdated);
             Ok(())
         })
@@ -1785,11 +1895,6 @@ struct LocalExtensionArchiveAgent {
     env: HashMap<String, String>,
 }
 
-struct LocalCustomAgent {
-    project_environment: Entity<ProjectEnvironment>,
-    command: AgentServerCommand,
-}
-
 impl ExternalAgentServer for LocalExtensionArchiveAgent {
     fn get_command(
         &mut self,
@@ -1988,6 +2093,198 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
     }
 }
 
+struct LocalRegistryArchiveAgent {
+    fs: Arc<dyn Fs>,
+    http_client: Arc<dyn HttpClient>,
+    node_runtime: NodeRuntime,
+    project_environment: Entity<ProjectEnvironment>,
+    registry_id: Arc<str>,
+    targets: HashMap<String, RegistryTargetConfig>,
+}
+
+impl ExternalAgentServer for LocalRegistryArchiveAgent {
+    fn get_command(
+        &mut self,
+        root_dir: Option<&str>,
+        extra_env: HashMap<String, String>,
+        _status_tx: Option<watch::Sender<SharedString>>,
+        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+        let fs = self.fs.clone();
+        let http_client = self.http_client.clone();
+        let node_runtime = self.node_runtime.clone();
+        let project_environment = self.project_environment.downgrade();
+        let registry_id = self.registry_id.clone();
+        let targets = self.targets.clone();
+
+        let root_dir: Arc<Path> = root_dir
+            .map(|root_dir| Path::new(root_dir))
+            .unwrap_or(paths::home_dir())
+            .into();
+
+        cx.spawn(async move |cx| {
+            let mut env = project_environment
+                .update(cx, |project_environment, cx| {
+                    project_environment.local_directory_environment(
+                        &Shell::System,
+                        root_dir.clone(),
+                        cx,
+                    )
+                })?
+                .await
+                .unwrap_or_default();
+
+            let dir = paths::external_agents_dir()
+                .join("registry")
+                .join(registry_id.as_ref());
+            fs.create_dir(&dir).await?;
+
+            let os = if cfg!(target_os = "macos") {
+                "darwin"
+            } else if cfg!(target_os = "linux") {
+                "linux"
+            } else if cfg!(target_os = "windows") {
+                "windows"
+            } else {
+                anyhow::bail!("unsupported OS");
+            };
+
+            let arch = if cfg!(target_arch = "aarch64") {
+                "aarch64"
+            } else if cfg!(target_arch = "x86_64") {
+                "x86_64"
+            } else {
+                anyhow::bail!("unsupported architecture");
+            };
+
+            let platform_key = format!("{}-{}", os, arch);
+            let target_config = targets.get(&platform_key).with_context(|| {
+                format!(
+                    "no target specified for platform '{}'. Available platforms: {}",
+                    platform_key,
+                    targets
+                        .keys()
+                        .map(|k| k.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?;
+
+            env.extend(target_config.env.clone());
+            env.extend(extra_env);
+
+            let archive_url = &target_config.archive;
+
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            archive_url.hash(&mut hasher);
+            let url_hash = hasher.finish();
+            let version_dir = dir.join(format!("v_{:x}", url_hash));
+
+            if !fs.is_dir(&version_dir).await {
+                let sha256 = if let Some(provided_sha) = &target_config.sha256 {
+                    Some(provided_sha.clone())
+                } else if archive_url.starts_with("https://github.com/") {
+                    if let Some(caps) = archive_url.strip_prefix("https://github.com/") {
+                        let parts: Vec<&str> = caps.split('/').collect();
+                        if parts.len() >= 6 && parts[2] == "releases" && parts[3] == "download" {
+                            let repo = format!("{}/{}", parts[0], parts[1]);
+                            let tag = parts[4];
+                            let filename = parts[5..].join("/");
+
+                            if let Ok(release) = ::http_client::github::get_release_by_tag_name(
+                                &repo,
+                                tag,
+                                http_client.clone(),
+                            )
+                            .await
+                            {
+                                if let Some(asset) =
+                                    release.assets.iter().find(|a| a.name == filename)
+                                {
+                                    asset.digest.as_ref().and_then(|d| {
+                                        d.strip_prefix("sha256:")
+                                            .map(|s| s.to_string())
+                                            .or_else(|| Some(d.clone()))
+                                    })
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let asset_kind = if archive_url.ends_with(".zip") {
+                    AssetKind::Zip
+                } else if archive_url.ends_with(".tar.gz") || archive_url.ends_with(".tgz") {
+                    AssetKind::TarGz
+                } else {
+                    anyhow::bail!("unsupported archive type in URL: {}", archive_url);
+                };
+
+                ::http_client::github_download::download_server_binary(
+                    &*http_client,
+                    archive_url,
+                    sha256.as_deref(),
+                    &version_dir,
+                    asset_kind,
+                )
+                .await?;
+            }
+
+            let cmd = &target_config.cmd;
+
+            let cmd_path = if cmd == "node" {
+                node_runtime.binary_path().await?
+            } else {
+                if cmd.contains("..") {
+                    anyhow::bail!("command path cannot contain '..': {}", cmd);
+                }
+
+                if cmd.starts_with("./") || cmd.starts_with(".\\") {
+                    let cmd_path = version_dir.join(&cmd[2..]);
+                    anyhow::ensure!(
+                        fs.is_file(&cmd_path).await,
+                        "Missing command {} after extraction",
+                        cmd_path.to_string_lossy()
+                    );
+                    cmd_path
+                } else {
+                    anyhow::bail!("command must be relative (start with './'): {}", cmd);
+                }
+            };
+
+            let command = AgentServerCommand {
+                path: cmd_path,
+                args: target_config.args.clone(),
+                env: Some(env),
+            };
+
+            Ok((command, version_dir.to_string_lossy().into_owned(), None))
+        })
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+struct LocalCustomAgent {
+    project_environment: Entity<ProjectEnvironment>,
+    command: AgentServerCommand,
+}
+
 impl ExternalAgentServer for LocalCustomAgent {
     fn get_command(
         &mut self,
@@ -2153,29 +2450,60 @@ pub enum CustomAgentServerSettings {
         /// Default: {}
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
+    Registry {
+        /// The default mode to use for this agent.
+        ///
+        /// Note: Not only all agents support modes.
+        ///
+        /// Default: None
+        default_mode: Option<String>,
+        /// The default model to use for this agent.
+        ///
+        /// This should be the model ID as reported by the agent.
+        ///
+        /// Default: None
+        default_model: Option<String>,
+        /// The favorite models for this agent.
+        ///
+        /// Default: []
+        favorite_models: Vec<String>,
+        /// Default values for session config options.
+        ///
+        /// This is a map from config option ID to value ID.
+        ///
+        /// Default: {}
+        default_config_options: HashMap<String, String>,
+        /// Favorited values for session config options.
+        ///
+        /// This is a map from config option ID to a list of favorited value IDs.
+        ///
+        /// Default: {}
+        favorite_config_option_values: HashMap<String, Vec<String>>,
+    },
 }
 
 impl CustomAgentServerSettings {
     pub fn command(&self) -> Option<&AgentServerCommand> {
         match self {
             CustomAgentServerSettings::Custom { command, .. } => Some(command),
-            CustomAgentServerSettings::Extension { .. } => None,
+            CustomAgentServerSettings::Extension { .. }
+            | CustomAgentServerSettings::Registry { .. } => None,
         }
     }
 
     pub fn default_mode(&self) -> Option<&str> {
         match self {
             CustomAgentServerSettings::Custom { default_mode, .. }
-            | CustomAgentServerSettings::Extension { default_mode, .. } => default_mode.as_deref(),
+            | CustomAgentServerSettings::Extension { default_mode, .. }
+            | CustomAgentServerSettings::Registry { default_mode, .. } => default_mode.as_deref(),
         }
     }
 
     pub fn default_model(&self) -> Option<&str> {
         match self {
             CustomAgentServerSettings::Custom { default_model, .. }
-            | CustomAgentServerSettings::Extension { default_model, .. } => {
-                default_model.as_deref()
-            }
+            | CustomAgentServerSettings::Extension { default_model, .. }
+            | CustomAgentServerSettings::Registry { default_model, .. } => default_model.as_deref(),
         }
     }
 
@@ -2185,6 +2513,9 @@ impl CustomAgentServerSettings {
                 favorite_models, ..
             }
             | CustomAgentServerSettings::Extension {
+                favorite_models, ..
+            }
+            | CustomAgentServerSettings::Registry {
                 favorite_models, ..
             } => favorite_models,
         }
@@ -2199,6 +2530,10 @@ impl CustomAgentServerSettings {
             | CustomAgentServerSettings::Extension {
                 default_config_options,
                 ..
+            }
+            | CustomAgentServerSettings::Registry {
+                default_config_options,
+                ..
             } => default_config_options.get(config_id).map(|s| s.as_str()),
         }
     }
@@ -2210,6 +2545,10 @@ impl CustomAgentServerSettings {
                 ..
             }
             | CustomAgentServerSettings::Extension {
+                favorite_config_option_values,
+                ..
+            }
+            | CustomAgentServerSettings::Registry {
                 favorite_config_option_values,
                 ..
             } => favorite_config_option_values
@@ -2250,6 +2589,19 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 favorite_models,
                 favorite_config_option_values,
             } => CustomAgentServerSettings::Extension {
+                default_mode,
+                default_model,
+                default_config_options,
+                favorite_models,
+                favorite_config_option_values,
+            },
+            settings::CustomAgentServerSettings::Registry {
+                default_mode,
+                default_model,
+                default_config_options,
+                favorite_models,
+                favorite_config_option_values,
+            } => CustomAgentServerSettings::Registry {
                 default_mode,
                 default_model,
                 default_config_options,
@@ -2332,6 +2684,7 @@ mod extension_agent_tests {
             external_agents: HashMap::default(),
             agent_icons: HashMap::default(),
             agent_display_names: HashMap::default(),
+            agent_sources: HashMap::default(),
         };
 
         // Seed with extension agents (contain ": ") and custom agents (don't contain ": ")

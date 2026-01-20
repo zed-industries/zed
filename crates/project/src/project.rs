@@ -1,3 +1,4 @@
+pub mod agent_registry_store;
 pub mod agent_server_store;
 pub mod buffer_store;
 mod color_extractor;
@@ -43,7 +44,10 @@ use crate::{
     project_search::SearchResultsHandle,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
 };
-pub use agent_server_store::{AgentServerStore, AgentServersUpdated, ExternalAgentServerName};
+pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
+pub use agent_server_store::{
+    AgentServerStore, AgentServersUpdated, ExternalAgentServerName, ExternalAgentSource,
+};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
