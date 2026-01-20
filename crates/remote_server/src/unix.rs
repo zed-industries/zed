@@ -296,7 +296,7 @@ fn start_server(
 
                     stdin_message = stdin_msg_rx.next().fuse() => {
                         let Some(message) = stdin_message else {
-                            log::warn!("error reading message on stdin. exiting.");
+                            log::warn!("error reading message on stdin, dropping connection.");
                             break;
                         };
                         if let Err(error) = incoming_tx.unbounded_send(message) {
@@ -378,7 +378,8 @@ pub fn execute_run(
     }
 
     let app = gpui::Application::headless();
-    let id = std::process::id().to_string();
+    let pid = std::process::id();
+    let id = pid.to_string();
     app.background_executor()
         .spawn(crashes::init(crashes::InitCrashHandler {
             session_id: id,
@@ -390,7 +391,8 @@ pub fn execute_run(
         .detach();
     let log_rx = init_logging_server(&log_file)?;
     log::info!(
-        "starting up. pid_file: {:?}, log_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
+        "starting up with PID {}:\npid_file: {:?}, log_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
+        pid,
         pid_file,
         log_file,
         stdin_socket,
@@ -398,7 +400,7 @@ pub fn execute_run(
         stderr_socket
     );
 
-    write_pid_file(&pid_file)
+    write_pid_file(&pid_file, pid)
         .with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
 
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
@@ -519,7 +521,7 @@ pub fn execute_run(
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum ServerPathError {
+pub enum ServerPathError {
     #[error("Failed to create server_dir `{path}`")]
     CreateServerDir {
         #[source]
@@ -575,36 +577,47 @@ impl ServerPaths {
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum ExecuteProxyError {
-    #[error("Failed to init server paths")]
+pub enum ExecuteProxyError {
+    #[error("Failed to init server paths: {0:#}")]
     ServerPath(#[from] ServerPathError),
 
     #[error(transparent)]
     ServerNotRunning(#[from] ProxyLaunchError),
 
-    #[error("Failed to check PidFile '{path}'")]
+    #[error("Failed to check PidFile '{path}': {source:#}")]
     CheckPidFile {
         #[source]
         source: CheckPidError,
         path: PathBuf,
     },
 
-    #[error("Failed to kill existing server with pid '{pid}'")]
+    #[error("Failed to kill existing server with pid '{pid}': {source:#}")]
     KillRunningServer {
         #[source]
         source: std::io::Error,
         pid: u32,
     },
 
-    #[error("failed to spawn server")]
+    #[error("failed to spawn server: {0:#}")]
     SpawnServer(#[source] SpawnServerError),
 
-    #[error("stdin_task failed")]
+    #[error("stdin_task failed: {0:#}")]
     StdinTask(#[source] anyhow::Error),
-    #[error("stdout_task failed")]
+    #[error("stdout_task failed: {0:#}")]
     StdoutTask(#[source] anyhow::Error),
-    #[error("stderr_task failed")]
+    #[error("stderr_task failed: {0:#}")]
     StderrTask(#[source] anyhow::Error),
+}
+
+impl ExecuteProxyError {
+    pub fn to_exit_code(&self) -> i32 {
+        match self {
+            ExecuteProxyError::ServerNotRunning(proxy_launch_error) => {
+                proxy_launch_error.to_exit_code()
+            }
+            _ => 1,
+        }
+    }
 }
 
 pub(crate) fn execute_proxy(
@@ -626,20 +639,22 @@ pub(crate) fn execute_proxy(
     .detach();
 
     log::info!("starting proxy process. PID: {}", std::process::id());
-    smol::block_on(async {
+    let server_pid = smol::block_on(async {
         let server_pid = check_pid_file(&server_paths.pid_file)
             .await
             .map_err(|source| ExecuteProxyError::CheckPidFile {
                 source,
                 path: server_paths.pid_file.clone(),
             })?;
-        let server_running = server_pid.is_some();
         if is_reconnecting {
-            if !server_running {
-                log::error!("attempted to reconnect, but no server running");
-                return Err(ExecuteProxyError::ServerNotRunning(
-                    ProxyLaunchError::ServerNotRunning,
-                ));
+            match server_pid {
+                None => {
+                    log::error!("attempted to reconnect, but no server running");
+                    Err(ExecuteProxyError::ServerNotRunning(
+                        ProxyLaunchError::ServerNotRunning,
+                    ))
+                }
+                Some(server_pid) => Ok(server_pid),
             }
         } else {
             if let Some(pid) = server_pid {
@@ -649,29 +664,59 @@ pub(crate) fn execute_proxy(
                 );
                 kill_running_server(pid, &server_paths).await?;
             }
-
             spawn_server(&server_paths)
                 .await
                 .map_err(ExecuteProxyError::SpawnServer)?;
-        };
-        Ok(())
+            std::fs::read_to_string(&server_paths.pid_file)
+                .and_then(|contents| {
+                    contents.parse::<u32>().map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Invalid PID file contents",
+                        )
+                    })
+                })
+                .map_err(SpawnServerError::ProcessStatus)
+                .map_err(ExecuteProxyError::SpawnServer)
+        }
     })?;
 
     let stdin_task = smol::spawn(async move {
         let stdin = smol::Unblock::new(std::io::stdin());
-        let stream = smol::net::unix::UnixStream::connect(&server_paths.stdin_socket).await?;
+        let stream = smol::net::unix::UnixStream::connect(&server_paths.stdin_socket)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to connect to stdin socket {}",
+                    server_paths.stdin_socket.display()
+                )
+            })?;
         handle_io(stdin, stream, "stdin").await
     });
 
     let stdout_task: smol::Task<Result<()>> = smol::spawn(async move {
         let stdout = smol::Unblock::new(std::io::stdout());
-        let stream = smol::net::unix::UnixStream::connect(&server_paths.stdout_socket).await?;
+        let stream = smol::net::unix::UnixStream::connect(&server_paths.stdout_socket)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to connect to stdout socket {}",
+                    server_paths.stdout_socket.display()
+                )
+            })?;
         handle_io(stream, stdout, "stdout").await
     });
 
     let stderr_task: smol::Task<Result<()>> = smol::spawn(async move {
         let mut stderr = smol::Unblock::new(std::io::stderr());
-        let mut stream = smol::net::unix::UnixStream::connect(&server_paths.stderr_socket).await?;
+        let mut stream = smol::net::unix::UnixStream::connect(&server_paths.stderr_socket)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to connect to stderr socket {}",
+                    server_paths.stderr_socket.display()
+                )
+            })?;
         let mut stderr_buffer = vec![0; 2048];
         loop {
             match stream
@@ -699,10 +744,13 @@ pub(crate) fn execute_proxy(
             result = stderr_task.fuse() => result.map_err(ExecuteProxyError::StderrTask),
         }
     }) {
-        log::error!(
-            "encountered error while forwarding messages: {:?}, terminating...",
-            forwarding_result
-        );
+        log::error!("encountered error while forwarding messages: {forwarding_result:#}",);
+        if !matches!(smol::block_on(check_server_running(server_pid)), Ok(true)) {
+            log::error!("server exited unexpectedly");
+            return Err(ExecuteProxyError::ServerNotRunning(
+                ProxyLaunchError::ServerNotRunning,
+            ));
+        }
         return Err(forwarding_result);
     }
 
@@ -730,7 +778,7 @@ async fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), Execut
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum SpawnServerError {
+pub enum SpawnServerError {
     #[error("failed to remove stdin socket")]
     RemoveStdinSocket(#[source] std::io::Error),
 
@@ -819,10 +867,18 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
 
 #[derive(Debug, Error)]
 #[error("Failed to remove PID file for missing process (pid `{pid}`")]
-pub(crate) struct CheckPidError {
+pub struct CheckPidError {
     #[source]
     source: std::io::Error,
     pid: u32,
+}
+async fn check_server_running(pid: u32) -> std::io::Result<bool> {
+    new_smol_command("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .output()
+        .await
+        .map(|output| output.status.success())
 }
 
 async fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
@@ -834,13 +890,8 @@ async fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     };
 
     log::debug!("Checking if process with PID {} exists...", pid);
-    match new_smol_command("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .output()
-        .await
-    {
-        Ok(output) if output.status.success() => {
+    match check_server_running(pid).await {
+        Ok(true) => {
             log::debug!(
                 "Process with PID {} exists. NOT spawning new server, but attaching to existing one.",
                 pid
@@ -857,13 +908,12 @@ async fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     }
 }
 
-fn write_pid_file(path: &Path) -> Result<()> {
+fn write_pid_file(path: &Path, pid: u32) -> Result<()> {
     if path.exists() {
         std::fs::remove_file(path)?;
     }
-    let pid = std::process::id().to_string();
     log::debug!("writing PID {} to file {:?}", pid, path);
-    std::fs::write(path, pid).context("Failed to write PID file")
+    std::fs::write(path, pid.to_string()).context("Failed to write PID file")
 }
 
 async fn handle_io<R, W>(mut reader: R, mut writer: W, socket_name: &str) -> Result<()>

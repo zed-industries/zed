@@ -2373,9 +2373,11 @@ dependencies = [
  "settings",
  "sum_tree",
  "text",
+ "tracing",
  "unindent",
  "util",
  "zlog",
+ "ztracing",
 ]
 
 [[package]]
@@ -5972,10 +5974,12 @@ dependencies = [
  "task",
  "tempfile",
  "toml 0.8.23",
+ "tracing",
  "url",
  "util",
  "wasm-encoder 0.221.3",
  "wasmparser 0.221.3",
+ "ztracing",
 ]
 
 [[package]]
@@ -6044,12 +6048,14 @@ dependencies = [
  "theme",
  "theme_extension",
  "toml 0.8.23",
+ "tracing",
  "url",
  "util",
  "wasmparser 0.221.3",
  "wasmtime",
  "wasmtime-wasi",
  "zlog",
+ "ztracing",
 ]
 
 [[package]]
@@ -8929,6 +8935,7 @@ dependencies = [
  "text",
  "theme",
  "toml 0.8.23",
+ "tracing",
  "tree-sitter",
  "tree-sitter-elixir",
  "tree-sitter-embedded-template",
@@ -8945,6 +8952,7 @@ dependencies = [
  "util",
  "watch",
  "zlog",
+ "ztracing",
 ]
 
 [[package]]
@@ -8964,7 +8972,9 @@ dependencies = [
  "project",
  "serde",
  "serde_json",
+ "tracing",
  "util",
+ "ztracing",
 ]
 
 [[package]]
@@ -15025,6 +15035,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "heck 0.5.0",
+ "itertools 0.14.0",
  "language",
  "language_models",
  "log",
@@ -20419,8 +20430,10 @@ dependencies = [
  "smol",
  "sum_tree",
  "text",
+ "tracing",
  "util",
  "zlog",
+ "ztracing",
 ]
 
 [[package]]
@@ -21351,6 +21364,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
+ "tracy-client",
  "zlog",
  "ztracing_macro",
 ]
