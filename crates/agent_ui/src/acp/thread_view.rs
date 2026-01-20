@@ -5896,7 +5896,7 @@ impl AcpThreadView {
                                     .child(
                                         Button::new(("send_now", index), "Send Now")
                                             .label_size(LabelSize::Small)
-                                            .when(is_next, |this| {
+                                            .when(is_next && message_editor.is_empty(cx), |this| {
                                                 let action: Box<dyn gpui::Action> =
                                                     if can_fast_track {
                                                         Box::new(Chat)
@@ -5912,6 +5912,9 @@ impl AcpThreadView {
                                                     )
                                                     .map(|kb| kb.size(keybinding_size)),
                                                 )
+                                            })
+                                            .when(is_next && !message_editor.is_empty(cx), |this| {
+                                                this.style(ButtonStyle::Outlined)
                                             })
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.send_queued_message_at_index(
