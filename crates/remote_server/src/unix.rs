@@ -578,34 +578,34 @@ impl ServerPaths {
 
 #[derive(Debug, Error)]
 pub enum ExecuteProxyError {
-    #[error("Failed to init server paths")]
+    #[error("Failed to init server paths: {0:#}")]
     ServerPath(#[from] ServerPathError),
 
     #[error(transparent)]
     ServerNotRunning(#[from] ProxyLaunchError),
 
-    #[error("Failed to check PidFile '{path}'")]
+    #[error("Failed to check PidFile '{path}': {source:#}")]
     CheckPidFile {
         #[source]
         source: CheckPidError,
         path: PathBuf,
     },
 
-    #[error("Failed to kill existing server with pid '{pid}'")]
+    #[error("Failed to kill existing server with pid '{pid}': {source:#}")]
     KillRunningServer {
         #[source]
         source: std::io::Error,
         pid: u32,
     },
 
-    #[error("failed to spawn server")]
+    #[error("failed to spawn server: {0:#}")]
     SpawnServer(#[source] SpawnServerError),
 
-    #[error("stdin_task failed")]
+    #[error("stdin_task failed: {0:#}")]
     StdinTask(#[source] anyhow::Error),
-    #[error("stdout_task failed")]
+    #[error("stdout_task failed: {0:#}")]
     StdoutTask(#[source] anyhow::Error),
-    #[error("stderr_task failed")]
+    #[error("stderr_task failed: {0:#}")]
     StderrTask(#[source] anyhow::Error),
 }
 
@@ -657,50 +657,66 @@ pub(crate) fn execute_proxy(
                 Some(server_pid) => Ok(server_pid),
             }
         } else {
-            match server_pid {
-                Some(pid) => {
-                    log::info!(
-                        "proxy found server already running with PID {}. Killing process and cleaning up files...",
-                        pid
-                    );
-                    kill_running_server(pid, &server_paths).await?;
-                    Ok(pid)
-                }
-                None => {
-                    spawn_server(&server_paths)
-                        .await
-                        .map_err(ExecuteProxyError::SpawnServer)?;
-                    std::fs::read_to_string(&server_paths.pid_file)
-                        .and_then(|contents| {
-                            contents.parse::<u32>().map_err(|_| {
-                                std::io::Error::new(
-                                    std::io::ErrorKind::InvalidData,
-                                    "Invalid PID file contents",
-                                )
-                            })
-                        })
-                        .map_err(SpawnServerError::ProcessStatus)
-                        .map_err(ExecuteProxyError::SpawnServer)
-                }
+            if let Some(pid) = server_pid {
+                log::info!(
+                    "proxy found server already running with PID {}. Killing process and cleaning up files...",
+                    pid
+                );
+                kill_running_server(pid, &server_paths).await?;
             }
+            spawn_server(&server_paths)
+                .await
+                .map_err(ExecuteProxyError::SpawnServer)?;
+            std::fs::read_to_string(&server_paths.pid_file)
+                .and_then(|contents| {
+                    contents.parse::<u32>().map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Invalid PID file contents",
+                        )
+                    })
+                })
+                .map_err(SpawnServerError::ProcessStatus)
+                .map_err(ExecuteProxyError::SpawnServer)
         }
     })?;
 
     let stdin_task = smol::spawn(async move {
         let stdin = smol::Unblock::new(std::io::stdin());
-        let stream = smol::net::unix::UnixStream::connect(&server_paths.stdin_socket).await?;
+        let stream = smol::net::unix::UnixStream::connect(&server_paths.stdin_socket)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to connect to stdin socket {}",
+                    server_paths.stdin_socket.display()
+                )
+            })?;
         handle_io(stdin, stream, "stdin").await
     });
 
     let stdout_task: smol::Task<Result<()>> = smol::spawn(async move {
         let stdout = smol::Unblock::new(std::io::stdout());
-        let stream = smol::net::unix::UnixStream::connect(&server_paths.stdout_socket).await?;
+        let stream = smol::net::unix::UnixStream::connect(&server_paths.stdout_socket)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to connect to stdout socket {}",
+                    server_paths.stdout_socket.display()
+                )
+            })?;
         handle_io(stream, stdout, "stdout").await
     });
 
     let stderr_task: smol::Task<Result<()>> = smol::spawn(async move {
         let mut stderr = smol::Unblock::new(std::io::stderr());
-        let mut stream = smol::net::unix::UnixStream::connect(&server_paths.stderr_socket).await?;
+        let mut stream = smol::net::unix::UnixStream::connect(&server_paths.stderr_socket)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to connect to stderr socket {}",
+                    server_paths.stderr_socket.display()
+                )
+            })?;
         let mut stderr_buffer = vec![0; 2048];
         loop {
             match stream
