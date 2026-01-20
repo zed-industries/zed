@@ -2236,6 +2236,11 @@
   "global_lsp_settings": {
     // Whether to show the LSP servers button in the status bar.
     "button": true,
+    // The maximum amount of time to wait for responses from language servers, in seconds.
+    //
+    // A value of `0` will result in no timeout being applied (causing all LSP responses to wait
+    // indefinitely until completed).
+    "request_timeout": 120,
   },
   // Jupyter settings
   "jupyter": {

@@ -30,8 +30,8 @@ use language::{
     markdown_lang, rust_lang, tree_sitter_typescript,
 };
 use lsp::{
-    DiagnosticSeverity, DocumentChanges, FileOperationFilter, NumberOrString, TextDocumentEdit,
-    Uri, WillRenameFiles, notification::DidRenameFiles,
+    DEFAULT_LSP_REQUEST_TIMEOUT, DiagnosticSeverity, DocumentChanges, FileOperationFilter,
+    NumberOrString, TextDocumentEdit, Uri, WillRenameFiles, notification::DidRenameFiles,
 };
 use parking_lot::Mutex;
 use paths::{config_dir, global_gitignore_path, tasks_file};
@@ -2055,49 +2055,52 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     // Keep track of the FS events reported to the language server.
     let file_changes = Arc::new(Mutex::new(Vec::new()));
     fake_server
-        .request::<lsp::request::RegisterCapability>(lsp::RegistrationParams {
-            registrations: vec![lsp::Registration {
-                id: Default::default(),
-                method: "workspace/didChangeWatchedFiles".to_string(),
-                register_options: serde_json::to_value(
-                    lsp::DidChangeWatchedFilesRegistrationOptions {
-                        watchers: vec![
-                            lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    path!("/the-root/Cargo.toml").to_string(),
-                                ),
-                                kind: None,
-                            },
-                            lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    path!("/the-root/src/*.{rs,c}").to_string(),
-                                ),
-                                kind: None,
-                            },
-                            lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    path!("/the-root/target/y/**/*.rs").to_string(),
-                                ),
-                                kind: None,
-                            },
-                            lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    path!("/the/stdlib/src/**/*.rs").to_string(),
-                                ),
-                                kind: None,
-                            },
-                            lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    path!("**/Cargo.lock").to_string(),
-                                ),
-                                kind: None,
-                            },
-                        ],
-                    },
-                )
-                .ok(),
-            }],
-        })
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: Default::default(),
+                    method: "workspace/didChangeWatchedFiles".to_string(),
+                    register_options: serde_json::to_value(
+                        lsp::DidChangeWatchedFilesRegistrationOptions {
+                            watchers: vec![
+                                lsp::FileSystemWatcher {
+                                    glob_pattern: lsp::GlobPattern::String(
+                                        path!("/the-root/Cargo.toml").to_string(),
+                                    ),
+                                    kind: None,
+                                },
+                                lsp::FileSystemWatcher {
+                                    glob_pattern: lsp::GlobPattern::String(
+                                        path!("/the-root/src/*.{rs,c}").to_string(),
+                                    ),
+                                    kind: None,
+                                },
+                                lsp::FileSystemWatcher {
+                                    glob_pattern: lsp::GlobPattern::String(
+                                        path!("/the-root/target/y/**/*.rs").to_string(),
+                                    ),
+                                    kind: None,
+                                },
+                                lsp::FileSystemWatcher {
+                                    glob_pattern: lsp::GlobPattern::String(
+                                        path!("/the/stdlib/src/**/*.rs").to_string(),
+                                    ),
+                                    kind: None,
+                                },
+                                lsp::FileSystemWatcher {
+                                    glob_pattern: lsp::GlobPattern::String(
+                                        path!("**/Cargo.lock").to_string(),
+                                    ),
+                                    kind: None,
+                                },
+                            ],
+                        },
+                    )
+                    .ok(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
         .await
         .into_response()
         .unwrap();
@@ -2878,6 +2881,7 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
                 cancellable: Some(false),
                 ..Default::default()
             },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
         )
         .await;
     // Ensure progress notification is fully processed before starting the next one
@@ -2890,6 +2894,7 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
                 cancellable: Some(true),
                 ..Default::default()
             },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
         )
         .await;
     // Ensure progress notification is fully processed before cancelling
@@ -4525,6 +4530,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
                                     ..Default::default()
                                 },
                             },
+                            DEFAULT_LSP_REQUEST_TIMEOUT,
                         )
                         .await
                         .into_response()

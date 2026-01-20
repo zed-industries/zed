@@ -23,7 +23,7 @@ use language::{
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use parking_lot::Mutex;
-use project::{DisableAiSettings, Project};
+use project::{DisableAiSettings, Project, project_settings::ProjectSettings};
 use request::DidChangeStatus;
 use semver::Version;
 use serde_json::json;
@@ -344,10 +344,18 @@ impl Copilot {
 
     fn shutdown_language_server(
         &mut self,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> impl Future<Output = ()> + use<> {
+        let request_timeout = ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .get_request_timeout();
+
         let shutdown = match mem::replace(&mut self.server, CopilotServer::Disabled) {
-            CopilotServer::Running(server) => Some(Box::pin(async move { server.lsp.shutdown() })),
+            CopilotServer::Running(server) => {
+                Some(Box::pin(
+                    async move { server.lsp.shutdown(request_timeout) },
+                ))
+            }
             _ => None,
         };
 
@@ -510,36 +518,46 @@ impl Copilot {
                 .on_notification::<DidChangeStatus, _>({
                     let this = this.clone();
                     move |params, cx| {
-                        if params.kind == request::StatusKind::Normal {
-                            let this = this.clone();
-                            cx.spawn(async move |cx| {
-                                let lsp = this
-                                    .read_with(cx, |copilot, _| {
-                                        if let CopilotServer::Running(server) = &copilot.server {
-                                            Some(server.lsp.clone())
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .ok()
-                                    .flatten();
-                                let Some(lsp) = lsp else { return };
-                                let status = lsp
-                                    .request::<request::CheckStatus>(request::CheckStatusParams {
-                                        local_checks_only: false,
-                                    })
-                                    .await
-                                    .into_response()
-                                    .ok();
-                                if let Some(status) = status {
-                                    this.update(cx, |copilot, cx| {
-                                        copilot.update_sign_in_status(status, cx);
-                                    })
-                                    .ok();
-                                }
-                            })
-                            .detach();
+                        if params.kind != request::StatusKind::Normal {
+                            return;
                         }
+                        let this = this.clone();
+                        let request_timeout = cx.update(|app| {
+                            ProjectSettings::get_global(app)
+                                .global_lsp_settings
+                                .get_request_timeout()
+                        });
+
+                        cx.spawn(async move |cx| {
+                            let lsp = this
+                                .read_with(cx, |copilot, _| {
+                                    if let CopilotServer::Running(server) = &copilot.server {
+                                        Some(server.lsp.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .ok()
+                                .flatten();
+                            let Some(lsp) = lsp else { return };
+                            let status = lsp
+                                .request::<request::CheckStatus>(
+                                    request::CheckStatusParams {
+                                        local_checks_only: false,
+                                    },
+                                    request_timeout,
+                                )
+                                .await
+                                .into_response()
+                                .ok();
+                            if let Some(status) = status {
+                                this.update(cx, |copilot, cx| {
+                                    copilot.update_sign_in_status(status, cx);
+                                })
+                                .ok();
+                            }
+                        })
+                        .detach();
                     }
                 })
                 .detach();
@@ -570,6 +588,12 @@ impl Copilot {
             };
             let editor_info_json = serde_json::to_value(&editor_info)?;
 
+            let request_timeout = cx.update(|app| {
+                ProjectSettings::get_global(app)
+                    .global_lsp_settings
+                    .get_request_timeout()
+            });
+
             let server = cx
                 .update(|cx| {
                     let mut params = server.default_initialize_params(false, cx);
@@ -580,7 +604,7 @@ impl Copilot {
                         .get_or_insert_with(Default::default)
                         .show_document =
                         Some(lsp::ShowDocumentClientCapabilities { support: true });
-                    server.initialize(params, configuration.into(), cx)
+                    server.initialize(params, configuration.into(), request_timeout, cx)
                 })
                 .await?;
 
@@ -588,9 +612,12 @@ impl Copilot {
                 .context("copilot: did change configuration")?;
 
             let status = server
-                .request::<request::CheckStatus>(request::CheckStatusParams {
-                    local_checks_only: false,
-                })
+                .request::<request::CheckStatus>(
+                    request::CheckStatusParams {
+                        local_checks_only: false,
+                    },
+                    request_timeout,
+                )
                 .await
                 .into_response()
                 .context("copilot: check status")?;
@@ -641,81 +668,90 @@ impl Copilot {
     }
 
     pub fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        if let CopilotServer::Running(server) = &mut self.server {
-            let task = match &server.sign_in_status {
-                SignInStatus::Authorized => Task::ready(Ok(())).shared(),
-                SignInStatus::SigningIn { task, .. } => {
-                    cx.notify();
-                    task.clone()
-                }
-                SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized => {
-                    let lsp = server.lsp.clone();
-
-                    let task = cx
-                        .spawn(async move |this, cx| {
-                            let sign_in = async {
-                                let flow = lsp
-                                    .request::<request::SignIn>(request::SignInParams {})
-                                    .await
-                                    .into_response()
-                                    .context("copilot sign-in")?;
-
-                                this.update(cx, |this, cx| {
-                                    if let CopilotServer::Running(RunningCopilotServer {
-                                        sign_in_status: status,
-                                        ..
-                                    }) = &mut this.server
-                                        && let SignInStatus::SigningIn {
-                                            prompt: prompt_flow,
-                                            ..
-                                        } = status
-                                    {
-                                        *prompt_flow = Some(flow.clone());
-                                        cx.notify();
-                                    }
-                                })?;
-
-                                anyhow::Ok(())
-                            };
-
-                            let sign_in = sign_in.await;
-                            this.update(cx, |this, cx| match sign_in {
-                                Ok(()) => Ok(()),
-                                Err(error) => {
-                                    this.update_sign_in_status(
-                                        request::SignInStatus::NotSignedIn,
-                                        cx,
-                                    );
-                                    Err(Arc::new(error))
-                                }
-                            })?
-                        })
-                        .shared();
-                    server.sign_in_status = SignInStatus::SigningIn {
-                        prompt: None,
-                        task: task.clone(),
-                    };
-                    cx.notify();
-                    task
-                }
-            };
-
-            cx.background_spawn(task.map_err(|err| anyhow!("{err:?}")))
-        } else {
+        let CopilotServer::Running(server) = &mut self.server else {
             // If we're downloading, wait until download is finished
             // If we're in a stuck state, display to the user
-            Task::ready(Err(anyhow!("copilot hasn't started yet")))
-        }
+            return Task::ready(Err(anyhow!("copilot hasn't started yet")));
+        };
+
+        let task = match &server.sign_in_status {
+            SignInStatus::Authorized => Task::ready(Ok(())).shared(),
+            SignInStatus::SigningIn { task, .. } => {
+                cx.notify();
+                task.clone()
+            }
+            SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized => {
+                let lsp = server.lsp.clone();
+
+                let request_timeout = ProjectSettings::get_global(cx)
+                    .global_lsp_settings
+                    .get_request_timeout();
+
+                let task = cx
+                    .spawn(async move |this, cx| {
+                        let sign_in = async {
+                            let flow = lsp
+                                .request::<request::SignIn>(
+                                    request::SignInParams {},
+                                    request_timeout,
+                                )
+                                .await
+                                .into_response()
+                                .context("copilot sign-in")?;
+
+                            this.update(cx, |this, cx| {
+                                if let CopilotServer::Running(RunningCopilotServer {
+                                    sign_in_status: status,
+                                    ..
+                                }) = &mut this.server
+                                    && let SignInStatus::SigningIn {
+                                        prompt: prompt_flow,
+                                        ..
+                                    } = status
+                                {
+                                    *prompt_flow = Some(flow.clone());
+                                    cx.notify();
+                                }
+                            })?;
+
+                            anyhow::Ok(())
+                        };
+
+                        let sign_in = sign_in.await;
+                        this.update(cx, |this, cx| match sign_in {
+                            Ok(()) => Ok(()),
+                            Err(error) => {
+                                this.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
+                                Err(Arc::new(error))
+                            }
+                        })?
+                    })
+                    .shared();
+                server.sign_in_status = SignInStatus::SigningIn {
+                    prompt: None,
+                    task: task.clone(),
+                };
+                cx.notify();
+                task
+            }
+        };
+
+        cx.background_spawn(task.map_err(|err| anyhow!("{err:?}")))
     }
 
     pub fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
+
         match &self.server {
             CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) => {
+                let request_timeout = ProjectSettings::get_global(cx)
+                    .global_lsp_settings
+                    .get_request_timeout();
+
                 let server = server.clone();
                 cx.background_spawn(async move {
                     server
-                        .request::<request::SignOut>(request::SignOutParams {})
+                        .request::<request::SignOut>(request::SignOutParams {}, request_timeout)
                         .await
                         .into_response()
                         .context("copilot: sign in confirm")?;
@@ -928,6 +964,10 @@ impl Copilot {
         let hard_tabs = settings.hard_tabs;
         drop(settings);
 
+        let request_timeout = ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .get_request_timeout();
+
         cx.background_spawn(async move {
             let (version, snapshot) = pending_snapshot.await?;
             let lsp_position = point_to_lsp(position);
@@ -939,7 +979,7 @@ impl Copilot {
                         version,
                     },
                     position: lsp_position,
-                })
+                }, request_timeout)
                 .fuse();
 
             let inline_request = lsp
@@ -956,7 +996,7 @@ impl Copilot {
                         tab_size,
                         insert_spaces: !hard_tabs,
                     }),
-                })
+                }, request_timeout)
                 .fuse();
 
             futures::pin_mut!(nes_request, inline_request);
@@ -1051,24 +1091,29 @@ impl Copilot {
             Ok(server) => server,
             Err(error) => return Task::ready(Err(error)),
         };
-        if let Some(command) = &completion.command {
-            let request = server
-                .lsp
-                .request::<lsp::ExecuteCommand>(lsp::ExecuteCommandParams {
-                    command: command.command.clone(),
-                    arguments: command.arguments.clone().unwrap_or_default(),
-                    ..Default::default()
-                });
-            cx.background_spawn(async move {
-                request
-                    .await
-                    .into_response()
-                    .context("copilot: notify accepted")?;
-                Ok(())
-            })
-        } else {
-            Task::ready(Ok(()))
-        }
+        let Some(command) = &completion.command else {
+            return Task::ready(Ok(()));
+        };
+
+        let request_timeout = ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .get_request_timeout();
+
+        let request = server.lsp.request::<lsp::ExecuteCommand>(
+            lsp::ExecuteCommandParams {
+                command: command.command.clone(),
+                arguments: command.arguments.clone().unwrap_or_default(),
+                ..Default::default()
+            },
+            request_timeout,
+        );
+        cx.background_spawn(async move {
+            request
+                .await
+                .into_response()
+                .context("copilot: notify accepted")?;
+            Ok(())
+        })
     }
 
     pub fn status(&self) -> Status {
@@ -1311,6 +1356,7 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use pretty_assertions::assert_eq;
     use util::{
         path,
         paths::PathStyle,
@@ -1319,6 +1365,7 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {
+        init_test(cx);
         let (copilot, mut lsp) = Copilot::fake(cx);
 
         let buffer_1 = cx.new(|cx| Buffer::local("Hello", cx));
@@ -1413,19 +1460,31 @@ mod tests {
             .update(cx, |copilot, cx| copilot.sign_out(cx))
             .await
             .unwrap();
+        macro_rules! receive_document_notifications {
+            ($notifications_count:expr, $document_notification_type:ty) => {{
+                let mut received_notifications = Vec::new();
+                for _ in 0..$notifications_count {
+                    received_notifications.push(
+                        lsp.receive_notification::<$document_notification_type>()
+                            .await,
+                    );
+                }
+                received_notifications
+                    .sort_by_key(|document| document.text_document.uri.path().to_owned());
+                received_notifications
+            }};
+        }
+
         assert_eq!(
-            lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
-                .await,
-            lsp::DidCloseTextDocumentParams {
-                text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri.clone()),
-            }
-        );
-        assert_eq!(
-            lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
-                .await,
-            lsp::DidCloseTextDocumentParams {
-                text_document: lsp::TextDocumentIdentifier::new(buffer_2_uri.clone()),
-            }
+            receive_document_notifications!(2, lsp::notification::DidCloseTextDocument),
+            vec![
+                lsp::DidCloseTextDocumentParams {
+                    text_document: lsp::TextDocumentIdentifier::new(buffer_2_uri.clone()),
+                },
+                lsp::DidCloseTextDocumentParams {
+                    text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri.clone()),
+                },
+            ]
         );
 
         // Ensure all previously-registered buffers are re-opened when signing in.
@@ -1455,28 +1514,25 @@ mod tests {
         });
 
         assert_eq!(
-            lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
-                .await,
-            lsp::DidOpenTextDocumentParams {
-                text_document: lsp::TextDocumentItem::new(
-                    buffer_1_uri.clone(),
-                    "plaintext".into(),
-                    0,
-                    "Hello world".into()
-                ),
-            }
-        );
-        assert_eq!(
-            lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
-                .await,
-            lsp::DidOpenTextDocumentParams {
-                text_document: lsp::TextDocumentItem::new(
-                    buffer_2_uri.clone(),
-                    "plaintext".into(),
-                    0,
-                    "Goodbye".into()
-                ),
-            }
+            receive_document_notifications!(2, lsp::notification::DidOpenTextDocument),
+            vec![
+                lsp::DidOpenTextDocumentParams {
+                    text_document: lsp::TextDocumentItem::new(
+                        buffer_2_uri.clone(),
+                        "plaintext".into(),
+                        0,
+                        "Goodbye".into()
+                    ),
+                },
+                lsp::DidOpenTextDocumentParams {
+                    text_document: lsp::TextDocumentItem::new(
+                        buffer_1_uri.clone(),
+                        "plaintext".into(),
+                        0,
+                        "Hello world".into()
+                    ),
+                },
+            ]
         );
         // Dropping a buffer causes it to be closed on the LSP side as well.
         cx.update(|_| drop(buffer_2));
@@ -1547,10 +1603,13 @@ mod tests {
             unimplemented!()
         }
     }
-}
 
-#[cfg(test)]
-#[ctor::ctor]
-fn init_logger() {
-    zlog::init_test();
+    fn init_test(cx: &mut TestAppContext) {
+        zlog::init_test();
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
 }

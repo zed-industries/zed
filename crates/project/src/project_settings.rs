@@ -5,7 +5,7 @@ use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use futures::StreamExt as _;
 use gpui::{AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
-use lsp::LanguageServerName;
+use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT_SECS, LanguageServerName};
 use paths::{
     EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
     local_tasks_file_relative_path, local_vscode_launch_file_relative_path,
@@ -117,12 +117,38 @@ impl From<settings::NodeBinarySettings> for NodeBinarySettings {
 }
 
 /// Common language server settings.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct GlobalLspSettings {
     /// Whether to show the LSP servers button in the status bar.
     ///
     /// Default: `true`
     pub button: bool,
+    /// The maximum amount of time to wait for responses from language servers, in seconds.
+    /// A value of `0` will result in no timeout being applied (causing all LSP responses to wait
+    /// indefinitely until completed).
+    /// This should not be used outside of serialization/de-serialization in favor of get_request_timeout.
+    ///
+    /// Default: `120`
+    pub request_timeout: u64,
+}
+
+impl Default for GlobalLspSettings {
+    fn default() -> Self {
+        Self {
+            button: true,
+            request_timeout: DEFAULT_LSP_REQUEST_TIMEOUT_SECS,
+        }
+    }
+}
+
+impl GlobalLspSettings {
+    /// Returns the timeout duration for LSP-related interactions, or Duration::ZERO if no timeout should be applied.
+    /// Zero durations are treated as no timeout by language servers, so code using this in an async context can
+    /// simply call unwrap_or_default.
+    pub const fn get_request_timeout(&self) -> Duration {
+        Duration::from_secs(self.request_timeout)
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
@@ -613,6 +639,12 @@ impl Settings for ProjectSettings {
                     .as_ref()
                     .unwrap()
                     .button
+                    .unwrap(),
+                request_timeout: content
+                    .global_lsp_settings
+                    .as_ref()
+                    .unwrap()
+                    .request_timeout
                     .unwrap(),
             },
             dap: project
