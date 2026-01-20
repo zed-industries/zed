@@ -6,6 +6,7 @@ mod git;
 mod headless;
 mod load_project;
 mod metrics;
+mod parse_output;
 mod paths;
 mod predict;
 mod progress;
@@ -130,6 +131,9 @@ enum Command {
     FormatPrompt(FormatPromptArgs),
     /// Runs edit prediction
     Predict(PredictArgs),
+    /// Parse model outputs (actual_output) into unified diffs (actual_patch).
+    /// Requires format-prompt to have been run first. Uses provider from prompt.
+    ParseOutput,
     /// Computes a score based on actual and expected patches
     Score(PredictArgs),
     /// Prepares a distillation dataset by copying expected outputs to
@@ -159,6 +163,7 @@ impl Display for Command {
             Command::Predict(args) => {
                 write!(f, "predict --provider={}", args.provider)
             }
+            Command::ParseOutput => write!(f, "parse-output"),
             Command::Score(args) => {
                 write!(f, "score --provider={}", args.provider)
             }
@@ -364,8 +369,12 @@ async fn load_examples(
         }
     }
 
-    if let Some(path) = output_path {
-        resume_from_output(path, &mut examples);
+    // Skip resume logic for --in-place since input and output are the same file,
+    // which would incorrectly treat all input examples as already processed.
+    if !args.in_place {
+        if let Some(path) = output_path {
+            resume_from_output(path, &mut examples);
+        }
     }
 
     Progress::global().set_total_examples(examples.len());
@@ -470,9 +479,12 @@ fn main() {
             return;
         }
         Command::SplitCommit(split_commit_args) => {
-            if let Err(error) =
-                split_commit::run_split_commit(split_commit_args, &args.inputs, output.as_ref())
-            {
+            if let Err(error) = split_commit::run_split_commit(
+                split_commit_args,
+                &args.inputs,
+                output.as_ref(),
+                args.failed,
+            ) {
                 eprintln!("{error:#}");
                 std::process::exit(1);
             }
@@ -593,6 +605,9 @@ fn main() {
                                                 cx.clone(),
                                             )
                                             .await?;
+                                        }
+                                        Command::ParseOutput => {
+                                            parse_output::run_parse_output(example)?;
                                         }
                                         Command::Distill => {
                                             run_distill(example).await?;

@@ -254,14 +254,23 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
     let worktree_git_dir = repo_dir
         .join(".git/worktrees")
         .join(repo_name.name.as_ref());
-    let index_lock = worktree_git_dir.join("index.lock");
-    if index_lock.exists() {
-        fs::remove_file(&index_lock).ok();
+    for lock_file in &["index.lock", "HEAD.lock", "config.lock"] {
+        let worktree_lock_path = worktree_git_dir.join(lock_file);
+        let repo_lock_path = repo_dir.join(".git").join(lock_file);
+        if worktree_lock_path.exists() {
+            fs::remove_file(&worktree_lock_path).ok();
+        }
+        if repo_lock_path.exists() {
+            fs::remove_file(&repo_lock_path).ok();
+        }
     }
 
     let mut git_repo_exists = false;
     if repo_dir.is_dir() {
-        if git::run_git(&repo_dir, &["status"]).await.is_ok() {
+        if git::run_git(&repo_dir, &["remote", "get-url", "origin"])
+            .await
+            .map_or(false, |origin| origin.trim() == example.spec.repository_url)
+        {
             git_repo_exists = true;
         } else {
             fs::remove_dir_all(&repo_dir).ok();
@@ -283,25 +292,36 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
     step_progress.set_substatus("fetching");
     let revision = git::fetch_if_needed(&repo_dir, &example.spec.revision).await?;
 
+    // Clean up any stale worktree registrations from previous crashed runs.
+    git::run_git(&repo_dir, &["worktree", "prune"]).await.ok();
+
     // Create the worktree for this example if needed.
     step_progress.set_substatus("preparing worktree");
 
-    let mut worktree_exists = false;
-    if worktree_path.is_dir() {
-        if git::run_git(&worktree_path, &["clean", "--force", "-d"])
+    // Check if worktree exists and is valid (not just a directory from a crashed run).
+    let worktree_valid = worktree_path.is_dir()
+        && git::run_git(&worktree_path, &["rev-parse", "--git-dir"])
             .await
-            .is_ok()
-        {
-            git::run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
-            git::run_git(&worktree_path, &["checkout", revision.as_str()]).await?;
-            worktree_exists = true;
-        } else {
+            .is_ok();
+
+    if worktree_valid {
+        git::run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
+        git::run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
+        git::run_git(&worktree_path, &["checkout", revision.as_str()]).await?;
+    } else {
+        let worktree_path_string = worktree_path.to_string_lossy();
+
+        // Clean up invalid worktree directory and registration if they exist.
+        if worktree_path.exists() {
             fs::remove_dir_all(&worktree_path).ok();
         }
-    }
+        git::run_git(
+            &repo_dir,
+            &["worktree", "remove", "--force", &worktree_path_string],
+        )
+        .await
+        .ok();
 
-    if !worktree_exists {
-        let worktree_path_string = worktree_path.to_string_lossy();
         let branch_name = example.spec.filename();
         git::run_git(
             &repo_dir,

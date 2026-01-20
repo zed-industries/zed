@@ -44,9 +44,6 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
-      run: ./script/clippy.ps1
-      shell: pwsh
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
@@ -59,10 +56,28 @@ jobs:
         Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
       shell: pwsh
     timeout-minutes: 60
+  clippy_windows:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: self-32vcpu-windows-2022
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        New-Item -ItemType Directory -Path "./../.cargo" -Force
+        Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
+      shell: pwsh
+    - name: steps::clippy
+      run: ./script/clippy.ps1
+      shell: pwsh
+    timeout-minutes: 60
   bundle_linux_aarch64:
     needs:
     - check_style
     - run_tests_windows
+    - clippy_windows
     runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
     env:
       CARGO_INCREMENTAL: 0
@@ -113,6 +128,7 @@ jobs:
     needs:
     - check_style
     - run_tests_windows
+    - clippy_windows
     runs-on: namespace-profile-32x64-ubuntu-2004
     env:
       CARGO_INCREMENTAL: 0
@@ -163,6 +179,7 @@ jobs:
     needs:
     - check_style
     - run_tests_windows
+    - clippy_windows
     runs-on: self-mini-macos
     env:
       CARGO_INCREMENTAL: 0
@@ -216,6 +233,7 @@ jobs:
     needs:
     - check_style
     - run_tests_windows
+    - clippy_windows
     runs-on: self-mini-macos
     env:
       CARGO_INCREMENTAL: 0
@@ -269,6 +287,7 @@ jobs:
     needs:
     - check_style
     - run_tests_windows
+    - clippy_windows
     runs-on: self-32vcpu-windows-2022
     env:
       CARGO_INCREMENTAL: 0
@@ -315,6 +334,7 @@ jobs:
     needs:
     - check_style
     - run_tests_windows
+    - clippy_windows
     runs-on: self-32vcpu-windows-2022
     env:
       CARGO_INCREMENTAL: 0
