@@ -6103,21 +6103,20 @@ impl AcpThreadView {
             return;
         };
 
-        let queued_messages: Vec<_> = native_thread
-            .read(cx)
-            .queued_messages()
-            .iter()
-            .map(|q| q.content.clone())
-            .collect();
-
+        let thread = native_thread.read(cx);
+        let needed_count = thread.queued_messages().len();
         let current_count = self.queued_message_editors.len();
-        let needed_count = queued_messages.len();
 
         if current_count == needed_count && needed_count == self.last_synced_queue_length {
             return;
         }
 
-        // Update queue content in case a queued message has been removed
+        let queued_messages: Vec<_> = thread
+            .queued_messages()
+            .iter()
+            .map(|q| q.content.clone())
+            .collect();
+
         if current_count > needed_count {
             self.queued_message_editors.truncate(needed_count);
             self.queued_message_editor_subscriptions
