@@ -2658,7 +2658,7 @@ impl SettingsWindow {
         if self.navbar_entries[navbar_entry_index].is_root
             || !self.is_nav_entry_visible(navbar_entry_index)
         {
-            if let Some(scroll_handle) = self.sub_page_scroll_handle() {
+            if let Some(scroll_handle) = self.current_sub_page_scroll_handle() {
                 scroll_handle.set_offset(point(px(0.), px(0.)));
             }
 
@@ -2732,7 +2732,7 @@ impl SettingsWindow {
             .position(|(index, _)| index == content_item_index)
             .unwrap_or(0);
         if index == 0 {
-            if let Some(scroll_handle) = self.sub_page_scroll_handle() {
+            if let Some(scroll_handle) = self.current_sub_page_scroll_handle() {
                 scroll_handle.set_offset(point(px(0.), px(0.)));
             }
 
@@ -2783,7 +2783,7 @@ impl SettingsWindow {
         cx.notify();
     }
 
-    fn sub_page_scroll_handle(&self) -> Option<&ScrollHandle> {
+    fn current_sub_page_scroll_handle(&self) -> Option<&ScrollHandle> {
         self.sub_page_stack.last().map(|page| &page.scroll_handle)
     }
 

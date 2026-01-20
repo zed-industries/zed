@@ -27,7 +27,7 @@ pub(crate) fn render_edit_prediction_setup_page(
     });
     let providers = [
         project.and_then(|project| {
-            Some(render_github_copilot_provider(project, window, cx)?.into_any_element())
+            render_github_copilot_provider(project, window, cx).map(IntoElement::into_any_element)
         }),
         cx.has_flag::<MercuryFeatureFlag>().then(|| {
             render_api_key_provider(
