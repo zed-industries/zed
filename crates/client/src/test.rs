@@ -1,9 +1,9 @@
 use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
 use anyhow::{Context as _, Result, anyhow};
 use cloud_api_client::{AuthenticatedUser, GetAuthenticatedUserResponse, PlanInfo};
-use cloud_llm_client::{CurrentUsage, PlanV1, UsageData, UsageLimit};
+use cloud_llm_client::{CurrentUsage, PlanV2, UsageData, UsageLimit};
 use futures::{StreamExt, stream::BoxStream};
-use gpui::{AppContext as _, BackgroundExecutor, Entity, TestAppContext};
+use gpui::{AppContext as _, Entity, TestAppContext};
 use http_client::{AsyncBody, Method, Request, http};
 use parking_lot::Mutex;
 use rpc::{ConnectionId, Peer, Receipt, TypedEnvelope, proto};
@@ -13,7 +13,6 @@ pub struct FakeServer {
     peer: Arc<Peer>,
     state: Arc<Mutex<FakeServerState>>,
     user_id: u64,
-    executor: BackgroundExecutor,
 }
 
 #[derive(Default)]
@@ -35,7 +34,6 @@ impl FakeServer {
             peer: Peer::new(0),
             state: Default::default(),
             user_id: client_user_id,
-            executor: cx.executor(),
         };
 
         client.http_client().as_fake().replace_handler({
@@ -181,8 +179,6 @@ impl FakeServer {
 
     #[allow(clippy::await_holding_lock)]
     pub async fn receive<M: proto::EnvelopedMessage>(&self) -> Result<TypedEnvelope<M>> {
-        self.executor.start_waiting();
-
         let message = self
             .state
             .lock()
@@ -192,7 +188,6 @@ impl FakeServer {
             .next()
             .await
             .context("other half hung up")?;
-        self.executor.finish_waiting();
         let type_name = message.payload_type_name();
         let message = message.into_any();
 
@@ -269,21 +264,15 @@ pub fn make_get_authenticated_user_response(
         },
         feature_flags: vec![],
         plan: PlanInfo {
-            plan: PlanV1::ZedPro,
-            plan_v2: None,
+            plan_v2: PlanV2::ZedPro,
             subscription_period: None,
             usage: CurrentUsage {
-                model_requests: UsageData {
-                    used: 0,
-                    limit: UsageLimit::Limited(500),
-                },
                 edit_predictions: UsageData {
                     used: 250,
                     limit: UsageLimit::Unlimited,
                 },
             },
             trial_started_at: None,
-            is_usage_based_billing_enabled: false,
             is_account_too_young: false,
             has_overdue_invoices: false,
         },

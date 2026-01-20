@@ -300,18 +300,31 @@ impl LspInstaller for TyLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Option<Toolchain>,
+        toolchain: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        let Some(ty_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await else {
-            return None;
+        let ty_in_venv = if let Some(toolchain) = toolchain
+            && toolchain.language_name.as_ref() == "Python"
+        {
+            Path::new(toolchain.path.as_str())
+                .parent()
+                .map(|path| path.join("ty"))
+        } else {
+            None
         };
-        let env = delegate.shell_env().await;
-        Some(LanguageServerBinary {
-            path: ty_bin,
-            env: Some(env),
-            arguments: vec!["server".into()],
-        })
+
+        for path in ty_in_venv.into_iter().chain(["ty".into()]) {
+            if let Some(ty_bin) = delegate.which(path.as_os_str()).await {
+                let env = delegate.shell_env().await;
+                return Some(LanguageServerBinary {
+                    path: ty_bin,
+                    env: Some(env),
+                    arguments: vec!["server".into()],
+                });
+            }
+        }
+
+        None
     }
 
     async fn fetch_server_binary(
@@ -1362,7 +1375,8 @@ impl ToolchainLister for PythonToolchainProvider {
                 PythonEnvironmentKind::Venv
                 | PythonEnvironmentKind::VirtualEnv
                 | PythonEnvironmentKind::Uv
-                | PythonEnvironmentKind::UvWorkspace,
+                | PythonEnvironmentKind::UvWorkspace
+                | PythonEnvironmentKind::Poetry,
             ) => {
                 if let Some(activation_scripts) = &toolchain.activation_scripts {
                     if let Some(activate_script_path) = activation_scripts.get(&shell) {
@@ -1424,7 +1438,8 @@ async fn venv_to_toolchain(venv: PythonEnvironment, fs: &dyn Fs) -> Option<Toolc
             PythonEnvironmentKind::Venv
             | PythonEnvironmentKind::VirtualEnv
             | PythonEnvironmentKind::Uv
-            | PythonEnvironmentKind::UvWorkspace,
+            | PythonEnvironmentKind::UvWorkspace
+            | PythonEnvironmentKind::Poetry,
         ) => resolve_venv_activation_scripts(&venv, fs, &mut activation_scripts).await,
         _ => {}
     }
@@ -1462,6 +1477,7 @@ async fn resolve_venv_activation_scripts(
             (ShellKind::Fish, "activate.fish"),
             (ShellKind::Nushell, "activate.nu"),
             (ShellKind::PowerShell, "activate.ps1"),
+            (ShellKind::Pwsh, "activate.ps1"),
             (ShellKind::Cmd, "activate.bat"),
             (ShellKind::Xonsh, "activate.xsh"),
         ] {

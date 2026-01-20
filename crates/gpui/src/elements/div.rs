@@ -1983,12 +1983,12 @@ impl Interactivity {
     ) {
         use crate::{BorderStyle, TextAlign};
 
-        if global_id.is_some()
+        if let Some(global_id) = global_id
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
             && hitbox.is_hovered(window)
         {
             const FONT_SIZE: crate::Pixels = crate::Pixels(10.);
-            let element_id = format!("{:?}", global_id.unwrap());
+            let element_id = format!("{global_id:?}");
             let str_len = element_id.len();
 
             let render_debug_text = |window: &mut Window| {
@@ -2177,8 +2177,8 @@ impl Interactivity {
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
                     if let Some(hover_state) = &hover_state {
                         hover_state.borrow_mut().element = hovered;
+                        cx.notify(current_view);
                     }
-                    cx.notify(current_view);
                 }
             });
         }
@@ -2377,7 +2377,7 @@ impl Interactivity {
             if let Some(hover_listener) = self.hover_listener.take() {
                 let hitbox = hitbox.clone();
                 let was_hovered = element_state
-                    .hover_state
+                    .hover_listener_state
                     .get_or_insert_with(Default::default)
                     .clone();
                 let has_mouse_down = element_state
@@ -2394,8 +2394,8 @@ impl Interactivity {
                         && hitbox.is_hovered(window);
                     let mut was_hovered = was_hovered.borrow_mut();
 
-                    if is_hovered != was_hovered.element {
-                        was_hovered.element = is_hovered;
+                    if is_hovered != *was_hovered {
+                        *was_hovered = is_hovered;
                         drop(was_hovered);
 
                         hover_listener(&is_hovered, window, cx);
@@ -2727,6 +2727,7 @@ pub struct InteractiveElementState {
     pub(crate) focus_handle: Option<FocusHandle>,
     pub(crate) clicked_state: Option<Rc<RefCell<ElementClickedState>>>,
     pub(crate) hover_state: Option<Rc<RefCell<ElementHoverState>>>,
+    pub(crate) hover_listener_state: Option<Rc<RefCell<bool>>>,
     pub(crate) pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,

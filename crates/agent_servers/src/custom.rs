@@ -35,7 +35,7 @@ impl AgentServer for CustomAgentServer {
             settings
                 .get::<AllAgentServersSettings>(None)
                 .custom
-                .get(&self.name())
+                .get(self.name().as_ref())
                 .cloned()
         });
 
@@ -53,7 +53,7 @@ impl AgentServer for CustomAgentServer {
             settings
                 .get::<AllAgentServersSettings>(None)
                 .custom
-                .get(&self.name())
+                .get(self.name().as_ref())
                 .cloned()
         });
 
@@ -87,7 +87,7 @@ impl AgentServer for CustomAgentServer {
                 .agent_servers
                 .get_or_insert_default()
                 .custom
-                .entry(name.clone())
+                .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
@@ -102,6 +102,10 @@ impl AgentServer for CustomAgentServer {
                     ..
                 }
                 | settings::CustomAgentServerSettings::Extension {
+                    favorite_config_option_values,
+                    ..
+                }
+                | settings::CustomAgentServerSettings::Registry {
                     favorite_config_option_values,
                     ..
                 } => {
@@ -131,7 +135,7 @@ impl AgentServer for CustomAgentServer {
                 .agent_servers
                 .get_or_insert_default()
                 .custom
-                .entry(name.clone())
+                .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
@@ -142,7 +146,8 @@ impl AgentServer for CustomAgentServer {
 
             match settings {
                 settings::CustomAgentServerSettings::Custom { default_mode, .. }
-                | settings::CustomAgentServerSettings::Extension { default_mode, .. } => {
+                | settings::CustomAgentServerSettings::Extension { default_mode, .. }
+                | settings::CustomAgentServerSettings::Registry { default_mode, .. } => {
                     *default_mode = mode_id.map(|m| m.to_string());
                 }
             }
@@ -154,7 +159,7 @@ impl AgentServer for CustomAgentServer {
             settings
                 .get::<AllAgentServersSettings>(None)
                 .custom
-                .get(&self.name())
+                .get(self.name().as_ref())
                 .cloned()
         });
 
@@ -170,7 +175,7 @@ impl AgentServer for CustomAgentServer {
                 .agent_servers
                 .get_or_insert_default()
                 .custom
-                .entry(name.clone())
+                .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
@@ -181,7 +186,8 @@ impl AgentServer for CustomAgentServer {
 
             match settings {
                 settings::CustomAgentServerSettings::Custom { default_model, .. }
-                | settings::CustomAgentServerSettings::Extension { default_model, .. } => {
+                | settings::CustomAgentServerSettings::Extension { default_model, .. }
+                | settings::CustomAgentServerSettings::Registry { default_model, .. } => {
                     *default_model = model_id.map(|m| m.to_string());
                 }
             }
@@ -193,7 +199,7 @@ impl AgentServer for CustomAgentServer {
             settings
                 .get::<AllAgentServersSettings>(None)
                 .custom
-                .get(&self.name())
+                .get(self.name().as_ref())
                 .cloned()
         });
 
@@ -221,7 +227,7 @@ impl AgentServer for CustomAgentServer {
                 .agent_servers
                 .get_or_insert_default()
                 .custom
-                .entry(name.clone())
+                .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
@@ -235,6 +241,9 @@ impl AgentServer for CustomAgentServer {
                     favorite_models, ..
                 }
                 | settings::CustomAgentServerSettings::Extension {
+                    favorite_models, ..
+                }
+                | settings::CustomAgentServerSettings::Registry {
                     favorite_models, ..
                 } => favorite_models,
             };
@@ -255,7 +264,7 @@ impl AgentServer for CustomAgentServer {
             settings
                 .get::<AllAgentServersSettings>(None)
                 .custom
-                .get(&self.name())
+                .get(self.name().as_ref())
                 .cloned()
         });
 
@@ -279,7 +288,7 @@ impl AgentServer for CustomAgentServer {
                 .agent_servers
                 .get_or_insert_default()
                 .custom
-                .entry(name.clone())
+                .entry(name.to_string())
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
@@ -294,6 +303,10 @@ impl AgentServer for CustomAgentServer {
                     ..
                 }
                 | settings::CustomAgentServerSettings::Extension {
+                    default_config_options,
+                    ..
+                }
+                | settings::CustomAgentServerSettings::Registry {
                     default_config_options,
                     ..
                 } => {
@@ -322,13 +335,17 @@ impl AgentServer for CustomAgentServer {
             settings
                 .get::<AllAgentServersSettings>(None)
                 .custom
-                .get(&self.name())
+                .get(self.name().as_ref())
                 .map(|s| match s {
                     project::agent_server_store::CustomAgentServerSettings::Custom {
                         default_config_options,
                         ..
                     }
                     | project::agent_server_store::CustomAgentServerSettings::Extension {
+                        default_config_options,
+                        ..
+                    }
+                    | project::agent_server_store::CustomAgentServerSettings::Registry {
                         default_config_options,
                         ..
                     } => default_config_options.clone(),

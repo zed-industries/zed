@@ -34,6 +34,7 @@ impl ReplStore {
     pub(crate) fn init(fs: Arc<dyn Fs>, cx: &mut App) {
         let store = cx.new(move |cx| Self::new(fs, cx));
 
+        #[cfg(not(feature = "test-support"))]
         store
             .update(cx, |store, cx| store.refresh_kernelspecs(cx))
             .detach_and_log_err(cx);

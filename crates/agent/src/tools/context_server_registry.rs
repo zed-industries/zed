@@ -1,12 +1,20 @@
 use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use context_server::{ContextServerId, client::NotificationSubscription};
+use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
 use util::ResultExt;
+
+/// Generates a tool ID for an MCP tool that can be used in settings.
+///
+/// The format is `mcp:<server_id>:<tool_name>` to avoid collisions with built-in tools.
+pub fn mcp_tool_id(server_id: &str, tool_name: &str) -> String {
+    format!("mcp:{}:{}", server_id, tool_name)
+}
 
 pub struct ContextServerPrompt {
     pub server_id: ContextServerId,
@@ -331,13 +339,20 @@ impl AnyAgentTool for ContextServerTool {
             return Task::ready(Err(anyhow!("Context server not found")));
         };
         let tool_name = self.tool.name.clone();
-        let authorize = event_stream.authorize(self.initial_title(input.clone(), cx), cx);
+        let tool_id = mcp_tool_id(&self.server_id.0, &self.tool.name);
+        let display_name = self.tool.name.clone();
+        let authorize = event_stream.authorize_third_party_tool(
+            self.initial_title(input.clone(), cx),
+            tool_id,
+            display_name,
+            cx,
+        );
 
         cx.spawn(async move |_cx| {
             authorize.await?;
 
             let Some(protocol) = server.client() else {
-                bail!("Context server not initialized");
+                anyhow::bail!("Context server not initialized");
             };
 
             let arguments = if let serde_json::Value::Object(map) = input {
@@ -351,15 +366,21 @@ impl AnyAgentTool for ContextServerTool {
                 tool_name,
                 arguments
             );
-            let response = protocol
-                .request::<context_server::types::requests::CallTool>(
-                    context_server::types::CallToolParams {
-                        name: tool_name,
-                        arguments,
-                        meta: None,
-                    },
-                )
-                .await?;
+
+            let request = protocol.request::<context_server::types::requests::CallTool>(
+                context_server::types::CallToolParams {
+                    name: tool_name,
+                    arguments,
+                    meta: None,
+                },
+            );
+
+            let response = futures::select! {
+                response = request.fuse() => response?,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("MCP tool cancelled by user");
+                }
+            };
 
             let mut result = String::new();
             for content in response.content {
@@ -427,4 +448,30 @@ pub fn get_prompt(
 
         Ok(response)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mcp_tool_id_format() {
+        assert_eq!(
+            mcp_tool_id("filesystem", "read_file"),
+            "mcp:filesystem:read_file"
+        );
+        assert_eq!(
+            mcp_tool_id("github", "create_issue"),
+            "mcp:github:create_issue"
+        );
+        assert_eq!(
+            mcp_tool_id("my-custom-server", "do_something"),
+            "mcp:my-custom-server:do_something"
+        );
+        // Underscores in names
+        assert_eq!(mcp_tool_id("my_server", "my_tool"), "mcp:my_server:my_tool");
+    }
+
+    // Note: Tests for MCP tool ID collision with built-in tools and permission
+    // decisions are in crates/agent/src/tool_permissions.rs to avoid duplication.
 }
