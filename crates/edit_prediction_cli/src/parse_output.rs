@@ -19,18 +19,8 @@ pub fn run_parse_output(example: &mut Example) -> Result<()> {
         .enumerate()
         .filter(|(_, p)| !p.actual_output.is_empty())
         .map(|(ix, prediction)| {
-            let actual_patch = match provider {
-                PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_) => {
-                    TeacherPrompt::parse(example, &prediction.actual_output)
-                }
-                PredictionProvider::Zeta2(version) => {
-                    parse_zeta2_output(example, &prediction.actual_output, version)
-                }
-                _ => anyhow::bail!(
-                    "parse-output only supports Teacher and Zeta2 providers, got {:?}",
-                    provider
-                ),
-            };
+            let actual_patch =
+                parse_prediction_output(example, &prediction.actual_output, provider);
             actual_patch.map(|patch| (ix, patch))
         })
         .collect::<Result<Vec<_>>>()?;
@@ -41,6 +31,23 @@ pub fn run_parse_output(example: &mut Example) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub fn parse_prediction_output(
+    example: &Example,
+    actual_output: &str,
+    provider: PredictionProvider,
+) -> Result<String> {
+    match provider {
+        PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_) => {
+            TeacherPrompt::parse(example, actual_output)
+        }
+        PredictionProvider::Zeta2(version) => parse_zeta2_output(example, actual_output, version),
+        _ => anyhow::bail!(
+            "parse-output only supports Teacher and Zeta2 providers, got {:?}",
+            provider
+        ),
+    }
 }
 
 fn extract_zeta2_current_region(prompt: &str, version: ZetaVersion) -> Result<String> {
