@@ -16,7 +16,7 @@ pub struct RateLimiter {
 
 pub struct RateLimitGuard<T> {
     inner: T,
-    _guard: SemaphoreGuardArc,
+    _guard: Option<SemaphoreGuardArc>,
 }
 
 impl<T> Stream for RateLimitGuard<T>
@@ -67,6 +67,36 @@ impl RateLimiter {
         let guard = self.semaphore.acquire_arc();
         async move {
             let guard = guard.await;
+            let inner = future.await?;
+            Ok(RateLimitGuard {
+                inner,
+                _guard: Some(guard),
+            })
+        }
+    }
+
+    /// Like `stream`, but conditionally bypasses the rate limiter based on the flag.
+    /// Used for nested requests (like edit agent requests) that are already "part of"
+    /// a rate-limited request to avoid deadlocks.
+    pub fn stream_with_bypass<'a, Fut, T>(
+        &self,
+        future: Fut,
+        bypass: bool,
+    ) -> impl 'a
+    + Future<
+        Output = Result<impl Stream<Item = T::Item> + use<Fut, T>, LanguageModelCompletionError>,
+    >
+    where
+        Fut: 'a + Future<Output = Result<T, LanguageModelCompletionError>>,
+        T: Stream,
+    {
+        let semaphore = self.semaphore.clone();
+        async move {
+            let guard = if bypass {
+                None
+            } else {
+                Some(semaphore.acquire_arc().await)
+            };
             let inner = future.await?;
             Ok(RateLimitGuard {
                 inner,
