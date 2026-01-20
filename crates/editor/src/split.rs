@@ -149,16 +149,14 @@ where
 
     let source_multibuffer_range = source_snapshot.range_for_excerpt(source_excerpt_id)?;
     let source_excerpt_start_in_multibuffer = source_multibuffer_range.start;
-    let source_excerpt_start_in_buffer = source_snapshot
-        .context_range_for_excerpt(source_excerpt_id)?
-        .start
-        .to_point(&source_buffer);
+    let source_context_range = source_snapshot.context_range_for_excerpt(source_excerpt_id)?;
+    let source_excerpt_start_in_buffer = source_context_range.start.to_point(&source_buffer);
+    let source_excerpt_end_in_buffer = source_context_range.end.to_point(&source_buffer);
     let target_multibuffer_range = target_snapshot.range_for_excerpt(target_excerpt_id)?;
     let target_excerpt_start_in_multibuffer = target_multibuffer_range.start;
-    let target_excerpt_start_in_buffer = target_snapshot
-        .context_range_for_excerpt(target_excerpt_id)?
-        .start
-        .to_point(&target_buffer);
+    let target_context_range = target_snapshot.context_range_for_excerpt(target_excerpt_id)?;
+    let target_excerpt_start_in_buffer = target_context_range.start.to_point(&target_buffer);
+    let target_excerpt_end_in_buffer = target_context_range.end.to_point(&target_buffer);
 
     let boundaries: Vec<_> = input_points
         .into_iter()
@@ -167,11 +165,20 @@ where
             let source_multibuffer_point = source_excerpt_start_in_multibuffer
                 + (source_buffer_point - source_excerpt_start_in_buffer.min(source_buffer_point));
 
+            let clamped_target_start = target_range
+                .start
+                .max(target_excerpt_start_in_buffer)
+                .min(target_excerpt_end_in_buffer);
+            let clamped_target_end = target_range
+                .end
+                .max(target_excerpt_start_in_buffer)
+                .min(target_excerpt_end_in_buffer);
+
             let target_multibuffer_start = target_excerpt_start_in_multibuffer
-                + (target_range.start - target_excerpt_start_in_buffer.min(target_range.start));
+                + (clamped_target_start - target_excerpt_start_in_buffer);
 
             let target_multibuffer_end = target_excerpt_start_in_multibuffer
-                + (target_range.end - target_excerpt_start_in_buffer.min(target_range.end));
+                + (clamped_target_end - target_excerpt_start_in_buffer);
 
             (
                 source_multibuffer_point,
@@ -191,10 +198,19 @@ where
         let source_multibuffer_point = source_excerpt_start_in_multibuffer
             + (source_buffer_point - source_excerpt_start_in_buffer.min(source_buffer_point));
 
+        let clamped_target_start = target_range
+            .start
+            .max(target_excerpt_start_in_buffer)
+            .min(target_excerpt_end_in_buffer);
+        let clamped_target_end = target_range
+            .end
+            .max(target_excerpt_start_in_buffer)
+            .min(target_excerpt_end_in_buffer);
+
         let target_multibuffer_start = target_excerpt_start_in_multibuffer
-            + (target_range.start - target_excerpt_start_in_buffer.min(target_range.start));
+            + (clamped_target_start - target_excerpt_start_in_buffer);
         let target_multibuffer_end = target_excerpt_start_in_multibuffer
-            + (target_range.end - target_excerpt_start_in_buffer.min(target_range.end));
+            + (clamped_target_end - target_excerpt_start_in_buffer);
 
         Some((
             source_multibuffer_point,
