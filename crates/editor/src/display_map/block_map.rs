@@ -737,11 +737,7 @@ impl BlockMap {
 
                 // Preserve below blocks at start of edit
                 while let Some(transform) = cursor.item() {
-                    if transform
-                        .block
-                        .as_ref()
-                        .is_some_and(|b| b.place_below() || matches!(b, Block::Spacer { .. }))
-                    {
+                    if transform.block.as_ref().is_some_and(|b| b.place_below()) {
                         new_transforms.push(transform.clone(), ());
                         cursor.next();
                     } else {
@@ -1100,19 +1096,26 @@ impl BlockMap {
         let mut result = Vec::new();
 
         for row_mapping in row_mappings {
-            let Some(((first_boundary, first_range), first_group_start)) = row_mapping
+            let Some(((first_boundary, first_range), first_group)) = row_mapping
                 .boundaries
                 .first()
-                .zip(row_mapping.first_group_start)
+                .zip(row_mapping.first_group.clone())
             else {
                 continue;
             };
 
+            let (our_baseline, their_baseline) =
+                if *first_boundary == first_group.end && first_group.end != first_group.start {
+                    (first_group.end, first_range.end)
+                } else {
+                    (first_group.start, first_range.start)
+                };
+
             let first_our_wrap = wrap_snapshot
-                .make_wrap_point(first_group_start, Bias::Left)
+                .make_wrap_point(our_baseline, Bias::Left)
                 .row();
             let companion_start_wrap = companion_snapshot
-                .make_wrap_point(first_range.start, Bias::Left)
+                .make_wrap_point(their_baseline, Bias::Left)
                 .row();
 
             let mut delta = companion_start_wrap.0 as i32 - first_our_wrap.0 as i32;
@@ -1123,9 +1126,15 @@ impl BlockMap {
                 let mut current_range = range.clone();
 
                 if current_boundary.column > 0 {
+                    // Can only occur at the end of an excerpt.
                     break;
                 }
 
+                // If this boundary begins a nonempty group of rows, we want to align at the start of the group,
+                // to handle cases like soft-wrapping of the row just before a hunk.
+                //
+                // Otherwise, this boundary is the only chance we'll get to align with the corresponding companion
+                // range, so we need to look at the end of that range.
                 let align_at_start = iter
                     .peek()
                     .is_some_and(|(_, next_range)| next_range.end <= current_range.end);

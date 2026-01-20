@@ -39,8 +39,8 @@ pub(crate) fn convert_lhs_rows_to_rhs(
         rhs_snapshot,
         lhs_bounds,
         |diff, points, buffer| {
-            let (points, first_group_start) = diff.base_text_rows_to_rows(points, buffer);
-            (points.collect(), first_group_start)
+            let (points, first_group) = diff.base_text_rows_to_rows_naive(points, buffer);
+            (points.collect(), first_group)
         },
     )
 }
@@ -57,8 +57,8 @@ pub(crate) fn convert_rhs_rows_to_lhs(
         lhs_snapshot,
         rhs_bounds,
         |diff, points, buffer| {
-            let (points, first_group_start) = diff.rows_to_base_text_rows(points, buffer);
-            (points.collect(), first_group_start)
+            let (points, first_group) = diff.rows_to_base_text_rows_naive(points, buffer);
+            (points.collect(), first_group)
         },
     )
 }
@@ -75,7 +75,7 @@ where
         &BufferDiffSnapshot,
         Vec<Point>,
         &text::BufferSnapshot,
-    ) -> (Vec<Range<Point>>, Option<Point>),
+    ) -> (Vec<Range<Point>>, Option<Range<Point>>),
 {
     let mut result = Vec::new();
 
@@ -112,7 +112,7 @@ where
         &BufferDiffSnapshot,
         Vec<Point>,
         &text::BufferSnapshot,
-    ) -> (Vec<Range<Point>>, Option<Point>),
+    ) -> (Vec<Range<Point>>, Option<Range<Point>>),
 {
     let target_excerpt_id = excerpt_map.get(&source_excerpt_id).copied()?;
     let target_buffer = target_snapshot.buffer_for_excerpt(target_excerpt_id)?;
@@ -134,8 +134,7 @@ where
         input_points.push(local_end);
     }
 
-    let (translated_ranges, first_group_start) =
-        translate_fn(&diff, input_points.clone(), rhs_buffer);
+    let (translated_ranges, first_group) = translate_fn(&diff, input_points.clone(), rhs_buffer);
 
     let source_multibuffer_range = source_snapshot.range_for_excerpt(source_excerpt_id)?;
     let source_excerpt_start_in_multibuffer = source_multibuffer_range.start;
@@ -169,14 +168,18 @@ where
             )
         })
         .collect();
-    let first_group_start = first_group_start.map(|first_group_start| {
-        source_excerpt_start_in_multibuffer
-            + (first_group_start - source_excerpt_start_in_buffer.min(first_group_start))
+    let first_group = first_group.map(|first_group_start| {
+        let start = source_excerpt_start_in_multibuffer
+            + (first_group_start.start
+                - source_excerpt_start_in_buffer.min(first_group_start.start));
+        let end = source_excerpt_start_in_multibuffer
+            + (first_group_start.end - source_excerpt_start_in_buffer.min(first_group_start.end));
+        start..end
     });
 
     Some(MultiBufferRowMapping {
         boundaries,
-        first_group_start,
+        first_group,
     })
 }
 
@@ -660,7 +663,7 @@ impl SplittableEditor {
             );
 
             for (lhs_excerpt, rhs_excerpt) in lhs_snapshot
-                .excerpt_boundaries_in_range(MultibufferOffset(0)..)
+                .excerpt_boundaries_in_range(MultiBufferOffset(0)..)
                 .zip(rhs_snapshot.excerpt_boundaries_in_range(MultiBufferOffset(0)..))
             {
                 let lhs_point = lhs_snapshot
@@ -1190,7 +1193,7 @@ impl SecondaryEditor {
             .into_iter()
             .map(|(_, excerpt_range)| {
                 let point_range_to_base_text_point_range = |range: Range<Point>| {
-                    let (mut translated, _) = diff_snapshot.rows_to_base_text_rows(
+                    let (mut translated, _) = diff_snapshot.rows_to_base_text_rows_naive(
                         [Point::new(range.start.row, 0), Point::new(range.end.row, 0)],
                         main_buffer,
                     );
@@ -2209,7 +2212,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[ignore]
     async fn test_reverting_deletion_hunk(cx: &mut gpui::TestAppContext) {
         use git::Restore;
         use rope::Point;
