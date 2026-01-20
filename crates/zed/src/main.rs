@@ -17,6 +17,7 @@ use crashes::InitCrashHandler;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use extension::ExtensionHostProxy;
+use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
@@ -423,7 +424,7 @@ fn main() {
                 HashMap::default()
             }
         };
-        trusted_worktrees::init(db_trusted_paths, None, None, cx);
+        trusted_worktrees::init(db_trusted_paths, cx);
         menu::init();
         zed_actions::init();
 
@@ -590,14 +591,21 @@ fn main() {
             cx.background_executor().clone(),
         );
         command_palette::init(cx);
-        let copilot_language_server_id = app_state.languages.next_language_server_id();
-        copilot::init(
-            copilot_language_server_id,
+        let copilot_chat_configuration = copilot_chat::CopilotChatConfiguration {
+            enterprise_uri: language::language_settings::all_language_settings(None, cx)
+                .edit_predictions
+                .copilot
+                .enterprise_uri
+                .clone(),
+        };
+        copilot_chat::init(
             app_state.fs.clone(),
             app_state.client.http_client(),
-            app_state.node_runtime.clone(),
+            copilot_chat_configuration,
             cx,
         );
+
+        copilot_ui::init(cx);
         supermaven::init(app_state.client.clone(), cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
@@ -610,6 +618,15 @@ fn main() {
         snippet_provider::init(cx);
         edit_prediction_registry::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
+        if cx.has_flag::<AcpBetaFeatureFlag>() {
+            project::AgentRegistryStore::init_global(cx);
+        }
+        cx.observe_flag::<AcpBetaFeatureFlag, _>(|is_enabled, cx| {
+            if is_enabled {
+                project::AgentRegistryStore::init_global(cx);
+            }
+        })
+        .detach();
         agent_ui::init(
             app_state.fs.clone(),
             app_state.client.clone(),
@@ -621,6 +638,7 @@ fn main() {
         agent_ui_v2::agents_panel::init(cx);
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
+        dev_container::init(cx);
 
         load_embedded_fonts(cx);
 
@@ -924,28 +942,26 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                     .project()
                                     .update(cx, |project, _| project.lsp_store())
                             })?;
+                            let uri = format!("zed://schemas/{}", schema_path);
                             let json_schema_content =
-                                json_schema_store::resolve_schema_request_inner(
-                                    &app_state.languages,
-                                    lsp_store,
-                                    &schema_path,
-                                    cx,
-                                )
-                                .await?;
+                                json_schema_store::handle_schema_request(lsp_store, uri, cx)
+                                    .await?;
+                            let json_schema_value: serde_json::Value =
+                                serde_json::from_str(&json_schema_content)
+                                    .context("Failed to parse JSON Schema")?;
                             let json_schema_content =
-                                serde_json::to_string_pretty(&json_schema_content)
+                                serde_json::to_string_pretty(&json_schema_value)
                                     .context("Failed to serialize JSON Schema as JSON")?;
                             let buffer_task = workspace.update(cx, |workspace, cx| {
-                                workspace
-                                    .project()
-                                    .update(cx, |project, cx| project.create_buffer(false, cx))
+                                workspace.project().update(cx, |project, cx| {
+                                    project.create_buffer(json, false, cx)
+                                })
                             })?;
 
                             let buffer = buffer_task.await?;
 
                             workspace.update_in(cx, |workspace, window, cx| {
                                 buffer.update(cx, |buffer, cx| {
-                                    buffer.set_language(json, cx);
                                     buffer.edit([(0..0, json_schema_content)], None, cx);
                                     buffer.edit(
                                         [(0..0, format!("// {} JSON Schema\n", schema_path))],
@@ -1536,6 +1552,7 @@ fn parse_url_arg(arg: &str, cx: &App) -> String {
         Ok(path) => format!("file://{}", path.display()),
         Err(_) => {
             if arg.starts_with("file://")
+                || arg.starts_with("zed://")
                 || arg.starts_with("zed-cli://")
                 || arg.starts_with("ssh://")
                 || parse_zed_link(arg, cx).is_some()

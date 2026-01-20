@@ -324,7 +324,7 @@ pub struct RemoteClient {
 
 #[derive(Debug)]
 pub enum RemoteClientEvent {
-    Disconnected,
+    Disconnected { server_not_running: bool },
 }
 
 impl EventEmitter<RemoteClientEvent> for RemoteClient {}
@@ -442,18 +442,20 @@ impl RemoteClient {
                         return Err(error);
                     }
                     Err(_) => {
-                        let mut error =
-                            "remote client did not become ready within the timeout".to_owned();
+                        let mut error = String::new();
                         if let Some(status) = io_task.now_or_never() {
+                            error.push_str("Client exited with ");
                             match status {
                                 Ok(exit_code) => {
-                                    error.push_str(&format!(", exit_code={exit_code:?}"))
+                                    error.push_str(&format!(" exit_code {exit_code:?}"))
                                 }
-                                Err(e) => error.push_str(&format!(", error={e:?}")),
+                                Err(e) => error.push_str(&format!(" error {e:?}")),
                             }
+                        } else {
+                            error.push_str("client did not become ready within the timeout");
                         }
                         let error = anyhow::anyhow!("{error}");
-                        log::error!("failed to establish connection: {}", error);
+                        log::error!("failed to establish connection: {error}");
                         return Err(error);
                     }
                 }
@@ -881,7 +883,9 @@ impl RemoteClient {
         self.state.replace(state);
 
         if is_reconnect_exhausted || is_server_not_running {
-            cx.emit(RemoteClientEvent::Disconnected);
+            cx.emit(RemoteClientEvent::Disconnected {
+                server_not_running: is_server_not_running,
+            });
         }
         cx.notify();
     }
@@ -897,6 +901,11 @@ impl RemoteClient {
     pub fn shares_network_interface(&self) -> bool {
         self.remote_connection()
             .map_or(false, |connection| connection.shares_network_interface())
+    }
+
+    pub fn has_wsl_interop(&self) -> bool {
+        self.remote_connection()
+            .map_or(false, |connection| connection.has_wsl_interop())
     }
 
     pub fn build_command(
@@ -1255,7 +1264,13 @@ impl RemoteConnectionOptions {
         match self {
             RemoteConnectionOptions::Ssh(opts) => opts.host.to_string(),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
-            RemoteConnectionOptions::Docker(opts) => opts.name.clone(),
+            RemoteConnectionOptions::Docker(opts) => {
+                if opts.use_podman {
+                    format!("[podman] {}", opts.name)
+                } else {
+                    opts.name.clone()
+                }
+            }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(opts) => format!("mock-{}", opts.id),
         }

@@ -1,3 +1,4 @@
+pub mod agent_registry_store;
 pub mod agent_server_store;
 pub mod buffer_store;
 mod color_extractor;
@@ -35,6 +36,7 @@ pub mod search_history;
 mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
+use itertools::Either;
 
 use crate::{
     git_store::GitStore,
@@ -42,7 +44,10 @@ use crate::{
     project_search::SearchResultsHandle,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
 };
-pub use agent_server_store::{AgentServerStore, AgentServersUpdated, ExternalAgentServerName};
+pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
+pub use agent_server_store::{
+    AgentServerStore, AgentServersUpdated, ExternalAgentServerName, ExternalAgentSource,
+};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
@@ -198,6 +203,7 @@ pub struct Project {
     user_store: Entity<UserStore>,
     fs: Arc<dyn Fs>,
     remote_client: Option<Entity<RemoteClient>>,
+    // todo lw explain the client_state x remote_client matrix, its super confusing
     client_state: ProjectClientState,
     git_store: Entity<GitStore>,
     collaborators: HashMap<proto::PeerId, Collaborator>,
@@ -331,7 +337,9 @@ pub enum Event {
     },
     RemoteIdChanged(Option<u64>),
     DisconnectedFromHost,
-    DisconnectedFromRemote,
+    DisconnectedFromRemote {
+        server_not_running: bool,
+    },
     Closed,
     DeletedEntry(WorktreeId, ProjectEntryId),
     CollaboratorUpdated {
@@ -1102,8 +1110,14 @@ impl Project {
                 .detach();
 
             let weak_self = cx.weak_entity();
-            let context_server_store =
-                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self.clone(), cx));
+            let context_server_store = cx.new(|cx| {
+                ContextServerStore::local(
+                    worktree_store.clone(),
+                    Some(weak_self.clone()),
+                    false,
+                    cx,
+                )
+            });
 
             let environment = cx.new(|cx| {
                 ProjectEnvironment::new(env, worktree_store.downgrade(), None, false, cx)
@@ -1310,8 +1324,6 @@ impl Project {
             }
 
             let weak_self = cx.weak_entity();
-            let context_server_store =
-                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self.clone(), cx));
 
             let buffer_store = cx.new(|cx| {
                 BufferStore::remote(
@@ -1339,6 +1351,7 @@ impl Project {
                     cx,
                 )
             });
+
             let task_store = cx.new(|cx| {
                 TaskStore::remote(
                     buffer_store.downgrade(),
@@ -1362,6 +1375,16 @@ impl Project {
             });
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
+
+            let context_server_store = cx.new(|cx| {
+                ContextServerStore::remote(
+                    rpc::proto::REMOTE_SERVER_PROJECT_ID,
+                    remote.clone(),
+                    worktree_store.clone(),
+                    Some(weak_self.clone()),
+                    cx,
+                )
+            });
 
             let environment = cx.new(|cx| {
                 ProjectEnvironment::new(
@@ -1677,8 +1700,9 @@ impl Project {
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
             let weak_self = cx.weak_entity();
-            let context_server_store =
-                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self, cx));
+            let context_server_store = cx.new(|cx| {
+                ContextServerStore::local(worktree_store.clone(), Some(weak_self), false, cx)
+            });
 
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
@@ -2711,6 +2735,19 @@ impl Project {
         !self.is_local()
     }
 
+    #[inline]
+    pub fn is_via_wsl_with_host_interop(&self, cx: &App) -> bool {
+        match &self.client_state {
+            ProjectClientState::Local | ProjectClientState::Shared { .. } => {
+                matches!(
+                    &self.remote_client, Some(remote_client)
+                    if remote_client.read(cx).has_wsl_interop()
+                )
+            }
+            _ => false,
+        }
+    }
+
     pub fn disable_worktree_scanner(&mut self, cx: &mut Context<Self>) {
         self.worktree_store.update(cx, |worktree_store, _cx| {
             worktree_store.disable_scanner();
@@ -2720,11 +2757,12 @@ impl Project {
     #[inline]
     pub fn create_buffer(
         &mut self,
-        searchable: bool,
+        language: Option<Arc<Language>>,
+        project_searchable: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.create_buffer(searchable, cx)
+            buffer_store.create_buffer(language, project_searchable, cx)
         })
     }
 
@@ -2788,6 +2826,7 @@ impl Project {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn open_buffer(
         &mut self,
         path: impl Into<ProjectPath>,
@@ -2840,6 +2879,7 @@ impl Project {
             .update(cx, |git_store, cx| git_store.open_unstaged_diff(buffer, cx))
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn open_uncommitted_diff(
         &mut self,
         buffer: Entity<Buffer>,
@@ -3287,7 +3327,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) {
         match event {
-            remote::RemoteClientEvent::Disconnected => {
+            &remote::RemoteClientEvent::Disconnected { server_not_running } => {
                 self.worktree_store.update(cx, |store, cx| {
                     store.disconnected_from_host(cx);
                 });
@@ -3297,7 +3337,7 @@ impl Project {
                 self.lsp_store.update(cx, |lsp_store, _cx| {
                     lsp_store.disconnected_from_ssh_remote()
                 });
-                cx.emit(Event::DisconnectedFromRemote);
+                cx.emit(Event::DisconnectedFromRemote { server_not_running });
             }
         }
     }
@@ -4222,6 +4262,31 @@ impl Project {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.move_worktree(source, destination, cx)
         })
+    }
+
+    /// Attempts to convert the input path to a WSL path if this is a wsl remote project and the input path is a host windows path.
+    pub fn try_windows_path_to_wsl(
+        &self,
+        abs_path: &Path,
+        cx: &App,
+    ) -> impl Future<Output = Result<PathBuf>> + use<> {
+        let fut = if cfg!(windows)
+            && let (
+                ProjectClientState::Local | ProjectClientState::Shared { .. },
+                Some(remote_client),
+            ) = (&self.client_state, &self.remote_client)
+            && let RemoteConnectionOptions::Wsl(wsl) = remote_client.read(cx).connection_options()
+        {
+            Either::Left(wsl.abs_windows_path_to_wsl_path(abs_path))
+        } else {
+            Either::Right(abs_path.to_owned())
+        };
+        async move {
+            match fut {
+                Either::Left(fut) => fut.await.map(Into::into),
+                Either::Right(path) => Ok(path),
+            }
+        }
     }
 
     pub fn find_or_create_worktree(
@@ -5167,7 +5232,7 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         let buffer = this
-            .update(&mut cx, |this, cx| this.create_buffer(true, cx))
+            .update(&mut cx, |this, cx| this.create_buffer(None, true, cx))
             .await?;
         let peer_id = envelope.original_sender_id()?;
 
