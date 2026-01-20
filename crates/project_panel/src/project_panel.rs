@@ -1761,6 +1761,7 @@ impl ProjectPanel {
 
         let edit_task;
         let edited_entry_id;
+        let edited_entry;
         if is_new_entry {
             self.state.selection = Some(SelectedEntry {
                 worktree_id,
@@ -1771,6 +1772,7 @@ impl ProjectPanel {
                 return None;
             }
 
+            edited_entry = None;
             edited_entry_id = NEW_ENTRY_ID;
             edit_task = self.project.update(cx, |project, cx| {
                 project.create_entry((worktree_id, new_path), is_dir, cx)
@@ -1788,7 +1790,10 @@ impl ProjectPanel {
                 return None;
             }
             edited_entry_id = entry.id;
-            edit_task = self.rename_entry(entry.id, (worktree_id, new_path).into(), true, cx);
+            edited_entry = Some(entry);
+            edit_task = self.project.update(cx, |project, cx| {
+                project.rename_entry(edited_entry_id, (worktree_id, new_path).into(), cx)
+            })
         };
 
         // Reborrow so lifetime does not overlap `self.confirm_undoable_rename_entry()`
@@ -2147,31 +2152,6 @@ impl ProjectPanel {
                 })
             }
         }
-    }
-
-    fn rename_entry(
-        &self,
-        entry_id: ProjectEntryId,
-        new_path: ProjectPath,
-        record_operation: bool,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<CreatedEntry>> {
-        let Some(old_path) = self.project.read(cx).path_for_entry(entry_id, cx) else {
-            return Task::ready(Err(anyhow!("no path for entry")));
-        };
-        let rename_task = self.project.update(cx, |project, cx| {
-            project.rename_entry(entry_id, new_path.clone(), cx)
-        });
-        cx.spawn(async move |this, cx| {
-            let created_entry = rename_task.await?;
-            if record_operation {
-                this.update(cx, |this, _cx| {
-                    this.record_operation(ProjectPanelOperation::Rename { old_path, new_path })
-                })
-                .ok();
-            }
-            Ok(created_entry)
-        })
     }
 
     fn rename_impl(
@@ -3123,7 +3103,9 @@ impl ProjectPanel {
                 let destination: ProjectPath = (worktree_id, new_path).into();
                 let task = if clipboard_entries.is_cut() {
                     let old_path = self.project.read(cx).path_for_entry(clip_entry_id, cx)?;
-                    let task = self.rename_entry(clip_entry_id, destination.clone(), false, cx);
+                    let task = self.project.update(cx, |project, cx| {
+                        project.rename_entry(clip_entry_id, destination.clone(), cx)
+                    });
                     PasteTask::Rename {
                         task,
                         old_path,
@@ -3515,12 +3497,13 @@ impl ProjectPanel {
                 ))
             })?;
 
-        let rename_task = self.rename_entry(
-            entry_to_move,
-            (destination_worktree_id, new_path).into(),
-            true,
-            cx,
-        );
+        let rename_task = self.project.update(cx, |project, cx| {
+            project.rename_entry(
+                entry_to_move,
+                (destination_worktree_id, new_path).into(),
+                cx,
+            )
+        });
 
         if let Some(destination_worktree) = destination_worktree {
             self.expand_entry(destination_worktree, destination_entry, cx);
