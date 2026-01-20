@@ -164,6 +164,21 @@ pub use lsp_store::{
 pub use toolchain_store::{ToolchainStore, Toolchains};
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 
+#[derive(Clone, Copy, Debug)]
+pub struct LocalProjectFlags {
+    pub init_worktree_trust: bool,
+    pub watch_global_configs: bool,
+}
+
+impl Default for LocalProjectFlags {
+    fn default() -> Self {
+        Self {
+            init_worktree_trust: true,
+            watch_global_configs: true,
+        }
+    }
+}
+
 pub trait ProjectItem: 'static {
     fn try_open(
         project: &Entity<Project>,
@@ -1088,7 +1103,7 @@ impl Project {
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         env: Option<HashMap<String, String>>,
-        init_worktree_trust: bool,
+        flags: LocalProjectFlags,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
@@ -1097,7 +1112,7 @@ impl Project {
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
             let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
-            if init_worktree_trust {
+            if flags.init_worktree_trust {
                 trusted_worktrees::track_worktree_trust(
                     worktree_store.clone(),
                     None,
@@ -1185,6 +1200,7 @@ impl Project {
                     fs.clone(),
                     worktree_store.clone(),
                     task_store.clone(),
+                    flags.watch_global_configs,
                     cx,
                 )
             });
@@ -1899,7 +1915,10 @@ impl Project {
                 Arc::new(languages),
                 fs,
                 None,
-                false,
+                LocalProjectFlags {
+                    init_worktree_trust: false,
+                    ..Default::default()
+                },
                 cx,
             )
         });
@@ -1956,7 +1975,10 @@ impl Project {
                 Arc::new(languages),
                 fs,
                 None,
-                init_worktree_trust,
+                LocalProjectFlags {
+                    init_worktree_trust,
+                    ..Default::default()
+                },
                 cx,
             )
         });

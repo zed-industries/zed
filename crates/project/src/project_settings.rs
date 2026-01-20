@@ -691,6 +691,7 @@ impl SettingsObserver {
         fs: Arc<dyn Fs>,
         worktree_store: Entity<WorktreeStore>,
         task_store: Entity<TaskStore>,
+        watch_global_configs: bool,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
@@ -787,16 +788,24 @@ impl SettingsObserver {
             _user_settings_watcher: None,
             _editorconfig_watcher: Some(_editorconfig_watcher),
             project_id: REMOTE_SERVER_PROJECT_ID,
-            _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(
-                fs.clone(),
-                paths::tasks_file().clone(),
-                cx,
-            ),
-            _global_debug_config_watcher: Self::subscribe_to_global_debug_scenarios_changes(
-                fs.clone(),
-                paths::debug_scenarios_file().clone(),
-                cx,
-            ),
+            _global_task_config_watcher: if watch_global_configs {
+                Self::subscribe_to_global_task_file_changes(
+                    fs.clone(),
+                    paths::tasks_file().clone(),
+                    cx,
+                )
+            } else {
+                Task::ready(())
+            },
+            _global_debug_config_watcher: if watch_global_configs {
+                Self::subscribe_to_global_debug_scenarios_changes(
+                    fs.clone(),
+                    paths::debug_scenarios_file().clone(),
+                    cx,
+                )
+            } else {
+                Task::ready(())
+            },
         }
     }
 

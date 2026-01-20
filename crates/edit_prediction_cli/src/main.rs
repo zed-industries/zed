@@ -22,7 +22,7 @@ use collections::HashSet;
 use edit_prediction::EditPredictionStore;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
-use gpui::{AppContext as _, Application, BackgroundExecutor};
+use gpui::{AppContext as _, Application, BackgroundExecutor, Task};
 use zeta_prompt::ZetaVersion;
 
 use reqwest_client::ReqwestClient;
@@ -674,23 +674,35 @@ fn main() {
                                 }
                             }
 
-                            if let Some(state) =
-                                repo_examples.first().and_then(|e| e.state.as_ref())
-                            {
+                            let repo_url = &repo_examples.first().unwrap().spec.repository_url;
+                            let project = repo_examples
+                                .iter()
+                                .find_map(|e| e.state.as_ref().map(|s| s.project.clone()))
+                                .or_else(|| app_state.project_cache.get(repo_url));
+
+                            if let Some(project) = project {
                                 let mut cx = cx.clone();
+
+                                let shutdown_task: Task<()> =
+                                    project.update(&mut cx, |project, cx| {
+                                        let lsp_store = project.lsp_store();
+                                        lsp_store.update(cx, |lsp_store, cx| {
+                                            lsp_store.shutdown_all_language_servers(cx)
+                                        })
+                                    });
+
+                                shutdown_task.await;
+
                                 if let Some(ep_store) =
                                     cx.update(|cx| EditPredictionStore::try_global(cx))
                                 {
-                                    let project = state.project.clone();
                                     ep_store.update(&mut cx, |store, _| {
                                         store.remove_project(&project);
                                     });
                                 }
                             }
 
-                            app_state
-                                .project_cache
-                                .remove(&repo_examples.first().unwrap().spec.repository_url);
+                            app_state.project_cache.remove(repo_url);
                             for example in &mut repo_examples {
                                 example.state.take();
                             }
