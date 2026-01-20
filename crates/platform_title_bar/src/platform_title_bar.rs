@@ -1,6 +1,10 @@
+mod platforms;
+mod system_window_tabs;
+
 use gpui::{
-    AnyElement, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, WindowControlArea, div, px,
+    div, px, AnyElement, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, Pixels, StatefulInteractiveElement, Styled, Window,
+    WindowControlArea,
 };
 use smallvec::SmallVec;
 use std::mem;
@@ -9,6 +13,10 @@ use ui::prelude::*;
 use crate::{
     platforms::{platform_linux, platform_mac, platform_windows},
     system_window_tabs::SystemWindowTabs,
+};
+
+pub use system_window_tabs::{
+    DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, ShowNextWindowTab, ShowPreviousWindowTab,
 };
 
 pub struct PlatformTitleBar {
@@ -61,6 +69,10 @@ impl PlatformTitleBar {
         T: IntoIterator<Item = AnyElement>,
     {
         self.children = children.into_iter().collect();
+    }
+
+    pub fn init(cx: &mut App) {
+        SystemWindowTabs::init(cx);
     }
 }
 

@@ -23,7 +23,6 @@ test-support = [
     "reqwest_client",
     "workspace/test-support",
     "agent/test-support",
-    "rules_library/test-support"
 ]
 unit-eval = []
 
@@ -128,7 +127,6 @@ editor = { workspace = true, features = ["test-support"] }
 eval_utils.workspace = true
 gpui = { workspace = true, "features" = ["test-support"] }
 git_ui = { workspace = true, features = ["test-support"] }
-rules_library = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, "features" = ["test-support"] }
 languages = { workspace = true, features = ["test-support"] }
