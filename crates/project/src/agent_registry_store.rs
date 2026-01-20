@@ -107,14 +107,8 @@ impl AgentRegistryStore {
         self.pending_refresh = Some(cx.spawn(async move |this, cx| {
             let result = match fetch_registry_index(http_client.clone()).await {
                 Ok(data) => {
-                    build_registry_agents(
-                        fs.clone(),
-                        http_client,
-                        data.index,
-                        data.raw_body,
-                        true,
-                    )
-                    .await
+                    build_registry_agents(fs.clone(), http_client, data.index, data.raw_body, true)
+                        .await
                 }
                 Err(error) => Err(error),
             };
