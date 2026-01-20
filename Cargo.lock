@@ -17527,14 +17527,12 @@ name = "trash"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "libc",
  "objc2",
  "objc2-foundation",
  "once_cell",
  "percent-encoding",
  "scopeguard",
- "smallvec",
  "urlencoding",
  "windows 0.61.3",
 ]
@@ -20435,6 +20433,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "text",
+ "trash",
  "util",
  "zlog",
 ]

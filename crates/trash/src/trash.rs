@@ -12,9 +12,7 @@ mod windows;
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, anyhow};
-use collections::HashMap;
-use smallvec::SmallVec;
+use anyhow::Result;
 
 trait Platform: Send + Sync {
     /// Move a file to the platform's trash, returning the path in trash.
@@ -30,103 +28,45 @@ trait Platform: Send + Sync {
     fn restore_dir(&self, path_in_trash: &Path, original_path: &Path) -> Result<()>;
 }
 
-pub struct Trash {
-    platform: Box<dyn Platform>,
-    // Duplicate items are rare we can optimize by storing on stack
-    items: HashMap<PathBuf, SmallVec<[TrashItem; 1]>>,
+#[derive(Clone, Debug)]
+pub struct TrashItem {
+    pub original_path: PathBuf,
+    pub path_in_trash: PathBuf,
+    pub is_dir: bool,
 }
 
-#[derive(Clone)]
-struct TrashItem {
-    path_in_trash: PathBuf,
-    is_dir: bool,
+pub fn trash_file(path: &Path) -> Result<TrashItem> {
+    let platform = create_platform();
+    let path_in_trash = platform.trash_file(path)?;
+    let original_path = path.to_path_buf();
+    Ok(TrashItem {
+        original_path,
+        path_in_trash,
+        is_dir: false,
+    })
 }
 
-impl Default for Trash {
-    fn default() -> Self {
-        Self::new()
-    }
+pub fn trash_dir(path: &Path) -> Result<TrashItem> {
+    let platform = create_platform();
+    let path_in_trash = platform.trash_dir(path)?;
+    let original_path = path.to_path_buf();
+    Ok(TrashItem {
+        original_path,
+        path_in_trash,
+        is_dir: true,
+    })
 }
 
-impl Trash {
-    pub fn new() -> Self {
-        Self {
-            items: HashMap::default(),
-            platform: create_platform(),
-        }
-    }
+/// Restore the most recently trashed item with the given original path.
+pub fn restore(item: &TrashItem) -> Result<()> {
+    let platform = create_platform();
+    let result = if item.is_dir {
+        platform.restore_dir(&item.path_in_trash, &item.original_path)
+    } else {
+        platform.restore_file(&item.path_in_trash, &item.original_path)
+    };
 
-    pub fn trash_file(&mut self, path: &Path) -> Result<()> {
-        let path_in_trash = self.platform.trash_file(path)?;
-        self.track_item(path, path_in_trash, false);
-        Ok(())
-    }
-
-    pub fn trash_dir(&mut self, path: &Path) -> Result<()> {
-        let path_in_trash = self.platform.trash_dir(path)?;
-        self.track_item(path, path_in_trash, true);
-        Ok(())
-    }
-
-    /// Restore the most recently trashed item with the given original path.
-    pub fn restore(&mut self, original_path: &Path) -> Result<()> {
-        let entries = self
-            .items
-            .get_mut(original_path)
-            .ok_or_else(|| anyhow!("no trashed item found for path: {:?}", original_path))?;
-
-        let entry = entries
-            .pop()
-            .ok_or_else(|| anyhow!("no trashed item found for path: {:?}", original_path))?;
-
-        let result = if entry.is_dir {
-            self.platform
-                .restore_dir(&entry.path_in_trash, original_path)
-        } else {
-            self.platform
-                .restore_file(&entry.path_in_trash, original_path)
-        };
-
-        if result.is_err() {
-            entries.push(entry);
-        }
-
-        if entries.is_empty() {
-            self.items.remove(original_path);
-        }
-
-        result
-    }
-
-    /// Returns true if there are any trashed items for the given original path.
-    pub fn has_trashed_item(&self, original_path: &Path) -> bool {
-        self.items
-            .get(original_path)
-            .is_some_and(|entries| !entries.is_empty())
-    }
-
-    /// Returns the number of trashed items for the given original path.
-    pub fn trashed_item_count(&self, original_path: &Path) -> usize {
-        self.items
-            .get(original_path)
-            .map(|entries| entries.len())
-            .unwrap_or(0)
-    }
-
-    /// Clear all tracked items without restoring them.
-    pub fn clear(&mut self) {
-        self.items.clear();
-    }
-
-    fn track_item(&mut self, original_path: &Path, path_in_trash: PathBuf, is_dir: bool) {
-        self.items
-            .entry(original_path.to_path_buf())
-            .or_default()
-            .push(TrashItem {
-                path_in_trash,
-                is_dir,
-            });
-    }
+    result
 }
 
 #[cfg(all(
@@ -135,18 +75,16 @@ impl Trash {
     not(target_os = "ios"),
     not(target_os = "android")
 ))]
-fn create_platform() -> Box<dyn Platform> {
-    Box::new(
-        freedesktop::FreeDesktopPlatform::new().expect("failed to initialize FreeDesktop trash"),
-    )
+fn create_platform() -> impl Platform {
+    freedesktop::FreeDesktopPlatform::new().expect("failed to initialize FreeDesktop trash")
 }
 
 #[cfg(target_os = "macos")]
-fn create_platform() -> Box<dyn Platform> {
-    Box::new(mac::MacPlatform)
+fn create_platform() -> impl Platform {
+    mac::MacPlatform
 }
 
 #[cfg(windows)]
-fn create_platform() -> Box<dyn Platform> {
-    Box::new(windows::WindowsPlatform)
+fn create_platform() -> impl Platform {
+    windows::WindowsPlatform
 }

@@ -7,7 +7,6 @@ pub mod fs_watcher;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
-use trash::Trash;
 
 use anyhow::{Context as _, Result, anyhow};
 use futures::stream::iter;
@@ -104,10 +103,10 @@ pub trait Fs: Send + Sync {
     async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()>;
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
-    async fn trash_dir(&self, path: &Path) -> Result<()>;
+    async fn trash_dir(&self, path: &Path) -> Result<trash::TrashItem>;
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
-    async fn trash_file(&self, path: &Path) -> Result<()>;
-    async fn restore_from_trash(&self, path: &Path) -> Result<()>;
+    async fn trash_file(&self, path: &Path) -> Result<trash::TrashItem>;
+    async fn restore_from_trash(&self, item: &trash::TrashItem) -> Result<()>;
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>>;
     async fn load(&self, path: &Path) -> Result<String> {
@@ -310,7 +309,6 @@ pub struct RealFs {
     executor: BackgroundExecutor,
     next_job_id: Arc<AtomicUsize>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
-    trash: Arc<Mutex<trash::Trash>>,
 }
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
@@ -418,7 +416,6 @@ impl RealFs {
             executor,
             next_job_id: Arc::new(AtomicUsize::new(0)),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
-            trash: Arc::new(Mutex::new(Trash::default())),
         }
     }
 
@@ -644,25 +641,19 @@ impl Fs for RealFs {
         }
     }
 
-    async fn trash_file(&self, path: &Path) -> Result<()> {
+    async fn trash_file(&self, path: &Path) -> Result<trash::TrashItem> {
         let path = path.to_path_buf();
-        let trash = self.trash.clone();
-
-        smol::unblock(move || trash.lock().trash_file(&path)).await
+        smol::unblock(move || trash::trash_file(&path)).await
     }
 
-    async fn trash_dir(&self, path: &Path) -> Result<()> {
+    async fn trash_dir(&self, path: &Path) -> Result<trash::TrashItem> {
         let path = path.to_path_buf();
-        let trash = self.trash.clone();
-
-        smol::unblock(move || trash.lock().trash_dir(&path)).await
+        smol::unblock(move || trash::trash_dir(&path)).await
     }
 
-    async fn restore_from_trash(&self, path: &Path) -> Result<()> {
-        let path = path.to_path_buf();
-        let trash = self.trash.clone();
-
-        smol::unblock(move || trash.lock().restore(&path)).await
+    async fn restore_from_trash(&self, item: &trash::TrashItem) -> Result<()> {
+        let item = item.clone();
+        smol::unblock(move || trash::restore(&item)).await
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
@@ -1175,7 +1166,6 @@ struct FakeFsState {
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     moves: std::collections::HashMap<u64, PathBuf>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
-    trash: std::collections::HashMap<PathBuf, PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1460,7 +1450,6 @@ impl FakeFs {
                 metadata_call_count: 0,
                 path_write_counts: Default::default(),
                 moves: Default::default(),
-                trash: Default::default(),
                 job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
             })),
         });
@@ -2466,8 +2455,34 @@ impl Fs for FakeFs {
         Ok(())
     }
 
-    async fn trash_dir(&self, path: &Path) -> Result<()> {
-        self.trash_file(path).await
+    async fn trash_dir(&self, path: &Path) -> Result<trash::TrashItem> {
+        self.simulate_random_delay().await;
+
+        let original_path = normalize_path(path);
+        self.state.lock().entry(&original_path)?;
+
+        let trash_dir = PathBuf::from("/.trash");
+        if !self.is_dir(&trash_dir).await {
+            self.create_dir(&trash_dir).await?;
+        }
+
+        let path_in_trash = trash_dir.join(uuid::Uuid::new_v4().to_string());
+        self.rename(
+            &original_path,
+            &path_in_trash,
+            RenameOptions {
+                overwrite: false,
+                ignore_if_exists: false,
+                create_parents: false,
+            },
+        )
+        .await?;
+
+        Ok(trash::TrashItem {
+            original_path,
+            path_in_trash,
+            is_dir: true,
+        })
     }
 
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
@@ -2496,7 +2511,7 @@ impl Fs for FakeFs {
         Ok(())
     }
 
-    async fn trash_file(&self, path: &Path) -> Result<()> {
+    async fn trash_file(&self, path: &Path) -> Result<trash::TrashItem> {
         self.simulate_random_delay().await;
 
         let original_path = normalize_path(path);
@@ -2519,22 +2534,17 @@ impl Fs for FakeFs {
         )
         .await?;
 
-        self.state.lock().trash.insert(original_path, path_in_trash);
-        Ok(())
+        Ok(trash::TrashItem {
+            original_path,
+            path_in_trash,
+            is_dir: false,
+        })
     }
 
-    async fn restore_from_trash(&self, path: &Path) -> Result<()> {
-        let path = normalize_path(path);
-        let trash_path = self
-            .state
-            .lock()
-            .trash
-            .remove(&path)
-            .ok_or_else(|| anyhow!("No trash item found for path: {}", path.display()))?;
-
+    async fn restore_from_trash(&self, item: &trash::TrashItem) -> Result<()> {
         self.rename(
-            &trash_path,
-            &path,
+            &item.path_in_trash,
+            &item.original_path,
             RenameOptions {
                 overwrite: false,
                 ignore_if_exists: false,
@@ -2967,7 +2977,6 @@ mod tests {
     use super::*;
     use gpui::BackgroundExecutor;
     use serde_json::json;
-    use trash::Trash;
     use util::path;
 
     #[gpui::test]
@@ -3392,7 +3401,6 @@ mod tests {
             executor,
             next_job_id: Arc::new(AtomicUsize::new(0)),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
-            trash: Arc::new(Mutex::new(Trash::default())),
         };
         let temp_dir = TempDir::new().unwrap();
         let file_to_be_replaced = temp_dir.path().join("file.txt");
@@ -3413,7 +3421,6 @@ mod tests {
             executor,
             next_job_id: Arc::new(AtomicUsize::new(0)),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
-            trash: Arc::new(Mutex::new(Trash::default())),
         };
         let temp_dir = TempDir::new().unwrap();
         let file_to_be_replaced = temp_dir.path().join("file.txt");
@@ -3516,18 +3523,18 @@ mod tests {
         )
         .await;
         let file_a_path = path!("/root/src/file_a.txt");
-        fs.trash_file(file_a_path.as_ref()).await.unwrap();
+        let file_a_trash_item = fs.trash_file(file_a_path.as_ref()).await.unwrap();
         assert!(!fs.is_file(file_a_path.as_ref()).await);
 
         let src_dir_path = path!("/root/src");
-        fs.trash_dir(src_dir_path.as_ref()).await.unwrap();
+        let src_dir_trash_item = fs.trash_dir(src_dir_path.as_ref()).await.unwrap();
         assert!(!fs.is_dir(src_dir_path.as_ref()).await);
 
-        fs.restore_from_trash(src_dir_path.as_ref()).await.unwrap();
+        fs.restore_from_trash(&src_dir_trash_item).await.unwrap();
         assert!(fs.is_dir(src_dir_path.as_ref()).await);
         assert!(!fs.is_file(file_a_path.as_ref()).await);
 
-        fs.restore_from_trash(file_a_path.as_ref()).await.unwrap();
+        fs.restore_from_trash(&file_a_trash_item).await.unwrap();
         assert!(fs.is_file(file_a_path.as_ref()).await);
     }
 }

@@ -13,8 +13,6 @@ path = "src/trash.rs"
 
 [dependencies]
 anyhow.workspace = true
-collections.workspace = true
-smallvec.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true

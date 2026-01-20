@@ -1963,7 +1963,7 @@ async fn test_undo_redo(cx: &mut gpui::TestAppContext) {
         this.undo(&Undo, window, cx);
     });
     panel.update_in(cx, |this, window, cx| {
-        this.rename(&Undo, window, cx);
+        this.rename(&Rename, window, cx);
     });
 }
 

@@ -135,7 +135,7 @@ use util::{
     paths::{PathStyle, SanitizedPath, is_absolute},
     rel_path::RelPath,
 };
-use worktree::{CreatedEntry, Snapshot, Traversal};
+use worktree::{CreatedEntry, Snapshot, TrashedEntry, Traversal};
 pub use worktree::{
     Entry, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange, ProjectEntryId,
     UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
@@ -2384,7 +2384,7 @@ impl Project {
         path: ProjectPath,
         trash: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let entry = self.entry_for_path(&path, cx)?;
         self.delete_entry(entry.id, trash, cx)
     }
@@ -2395,7 +2395,7 @@ impl Project {
         entry_id: ProjectEntryId,
         trash: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
         cx.emit(Event::DeletedEntry(worktree.read(cx).id(), entry_id));
         worktree.update(cx, |worktree, cx| {
@@ -2406,14 +2406,13 @@ impl Project {
     #[inline]
     pub fn restore_entry(
         &mut self,
-        project_path: ProjectPath,
+        worktree_id: WorktreeId,
+        entry: TrashedEntry,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
-        let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
-        cx.emit(Event::RestoredEntry(project_path.clone()));
-        worktree.update(cx, |worktree, cx| {
-            worktree.restore_entry(project_path.path.as_ref(), cx)
-        })
+        let worktree = self.worktree_for_id(worktree_id, cx)?;
+        cx.emit(Event::RestoredEntry((worktree_id, entry.path.clone()).into()));
+        worktree.update(cx, |worktree, cx| worktree.restore_entry(entry, cx))
     }
 
     #[inline]

@@ -103,6 +103,15 @@ pub enum CreatedEntry {
     Excluded { abs_path: PathBuf },
 }
 
+/// Represents an entry that was moved to the system trash.
+#[derive(Debug)]
+pub struct TrashedEntry {
+    /// The path of the entry relative to the worktree root.
+    pub path: Arc<RelPath>,
+    /// The underlying trash item containing absolute paths for restoration.
+    pub trash_item: trash::TrashItem,
+}
+
 #[derive(Debug)]
 pub struct LoadedFile {
     pub file: Arc<File>,
@@ -811,7 +820,7 @@ impl Worktree {
         entry_id: ProjectEntryId,
         trash: bool,
         cx: &mut Context<Worktree>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let task = match self {
             Worktree::Local(this) => this.delete_entry(entry_id, trash, cx),
             Worktree::Remote(this) => this.delete_entry(entry_id, trash, cx),
@@ -835,12 +844,12 @@ impl Worktree {
 
     pub fn restore_entry(
         &mut self,
-        path: &RelPath,
+        entry: TrashedEntry,
         cx: &mut Context<Worktree>,
     ) -> Option<Task<Result<()>>> {
         match self {
-            Worktree::Local(this) => this.restore_entry(path, cx),
-            Worktree::Remote(this) => this.restore_entry(path, cx),
+            Worktree::Local(this) => this.restore_entry(entry, cx),
+            Worktree::Remote(this) => this.restore_entry(entry, cx),
         }
     }
 
@@ -984,9 +993,12 @@ impl Worktree {
         request: proto::RestoreProjectEntry,
         mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
-        let path = RelPath::from_proto(&request.path)?;
+        let entry = request
+            .entry
+            .ok_or_else(|| anyhow::anyhow!("missing trashed entry data"))?;
+        let entry = TrashedEntry::try_from(entry)?;
         let (scan_id, task) = this.update(&mut cx, |this, cx| {
-            (this.scan_id(), this.restore_entry(&path, cx))
+            (this.scan_id(), this.restore_entry(entry, cx))
         });
         task.ok_or_else(|| anyhow::anyhow!("invalid entry"))?
             .await?;
@@ -1625,21 +1637,22 @@ impl LocalWorktree {
         entry_id: ProjectEntryId,
         trash: bool,
         cx: &Context<Worktree>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let entry = self.entry_for_id(entry_id)?.clone();
         let entry_path = entry.path.clone();
         let abs_path = self.absolutize(&entry.path);
         let fs = self.fs.clone();
 
         let delete = cx.background_spawn(async move {
-            if entry.is_file() {
+            let trash_item = if entry.is_file() {
                 if trash {
-                    fs.trash_file(&abs_path).await?;
+                    Some(fs.trash_file(&abs_path).await?)
                 } else {
                     fs.remove_file(&abs_path, Default::default()).await?;
+                    None
                 }
             } else if trash {
-                fs.trash_dir(&abs_path).await?;
+                Some(fs.trash_dir(&abs_path).await?)
             } else {
                 fs.remove_dir(
                     &abs_path,
@@ -1649,30 +1662,36 @@ impl LocalWorktree {
                     },
                 )
                 .await?;
-            }
-            anyhow::Ok(())
+                None
+            };
+            anyhow::Ok(trash_item)
         });
 
         Some(cx.spawn(async move |this, cx| {
-            delete.await?;
+            let trash_item = delete.await?;
             this.update(cx, |this, _| {
                 this.as_local_mut()
                     .unwrap()
-                    .refresh_entries_for_paths(vec![entry_path])
+                    .refresh_entries_for_paths(vec![entry_path.clone()])
             })?
             .recv()
             .await;
-            Ok(())
+            Ok(trash_item.map(|trash_item| TrashedEntry {
+                trash_item,
+                path: entry_path,
+            }))
         }))
     }
 
-    fn restore_entry(&self, path: &RelPath, cx: &Context<Worktree>) -> Option<Task<Result<()>>> {
-        let abs_path = self.absolutize(path);
-        let entry_path: Arc<RelPath> = Arc::from(path);
+    fn restore_entry(
+        &self,
+        entry: TrashedEntry,
+        cx: &Context<Worktree>,
+    ) -> Option<Task<Result<()>>> {
         let fs = self.fs.clone();
 
         let restore = cx.background_spawn(async move {
-            fs.restore_from_trash(&abs_path).await?;
+            fs.restore_from_trash(&entry.trash_item).await?;
             anyhow::Ok(())
         });
 
@@ -1681,7 +1700,7 @@ impl LocalWorktree {
             this.update(cx, |this, _| {
                 this.as_local_mut()
                     .unwrap()
-                    .refresh_entries_for_paths(vec![entry_path])
+                    .refresh_entries_for_paths(vec![entry.path])
             })?
             .recv()
             .await;
@@ -2049,7 +2068,7 @@ impl RemoteWorktree {
         entry_id: ProjectEntryId,
         trash: bool,
         cx: &Context<Worktree>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let response = self.client.request(proto::DeleteProjectEntry {
             project_id: self.project_id,
             entry_id: entry_id.to_proto(),
@@ -2071,15 +2090,20 @@ impl RemoteWorktree {
                 this.snapshot = snapshot.clone();
             })?;
 
-            Ok(())
+            // TODO: Remote trash doesn't return TrashItem yet - needs protocol changes
+            Ok(None)
         }))
     }
 
-    fn restore_entry(&self, path: &RelPath, cx: &Context<Worktree>) -> Option<Task<Result<()>>> {
+    fn restore_entry(
+        &self,
+        entry: TrashedEntry,
+        cx: &Context<Worktree>,
+    ) -> Option<Task<Result<()>>> {
         let response = self.client.request(proto::RestoreProjectEntry {
             project_id: self.project_id,
             worktree_id: self.id().to_proto(),
-            path: path.to_proto(),
+            entry: Some(proto::TrashedEntry::from(&entry)),
         });
         Some(cx.spawn(async move |this, cx| {
             let response = response.await?;
@@ -5907,6 +5931,32 @@ impl TryFrom<(&CharBag, &PathMatcher, proto::Entry)> for Entry {
             is_private: false,
             char_bag,
             is_fifo: entry.is_fifo,
+        })
+    }
+}
+
+impl<'a> From<&'a TrashedEntry> for proto::TrashedEntry {
+    fn from(entry: &'a TrashedEntry) -> Self {
+        Self {
+            path: entry.path.to_proto(),
+            original_path: entry.trash_item.original_path.to_string_lossy().to_string(),
+            path_in_trash: entry.trash_item.path_in_trash.to_string_lossy().to_string(),
+            is_dir: entry.trash_item.is_dir,
+        }
+    }
+}
+
+impl TryFrom<proto::TrashedEntry> for TrashedEntry {
+    type Error = anyhow::Error;
+
+    fn try_from(entry: proto::TrashedEntry) -> Result<Self> {
+        Ok(Self {
+            path: RelPath::from_proto(&entry.path)?.into_arc(),
+            trash_item: trash::TrashItem {
+                original_path: PathBuf::from(entry.original_path),
+                path_in_trash: PathBuf::from(entry.path_in_trash),
+                is_dir: entry.is_dir,
+            },
         })
     }
 }

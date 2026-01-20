@@ -117,10 +117,17 @@ message DeleteProjectEntry {
   bool use_trash = 3;
 }
 
+message TrashedEntry {
+  string path = 1;
+  string original_path = 2;
+  string path_in_trash = 3;
+  bool is_dir = 4;
+}
+
 message RestoreProjectEntry {
   uint64 project_id = 1;
   uint64 worktree_id = 2;
-  string path = 3;
+  TrashedEntry entry = 3;
 }
 
 message ExpandProjectEntry {

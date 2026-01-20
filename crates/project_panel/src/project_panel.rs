@@ -556,8 +556,8 @@ pub enum Event {
 pub enum ProjectPanelOperation {
     Batch(Vec<ProjectPanelOperation>),
     Trash {
-        is_directory: bool,
-        project_path: ProjectPath,
+        worktree_id: WorktreeId,
+        entry: worktree::TrashedEntry,
     },
     Create {
         is_directory: bool,
@@ -2110,7 +2110,7 @@ impl ProjectPanel {
                 })
             }
             ProjectPanelOperation::Create {
-                is_directory,
+                is_directory: _,
                 project_path,
             } => {
                 let Some(entry_id) = self
@@ -2128,19 +2128,24 @@ impl ProjectPanel {
                     return Task::ready(Err(anyhow!("failed to delete entry")));
                 };
                 cx.spawn(async move |_, _cx| {
-                    task.await?;
+                    let entry = task.await?.ok_or_else(|| anyhow!("expected trash item"))?;
                     Ok(ProjectPanelOperation::Trash {
-                        project_path,
-                        is_directory,
+                        worktree_id: project_path.worktree_id,
+                        entry,
                     })
                 })
             }
             ProjectPanelOperation::Trash {
-                project_path,
-                is_directory,
+                worktree_id,
+                entry,
             } => {
+                let is_directory = entry.trash_item.is_dir;
+                let project_path = ProjectPath {
+                    worktree_id,
+                    path: entry.path.clone(),
+                };
                 let Some(task) = self.project.update(cx, |project, cx| {
-                    project.restore_entry(project_path.clone(), cx)
+                    project.restore_entry(worktree_id, entry, cx)
                 }) else {
                     return Task::ready(Err(anyhow!("failed to restore entry")));
                 };
@@ -2438,8 +2443,8 @@ impl ProjectPanel {
                 {
                     return anyhow::Ok(());
                 }
-                for (entry_id, project_path, _, is_dir) in file_paths {
-                    panel
+                for (entry_id, project_path, _, _is_dir) in file_paths {
+                    let trashed_entry = panel
                         .update(cx, |panel, cx| {
                             panel
                                 .project
@@ -2448,12 +2453,14 @@ impl ProjectPanel {
                         })??
                         .await?;
 
-                    panel.update(cx, |panel, _| {
-                        panel.record_operation(ProjectPanelOperation::Trash {
-                            project_path,
-                            is_directory: is_dir,
-                        });
-                    })?;
+                    if let Some(entry) = trashed_entry {
+                        panel.update(cx, |panel, _| {
+                            panel.record_operation(ProjectPanelOperation::Trash {
+                                worktree_id: project_path.worktree_id,
+                                entry,
+                            });
+                        })?;
+                    }
                 }
                 panel.update_in(cx, |panel, window, cx| {
                     if let Some(next_selection) = next_selection {
