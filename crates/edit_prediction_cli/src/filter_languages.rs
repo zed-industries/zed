@@ -163,10 +163,17 @@ fn get_extension(cursor_path: &str) -> Option<String> {
     None
 }
 
-fn read_lines_streaming(input: &Path) -> Result<Box<dyn Iterator<Item = io::Result<String>>>> {
-    let file =
-        File::open(input).with_context(|| format!("failed to open '{}'", input.display()))?;
-    let reader = BufReader::new(file);
+fn read_lines_streaming(
+    input: Option<&Path>,
+) -> Result<Box<dyn Iterator<Item = io::Result<String>>>> {
+    let reader: Box<dyn BufRead> = match input {
+        Some(path) => {
+            let file =
+                File::open(path).with_context(|| format!("failed to open '{}'", path.display()))?;
+            Box::new(BufReader::new(file))
+        }
+        None => Box::new(BufReader::new(io::stdin())),
+    };
     Ok(Box::new(reader.lines()))
 }
 
@@ -195,12 +202,16 @@ pub fn run_filter_languages(
         return Ok(());
     }
 
-    let input_path = inputs
-        .first()
-        .with_context(|| "input file is required (use --list to see available languages)")?;
+    let input_path: Option<&Path> = match inputs.first().map(|p| p.as_path()) {
+        Some(p) if p.as_os_str() == "-" => None,
+        Some(p) => Some(p),
+        None => None,
+    };
 
     if args.stats {
-        return run_stats(input_path, &extension_map);
+        let stats_input =
+            input_path.with_context(|| "input file is required for --stats (cannot use stdin)")?;
+        return run_stats(stats_input, &extension_map);
     }
 
     if args.languages.is_none() && args.extensions.is_none() {
@@ -337,7 +348,7 @@ pub fn run_filter_languages(
 }
 
 fn run_stats(input: &Path, extension_map: &HashMap<String, String>) -> Result<()> {
-    let lines = read_lines_streaming(input)?;
+    let lines = read_lines_streaming(Some(input))?;
 
     let mut language_counts: HashMap<String, usize> = HashMap::default();
     let mut unknown_extensions: HashMap<String, usize> = HashMap::default();
