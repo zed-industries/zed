@@ -211,8 +211,10 @@ async fn setup_project(
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
-            false, // watch_global_configs: disabled to avoid FD leak from per-project config watchers
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                watch_global_configs: false,
+            },
             cx,
         )
     });

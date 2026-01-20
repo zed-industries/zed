@@ -674,9 +674,6 @@ fn main() {
                                 }
                             }
 
-                            // Get the project from either an example's state or the project cache.
-                            // We need this to properly clean up LSP servers and EditPredictionStore
-                            // even if all examples failed before setting their state.
                             let repo_url = &repo_examples.first().unwrap().spec.repository_url;
                             let project = repo_examples
                                 .iter()
@@ -686,9 +683,6 @@ fn main() {
                             if let Some(project) = project {
                                 let mut cx = cx.clone();
 
-                                // Stop all LSP servers and wait for them to shut down before
-                                // removing the project. This prevents file descriptor leaks from
-                                // LSP processes that would otherwise stay running.
                                 let shutdown_task: Task<()> =
                                     project.update(&mut cx, |project, cx| {
                                         let lsp_store = project.lsp_store();

@@ -222,8 +222,10 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
-            true,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
             cx,
         )
     });
@@ -901,8 +903,10 @@ fn run_breakpoint_hover_visual_tests(
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
-            true,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
             cx,
         )
     });
@@ -1214,8 +1218,10 @@ import { AiPaneTabContext } from 'context';
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
-            true,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
             cx,
         )
     });
@@ -1699,8 +1705,10 @@ fn run_subagent_visual_tests(
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
-            true,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
             cx,
         )
     });
@@ -2022,8 +2030,10 @@ fn run_agent_thread_view_test(
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
-            true,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
             cx,
         )
     });

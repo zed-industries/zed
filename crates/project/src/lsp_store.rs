@@ -11039,8 +11039,6 @@ impl LspStore {
         self.shutdown_all_language_servers(cx).detach();
     }
 
-    /// Stops all language servers and returns a task that resolves when all servers have shut down.
-    /// This is useful when you need to wait for cleanup to complete before continuing.
     pub fn shutdown_all_language_servers(&mut self, cx: &mut Context<Self>) -> Task<()> {
         if let Some((client, project_id)) = self.upstream_client() {
             let request = client.request(proto::StopLanguageServers {

@@ -1659,8 +1659,7 @@ impl Workspace {
             app_state.languages.clone(),
             app_state.fs.clone(),
             env,
-            true,
-            true,
+            Default::default(),
             cx,
         );
 
