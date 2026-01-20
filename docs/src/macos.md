@@ -51,7 +51,7 @@ zed file.txt             # Open a file
 zed project/ file.txt    # Open a folder and a file
 ```
 
-See the [CLI Reference](./command-line-interface.md) for all available options.
+See the [CLI Reference](./reference/cli.md) for all available options.
 
 ## Uninstall
 
