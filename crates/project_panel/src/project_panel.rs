@@ -1762,6 +1762,7 @@ impl ProjectPanel {
         let edit_task;
         let edited_entry_id;
         let edited_entry;
+        let new_project_path: ProjectPath;
         if is_new_entry {
             self.state.selection = Some(SelectedEntry {
                 worktree_id,
@@ -1774,8 +1775,9 @@ impl ProjectPanel {
 
             edited_entry = None;
             edited_entry_id = NEW_ENTRY_ID;
+            new_project_path = (worktree_id, new_path).into();
             edit_task = self.project.update(cx, |project, cx| {
-                project.create_entry((worktree_id, new_path), is_dir, cx)
+                project.create_entry(new_project_path.clone(), is_dir, cx)
             });
         } else {
             let new_path = if let Some(parent) = entry.path.clone().parent() {
@@ -1791,13 +1793,11 @@ impl ProjectPanel {
             }
             edited_entry_id = entry.id;
             edited_entry = Some(entry);
+            new_project_path = (worktree_id, new_path).into();
             edit_task = self.project.update(cx, |project, cx| {
-                project.rename_entry(edited_entry_id, (worktree_id, new_path).into(), cx)
+                project.rename_entry(edited_entry_id, new_project_path.clone(), cx)
             })
         };
-
-        // Reborrow so lifetime does not overlap `self.confirm_undoable_rename_entry()`
-        let edit_state = self.state.edit_state.as_mut()?;
 
         if refocus {
             window.focus(&self.focus_handle, cx);
@@ -1809,6 +1809,22 @@ impl ProjectPanel {
             let new_entry = edit_task.await;
             project_panel.update(cx, |project_panel, cx| {
                 project_panel.state.edit_state = None;
+
+                // Record the operation if the edit was applied
+                if new_entry.is_ok() {
+                    if let Some(old_entry) = edited_entry {
+                        project_panel.record_operation(ProjectPanelOperation::Rename {
+                            old_path: (worktree_id, old_entry.path).into(),
+                            new_path: new_project_path,
+                        });
+                    } else {
+                        project_panel.record_operation(ProjectPanelOperation::Create {
+                            is_directory: is_dir,
+                            project_path: new_project_path,
+                        });
+                    }
+                }
+
                 cx.notify();
             })?;
 
