@@ -3,7 +3,7 @@ use agent::{ThreadStore, outline};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_slash_commands::{codeblock_fence_for_path, collect_default_diagnostics_output};
+use assistant_slash_commands::{codeblock_fence_for_path, collect_diagnostics_output};
 use collections::{HashMap, HashSet};
 use editor::{
     Anchor, Editor, EditorSnapshot, ExcerptId, FoldPlaceholder, ToOffset,
@@ -525,8 +525,15 @@ impl MentionSet {
             return Task::ready(Err(anyhow!("project not found")));
         };
 
-        let diagnostics_task =
-            collect_default_diagnostics_output(project, include_errors, include_warnings, cx);
+        let diagnostics_task = collect_diagnostics_output(
+            project,
+            assistant_slash_commands::Options {
+                include_errors,
+                include_warnings,
+                path_matcher: None,
+            },
+            cx,
+        );
         cx.spawn(async move |_, _| {
             let output = diagnostics_task.await?;
             let content = output

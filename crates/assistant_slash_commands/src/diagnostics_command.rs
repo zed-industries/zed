@@ -188,7 +188,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
         let path_style = project.read(cx).path_style(cx);
         let options = Options::parse(arguments, path_style);
 
-        let task = collect_diagnostics(project.clone(), options, cx);
+        let task = collect_diagnostics_output(project.clone(), options, cx);
 
         window.spawn(cx, async move |_| {
             task.await?
@@ -198,23 +198,13 @@ impl SlashCommand for DiagnosticsSlashCommand {
     }
 }
 
-struct Options {
-    include_errors: bool,
-    include_warnings: bool,
-    path_matcher: Option<PathMatcher>,
+pub struct Options {
+    pub include_errors: bool,
+    pub include_warnings: bool,
+    pub path_matcher: Option<PathMatcher>,
 }
 
 const INCLUDE_WARNINGS_ARGUMENT: &str = "--include-warnings";
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            include_errors: true,
-            include_warnings: false,
-            path_matcher: None,
-        }
-    }
-}
 
 impl Options {
     fn parse(arguments: &[String], path_style: PathStyle) -> Self {
@@ -239,24 +229,7 @@ impl Options {
     }
 }
 
-pub fn collect_default_diagnostics_output(
-    project: Entity<Project>,
-    include_errors: bool,
-    include_warnings: bool,
-    cx: &mut App,
-) -> Task<Result<Option<SlashCommandOutput>>> {
-    collect_diagnostics(
-        project,
-        Options {
-            include_errors,
-            include_warnings,
-            path_matcher: None,
-        },
-        cx,
-    )
-}
-
-fn collect_diagnostics(
+pub fn collect_diagnostics_output(
     project: Entity<Project>,
     options: Options,
     cx: &mut App,
