@@ -36,7 +36,7 @@ use ui::{
     PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use util::{ResultExt, paths::PathMatcher};
-use workspace::{ModalView, SplitDirection, Workspace, pane};
+use workspace::{ModalView, SplitDirection, Workspace, pane, searchable::SearchableItem};
 pub use zed_actions::quick_search::Toggle;
 
 actions!(quick_search, [ReplaceNext, ReplaceAll, ToggleFilters, ToggleSplitMenu, ToggleHistory]);
@@ -131,8 +131,18 @@ impl QuickSearch {
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
             let project = workspace.project().clone();
             let weak_workspace = cx.entity().downgrade();
+            let initial_query = if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
+                let query = editor.update(cx, |editor, cx| editor.query_suggestion(window, cx));
+                if !query.is_empty() {
+                    Some(query)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
             workspace.toggle_modal(window, cx, |window, cx| {
-                QuickSearch::new(weak_workspace, project, window, cx)
+                QuickSearch::new(weak_workspace, project, initial_query, window, cx)
             });
         });
     }
@@ -140,6 +150,7 @@ impl QuickSearch {
     fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
+        initial_query: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -170,12 +181,14 @@ impl QuickSearch {
 
         let focus_handle = cx.focus_handle();
 
-        let initial_query = project
-            .read(cx)
-            .search_history(SearchInputKind::Query)
-            .iter()
-            .next()
-            .map(|s| s.to_string());
+        let initial_query = initial_query.or_else(|| {
+            project
+                .read(cx)
+                .search_history(SearchInputKind::Query)
+                .iter()
+                .next()
+                .map(|s| s.to_string())
+        });
 
         let delegate = QuickSearchDelegate::new(
             workspace,
