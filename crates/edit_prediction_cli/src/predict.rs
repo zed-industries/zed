@@ -10,7 +10,10 @@ use crate::{
     retrieve_context::run_context_retrieval,
 };
 use anyhow::Context as _;
-use edit_prediction::{DebugEvent, EditPredictionStore};
+use edit_prediction::{
+    DebugEvent, EditPredictionModel, EditPredictionStore, mercury::MercuryModel,
+    sweep_ai::SweepModel, zeta1::Zeta1Model, zeta2::Zeta2Model,
+};
 use futures::{FutureExt as _, StreamExt as _, future::Shared};
 use gpui::{AppContext as _, AsyncApp, Task};
 use std::{
@@ -90,14 +93,25 @@ pub async fn run_prediction(
         .update(|cx| EditPredictionStore::try_global(cx))
         .context("EditPredictionStore not initialized")?;
 
-    ep_store.update(&mut cx, |store, _cx| {
-        let model = match provider {
-            PredictionProvider::Zeta1 => edit_prediction::EditPredictionModel::Zeta1,
-            PredictionProvider::Zeta2(version) => {
-                edit_prediction::EditPredictionModel::Zeta2 { version }
-            }
-            PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
-            PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
+    ep_store.update(&mut cx, |store, cx| {
+        let model: Box<dyn EditPredictionModel> = match provider {
+            PredictionProvider::Zeta1 => Box::new(Zeta1Model::new(
+                app_state.client.clone(),
+                app_state.user_store.clone(),
+                store.llm_token().clone(),
+                store.custom_predict_edits_url(),
+                store.reject_predictions_tx(),
+            )),
+            PredictionProvider::Zeta2(version) => Box::new(Zeta2Model::new(
+                app_state.client.clone(),
+                store.llm_token().clone(),
+                app_state.user_store.clone(),
+                store.custom_predict_edits_url(),
+                store.reject_predictions_tx(),
+                version,
+            )),
+            PredictionProvider::Sweep => Box::new(SweepModel::new(app_state.client.clone(), cx)),
+            PredictionProvider::Mercury => Box::new(MercuryModel::new(cx)),
             PredictionProvider::Teacher(..) | PredictionProvider::TeacherNonBatching(..) => {
                 unreachable!()
             }

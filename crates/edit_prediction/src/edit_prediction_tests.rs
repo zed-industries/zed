@@ -1,5 +1,8 @@
 use super::*;
-use crate::{compute_diff_between_snapshots, udiff::apply_diff_to_string, zeta1::MAX_EVENT_TOKENS};
+use crate::{
+    compute_diff_between_snapshots, udiff::apply_diff_to_string, zeta1::MAX_EVENT_TOKENS,
+    zeta1::Zeta1Model, zeta2::Zeta2Model,
+};
 use client::{UserStore, test::FakeServer};
 use clock::{FakeSystemClock, ReplicaId};
 use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
@@ -14,7 +17,7 @@ use futures::{
 };
 use gpui::{
     Entity, TestAppContext,
-    http_client::{FakeHttpClient, Response},
+    http_client::{self, FakeHttpClient, Method, Response},
 };
 use indoc::indoc;
 use language::Point;
@@ -1407,6 +1410,17 @@ fn init_test_with_fake_client(
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let ep_store = EditPredictionStore::global(&client, &user_store, cx);
 
+        ep_store.update(cx, |ep_store, _cx| {
+            ep_store.set_edit_prediction_model(Box::new(Zeta2Model::new(
+                client,
+                ep_store.llm_token().clone(),
+                user_store.clone(),
+                ep_store.custom_predict_edits_url(),
+                ep_store.reject_predictions_tx(),
+                zeta_prompt::ZetaVersion::default(),
+            )));
+        });
+
         (
             ep_store,
             RequestChannels {
@@ -2081,8 +2095,15 @@ async fn make_test_ep_store(
     let _server = FakeServer::for_client(42, &client, cx).await;
 
     let ep_store = cx.new(|cx| {
-        let mut ep_store = EditPredictionStore::new(client, project.read(cx).user_store(), cx);
-        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
+        let mut ep_store =
+            EditPredictionStore::new(client.clone(), project.read(cx).user_store(), cx);
+        ep_store.set_edit_prediction_model(Box::new(Zeta1Model::new(
+            client,
+            project.read(cx).user_store(),
+            ep_store.llm_token().clone(),
+            ep_store.custom_predict_edits_url(),
+            ep_store.reject_predictions_tx(),
+        )));
 
         let worktrees = project.read(cx).worktrees(cx).collect::<Vec<_>>();
         for worktree in worktrees {
@@ -2162,7 +2183,8 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
         language_model::RefreshLlmTokenListener::register(client.clone(), cx);
     });
 
-    let ep_store = cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(), cx));
+    let ep_store =
+        cx.new(|cx| EditPredictionStore::new(client.clone(), project.read(cx).user_store(), cx));
 
     let buffer = project
         .update(cx, |project, cx| {
@@ -2181,7 +2203,14 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
     cx.background_executor.run_until_parked();
 
     let completion_task = ep_store.update(cx, |ep_store, cx| {
-        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
+        let model = Box::new(Zeta1Model::new(
+            client,
+            project.read(cx).user_store(),
+            ep_store.llm_token().clone(),
+            ep_store.custom_predict_edits_url(),
+            ep_store.reject_predictions_tx(),
+        ));
+        ep_store.set_edit_prediction_model(model);
         ep_store.request_prediction(&project, &buffer, cursor, Default::default(), cx)
     });
 
@@ -2270,7 +2299,8 @@ async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut Te
         language_model::RefreshLlmTokenListener::register(client.clone(), cx);
     });
 
-    let ep_store = cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(), cx));
+    let ep_store =
+        cx.new(|cx| EditPredictionStore::new(client.clone(), project.read(cx).user_store(), cx));
 
     let buffer = project
         .update(cx, |project, cx| {
@@ -2290,7 +2320,14 @@ async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut Te
 
     let completion_task = ep_store.update(cx, |ep_store, cx| {
         ep_store.set_custom_predict_edits_url(Url::parse("http://test/predict").unwrap());
-        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
+        let model = Box::new(Zeta1Model::new(
+            client,
+            project.read(cx).user_store(),
+            ep_store.llm_token().clone(),
+            ep_store.custom_predict_edits_url(),
+            ep_store.reject_predictions_tx(),
+        ));
+        ep_store.set_edit_prediction_model(model);
         ep_store.request_prediction(&project, &buffer, cursor, Default::default(), cx)
     });
 
