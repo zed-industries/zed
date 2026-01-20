@@ -3693,10 +3693,10 @@ impl ProjectSettingsUpdateQueue {
                 .await
                 .context("Failed to open settings file")?;
 
-            settings_window.update(cx, |this, _cx| {
+            let _ = settings_window.update(cx, |this, _cx| {
                 this.project_setting_file_buffers
                     .insert(project_path, buffer.clone());
-            })?;
+            });
 
             buffer
         };
@@ -4418,4 +4418,430 @@ pub mod test {
         > Appearance & Behavior
         "
     );
+}
+
+#[cfg(test)]
+mod project_settings_update_tests {
+    use super::*;
+    use fs::{FakeFs, Fs as _};
+    use gpui::TestAppContext;
+    use project::Project;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            menu::init();
+            let queue = ProjectSettingsUpdateQueue::new(cx);
+            cx.set_global(queue);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_creates_settings_file_if_missing(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "src": { "main.rs": "" } }))
+            .await;
+
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+
+        let (worktree_id, worktree) = project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            (worktree.read(cx).id(), worktree.downgrade())
+        });
+
+        let rel_path: Arc<RelPath> = RelPath::unix(".zed/settings.json")
+            .expect("valid path")
+            .into_arc();
+        let project_path = ProjectPath {
+            worktree_id,
+            path: rel_path.clone(),
+        };
+
+        let settings_window: WeakEntity<SettingsWindow> = WeakEntity::new_invalid();
+        let entry = ProjectSettingsUpdateEntry {
+            worktree_id,
+            rel_path: rel_path.clone(),
+            settings_window,
+            project: project.downgrade(),
+            worktree,
+            update: Box::new(|content, _cx| {
+                content.project.all_languages.defaults.tab_size = Some(NonZeroU32::new(4).unwrap());
+            }),
+        };
+
+        cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        cx.executor().run_until_parked();
+
+        let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone());
+        let buffer = buffer_store
+            .update(cx, |store, cx| store.open_buffer(project_path, cx))
+            .await
+            .expect("buffer should exist");
+
+        let text = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert!(
+            text.contains("\"tab_size\": 4"),
+            "Expected tab_size setting in: {}",
+            text
+        );
+    }
+
+    #[gpui::test]
+    async fn test_updates_existing_settings_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".zed": {
+                    "settings.json": r#"{ "tab_size": 2 }"#
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+
+        let (worktree_id, worktree) = project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            (worktree.read(cx).id(), worktree.downgrade())
+        });
+
+        let rel_path: Arc<RelPath> = RelPath::unix(".zed/settings.json")
+            .expect("valid path")
+            .into_arc();
+        let project_path = ProjectPath {
+            worktree_id,
+            path: rel_path.clone(),
+        };
+
+        let settings_window: WeakEntity<SettingsWindow> = WeakEntity::new_invalid();
+        let entry = ProjectSettingsUpdateEntry {
+            worktree_id,
+            rel_path: rel_path.clone(),
+            settings_window,
+            project: project.downgrade(),
+            worktree,
+            update: Box::new(|content, _cx| {
+                content.project.all_languages.defaults.tab_size = Some(NonZeroU32::new(8).unwrap());
+            }),
+        };
+
+        cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        cx.executor().run_until_parked();
+
+        let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone());
+        let buffer = buffer_store
+            .update(cx, |store, cx| store.open_buffer(project_path, cx))
+            .await
+            .expect("buffer should exist");
+
+        let text = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert!(
+            text.contains("\"tab_size\": 8"),
+            "Expected updated tab_size in: {}",
+            text
+        );
+    }
+
+    #[gpui::test]
+    async fn test_updates_are_serialized(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".zed": {
+                    "settings.json": "{}"
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+
+        let (worktree_id, worktree) = project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            (worktree.read(cx).id(), worktree.downgrade())
+        });
+
+        let rel_path: Arc<RelPath> = RelPath::unix(".zed/settings.json")
+            .expect("valid path")
+            .into_arc();
+        let project_path = ProjectPath {
+            worktree_id,
+            path: rel_path.clone(),
+        };
+
+        let update_order = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        for i in 1..=3 {
+            let settings_window: WeakEntity<SettingsWindow> = WeakEntity::new_invalid();
+            let update_order = update_order.clone();
+            let entry = ProjectSettingsUpdateEntry {
+                worktree_id,
+                rel_path: rel_path.clone(),
+                settings_window,
+                project: project.downgrade(),
+                worktree: worktree.clone(),
+                update: Box::new(move |content, _cx| {
+                    update_order.lock().unwrap().push(i);
+                    content.project.all_languages.defaults.tab_size =
+                        Some(NonZeroU32::new(i).unwrap());
+                }),
+            };
+            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        }
+
+        cx.executor().run_until_parked();
+
+        let order = update_order.lock().unwrap().clone();
+        assert_eq!(order, vec![1, 2, 3], "Updates should be processed in order");
+
+        let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone());
+        let buffer = buffer_store
+            .update(cx, |store, cx| store.open_buffer(project_path, cx))
+            .await
+            .expect("buffer should exist");
+
+        let text = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert!(
+            text.contains("\"tab_size\": 3"),
+            "Final tab_size should be 3: {}",
+            text
+        );
+    }
+
+    #[gpui::test]
+    async fn test_queue_continues_after_failure(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".zed": {
+                    "settings.json": "{}"
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+
+        let (worktree_id, worktree) = project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            (worktree.read(cx).id(), worktree.downgrade())
+        });
+
+        let rel_path: Arc<RelPath> = RelPath::unix(".zed/settings.json")
+            .expect("valid path")
+            .into_arc();
+        let project_path = ProjectPath {
+            worktree_id,
+            path: rel_path.clone(),
+        };
+
+        let successful_updates = Arc::new(AtomicUsize::new(0));
+
+        {
+            let settings_window: WeakEntity<SettingsWindow> = WeakEntity::new_invalid();
+            let successful_updates = successful_updates.clone();
+            let entry = ProjectSettingsUpdateEntry {
+                worktree_id,
+                rel_path: rel_path.clone(),
+                settings_window,
+                project: project.downgrade(),
+                worktree: worktree.clone(),
+                update: Box::new(move |content, _cx| {
+                    successful_updates.fetch_add(1, Ordering::SeqCst);
+                    content.project.all_languages.defaults.tab_size =
+                        Some(NonZeroU32::new(2).unwrap());
+                }),
+            };
+            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        }
+
+        {
+            let dropped_project: WeakEntity<Project> = WeakEntity::new_invalid();
+            let settings_window: WeakEntity<SettingsWindow> = WeakEntity::new_invalid();
+            let entry = ProjectSettingsUpdateEntry {
+                worktree_id,
+                rel_path: rel_path.clone(),
+                settings_window,
+                project: dropped_project,
+                worktree: worktree.clone(),
+                update: Box::new(|content, _cx| {
+                    content.project.all_languages.defaults.tab_size =
+                        Some(NonZeroU32::new(99).unwrap());
+                }),
+            };
+            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        }
+
+        {
+            let settings_window: WeakEntity<SettingsWindow> = WeakEntity::new_invalid();
+            let successful_updates = successful_updates.clone();
+            let entry = ProjectSettingsUpdateEntry {
+                worktree_id,
+                rel_path: rel_path.clone(),
+                settings_window,
+                project: project.downgrade(),
+                worktree: worktree.clone(),
+                update: Box::new(move |content, _cx| {
+                    successful_updates.fetch_add(1, Ordering::SeqCst);
+                    content.project.all_languages.defaults.tab_size =
+                        Some(NonZeroU32::new(4).unwrap());
+                }),
+            };
+            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        }
+
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            successful_updates.load(Ordering::SeqCst),
+            2,
+            "Two updates should have succeeded despite middle failure"
+        );
+
+        let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone());
+        let buffer = buffer_store
+            .update(cx, |store, cx| store.open_buffer(project_path, cx))
+            .await
+            .expect("buffer should exist");
+
+        let text = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert!(
+            text.contains("\"tab_size\": 4"),
+            "Final tab_size should be 4 (third update): {}",
+            text
+        );
+    }
+
+    #[gpui::test]
+    async fn test_handles_dropped_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".zed": {
+                    "settings.json": "{}"
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            worktree.read(cx).id()
+        });
+
+        let rel_path: Arc<RelPath> = RelPath::unix(".zed/settings.json")
+            .expect("valid path")
+            .into_arc();
+
+        let dropped_worktree: WeakEntity<Worktree> = WeakEntity::new_invalid();
+        let settings_window: WeakEntity<SettingsWindow> = WeakEntity::new_invalid();
+        let entry = ProjectSettingsUpdateEntry {
+            worktree_id,
+            rel_path: rel_path.clone(),
+            settings_window,
+            project: project.downgrade(),
+            worktree: dropped_worktree,
+            update: Box::new(|content, _cx| {
+                content.project.all_languages.defaults.tab_size =
+                    Some(NonZeroU32::new(99).unwrap());
+            }),
+        };
+
+        cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        cx.executor().run_until_parked();
+
+        let file_content = fs
+            .load("/project/.zed/settings.json".as_ref())
+            .await
+            .unwrap();
+        assert_eq!(
+            file_content, "{}",
+            "File should be unchanged when worktree is dropped"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_handles_dropped_settings_window(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".zed": {
+                    "settings.json": "{}"
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+
+        let (worktree_id, worktree) = project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            (worktree.read(cx).id(), worktree.downgrade())
+        });
+
+        let rel_path: Arc<RelPath> = RelPath::unix(".zed/settings.json")
+            .expect("valid path")
+            .into_arc();
+        let project_path = ProjectPath {
+            worktree_id,
+            path: rel_path.clone(),
+        };
+
+        let settings_window: WeakEntity<SettingsWindow> = WeakEntity::new_invalid();
+        let entry = ProjectSettingsUpdateEntry {
+            worktree_id,
+            rel_path: rel_path.clone(),
+            settings_window,
+            project: project.downgrade(),
+            worktree,
+            update: Box::new(|content, _cx| {
+                content.project.all_languages.defaults.tab_size = Some(NonZeroU32::new(4).unwrap());
+            }),
+        };
+
+        cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        cx.executor().run_until_parked();
+
+        let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone());
+        let buffer = buffer_store
+            .update(cx, |store, cx| store.open_buffer(project_path, cx))
+            .await
+            .expect("buffer should exist");
+
+        let text = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert!(
+            text.contains("\"tab_size\": 4"),
+            "Update should succeed even with dropped settings window: {}",
+            text
+        );
+    }
 }

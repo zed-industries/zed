@@ -52,12 +52,18 @@ zed_actions.workspace = true
 [dev-dependencies]
 assets.workspace = true
 client.workspace = true
+fs = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language.workspace = true
 node_runtime.workspace = true
 paths.workspace = true
 pretty_assertions.workspace = true
+project = { workspace = true, features = ["test-support"] }
+recent_projects = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
 session.workspace = true
-settings.workspace = true
+settings = { workspace = true, features = ["test-support"] }
+title_bar = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
