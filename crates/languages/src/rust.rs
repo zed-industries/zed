@@ -579,7 +579,7 @@ impl LspAdapter for RustLspAdapter {
             lsp::SymbolKind::ENUM_MEMBER => {
                 let prefix = "enum E {";
                 return Some(CodeLabel::new(
-                    format!("{name}"),
+                    name.to_string(),
                     0..name.len(),
                     language.highlight_text(
                         &Rope::from_iter([prefix, name, "}"]),
