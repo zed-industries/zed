@@ -5793,17 +5793,22 @@ impl AcpThreadView {
                             .child(if editor_focused {
                                 h_flex()
                                     .gap_1()
+                                    .min_w_40()
                                     .child(
-                                        Button::new(("cancel_edit", index), "Cancel")
-                                            .label_size(LabelSize::Small)
-                                            .key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &editor::actions::Cancel,
-                                                    &editor.focus_handle(cx),
-                                                    cx,
-                                                )
-                                                .map(|kb| kb.size(keybinding_size)),
-                                            )
+                                        IconButton::new(("cancel_edit", index), IconName::Close)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Error)
+                                            .tooltip({
+                                                let focus_handle = editor.focus_handle(cx);
+                                                move |_window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Cancel Edit",
+                                                        &editor::actions::Cancel,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                }
+                                            })
                                             .on_click({
                                                 let main_editor = self.message_editor.clone();
                                                 cx.listener(move |_, _, window, cx| {
@@ -5812,16 +5817,20 @@ impl AcpThreadView {
                                             }),
                                     )
                                     .child(
-                                        Button::new(("save_edit", index), "Save")
-                                            .label_size(LabelSize::Small)
-                                            .key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &Chat,
-                                                    &editor.focus_handle(cx),
-                                                    cx,
-                                                )
-                                                .map(|kb| kb.size(keybinding_size)),
-                                            )
+                                        IconButton::new(("save_edit", index), IconName::Check)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Success)
+                                            .tooltip({
+                                                let focus_handle = editor.focus_handle(cx);
+                                                move |_window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Save Edit",
+                                                        &Chat,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                }
+                                            })
                                             .on_click({
                                                 let main_editor = self.message_editor.clone();
                                                 cx.listener(move |_, _, window, cx| {
@@ -5852,17 +5861,22 @@ impl AcpThreadView {
                                     .gap_1()
                                     .when(!is_next, |this| this.visible_on_hover("queue_entry"))
                                     .child(
-                                        Button::new(("edit", index), "Edit")
-                                            .label_size(LabelSize::Small)
-                                            .when(is_next, |this| {
-                                                this.key_binding(
-                                                    KeyBinding::for_action_in(
-                                                        &EditFirstQueuedMessage,
-                                                        &focus_handle,
-                                                        cx,
-                                                    )
-                                                    .map(|kb| kb.size(keybinding_size)),
-                                                )
+                                        IconButton::new(("edit", index), IconName::Pencil)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |_window, cx| {
+                                                    if is_next {
+                                                        Tooltip::for_action_in(
+                                                            "Edit",
+                                                            &EditFirstQueuedMessage,
+                                                            &focus_handle,
+                                                            cx,
+                                                        )
+                                                    } else {
+                                                        Tooltip::simple("Edit", cx)
+                                                    }
+                                                }
                                             })
                                             .on_click({
                                                 let editor = editor.clone();
@@ -5872,17 +5886,25 @@ impl AcpThreadView {
                                             }),
                                     )
                                     .child(
-                                        Button::new(("delete", index), "Remove")
-                                            .label_size(LabelSize::Small)
-                                            .when(is_next, |this| {
-                                                this.key_binding(
-                                                    KeyBinding::for_action_in(
-                                                        &RemoveFirstQueuedMessage,
-                                                        &focus_handle,
-                                                        cx,
-                                                    )
-                                                    .map(|kb| kb.size(keybinding_size)),
-                                                )
+                                        IconButton::new(("delete", index), IconName::Trash)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |_window, cx| {
+                                                    if is_next {
+                                                        Tooltip::for_action_in(
+                                                            "Remove Message from Queue",
+                                                            &RemoveFirstQueuedMessage,
+                                                            &focus_handle,
+                                                            cx,
+                                                        )
+                                                    } else {
+                                                        Tooltip::simple(
+                                                            "Remove Message from Queue",
+                                                            cx,
+                                                        )
+                                                    }
+                                                }
                                             })
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 if let Some(thread) = this.as_native_thread(cx) {
