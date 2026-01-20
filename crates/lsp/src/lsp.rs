@@ -773,6 +773,9 @@ impl LanguageServer {
                     execute_command: Some(ExecuteCommandClientCapabilities {
                         dynamic_registration: Some(true),
                     }),
+                    semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
+                        refresh_support: Some(true),
+                    }),
                     ..WorkspaceClientCapabilities::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
