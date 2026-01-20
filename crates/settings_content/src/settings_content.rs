@@ -977,6 +977,11 @@ pub struct RemoteSettingsContent {
     pub dev_container_connections: Option<Vec<DevContainerConnection>>,
     pub read_ssh_config: Option<bool>,
     pub use_podman: Option<bool>,
+    /// How many remote server archives to keep per channel and platform.
+    /// Set to 0 to disable cleanup.
+    ///
+    /// Default: 5
+    pub remote_server_cache_limit: Option<usize>,
 }
 
 #[with_fallible_options]
