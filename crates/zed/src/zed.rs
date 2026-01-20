@@ -2115,28 +2115,39 @@ fn open_settings_file(
     cx: &mut Context<Workspace>,
 ) {
     cx.spawn_in(window, async move |workspace, cx| {
-        let (worktree_creation_task, settings_open_task) = workspace
+        let settings_open_task = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.with_local_workspace(window, cx, move |workspace, window, cx| {
-                    let worktree_creation_task = workspace.project().update(cx, |project, cx| {
-                        // Set up a dedicated worktree for settings, since
-                        // otherwise we're dropping and re-starting LSP servers
-                        // for each file inside on every settings file
-                        // close/open
+                workspace.with_local_workspace(window, cx, move |_workspace, window, cx| {
+                    cx.spawn_in(window, async move |workspace, cx| {
+                        let worktree_creation_task =
+                            workspace.update_in(cx, |workspace, _window, cx| {
+                                workspace.project().update(cx, |project, cx| {
+                                    // Set up a dedicated worktree for settings, since
+                                    // otherwise we're dropping and re-starting LSP servers
+                                    // for each file inside on every settings file
+                                    // close/open
 
-                        // TODO: Do note that all other external files (e.g.
-                        // drag and drop from OS) still have their worktrees
-                        // released on file close, causing LSP servers'
-                        // restarts.
-                        project.find_or_create_worktree(paths::config_dir().as_path(), false, cx)
-                    });
-                    let settings_open_task =
-                        create_and_open_local_file(abs_path, window, cx, default_content);
-                    (worktree_creation_task, settings_open_task)
+                                    // TODO: Do note that all other external files (e.g.
+                                    // drag and drop from OS) still have their worktrees
+                                    // released on file close, causing LSP servers'
+                                    // restarts.
+                                    project.find_or_create_worktree(
+                                        paths::config_dir().as_path(),
+                                        false,
+                                        cx,
+                                    )
+                                })
+                            })?;
+                        let _ = worktree_creation_task.await?;
+                        let settings_open_task = workspace.update_in(cx, |_workspace, window, cx| {
+                            create_and_open_local_file(abs_path, window, cx, default_content)
+                        })?;
+                        let _ = settings_open_task.await?;
+                        anyhow::Ok(())
+                    })
                 })
             })?
             .await?;
-        let _ = worktree_creation_task.await?;
         let _ = settings_open_task.await?;
         anyhow::Ok(())
     })
