@@ -186,7 +186,7 @@ pub async fn run_prediction(
             .unwrap()
             .predictions
             .push(ExamplePrediction {
-                actual_patch: String::new(),
+                actual_patch: None,
                 actual_output: String::new(),
                 provider,
             });
@@ -204,16 +204,14 @@ pub async fn run_prediction(
             })
             .await?;
 
-        let actual_patch = prediction
-            .and_then(|prediction| {
-                let prediction = prediction.prediction.ok()?;
-                prediction
-                    .edit_preview
-                    .as_unified_diff(prediction.snapshot.file(), &prediction.edits)
-            })
-            .unwrap_or_default();
+        let actual_patch = prediction.and_then(|prediction| {
+            let prediction = prediction.prediction.ok()?;
+            prediction
+                .edit_preview
+                .as_unified_diff(prediction.snapshot.file(), &prediction.edits)
+        });
 
-        let has_prediction = !actual_patch.is_empty();
+        let has_prediction = actual_patch.as_ref().is_some_and(|p| !p.is_empty());
 
         updated_example
             .lock()
@@ -293,7 +291,7 @@ async fn predict_anthropic(
     let actual_patch = TeacherPrompt::parse(&example, &actual_output)?;
 
     let prediction = ExamplePrediction {
-        actual_patch,
+        actual_patch: Some(actual_patch),
         actual_output,
         provider: if batched {
             PredictionProvider::Teacher(version)

@@ -36,7 +36,7 @@ pub fn run_parse_output(example: &mut Example) -> Result<()> {
         .collect::<Result<Vec<_>>>()?;
 
     for (ix, actual_patch) in parsed_patches {
-        example.predictions[ix].actual_patch = actual_patch;
+        example.predictions[ix].actual_patch = Some(actual_patch);
         example.predictions[ix].provider = provider;
     }
 
