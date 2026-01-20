@@ -1988,7 +1988,9 @@ impl Terminal {
         let mouse_mode = self.mouse_mode(e.shift);
         let scroll_multiplier = if mouse_mode { 1. } else { scroll_multiplier };
 
-        if let Some(scroll_lines) = self.determine_scroll_lines(e, scroll_multiplier) {
+        if let Some(scroll_lines) = self.determine_scroll_lines(e, scroll_multiplier)
+            && scroll_lines != 0
+        {
             if mouse_mode {
                 let point = grid_point(
                     e.position - self.last_content.terminal_bounds.bounds.origin,
@@ -2009,7 +2011,7 @@ impl Terminal {
                 && !e.shift
             {
                 self.write_to_pty(alt_scroll(scroll_lines));
-            } else if scroll_lines != 0 {
+            } else {
                 let scroll = AlacScroll::Delta(scroll_lines);
 
                 self.events.push_back(InternalEvent::Scroll(scroll));

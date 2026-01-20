@@ -333,7 +333,9 @@ pub enum Event {
     },
     RemoteIdChanged(Option<u64>),
     DisconnectedFromHost,
-    DisconnectedFromRemote,
+    DisconnectedFromRemote {
+        server_not_running: bool,
+    },
     Closed,
     DeletedEntry(WorktreeId, ProjectEntryId),
     CollaboratorUpdated {
@@ -2820,6 +2822,7 @@ impl Project {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn open_buffer(
         &mut self,
         path: impl Into<ProjectPath>,
@@ -2872,6 +2875,7 @@ impl Project {
             .update(cx, |git_store, cx| git_store.open_unstaged_diff(buffer, cx))
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn open_uncommitted_diff(
         &mut self,
         buffer: Entity<Buffer>,
@@ -3319,7 +3323,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) {
         match event {
-            remote::RemoteClientEvent::Disconnected => {
+            &remote::RemoteClientEvent::Disconnected { server_not_running } => {
                 self.worktree_store.update(cx, |store, cx| {
                     store.disconnected_from_host(cx);
                 });
@@ -3329,7 +3333,7 @@ impl Project {
                 self.lsp_store.update(cx, |lsp_store, _cx| {
                     lsp_store.disconnected_from_ssh_remote()
                 });
-                cx.emit(Event::DisconnectedFromRemote);
+                cx.emit(Event::DisconnectedFromRemote { server_not_running });
             }
         }
     }

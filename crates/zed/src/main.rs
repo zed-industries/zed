@@ -423,7 +423,7 @@ fn main() {
                 HashMap::default()
             }
         };
-        trusted_worktrees::init(db_trusted_paths, None, None, cx);
+        trusted_worktrees::init(db_trusted_paths, cx);
         menu::init();
         zed_actions::init();
 
@@ -628,6 +628,7 @@ fn main() {
         agent_ui_v2::agents_panel::init(cx);
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
+        dev_container::init(cx);
 
         load_embedded_fonts(cx);
 
@@ -1541,6 +1542,7 @@ fn parse_url_arg(arg: &str, cx: &App) -> String {
         Ok(path) => format!("file://{}", path.display()),
         Err(_) => {
             if arg.starts_with("file://")
+                || arg.starts_with("zed://")
                 || arg.starts_with("zed-cli://")
                 || arg.starts_with("ssh://")
                 || parse_zed_link(arg, cx).is_some()

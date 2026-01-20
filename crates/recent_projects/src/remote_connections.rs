@@ -99,6 +99,7 @@ impl From<Connection> for RemoteConnectionOptions {
                     name: conn.name,
                     container_id: conn.container_id,
                     upload_binary_over_docker_exec: false,
+                    use_podman: conn.use_podman,
                 })
             }
         }

@@ -26994,22 +26994,18 @@ impl EditorSnapshot {
             let wrap_row = wrap_snapshot
                 .make_wrap_point(first_visible_row, Bias::Left)
                 .row();
+
             wrap_row.0 as i64 - base_wrap_row.0 as i64
         } else {
-            let folds = if current_selection_head < first_visible_row {
-                self.folds_in_range(current_selection_head..first_visible_row)
-            } else {
-                self.folds_in_range(first_visible_row..current_selection_head)
-            };
+            let fold_snapshot = self.fold_snapshot();
+            let base_fold_row = fold_snapshot
+                .to_fold_point(self.to_inlay_point(current_selection_head), Bias::Left)
+                .row();
+            let fold_row = fold_snapshot
+                .to_fold_point(self.to_inlay_point(first_visible_row), Bias::Left)
+                .row();
 
-            let folded_lines = folds
-                .map(|fold| {
-                    let range = fold.range.0.to_point(self);
-                    range.end.row.saturating_sub(range.start.row)
-                })
-                .sum::<u32>() as i64;
-
-            first_visible_row.row as i64 - current_selection_head.row as i64 + folded_lines
+            fold_row as i64 - base_fold_row as i64
         }
     }
 

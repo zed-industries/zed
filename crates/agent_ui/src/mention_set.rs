@@ -297,14 +297,13 @@ impl MentionSet {
             return cx.spawn(async move |_, cx| {
                 let image = task.await?;
                 let image = image.update(cx, |image, _| image.image.clone());
-                let format = image.format;
                 let image = cx
                     .update(|cx| LanguageModelImage::from_image(image, cx))
                     .await;
                 if let Some(image) = image {
                     Ok(Mention::Image(MentionImage {
                         data: image.source,
-                        format,
+                        format: LanguageModelImage::FORMAT,
                     }))
                 } else {
                     Err(anyhow!("Failed to convert image"))
@@ -672,7 +671,6 @@ pub(crate) fn paste_images_as_context(
             };
             let task = cx
                 .spawn(async move |cx| {
-                    let format = image.format;
                     let image = cx
                         .update(|_, cx| LanguageModelImage::from_image(image, cx))
                         .map_err(|e| e.to_string())?
@@ -681,7 +679,7 @@ pub(crate) fn paste_images_as_context(
                     if let Some(image) = image {
                         Ok(Mention::Image(MentionImage {
                             data: image.source,
-                            format,
+                            format: LanguageModelImage::FORMAT,
                         }))
                     } else {
                         Err("Failed to convert image".into())

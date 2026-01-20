@@ -26,8 +26,10 @@ rope.workspace = true
 settings = { workspace = true, optional = true }
 sum_tree.workspace = true
 text.workspace = true
+tracing.workspace = true
 util.workspace = true
 syntax_diff.workspace = true
+ztracing.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
@@ -39,3 +41,6 @@ settings.workspace = true
 text = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 zlog.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]

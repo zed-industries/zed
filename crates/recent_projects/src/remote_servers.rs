@@ -1,11 +1,11 @@
 use crate::{
-    dev_container::start_dev_container,
     remote_connections::{
         Connection, RemoteConnectionModal, RemoteConnectionPrompt, RemoteSettings, SshConnection,
         SshConnectionHeader, connect, determine_paths_with_positions, open_remote_project,
     },
     ssh_config::parse_ssh_config_hosts,
 };
+use dev_container::start_dev_container;
 use editor::Editor;
 use file_finder::OpenPathDelegate;
 use futures::{FutureExt, channel::oneshot, future::Shared, select};
@@ -1602,7 +1602,7 @@ impl RemoteServerProjects {
         cx.spawn_in(window, async move |entity, cx| {
             let (connection, starting_dir) =
                 match start_dev_container(cx, app_state.node_runtime.clone()).await {
-                    Ok((c, s)) => (c, s),
+                    Ok((c, s)) => (Connection::DevContainer(c), s),
                     Err(e) => {
                         log::error!("Failed to start dev container: {:?}", e);
                         entity

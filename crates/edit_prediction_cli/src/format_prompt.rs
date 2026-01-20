@@ -2,7 +2,7 @@ use crate::{
     FormatPromptArgs, PredictionProvider,
     example::{Example, ExamplePrompt},
     headless::EpAppState,
-    progress::{Progress, Step},
+    progress::{ExampleProgress, Step},
     retrieve_context::run_context_retrieval,
 };
 use anyhow::{Context as _, Result};
@@ -18,11 +18,12 @@ pub async fn run_format_prompt(
     example: &mut Example,
     args: &FormatPromptArgs,
     app_state: Arc<EpAppState>,
+    example_progress: &ExampleProgress,
     cx: AsyncApp,
 ) -> Result<()> {
-    run_context_retrieval(example, app_state.clone(), cx.clone()).await?;
+    run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
 
-    let step_progress = Progress::global().start(Step::FormatPrompt, &example.spec.name);
+    let step_progress = example_progress.start(Step::FormatPrompt);
 
     let prompt_inputs = example
         .prompt_inputs
@@ -250,6 +251,7 @@ impl TeacherPrompt {
         for file in related_files {
             let path_str = file.path.to_string_lossy();
             writeln!(&mut prompt, "`````{path_str}").ok();
+
             let mut prev_row = 0;
             for excerpt in &file.excerpts {
                 if excerpt.row_range.start > prev_row {
@@ -262,7 +264,7 @@ impl TeacherPrompt {
             if prev_row < file.max_row {
                 prompt.push_str("…\n");
             }
-            prompt.push_str("\n`````");
+            prompt.push_str("\n`````\n");
         }
 
         prompt
@@ -293,9 +295,9 @@ impl TeacherPrompt {
 
     fn extract_editable_region(text: &str) -> String {
         let start = text
-            .find(Self::EDITABLE_REGION_START)
+            .rfind(Self::EDITABLE_REGION_START)
             .map_or(0, |pos| pos + Self::EDITABLE_REGION_START.len());
-        let end = text.find(Self::EDITABLE_REGION_END).unwrap_or(text.len());
+        let end = text.rfind(Self::EDITABLE_REGION_END).unwrap_or(text.len());
 
         let region = &text[start..end];
         let region = region.strip_suffix('\n').unwrap_or(region);

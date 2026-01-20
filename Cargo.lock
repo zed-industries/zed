@@ -1224,8 +1224,7 @@ dependencies = [
 [[package]]
 name = "async-task"
 version = "4.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
+source = "git+https://github.com/smol-rs/async-task.git?rev=b4486cd71e4e94fbda54ce6302444de14f4d190e#b4486cd71e4e94fbda54ce6302444de14f4d190e"
 
 [[package]]
 name = "async-trait"
@@ -2375,9 +2374,11 @@ dependencies = [
  "sum_tree",
  "syntax_diff",
  "text",
+ "tracing",
  "unindent",
  "util",
  "zlog",
+ "ztracing",
 ]
 
 [[package]]
@@ -4883,6 +4884,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 
 [[package]]
+name = "dev_container"
+version = "0.1.0"
+dependencies = [
+ "futures 0.3.31",
+ "gpui",
+ "http 1.3.1",
+ "http_client",
+ "log",
+ "menu",
+ "node_runtime",
+ "paths",
+ "picker",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "diagnostics"
 version = "0.1.0"
 dependencies = [
@@ -5952,10 +5975,12 @@ dependencies = [
  "task",
  "tempfile",
  "toml 0.8.23",
+ "tracing",
  "url",
  "util",
  "wasm-encoder 0.221.3",
  "wasmparser 0.221.3",
+ "ztracing",
 ]
 
 [[package]]
@@ -6024,12 +6049,14 @@ dependencies = [
  "theme",
  "theme_extension",
  "toml 0.8.23",
+ "tracing",
  "url",
  "util",
  "wasmparser 0.221.3",
  "wasmtime",
  "wasmtime-wasi",
  "zlog",
+ "ztracing",
 ]
 
 [[package]]
@@ -8909,6 +8936,7 @@ dependencies = [
  "text",
  "theme",
  "toml 0.8.23",
+ "tracing",
  "tree-sitter",
  "tree-sitter-elixir",
  "tree-sitter-embedded-template",
@@ -8925,6 +8953,7 @@ dependencies = [
  "util",
  "watch",
  "zlog",
+ "ztracing",
 ]
 
 [[package]]
@@ -8944,7 +8973,9 @@ dependencies = [
  "project",
  "serde",
  "serde_json",
+ "tracing",
  "util",
+ "ztracing",
 ]
 
 [[package]]
@@ -13321,6 +13352,7 @@ dependencies = [
  "auto_update",
  "dap",
  "db",
+ "dev_container",
  "editor",
  "extension",
  "extension_host",
@@ -15004,6 +15036,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "heck 0.5.0",
+ "itertools 0.14.0",
  "language",
  "language_models",
  "log",
@@ -20414,8 +20447,10 @@ dependencies = [
  "smol",
  "sum_tree",
  "text",
+ "tracing",
  "util",
  "zlog",
+ "ztracing",
 ]
 
 [[package]]
@@ -20813,6 +20848,7 @@ dependencies = [
  "debug_adapter_extension",
  "debugger_tools",
  "debugger_ui",
+ "dev_container",
  "diagnostics",
  "edit_prediction",
  "edit_prediction_ui",
@@ -21345,6 +21381,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
+ "tracy-client",
  "zlog",
  "ztracing_macro",
 ]

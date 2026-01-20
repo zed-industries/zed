@@ -25,4 +25,9 @@ lsp.workspace = true
 project.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
 util.workspace = true
+ztracing.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]
