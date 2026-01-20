@@ -1,4 +1,3 @@
-mod dev_container;
 mod dev_container_suggest;
 pub mod disconnected_overlay;
 mod remote_connections;
@@ -10,6 +9,7 @@ use std::path::PathBuf;
 #[cfg(target_os = "windows")]
 mod wsl_picker;
 
+use dev_container::start_dev_container;
 use remote::RemoteConnectionOptions;
 pub use remote_connections::{RemoteConnectionModal, connect, open_remote_project};
 
@@ -36,6 +36,8 @@ use workspace::{
     with_active_or_new_workspace,
 };
 use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
+
+use crate::remote_connections::Connection;
 
 #[derive(Clone, Debug)]
 pub struct RecentProjectEntry {
@@ -236,26 +238,22 @@ pub fn init(cx: &mut App) {
             let replace_window = window.window_handle().downcast::<Workspace>();
 
             cx.spawn_in(window, async move |_, mut cx| {
-                let (connection, starting_dir) = match dev_container::start_dev_container(
-                    &mut cx,
-                    app_state.node_runtime.clone(),
-                )
-                .await
-                {
-                    Ok((c, s)) => (c, s),
-                    Err(e) => {
-                        log::error!("Failed to start Dev Container: {:?}", e);
-                        cx.prompt(
-                            gpui::PromptLevel::Critical,
-                            "Failed to start Dev Container",
-                            Some(&format!("{:?}", e)),
-                            &["Ok"],
-                        )
-                        .await
-                        .ok();
-                        return;
-                    }
-                };
+                let (connection, starting_dir) =
+                    match start_dev_container(&mut cx, app_state.node_runtime.clone()).await {
+                        Ok((c, s)) => (Connection::DevContainer(c), s),
+                        Err(e) => {
+                            log::error!("Failed to start Dev Container: {:?}", e);
+                            cx.prompt(
+                                gpui::PromptLevel::Critical,
+                                "Failed to start Dev Container",
+                                Some(&format!("{:?}", e)),
+                                &["Ok"],
+                            )
+                            .await
+                            .ok();
+                            return;
+                        }
+                    };
 
                 let result = open_remote_project(
                     connection.into(),

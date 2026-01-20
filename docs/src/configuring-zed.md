@@ -4317,6 +4317,38 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 },
 ```
 
+## Text Rendering Mode
+
+- Description: The text rendering mode to use.
+- Setting: `text_rendering_mode`
+- Default: `platform_default`
+
+**Options**
+
+1. Use grayscale text rendering.
+
+```json [settings]
+{
+  "text_rendering_mode": "grayscale"
+}
+```
+
+2. Use subpixel (ClearType-style) text rendering.
+
+```json [settings]
+{
+  "text_rendering_mode": "subpixel"
+}
+```
+
+3. Use platform default behavior.
+
+```json [settings]
+{
+  "text_rendering_mode": "platform_default"
+}
+```
+
 ## Theme
 
 - Description: The theme setting can be specified in two forms - either as the name of a theme or as an object containing the `mode`, `dark`, and `light` themes for the Zed UI.

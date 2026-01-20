@@ -25,7 +25,7 @@ use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::{Editor, MultiBuffer};
 use extension_host::ExtensionStore;
-use feature_flags::{FeatureFlagAppExt, PanicFeatureFlag};
+use feature_flags::{FeatureFlagAppExt as _, PanicFeatureFlag};
 use fs::Fs;
 use futures::FutureExt as _;
 use futures::future::Either;
@@ -4968,6 +4968,7 @@ mod tests {
             web_search::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
+            project::AgentRegistryStore::init_global(cx);
             agent_ui::init(
                 app_state.fs.clone(),
                 app_state.client.clone(),

@@ -834,6 +834,7 @@ impl Database {
                         path: db_settings_file.path,
                         content: db_settings_file.content,
                         kind: db_settings_file.kind,
+                        outside_worktree: db_settings_file.outside_worktree,
                     });
                 }
             }

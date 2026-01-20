@@ -7928,6 +7928,7 @@ impl<'a> MultiBufferChunks<'a> {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     fn next_excerpt_chunk(&mut self) -> Option<Chunk<'a>> {
         loop {
             if self.excerpt_offset_range.is_empty() {
@@ -7975,6 +7976,7 @@ impl<'a> Iterator for ReversedMultiBufferChunks<'a> {
 impl<'a> Iterator for MultiBufferChunks<'a> {
     type Item = Chunk<'a>;
 
+    #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Chunk<'a>> {
         if self.range.start >= self.range.end {
             return None;
