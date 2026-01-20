@@ -160,17 +160,20 @@ impl Display for Command {
             Command::FormatPrompt(args) => {
                 write!(f, "format-prompt --provider={}", args.provider)
             }
-            Command::Predict(args) => {
-                write!(f, "predict --provider={}", args.provider)
-            }
+            Command::Predict(args) => match &args.provider {
+                Some(provider) => write!(f, "predict --provider={}", provider),
+                None => write!(f, "predict"),
+            },
             Command::ParseOutput => write!(f, "parse-output"),
-            Command::Score(args) => {
-                write!(f, "score --provider={}", args.provider)
-            }
+            Command::Score(args) => match &args.provider {
+                Some(provider) => write!(f, "score --provider={}", provider),
+                None => write!(f, "score"),
+            },
             Command::Distill => write!(f, "distill"),
-            Command::Eval(args) => {
-                write!(f, "eval --provider={}", args.provider)
-            }
+            Command::Eval(args) => match &args.provider {
+                Some(provider) => write!(f, "eval --provider={}", provider),
+                None => write!(f, "eval"),
+            },
             Command::Synthesize(args) => {
                 write!(f, "synthesize --repos {}", args.repos.join(" "))
             }
@@ -189,8 +192,8 @@ struct FormatPromptArgs {
 
 #[derive(Debug, Args, Clone)]
 struct PredictArgs {
-    #[clap(long, short('p'), default_value_t = PredictionProvider::default())]
-    provider: PredictionProvider,
+    #[clap(long, short('p'))]
+    provider: Option<PredictionProvider>,
     #[clap(long, default_value_t = 1)]
     repetitions: usize,
 }
@@ -519,7 +522,7 @@ fn main() {
 
                 match &command {
                     Command::Predict(args) | Command::Score(args) | Command::Eval(args) => {
-                        predict::sync_batches(&args.provider).await?;
+                        predict::sync_batches(args.provider.as_ref()).await?;
                     }
                     _ => (),
                 }
@@ -698,7 +701,7 @@ fn main() {
 
                 match &command {
                     Command::Predict(args) | Command::Score(args) | Command::Eval(args) => {
-                        predict::sync_batches(&args.provider).await?;
+                        predict::sync_batches(args.provider.as_ref()).await?;
                     }
                     _ => (),
                 }
