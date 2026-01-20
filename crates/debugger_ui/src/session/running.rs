@@ -1538,19 +1538,17 @@ impl RunningState {
     ) {
         self.ensure_pane_item(item, window, cx);
 
-        let Some((variable_list_position, pane)) =
-            self.panes.panes().into_iter().find_map(|pane| {
-                pane.read(cx)
-                    .items_of_type::<SubView>()
-                    .position(|view| view.read(cx).view_kind() == item)
-                    .map(|view| (view, pane))
-            })
-        else {
+        let Some((item_position, pane)) = self.panes.panes().into_iter().find_map(|pane| {
+            pane.read(cx)
+                .items_of_type::<SubView>()
+                .position(|view| view.read(cx).view_kind() == item)
+                .map(|view| (view, pane))
+        }) else {
             return;
         };
 
         pane.update(cx, |this, cx| {
-            this.activate_item(variable_list_position, true, true, window, cx);
+            this.activate_item(item_position, true, true, window, cx);
         });
     }
 
