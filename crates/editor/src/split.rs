@@ -358,12 +358,13 @@ impl SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(secondary) = &self.secondary {
+        if let Some(secondary) = &mut self.secondary {
             if !secondary.has_latest_selection {
                 secondary.editor.read(cx).focus_handle(cx).focus(window, cx);
                 secondary.editor.update(cx, |editor, cx| {
                     editor.request_autoscroll(Autoscroll::fit(), cx);
                 });
+                secondary.has_latest_selection = true;
                 cx.notify();
             } else {
                 cx.propagate();
@@ -379,7 +380,7 @@ impl SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(secondary) = &self.secondary {
+        if let Some(secondary) = &mut self.secondary {
             if secondary.has_latest_selection {
                 self.primary_editor
                     .read(cx)
@@ -388,6 +389,7 @@ impl SplittableEditor {
                 self.primary_editor.update(cx, |editor, cx| {
                     editor.request_autoscroll(Autoscroll::fit(), cx);
                 });
+                secondary.has_latest_selection = false;
                 cx.notify();
             } else {
                 cx.propagate();

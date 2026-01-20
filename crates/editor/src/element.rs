@@ -9225,6 +9225,38 @@ impl Element for EditorElement {
                         }
                     };
 
+                    // When jumping from one side of a side-by-side diff to the
+                    // other, we autoscroll autoscroll to keep the target range in view.
+                    // 
+                    // If our scroll companion has a pending autoscroll request, process it
+                    // first so that both editors render with synchronized scroll positions.
+                    // This is important for split diff views where one editor may prepaint
+                    // before the other.
+                    if let Some(companion) = self
+                        .editor
+                        .read(cx)
+                        .scroll_companion()
+                        .and_then(|c| c.upgrade())
+                    {
+                        if companion.read(cx).scroll_manager.has_autoscroll_request() {
+                            companion.update(cx, |companion_editor, cx| {
+                                let companion_autoscroll_request =
+                                    companion_editor.scroll_manager.take_autoscroll_request();
+                                companion_editor.autoscroll_vertically(
+                                    bounds,
+                                    line_height,
+                                    max_scroll_top,
+                                    companion_autoscroll_request,
+                                    window,
+                                    cx,
+                                );
+                            });
+                            snapshot = self.editor.update(cx, |editor, cx| {
+                                editor.snapshot(window, cx)
+                            });
+                        }
+                    }
+
                     let (
                         autoscroll_request,
                         autoscroll_containing_element,

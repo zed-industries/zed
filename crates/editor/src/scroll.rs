@@ -353,6 +353,10 @@ impl ScrollManager {
         self.show_scrollbars
     }
 
+    pub fn has_autoscroll_request(&self) -> bool {
+        self.autoscroll_request.is_some()
+    }
+
     pub fn take_autoscroll_request(&mut self) -> Option<(Autoscroll, bool)> {
         self.autoscroll_request.take()
     }
