@@ -27,63 +27,70 @@ From this point on, you can interact with the many supported features outlined b
 
 By default, the Agent Panel uses Zed's first-party agent.
 
-To change that, go to the plus button in the top-right of the Agent Panel and choose another option.
-You can choose to create a new [Text Thread](./text-threads.md) or, if you have [external agents](./external-agents.md) connected, you can create new threads with them.
+To choose another agent, go to the plus button in the top-right of the Agent Panel and pick either one of the [external agents](./external-agents.md) installed out of the box or a new [Text Thread](./text-threads.md).
 
 ### Editing Messages {#editing-messages}
 
-Any message that you send to the AI is editable.
+Any message that you send to the model is editable.
 You can click on the card that contains your message and re-submit it with an adjusted prompt and/or new pieces of context.
+
+### Queueing Messages
+
+If you want to queue a message while the agent is going through a generation, you can do so through the `cmd/ctrl-shift-enter` keybinding.
+A queued up message gets sent as soon as the current generation wraps up.
 
 ### Checkpoints {#checkpoints}
 
-Every time the AI performs an edit, you should see a "Restore Checkpoint" button at the top of your message, allowing you to return your code base to the state it was in prior to that message.
+Every time the model performs an edit, you should see a "Restore Checkpoint" button at the top of your message, allowing you to return your code base to the state it was in prior to that message.
 
-The checkpoint button appears even if you interrupt the thread midway through an edit attempt, as this is likely a moment when you've identified that the agent is not heading in the right direction and you want to revert back.
+The checkpoint button appears even if you interrupt the thread midway through an edit, as this is likely a moment when you've identified that the agent is not heading in the right direction and you want to revert back.
 
 ### Navigating History {#navigating-history}
 
-To quickly navigate through recently updated threads, use the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the menu icon button at the top right of the panel to open the dropdown that shows you the six most recently updated threads.
+To quickly navigate through recently updated threads, use the {#kb agent::ToggleNavigationMenu} binding when focused on the panel's editor, or click the menu icon button at the top right of the panel.
+Doing that will open a dropdown that shows you your six most recently updated threads.
 
 To view all historical conversations, reach for the `View All` option from within the same menu or via the {#kb agent::OpenHistory} binding.
 
 ### Following the Agent {#following-the-agent}
 
-Zed is built with collaboration natively integrated, and this design pattern extends to collaboration with AI. To follow the agent as it reads and edits in your codebase, click on the "crosshair" icon button at the bottom left of the panel.
+Zed is built with collaboration natively integrated, and this naturally extends to collaboration with AI models.
+To follow the agent as it reads and edits in your codebase, click on the "crosshair" icon button at the bottom left of the panel.
 
-You can also do that with the keyboard by pressing the `cmd`/`ctrl` modifier with `enter` when submitting a message.
+You can also do that with the keyboard by holding down the `cmd`/`ctrl` modifier when submitting a message.
 
 ### Get Notified {#get-notified}
 
-If you send a prompt to the Agent and then move elsewhere, putting Zed in the background, you can be notified when its response is finished via:
+If you send a prompt to the Agent and then put Zed in the background, you can choose to be notified when its generation wraps up via:
 
 - a visual notification that appears in the top right of your screen
 - a sound notification
 
-These notifications can be used together or individually, according to your preference.
-
-You can customize their behavior, including turning them off entirely, by using the `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings keys.
+These notifications can be used together or individually, and you can use the `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings keys to customize that, including turning both off entirely.
 
 ### Reviewing Changes {#reviewing-changes}
 
-Once the agent has made changes to your project, the panel will surface which files, and how many of them, have been edited.
+Once the agent has made changes to your project, the panel will surface which files, how many of them, and how many lines have been edited.
 
-To see which files specifically have been edited, expand the accordion bar that shows up right above the message editor or click the `Review Changes` button ({#kb agent::OpenAgentDiff}), which opens a multi-buffer tab with all changes.
+To see which files specifically have been edited, expand the accordion bar that shows up right above the message editor or click the `Review Changes` button ({#kb agent::OpenAgentDiff}), which opens a special multi-buffer tab with all changes.
 
-You're able to reject or accept each individual change hunk, or the whole set of changes made by the agent.
+You can accept or reject each individual change hunk, or the whole set of changes made by the agent.
 
-Edit diffs also appear in individual buffers. If your active tab had edits made by the AI, you'll see diffs with the same accept/reject controls as in the multi-buffer.
+Edit diffs also appear in singleton buffers.
+If your active tab had edits made by the AI, you'll see diffs with the same accept/reject controls as in the multi-buffer.
+You can turn this off, though, through the `agent.single_file_review` setting.
 
 ## Adding Context {#adding-context}
 
-Although Zed's agent is very efficient at reading through your code base to autonomously pick up relevant context, manually adding whatever would be useful to fulfill your prompt is still very encouraged as a way to not only improve the AI's response quality but also to speed up its response time.
+Although Zed's agent is very efficient at reading through your code base to autonomously pick up relevant context, manually adding whatever would be useful to fulfill your prompt is still encouraged as a way to not only improve the AI's response quality but also to speed up its response time.
 
 In Zed's Agent Panel, all pieces of context are added as mentions in the panel's message editor.
 You can type `@` to mention files, directories, symbols, previous threads, and rules files.
 
 Copying images and pasting them in the panel's message editor is also supported.
 
-When you paste multi-line code selections copied from an editor buffer, Zed automatically formats them as @mentions with the file context. To paste content without this automatic formatting, use {#kb agent::PasteRaw} to paste raw text directly.
+When you paste multi-line code selections copied from a buffer, Zed automatically formats them as @-mentions with the file context.
+To paste content without this automatic formatting, use {#kb agent::PasteRaw} to paste raw text directly.
 
 ### Selection as Context
 
@@ -91,19 +98,23 @@ Additionally, you can also select text in a buffer and add it as context by usin
 
 ## Token Usage {#token-usage}
 
-Zed surfaces how many tokens you are consuming for your currently active thread near the profile selector in the panel's message editor. Depending on how many pieces of context you add, your token consumption can grow rapidly.
+Zed surfaces how many tokens you are consuming for your currently active thread near the profile selector in the panel's message editor.
 
-Once you approach the model's context window, a banner appears below the message editor suggesting to start a new thread with the current one summarized and added as context.
-You can also do this at any time with an ongoing thread via the "Agent Options" menu on the top right.
+Once you approach the model's context window, a banner appears above the message editor suggesting to start a new thread with the current one summarized and added as context.
+You can also do this at any time with an ongoing thread via the "Agent Options" menu on the top right, where you'll see a "New from Summary" button, as well as simply @-mentioning a past thread in a new one..
 
 ## Changing Models {#changing-models}
 
-After you've configured your LLM providers—either via [a custom API key](./llm-providers.md) or through [Zed's hosted models](./models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
-
-If you have favorited models configured, you can cycle through them with {#kb agent::CycleFavoriteModels} without opening the model selector.
+After you've configured your LLM providers—either via [a custom API key](./llm-providers.md) or through [Zed's hosted models](./models.md)—you can switch between their models by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
 
 > The same model can be offered via multiple providers - for example, Claude Sonnet 4 is available via Zed Pro, OpenRouter, Anthropic directly, and more.
 > Make sure you've selected the correct model **_provider_** for the model you'd like to use, delineated by the logo to the left of the model in the model selector.
+
+### Favoriting Models
+
+You can mark specific models as favorites either through the model selector, by clicking on the star icon button that appears as you hover the model, or through your settings via the `agent.favorite_models` settings key.
+
+The great thing about favoriting models is that you can cycle through them with {#kb agent::CycleFavoriteModels} without opening the model selector, enabling quick experimentation with the models you're already most comfortable with.
 
 ## Using Tools {#using-tools}
 
