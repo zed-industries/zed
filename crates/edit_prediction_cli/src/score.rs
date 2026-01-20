@@ -4,7 +4,7 @@ use crate::{
     headless::EpAppState,
     metrics,
     predict::run_prediction,
-    progress::{Progress, Step},
+    progress::{ExampleProgress, Step},
 };
 use anyhow::Context as _;
 use edit_prediction::udiff::apply_diff_to_string;
@@ -15,20 +15,15 @@ pub async fn run_scoring(
     example: &mut Example,
     args: &PredictArgs,
     app_state: Arc<EpAppState>,
+    example_progress: &ExampleProgress,
     cx: AsyncApp,
 ) -> anyhow::Result<()> {
-    run_prediction(
-        example,
-        Some(args.provider),
-        args.repetitions,
-        app_state,
-        cx,
-    )
-    .await?;
+    run_prediction(example, args, app_state, example_progress, cx).await?;
 
-    let _progress = Progress::global().start(Step::Score, &example.spec.name);
+    let progress = example_progress.start(Step::Score);
 
-    let original_text = &example.buffer.as_ref().unwrap().content;
+    progress.set_substatus("applying patches");
+    let original_text = &example.prompt_inputs.as_ref().unwrap().content;
     let expected_texts: Vec<String> = example
         .spec
         .expected_patches
@@ -39,6 +34,7 @@ pub async fn run_scoring(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
+    progress.set_substatus("computing metrics");
     let mut scores = vec![];
     for prediction in &example.predictions {
         let actual_text = match apply_diff_to_string(&prediction.actual_patch, original_text) {

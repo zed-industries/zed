@@ -1,8 +1,14 @@
-use crate::{Copilot, CopilotEditPrediction};
+use crate::{
+    CompletionSource, Copilot, CopilotEditPrediction,
+    request::{
+        DidShowCompletion, DidShowCompletionParams, DidShowInlineEdit, DidShowInlineEditParams,
+        InlineCompletionItem,
+    },
+};
 use anyhow::Result;
 use edit_prediction_types::{EditPrediction, EditPredictionDelegate, interpolate_edits};
 use gpui::{App, Context, Entity, Task};
-use language::{Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt};
+use language::{Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToPointUtf16};
 use std::{ops::Range, sync::Arc, time::Duration};
 
 pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
@@ -75,14 +81,12 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
             let completions = copilot
                 .update(cx, |copilot, cx| {
                     copilot.completions(&buffer, cursor_position, cx)
-                })?
+                })
                 .await?;
 
             if let Some(mut completion) = completions.into_iter().next()
-                && let Some((trimmed_range, trimmed_text, snapshot)) = cx
-                    .update(|cx| trim_completion(&completion, cx))
-                    .ok()
-                    .flatten()
+                && let Some((trimmed_range, trimmed_text, snapshot)) =
+                    cx.update(|cx| trim_completion(&completion, cx))
             {
                 let preview = buffer
                     .update(cx, |this, cx| {
@@ -90,7 +94,7 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
                             Arc::from([(trimmed_range.clone(), trimmed_text.clone())].as_slice()),
                             cx,
                         )
-                    })?
+                    })
                     .await;
                 this.update(cx, |this, cx| {
                     this.pending_refresh = None;
@@ -139,7 +143,37 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         )];
         let edits = interpolate_edits(&completion.snapshot, &buffer.snapshot(), &edits)
             .filter(|edits| !edits.is_empty())?;
-
+        self.copilot.update(cx, |this, _| {
+            if let Ok(server) = this.server.as_authenticated() {
+                match completion.source {
+                    CompletionSource::NextEditSuggestion => {
+                        if let Some(cmd) = completion.command.as_ref() {
+                            _ = server
+                                .lsp
+                                .notify::<DidShowInlineEdit>(DidShowInlineEditParams {
+                                    item: serde_json::json!({"command": {"arguments": cmd.arguments}}),
+                                });
+                        }
+                    }
+                    CompletionSource::InlineCompletion => {
+                        _ = server.lsp.notify::<DidShowCompletion>(DidShowCompletionParams {
+                            item: InlineCompletionItem {
+                                insert_text: completion.text.clone(),
+                                range: lsp::Range::new(
+                                    language::point_to_lsp(
+                                        completion.range.start.to_point_utf16(&completion.snapshot),
+                                    ),
+                                    language::point_to_lsp(
+                                        completion.range.end.to_point_utf16(&completion.snapshot),
+                                    ),
+                                ),
+                                command: completion.command.clone(),
+                            },
+                        });
+                    }
+                }
+            }
+        });
         Some(EditPrediction::Local {
             id: None,
             edits,

@@ -1,5 +1,5 @@
 use acp_thread::{MentionUri, selection_name};
-use agent::{HistoryStore, outline};
+use agent::{ThreadStore, outline};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
@@ -60,7 +60,7 @@ pub struct MentionImage {
 
 pub struct MentionSet {
     project: WeakEntity<Project>,
-    history_store: Entity<HistoryStore>,
+    thread_store: Option<Entity<ThreadStore>>,
     prompt_store: Option<Entity<PromptStore>>,
     mentions: HashMap<CreaseId, (MentionUri, MentionTask)>,
 }
@@ -68,12 +68,12 @@ pub struct MentionSet {
 impl MentionSet {
     pub fn new(
         project: WeakEntity<Project>,
-        history_store: Entity<HistoryStore>,
+        thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
     ) -> Self {
         Self {
             project,
-            history_store,
+            thread_store,
             prompt_store,
             mentions: HashMap::default(),
         }
@@ -94,7 +94,7 @@ impl MentionSet {
                 let content = if full_mention_content
                     && let MentionUri::Directory { abs_path } = &mention_uri
                 {
-                    cx.update(|cx| full_mention_for_directory(&project, abs_path, cx))?
+                    cx.update(|cx| full_mention_for_directory(&project, abs_path, cx))
                         .await?
                 } else {
                     task.await.map_err(|e| anyhow!("{e}"))?
@@ -136,6 +136,11 @@ impl MentionSet {
 
     pub fn clear(&mut self) -> impl Iterator<Item = (CreaseId, (MentionUri, MentionTask))> {
         self.mentions.drain()
+    }
+
+    #[cfg(test)]
+    pub fn has_thread_store(&self) -> bool {
+        self.thread_store.is_some()
     }
 
     pub fn confirm_mention_completion(
@@ -180,9 +185,7 @@ impl MentionSet {
             let image = cx
                 .spawn(async move |_, cx| {
                     let image = image_task.await.map_err(|e| e.to_string())?;
-                    let image = image
-                        .update(cx, |image, _| image.image.clone())
-                        .map_err(|e| e.to_string())?;
+                    let image = image.update(cx, |image, _| image.image.clone());
                     Ok(image)
                 })
                 .shared();
@@ -220,7 +223,9 @@ impl MentionSet {
             }
             MentionUri::Directory { .. } => Task::ready(Ok(Mention::Link)),
             MentionUri::Thread { id, .. } => self.confirm_mention_for_thread(id, cx),
-            MentionUri::TextThread { path, .. } => self.confirm_mention_for_text_thread(path, cx),
+            MentionUri::TextThread { .. } => {
+                Task::ready(Err(anyhow!("Text thread mentions are no longer supported")))
+            }
             MentionUri::File { abs_path } => {
                 self.confirm_mention_for_file(abs_path, supports_images, cx)
             }
@@ -295,15 +300,14 @@ impl MentionSet {
             let task = project.update(cx, |project, cx| project.open_image(project_path, cx));
             return cx.spawn(async move |_, cx| {
                 let image = task.await?;
-                let image = image.update(cx, |image, _| image.image.clone())?;
-                let format = image.format;
+                let image = image.update(cx, |image, _| image.image.clone());
                 let image = cx
-                    .update(|cx| LanguageModelImage::from_image(image, cx))?
+                    .update(|cx| LanguageModelImage::from_image(image, cx))
                     .await;
                 if let Some(image) = image {
                     Ok(Mention::Image(MentionImage {
                         data: image.source,
-                        format,
+                        format: LanguageModelImage::FORMAT,
                     }))
                 } else {
                     Err(anyhow!("Failed to convert image"))
@@ -369,8 +373,8 @@ impl MentionSet {
                     content,
                     tracked_buffers: vec![cx.entity()],
                 }
-            })?;
-            anyhow::Ok(mention)
+            });
+            Ok(mention)
         })
     }
 
@@ -477,13 +481,18 @@ impl MentionSet {
         id: acp::SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
+        let Some(thread_store) = self.thread_store.clone() else {
+            return Task::ready(Err(anyhow!(
+                "Thread mentions are only supported for the native agent"
+            )));
+        };
         let Some(project) = self.project.upgrade() else {
             return Task::ready(Err(anyhow!("project not found")));
         };
 
         let server = Rc::new(agent::NativeAgentServer::new(
             project.read(cx).fs().clone(),
-            self.history_store.clone(),
+            thread_store,
         ));
         let delegate = AgentServerDelegate::new(
             project.read(cx).agent_server_store().clone(),
@@ -497,28 +506,10 @@ impl MentionSet {
             let agent = agent.downcast::<agent::NativeAgentConnection>().unwrap();
             let summary = agent
                 .0
-                .update(cx, |agent, cx| agent.thread_summary(id, cx))?
+                .update(cx, |agent, cx| agent.thread_summary(id, cx))
                 .await?;
-            anyhow::Ok(Mention::Text {
-                content: summary.to_string(),
-                tracked_buffers: Vec::new(),
-            })
-        })
-    }
-
-    fn confirm_mention_for_text_thread(
-        &mut self,
-        path: PathBuf,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Mention>> {
-        let text_thread_task = self.history_store.update(cx, |store, cx| {
-            store.load_text_thread(path.as_path().into(), cx)
-        });
-        cx.spawn(async move |_, cx| {
-            let text_thread = text_thread_task.await?;
-            let xml = text_thread.update(cx, |text_thread, cx| text_thread.to_xml(cx))?;
             Ok(Mention::Text {
-                content: xml,
+                content: summary.to_string(),
                 tracked_buffers: Vec::new(),
             })
         })
@@ -546,6 +537,56 @@ impl MentionSet {
                 tracked_buffers: Vec::new(),
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use project::Project;
+    use prompt_store;
+    use release_channel;
+    use semver::Version;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::Path;
+    use theme;
+    use util::path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        let settings_store = cx.update(SettingsStore::test);
+        cx.set_global(settings_store);
+        cx.update(|cx| {
+            theme::init(theme::LoadThemes::JustBase, cx);
+            release_channel::init(Version::new(0, 0, 0), cx);
+            prompt_store::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_thread_mentions_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file": ""})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let thread_store = None;
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), thread_store, None));
+
+        let task = mention_set.update(cx, |mention_set, cx| {
+            mention_set.confirm_mention_for_thread(acp::SessionId::new("thread-1"), cx)
+        });
+
+        let error = task.await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Thread mentions are only supported for the native agent"),
+            "Unexpected error: {error:#}"
+        );
     }
 }
 
@@ -608,8 +649,8 @@ pub(crate) fn paste_images_as_context(
         })
         .ok();
         for image in images {
-            let Ok((excerpt_id, text_anchor, multibuffer_anchor)) =
-                editor.update_in(cx, |message_editor, window, cx| {
+            let Some((excerpt_id, text_anchor, multibuffer_anchor)) = editor
+                .update_in(cx, |message_editor, window, cx| {
                     let snapshot = message_editor.snapshot(window, cx);
                     let (excerpt_id, _, buffer_snapshot) =
                         snapshot.buffer_snapshot().as_singleton().unwrap();
@@ -627,6 +668,7 @@ pub(crate) fn paste_images_as_context(
                     );
                     (*excerpt_id, text_anchor, multibuffer_anchor)
                 })
+                .ok()
             else {
                 break;
             };
@@ -635,12 +677,10 @@ pub(crate) fn paste_images_as_context(
             let Some(start_anchor) = multibuffer_anchor else {
                 continue;
             };
-            let Ok(end_anchor) = editor.update(cx, |editor, cx| {
+            let end_anchor = editor.update(cx, |editor, cx| {
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
-            }) else {
-                continue;
-            };
+            });
             let image = Arc::new(image);
             let Ok(Some((crease_id, tx))) = cx.update(|window, cx| {
                 insert_crease_for_mention(
@@ -659,7 +699,6 @@ pub(crate) fn paste_images_as_context(
             };
             let task = cx
                 .spawn(async move |cx| {
-                    let format = image.format;
                     let image = cx
                         .update(|_, cx| LanguageModelImage::from_image(image, cx))
                         .map_err(|e| e.to_string())?
@@ -668,7 +707,7 @@ pub(crate) fn paste_images_as_context(
                     if let Some(image) = image {
                         Ok(Mention::Image(MentionImage {
                             data: image.source,
-                            format,
+                            format: LanguageModelImage::FORMAT,
                         }))
                     } else {
                         Err("Failed to convert image".into())
@@ -676,23 +715,17 @@ pub(crate) fn paste_images_as_context(
                 })
                 .shared();
 
-            mention_set
-                .update(cx, |mention_set, _cx| {
-                    mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
-                })
-                .ok();
+            mention_set.update(cx, |mention_set, _cx| {
+                mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
+            });
 
             if task.await.notify_async_err(cx).is_none() {
-                editor
-                    .update(cx, |editor, cx| {
-                        editor.edit([(start_anchor..end_anchor, "")], cx);
-                    })
-                    .ok();
-                mention_set
-                    .update(cx, |mention_set, _cx| {
-                        mention_set.remove_mention(&crease_id)
-                    })
-                    .ok();
+                editor.update(cx, |editor, cx| {
+                    editor.edit([(start_anchor..end_anchor, "")], cx);
+                });
+                mention_set.update(cx, |mention_set, _cx| {
+                    mention_set.remove_mention(&crease_id)
+                });
             }
         }
     }))
@@ -850,42 +883,44 @@ fn full_mention_for_directory(
     cx.spawn(async move |cx| {
         let file_paths = worktree.read_with(cx, |worktree, _cx| {
             collect_files_in_path(worktree, &directory_path)
-        })?;
+        });
         let descendants_future = cx.update(|cx| {
-            futures::future::join_all(file_paths.into_iter().map(|(worktree_path, full_path)| {
-                let rel_path = worktree_path
-                    .strip_prefix(&directory_path)
-                    .log_err()
-                    .map_or_else(|| worktree_path.clone(), |rel_path| rel_path.into());
+            futures::future::join_all(file_paths.into_iter().map(
+                |(worktree_path, full_path): (Arc<RelPath>, String)| {
+                    let rel_path = worktree_path
+                        .strip_prefix(&directory_path)
+                        .log_err()
+                        .map_or_else(|| worktree_path.clone(), |rel_path| rel_path.into());
 
-                let open_task = project.update(cx, |project, cx| {
-                    project.buffer_store().update(cx, |buffer_store, cx| {
-                        let project_path = ProjectPath {
-                            worktree_id,
-                            path: worktree_path,
-                        };
-                        buffer_store.open_buffer(project_path, cx)
+                    let open_task = project.update(cx, |project, cx| {
+                        project.buffer_store().update(cx, |buffer_store, cx| {
+                            let project_path = ProjectPath {
+                                worktree_id,
+                                path: worktree_path,
+                            };
+                            buffer_store.open_buffer(project_path, cx)
+                        })
+                    });
+
+                    cx.spawn(async move |cx| {
+                        let buffer = open_task.await.log_err()?;
+                        let buffer_content = outline::get_buffer_content_or_outline(
+                            buffer.clone(),
+                            Some(&full_path),
+                            &cx,
+                        )
+                        .await
+                        .ok()?;
+
+                        Some((rel_path, full_path, buffer_content.text, buffer))
                     })
-                });
-
-                cx.spawn(async move |cx| {
-                    let buffer = open_task.await.log_err()?;
-                    let buffer_content = outline::get_buffer_content_or_outline(
-                        buffer.clone(),
-                        Some(&full_path),
-                        &cx,
-                    )
-                    .await
-                    .ok()?;
-
-                    Some((rel_path, full_path, buffer_content.text, buffer))
-                })
-            }))
-        })?;
+                },
+            ))
+        });
 
         let contents = cx
             .background_spawn(async move {
-                let (contents, tracked_buffers) = descendants_future
+                let (contents, tracked_buffers): (Vec<_>, Vec<_>) = descendants_future
                     .await
                     .into_iter()
                     .flatten()

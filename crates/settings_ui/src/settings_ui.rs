@@ -15,7 +15,9 @@ use project::{Project, WorktreeId};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{Settings, SettingsContent, SettingsStore, initial_project_settings_content};
+use settings::{
+    IntoGpui, Settings, SettingsContent, SettingsStore, initial_project_settings_content,
+};
 use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
@@ -30,7 +32,8 @@ use theme::ThemeSettings;
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
     Banner, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
-    KeybindingHint, PopoverMenu, Switch, Tooltip, TreeViewItem, WithScrollbar, prelude::*,
+    KeybindingHint, PopoverMenu, Scrollbars, Switch, Tooltip, TreeViewItem, WithScrollbar,
+    prelude::*,
 };
 use ui_input::{NumberField, NumberFieldMode, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
@@ -493,6 +496,9 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DisplayIn>(render_dropdown)
         .add_basic_renderer::<settings::MinimapThumb>(render_dropdown)
         .add_basic_renderer::<settings::MinimapThumbBorder>(render_dropdown)
+        .add_basic_renderer::<settings::ModeContent>(render_dropdown)
+        .add_basic_renderer::<settings::UseSystemClipboard>(render_dropdown)
+        .add_basic_renderer::<settings::VimInsertModeCursorShape>(render_dropdown)
         .add_basic_renderer::<settings::SteppingGranularity>(render_dropdown)
         .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
         .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
@@ -653,18 +659,18 @@ pub fn open_settings_editor(
 ///
 /// Global so that `pick` and `write` callbacks can access it
 /// and use it to dynamically render sub pages (e.g. for language settings)
-static SUB_PAGE_STACK: LazyLock<RwLock<Vec<SubPage>>> = LazyLock::new(|| RwLock::new(Vec::new()));
+static ACTIVE_LANGUAGE: LazyLock<RwLock<Option<SharedString>>> =
+    LazyLock::new(|| RwLock::new(Option::None));
 
-fn sub_page_stack() -> std::sync::RwLockReadGuard<'static, Vec<SubPage>> {
-    SUB_PAGE_STACK
+fn active_language() -> Option<SharedString> {
+    ACTIVE_LANGUAGE
         .read()
-        .expect("SUB_PAGE_STACK is never poisoned")
+        .ok()
+        .and_then(|language| language.clone())
 }
 
-fn sub_page_stack_mut() -> std::sync::RwLockWriteGuard<'static, Vec<SubPage>> {
-    SUB_PAGE_STACK
-        .write()
-        .expect("SUB_PAGE_STACK is never poisoned")
+fn active_language_mut() -> Option<std::sync::RwLockWriteGuard<'static, Option<SharedString>>> {
+    ACTIVE_LANGUAGE.write().ok()
 }
 
 pub struct SettingsWindow {
@@ -674,6 +680,7 @@ pub struct SettingsWindow {
     worktree_root_dirs: HashMap<WorktreeId, String>,
     current_file: SettingsUiFile,
     pages: Vec<SettingsPage>,
+    sub_page_stack: Vec<SubPage>,
     search_bar: Entity<Editor>,
     search_task: Option<Task<()>>,
     /// Index into navbar_entries
@@ -687,7 +694,6 @@ pub struct SettingsWindow {
     filter_table: Vec<Vec<bool>>,
     has_query: bool,
     content_handles: Vec<Vec<Entity<NonFocusableHandle>>>,
-    sub_page_scroll_handle: ScrollHandle,
     focus_handle: FocusHandle,
     navbar_focus_handle: Entity<NonFocusableHandle>,
     content_focus_handle: Entity<NonFocusableHandle>,
@@ -712,7 +718,37 @@ struct SearchKeyLUTEntry {
 
 struct SubPage {
     link: SubPageLink,
-    section_header: &'static str,
+    section_header: SharedString,
+    scroll_handle: ScrollHandle,
+}
+
+impl SubPage {
+    fn new(link: SubPageLink, section_header: SharedString) -> Self {
+        if link.r#type == SubPageType::Language
+            && let Some(mut active_language_global) = active_language_mut()
+        {
+            active_language_global.replace(link.title.clone());
+        }
+
+        SubPage {
+            link,
+            section_header,
+            scroll_handle: ScrollHandle::new(),
+        }
+    }
+}
+
+impl Drop for SubPage {
+    fn drop(&mut self) {
+        if self.link.r#type == SubPageType::Language
+            && let Some(mut active_language_global) = active_language_mut()
+            && active_language_global
+                .as_ref()
+                .is_some_and(|language_name| language_name == &self.link.title)
+        {
+            active_language_global.take();
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -727,7 +763,7 @@ struct NavBarEntry {
 
 struct SettingsPage {
     title: &'static str,
-    items: Vec<SettingsPageItem>,
+    items: Box<[SettingsPageItem]>,
 }
 
 #[derive(PartialEq)]
@@ -760,6 +796,13 @@ impl std::fmt::Debug for SettingsPageItem {
 }
 
 impl SettingsPageItem {
+    fn header_text(&self) -> Option<&'static str> {
+        match self {
+            SettingsPageItem::SectionHeader(header) => Some(header),
+            _ => None,
+        }
+    }
+
     fn render(
         &self,
         settings_window: &SettingsWindow,
@@ -896,19 +939,22 @@ impl SettingsPageItem {
                             .on_click({
                                 let sub_page_link = sub_page_link.clone();
                                 cx.listener(move |this, _, window, cx| {
-                                    let mut section_index = item_index;
-                                    let current_page = this.current_page();
+                                    let header_text = this
+                                        .sub_page_stack
+                                        .last()
+                                        .map(|sub_page| sub_page.link.title.clone())
+                                        .or_else(|| {
+                                            this.current_page()
+                                                .items
+                                                .iter()
+                                                .take(item_index)
+                                                .rev()
+                                                .find_map(|item| {
+                                                    item.header_text().map(SharedString::new_static)
+                                                })
+                                        });
 
-                                    while !matches!(
-                                        current_page.items[section_index],
-                                        SettingsPageItem::SectionHeader(_)
-                                    ) {
-                                        section_index -= 1;
-                                    }
-
-                                    let SettingsPageItem::SectionHeader(header) =
-                                        current_page.items[section_index]
-                                    else {
+                                    let Some(header) = header_text else {
                                         unreachable!(
                                             "All items always have a section header above them"
                                         )
@@ -941,7 +987,7 @@ impl SettingsPageItem {
                     render_setting_item_inner(discriminant_setting_item, true, false, cx);
 
                 let has_sub_fields =
-                    rendered_ok && discriminant.map(|d| !fields[d].is_empty()).unwrap_or(false);
+                    rendered_ok && discriminant.is_some_and(|d| !fields[d].is_empty());
 
                 let mut content = v_flex()
                     .id("dynamic-item")
@@ -1104,7 +1150,7 @@ fn render_settings_item(
                 ),
         )
         .child(control)
-        .when(sub_page_stack().is_empty(), |this| {
+        .when(settings_window.sub_page_stack.is_empty(), |this| {
             this.child(render_settings_item_link(
                 setting_item.description,
                 setting_item.field.json_path(),
@@ -1241,9 +1287,17 @@ impl PartialEq for SettingItem {
     }
 }
 
+#[derive(Clone, PartialEq, Default)]
+enum SubPageType {
+    Language,
+    #[default]
+    Other,
+}
+
 #[derive(Clone)]
 struct SubPageLink {
     title: SharedString,
+    r#type: SubPageType,
     description: Option<SharedString>,
     /// See [`SettingField.json_path`]
     json_path: Option<&'static str>,
@@ -1251,12 +1305,8 @@ struct SubPageLink {
     /// Removes the "Edit in settings.json" button from the page.
     in_json: bool,
     files: FileMask,
-    render: Arc<
-        dyn Fn(&mut SettingsWindow, &mut Window, &mut Context<SettingsWindow>) -> AnyElement
-            + 'static
-            + Send
-            + Sync,
-    >,
+    render:
+        fn(&SettingsWindow, &ScrollHandle, &mut Window, &mut Context<SettingsWindow>) -> AnyElement,
 }
 
 impl PartialEq for SubPageLink {
@@ -1518,6 +1568,7 @@ impl SettingsWindow {
 
             current_file: current_file,
             pages: vec![],
+            sub_page_stack: vec![],
             navbar_entries: vec![],
             navbar_entry: 0,
             navbar_scroll_handle: UniformListScrollHandle::default(),
@@ -1526,7 +1577,6 @@ impl SettingsWindow {
             filter_table: vec![],
             has_query: false,
             content_handles: vec![],
-            sub_page_scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             navbar_focus_handle: NonFocusableHandle::new(
                 NAVBAR_CONTAINER_TAB_INDEX,
@@ -1818,6 +1868,7 @@ impl SettingsWindow {
             );
 
             let fuzzy_matches = fuzzy_search_task.await;
+            let bm25_matches = bm25_task.await;
 
             _ = this
                 .update(cx, |this, cx| {
@@ -1842,37 +1893,18 @@ impl SettingsWindow {
                     //     let score = fuzzy_match.score;
                     //     eprint!("# {header} :: QUERY = {query} :: SCORE = {score}\n{title}\n{description}\n\n");
                     // }
-                    update_matches_inner(
-                        this,
-                        search_index.as_ref(),
-                        fuzzy_matches
-                            .into_iter()
-                            // MAGIC NUMBER: Was found to have right balance between not too many weird matches, but also
-                            // flexible enough to catch misspellings and <4 letter queries
-                            // More flexible is good for us here because fuzzy matches will only be used for things that don't
-                            // match using bm25
-                            .take_while(|fuzzy_match| fuzzy_match.score >= 0.3)
-                            .map(|fuzzy_match| fuzzy_match.candidate_id),
-                        cx,
-                    );
-                })
-                .ok();
+                    let fuzzy_indices = fuzzy_matches
+                        .into_iter()
+                        // MAGIC NUMBER: Was found to have right balance between not too many weird matches, but also
+                        // flexible enough to catch misspellings and <4 letter queries
+                        .take_while(|fuzzy_match| fuzzy_match.score >= 0.5)
+                        .map(|fuzzy_match| fuzzy_match.candidate_id);
+                    let bm25_indices = bm25_matches
+                        .into_iter()
+                        .map(|bm25_match| bm25_match.document.id);
+                    let merged_indices = bm25_indices.chain(fuzzy_indices);
 
-            let bm25_matches = bm25_task.await;
-
-            _ = this
-                .update(cx, |this, cx| {
-                    if bm25_matches.is_empty() {
-                        return;
-                    }
-                    update_matches_inner(
-                        this,
-                        search_index.as_ref(),
-                        bm25_matches
-                            .into_iter()
-                            .map(|bm25_match| bm25_match.document.id),
-                        cx,
-                    );
+                    update_matches_inner(this, search_index.as_ref(), merged_indices, cx);
                 })
                 .ok();
 
@@ -2015,7 +2047,7 @@ impl SettingsWindow {
             self.setup_navbar_focus_subscriptions(window, cx);
             self.build_content_handles(window, cx);
         }
-        sub_page_stack_mut().clear();
+        self.sub_page_stack.clear();
         // PERF: doesn't have to be rebuilt, can just be filled with true. pages is constant once it is built
         self.build_filter_table();
         self.reset_list_state();
@@ -2131,7 +2163,7 @@ impl SettingsWindow {
             self.reset_list_state();
         }
 
-        sub_page_stack_mut().clear();
+        self.sub_page_stack.clear();
     }
 
     fn open_first_nav_page(&mut self) {
@@ -2626,8 +2658,10 @@ impl SettingsWindow {
         if self.navbar_entries[navbar_entry_index].is_root
             || !self.is_nav_entry_visible(navbar_entry_index)
         {
-            self.sub_page_scroll_handle
-                .set_offset(point(px(0.), px(0.)));
+            if let Some(scroll_handle) = self.current_sub_page_scroll_handle() {
+                scroll_handle.set_offset(point(px(0.), px(0.)));
+            }
+
             if focus_content {
                 let Some(first_item_index) =
                     self.visible_page_items().next().map(|(index, _)| index)
@@ -2698,8 +2732,10 @@ impl SettingsWindow {
             .position(|(index, _)| index == content_item_index)
             .unwrap_or(0);
         if index == 0 {
-            self.sub_page_scroll_handle
-                .set_offset(point(px(0.), px(0.)));
+            if let Some(scroll_handle) = self.current_sub_page_scroll_handle() {
+                scroll_handle.set_offset(point(px(0.), px(0.)));
+            }
+
             self.list_state.scroll_to(gpui::ListOffset {
                 item_ix: 0,
                 offset_in_item: px(0.),
@@ -2747,6 +2783,10 @@ impl SettingsWindow {
         cx.notify();
     }
 
+    fn current_sub_page_scroll_handle(&self) -> Option<&ScrollHandle> {
+        self.sub_page_stack.last().map(|page| &page.scroll_handle)
+    }
+
     fn visible_page_items(&self) -> impl Iterator<Item = (usize, &SettingsPageItem)> {
         let page_idx = self.current_page_index();
 
@@ -2754,33 +2794,32 @@ impl SettingsWindow {
             .items
             .iter()
             .enumerate()
-            .filter_map(move |(item_index, item)| {
-                self.filter_table[page_idx][item_index].then_some((item_index, item))
-            })
+            .filter(move |&(item_index, _)| self.filter_table[page_idx][item_index])
     }
 
     fn render_sub_page_breadcrumbs(&self) -> impl IntoElement {
-        let mut items = vec![];
-        items.push(self.current_page().title.into());
-        items.extend(
-            sub_page_stack()
-                .iter()
-                .flat_map(|page| [page.section_header.into(), page.link.title.clone()]),
-        );
-
-        let last = items.pop().unwrap();
-        h_flex()
-            .gap_1()
-            .children(
-                items
-                    .into_iter()
-                    .flat_map(|item| [item, "/".into()])
-                    .map(|item| Label::new(item).color(Color::Muted)),
+        h_flex().gap_1().children(
+            itertools::intersperse(
+                std::iter::once(self.current_page().title.into()).chain(
+                    self.sub_page_stack
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(index, page)| {
+                            (index == 0)
+                                .then(|| page.section_header.clone())
+                                .into_iter()
+                                .chain(std::iter::once(page.link.title.clone()))
+                        }),
+                ),
+                "/".into(),
             )
-            .child(Label::new(last))
+            .map(|item| Label::new(item).color(Color::Muted)),
+        )
     }
 
-    fn render_empty_state(&self, search_query: SharedString) -> impl IntoElement {
+    fn render_no_results(&self, cx: &App) -> impl IntoElement {
+        let search_query = self.search_bar.read(cx).text(cx);
+
         v_flex()
             .size_full()
             .items_center()
@@ -2788,28 +2827,25 @@ impl SettingsWindow {
             .gap_1()
             .child(Label::new("No Results"))
             .child(
-                Label::new(search_query)
+                Label::new(format!("No settings match \"{}\"", search_query))
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
     }
 
-    fn render_page_items(
+    fn render_current_page_items(
         &mut self,
-        page_index: usize,
         _window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
+        let current_page_index = self.current_page_index();
         let mut page_content = v_flex().id("settings-ui-page").size_full();
 
         let has_active_search = !self.search_bar.read(cx).is_empty(cx);
         let has_no_results = self.visible_page_items().next().is_none() && has_active_search;
 
         if has_no_results {
-            let search_query = self.search_bar.read(cx).text(cx);
-            page_content = page_content.child(
-                self.render_empty_state(format!("No settings match \"{}\"", search_query).into()),
-            )
+            page_content = page_content.child(self.render_no_results(cx))
         } else {
             let last_non_header_index = self
                 .visible_page_items()
@@ -2830,7 +2866,7 @@ impl SettingsWindow {
                     if index == 0 {
                         return div()
                             .px_8()
-                            .when(sub_page_stack().is_empty(), |this| {
+                            .when(this.sub_page_stack.is_empty(), |this| {
                                 this.when_some(root_nav_label, |this, title| {
                                     this.child(
                                         Label::new(title).size(LabelSize::Large).mt_2().mb_3(),
@@ -2852,8 +2888,9 @@ impl SettingsWindow {
 
                     let is_last = Some(actual_item_index) == last_non_header_index;
 
-                    let item_focus_handle =
-                        this.content_handles[page_index][actual_item_index].focus_handle(cx);
+                    let item_focus_handle = this.content_handles[current_page_index]
+                        [actual_item_index]
+                        .focus_handle(cx);
 
                     v_flex()
                         .id(("settings-page-item", actual_item_index))
@@ -2879,7 +2916,7 @@ impl SettingsWindow {
     fn render_sub_page_items<'a, Items>(
         &self,
         items: Items,
-        page_index: Option<usize>,
+        scroll_handle: &ScrollHandle,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement
@@ -2890,14 +2927,13 @@ impl SettingsWindow {
             .id("settings-ui-page")
             .size_full()
             .overflow_y_scroll()
-            .track_scroll(&self.sub_page_scroll_handle);
-        self.render_sub_page_items_in(page_content, items, page_index, window, cx)
+            .track_scroll(scroll_handle);
+        self.render_sub_page_items_in(page_content, items, window, cx)
     }
 
     fn render_sub_page_items_section<'a, Items>(
         &self,
         items: Items,
-        page_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement
@@ -2905,14 +2941,13 @@ impl SettingsWindow {
         Items: Iterator<Item = (usize, &'a SettingsPageItem)>,
     {
         let page_content = v_flex().id("settings-ui-sub-page-section").size_full();
-        self.render_sub_page_items_in(page_content, items, page_index, window, cx)
+        self.render_sub_page_items_in(page_content, items, window, cx)
     }
 
     fn render_sub_page_items_in<'a, Items>(
         &self,
-        mut page_content: Stateful<Div>,
+        page_content: Stateful<Div>,
         items: Items,
-        page_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement
@@ -2921,16 +2956,12 @@ impl SettingsWindow {
     {
         let items: Vec<_> = items.collect();
         let items_len = items.len();
-        let mut section_header = None;
 
         let has_active_search = !self.search_bar.read(cx).is_empty(cx);
         let has_no_results = items_len == 0 && has_active_search;
 
         if has_no_results {
-            let search_query = self.search_bar.read(cx).text(cx);
-            page_content = page_content.child(
-                self.render_empty_state(format!("No settings match \"{}\"", search_query).into()),
-            )
+            page_content.child(self.render_no_results(cx))
         } else {
             let last_non_header_index = items
                 .iter()
@@ -2945,35 +2976,25 @@ impl SettingsWindow {
                 .find(|entry| entry.is_root && entry.page_index == self.current_page_index())
                 .map(|entry| entry.title);
 
-            page_content = page_content
-                .when(sub_page_stack().is_empty(), |this| {
+            page_content
+                .when(self.sub_page_stack.is_empty(), |this| {
                     this.when_some(root_nav_label, |this, title| {
                         this.child(Label::new(title).size(LabelSize::Large).mt_2().mb_3())
                     })
                 })
                 .children(items.clone().into_iter().enumerate().map(
                     |(index, (actual_item_index, item))| {
-                        let no_bottom_border = items
-                            .get(index + 1)
-                            .map(|(_, next_item)| {
+                        let no_bottom_border =
+                            items.get(index + 1).is_some_and(|(_, next_item)| {
                                 matches!(next_item, SettingsPageItem::SectionHeader(_))
-                            })
-                            .unwrap_or(false);
+                            });
+
                         let is_last = Some(index) == last_non_header_index;
 
-                        if let SettingsPageItem::SectionHeader(header) = item {
-                            section_header = Some(*header);
-                        }
                         v_flex()
                             .w_full()
                             .min_w_0()
                             .id(("settings-page-item", actual_item_index))
-                            .when_some(page_index, |element, page_index| {
-                                element.track_focus(
-                                    &self.content_handles[page_index][actual_item_index]
-                                        .focus_handle(cx),
-                                )
-                            })
                             .child(item.render(
                                 self,
                                 actual_item_index,
@@ -2984,7 +3005,6 @@ impl SettingsWindow {
                     },
                 ))
         }
-        page_content
     }
 
     fn render_page(
@@ -2995,13 +3015,7 @@ impl SettingsWindow {
         let page_header;
         let page_content;
 
-        if sub_page_stack().is_empty() {
-            page_header = self.render_files_header(window, cx).into_any_element();
-
-            page_content = self
-                .render_page_items(self.current_page_index(), window, cx)
-                .into_any_element();
-        } else {
+        if let Some(current_sub_page) = self.sub_page_stack.last() {
             page_header = h_flex()
                 .w_full()
                 .justify_between()
@@ -3019,31 +3033,35 @@ impl SettingsWindow {
                         )
                         .child(self.render_sub_page_breadcrumbs()),
                 )
-                .when(
-                    sub_page_stack()
-                        .last()
-                        .is_none_or(|sub_page| sub_page.link.in_json),
-                    |this| {
-                        this.child(
-                            Button::new("open-in-settings-file", "Edit in settings.json")
-                                .tab_index(0_isize)
-                                .style(ButtonStyle::OutlinedGhost)
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Edit in settings.json",
-                                    &OpenCurrentFile,
-                                    &self.focus_handle,
-                                ))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_current_settings_file(window, cx);
-                                })),
-                        )
-                    },
-                )
+                .when(current_sub_page.link.in_json, |this| {
+                    this.child(
+                        Button::new("open-in-settings-file", "Edit in settings.json")
+                            .tab_index(0_isize)
+                            .style(ButtonStyle::OutlinedGhost)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Edit in settings.json",
+                                &OpenCurrentFile,
+                                &self.focus_handle,
+                            ))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_current_settings_file(window, cx);
+                            })),
+                    )
+                })
                 .into_any_element();
 
-            let active_page_render_fn = sub_page_stack().last().unwrap().link.render.clone();
-            page_content = (active_page_render_fn)(self, window, cx);
+            let active_page_render_fn = &current_sub_page.link.render;
+            page_content =
+                (active_page_render_fn)(self, &current_sub_page.scroll_handle, window, cx);
+        } else {
+            page_header = self.render_files_header(window, cx).into_any_element();
+
+            page_content = self
+                .render_current_page_items(window, cx)
+                .into_any_element();
         }
+
+        let current_sub_page = self.sub_page_stack.last();
 
         let mut warning_banner = gpui::Empty.into_any_element();
         if let Some(error) =
@@ -3114,10 +3132,10 @@ impl SettingsWindow {
                 .into_any_element()
         }
 
-        return v_flex()
+        v_flex()
             .id("settings-ui-page")
             .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
-                if !sub_page_stack().is_empty() {
+                if !this.sub_page_stack.is_empty() {
                     window.focus_next(cx);
                     return;
                 }
@@ -3149,7 +3167,7 @@ impl SettingsWindow {
                 window.focus_next(cx);
             }))
             .on_action(cx.listener(|this, _: &menu::SelectPrevious, window, cx| {
-                if !sub_page_stack().is_empty() {
+                if !this.sub_page_stack.is_empty() {
                     window.focus_prev(cx);
                     return;
                 }
@@ -3181,11 +3199,17 @@ impl SettingsWindow {
                 }
                 window.focus_prev(cx);
             }))
-            .when(sub_page_stack().is_empty(), |this| {
+            .when(current_sub_page.is_none(), |this| {
                 this.vertical_scrollbar_for(&self.list_state, window, cx)
             })
-            .when(!sub_page_stack().is_empty(), |this| {
-                this.vertical_scrollbar_for(&self.sub_page_scroll_handle, window, cx)
+            .when_some(current_sub_page, |this, current_sub_page| {
+                this.custom_scrollbars(
+                    Scrollbars::new(ui::ScrollAxes::Vertical)
+                        .tracked_scroll_handle(&current_sub_page.scroll_handle)
+                        .id((current_sub_page.link.title.clone(), 42)),
+                    window,
+                    cx,
+                )
             })
             .track_focus(&self.content_focus_handle.focus_handle(cx))
             .pt_6()
@@ -3206,7 +3230,7 @@ impl SettingsWindow {
                     .tab_group()
                     .tab_index(CONTENT_GROUP_TAB_INDEX)
                     .child(page_content),
-            );
+            )
     }
 
     /// This function will create a new settings file if one doesn't exist
@@ -3221,28 +3245,45 @@ impl SettingsWindow {
                 original_window
                     .update(cx, |workspace, window, cx| {
                         workspace
-                            .with_local_workspace(window, cx, |workspace, window, cx| {
-                                let create_task = workspace.project().update(cx, |project, cx| {
-                                    project.find_or_create_worktree(
-                                        paths::config_dir().as_path(),
-                                        false,
-                                        cx,
-                                    )
-                                });
-                                let open_task = workspace.open_paths(
-                                    vec![paths::settings_file().to_path_buf()],
-                                    OpenOptions {
-                                        visible: Some(OpenVisible::None),
-                                        ..Default::default()
-                                    },
-                                    None,
-                                    window,
-                                    cx,
-                                );
+                            .with_local_or_wsl_workspace(window, cx, |workspace, window, cx| {
+                                let project = workspace.project().clone();
 
                                 cx.spawn_in(window, async move |workspace, cx| {
-                                    create_task.await.ok();
-                                    open_task.await;
+                                    let (config_dir, settings_file) =
+                                        project.update(cx, |project, cx| {
+                                            (
+                                                project.try_windows_path_to_wsl(
+                                                    paths::config_dir().as_path(),
+                                                    cx,
+                                                ),
+                                                project.try_windows_path_to_wsl(
+                                                    paths::settings_file().as_path(),
+                                                    cx,
+                                                ),
+                                            )
+                                        });
+                                    let config_dir = config_dir.await?;
+                                    let settings_file = settings_file.await?;
+                                    project
+                                        .update(cx, |project, cx| {
+                                            project.find_or_create_worktree(&config_dir, false, cx)
+                                        })
+                                        .await
+                                        .ok();
+                                    workspace
+                                        .update_in(cx, |workspace, window, cx| {
+                                            workspace.open_paths(
+                                                vec![settings_file],
+                                                OpenOptions {
+                                                    visible: Some(OpenVisible::None),
+                                                    ..Default::default()
+                                                },
+                                                None,
+                                                window,
+                                                cx,
+                                            )
+                                        })?
+                                        .await;
 
                                     workspace.update_in(cx, |_, window, cx| {
                                         window.activate_window();
@@ -3350,19 +3391,15 @@ impl SettingsWindow {
     }
 
     fn current_page_index(&self) -> usize {
-        self.page_index_from_navbar_index(self.navbar_entry)
-    }
-
-    fn current_page(&self) -> &SettingsPage {
-        &self.pages[self.current_page_index()]
-    }
-
-    fn page_index_from_navbar_index(&self, index: usize) -> usize {
         if self.navbar_entries.is_empty() {
             return 0;
         }
 
-        self.navbar_entries[index].page_index
+        self.navbar_entries[self.navbar_entry].page_index
+    }
+
+    fn current_page(&self) -> &SettingsPage {
+        &self.pages[self.current_page_index()]
     }
 
     fn is_navbar_entry_selected(&self, ix: usize) -> bool {
@@ -3372,22 +3409,18 @@ impl SettingsWindow {
     fn push_sub_page(
         &mut self,
         sub_page_link: SubPageLink,
-        section_header: &'static str,
+        section_header: SharedString,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) {
-        sub_page_stack_mut().push(SubPage {
-            link: sub_page_link,
-            section_header,
-        });
-        self.sub_page_scroll_handle
-            .set_offset(point(px(0.), px(0.)));
+        self.sub_page_stack
+            .push(SubPage::new(sub_page_link, section_header));
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
     fn pop_sub_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
-        sub_page_stack_mut().pop();
+        self.sub_page_stack.pop();
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
@@ -3792,12 +3825,12 @@ fn render_font_picker(
         .get_value_from_file(file.to_settings(), field.pick)
         .1
         .cloned()
-        .unwrap_or_else(|| SharedString::default().into());
+        .map_or_else(|| SharedString::default(), |value| value.into_gpui());
 
     PopoverMenu::new("font-picker")
         .trigger(render_picker_trigger_button(
             "font_family_picker_trigger".into(),
-            current_value.clone().into(),
+            current_value.clone(),
         ))
         .menu(move |window, cx| {
             let file = file.clone();
@@ -3805,14 +3838,14 @@ fn render_font_picker(
 
             Some(cx.new(move |cx| {
                 font_picker(
-                    current_value.clone().into(),
+                    current_value,
                     move |font_name, cx| {
                         update_settings_file(
                             file.clone(),
                             field.json_path,
                             cx,
                             move |settings, _cx| {
-                                (field.write)(settings, Some(font_name.into()));
+                                (field.write)(settings, Some(font_name.to_string().into()));
                             },
                         )
                         .log_err(); // todo(settings_ui) don't log err
@@ -3965,7 +3998,11 @@ pub mod test {
     }
 
     fn parse(input: &'static str, window: &mut Window, cx: &mut App) -> SettingsWindow {
-        let mut pages: Vec<SettingsPage> = Vec::new();
+        struct PageBuilder {
+            title: &'static str,
+            items: Vec<SettingsPageItem>,
+        }
+        let mut page_builders: Vec<PageBuilder> = Vec::new();
         let mut expanded_pages = Vec::new();
         let mut selected_idx = None;
         let mut index = 0;
@@ -3985,23 +4022,23 @@ pub mod test {
             assert_eq!(kind.len(), 1);
             let kind = kind.chars().next().unwrap();
             if kind == 'v' {
-                let page_idx = pages.len();
+                let page_idx = page_builders.len();
                 expanded_pages.push(page_idx);
-                pages.push(SettingsPage {
+                page_builders.push(PageBuilder {
                     title,
                     items: vec![],
                 });
                 index += 1;
                 in_expanded_section = true;
             } else if kind == '>' {
-                pages.push(SettingsPage {
+                page_builders.push(PageBuilder {
                     title,
                     items: vec![],
                 });
                 index += 1;
                 in_expanded_section = false;
             } else if kind == '-' {
-                pages
+                page_builders
                     .last_mut()
                     .unwrap()
                     .items
@@ -4018,6 +4055,14 @@ pub mod test {
             }
         }
 
+        let pages: Vec<SettingsPage> = page_builders
+            .into_iter()
+            .map(|builder| SettingsPage {
+                title: builder.title,
+                items: builder.items.into_boxed_slice(),
+            })
+            .collect();
+
         let mut settings_window = SettingsWindow {
             title_bar: None,
             original_window: None,
@@ -4031,10 +4076,10 @@ pub mod test {
             navbar_scroll_handle: UniformListScrollHandle::default(),
             navbar_focus_subscriptions: vec![],
             filter_table: vec![],
+            sub_page_stack: vec![],
             has_query: false,
             content_handles: vec![],
             search_task: None,
-            sub_page_scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             navbar_focus_handle: NonFocusableHandle::new(
                 NAVBAR_CONTAINER_TAB_INDEX,

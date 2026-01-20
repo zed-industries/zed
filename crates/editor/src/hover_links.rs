@@ -232,6 +232,13 @@ impl Editor {
                 else {
                     return Task::ready(Ok(Navigated::No));
                 };
+                let Some(mb_anchor) = self
+                    .buffer()
+                    .read(cx)
+                    .buffer_anchor_to_anchor(&buffer, anchor, cx)
+                else {
+                    return Task::ready(Ok(Navigated::No));
+                };
                 let links = hovered_link_state
                     .links
                     .into_iter()
@@ -243,8 +250,10 @@ impl Editor {
                         }
                     })
                     .collect();
+                let nav_entry = self.navigation_entry(mb_anchor, cx);
                 let split = Self::is_alt_pressed(&modifiers, cx);
-                let navigate_task = self.navigate_to_hover_links(None, links, split, window, cx);
+                let navigate_task =
+                    self.navigate_to_hover_links(None, links, nav_entry, split, window, cx);
                 self.select(SelectPhase::End, window, cx);
                 return navigate_task;
             }
@@ -475,7 +484,7 @@ pub(crate) fn find_url(
 ) -> Option<(Range<text::Anchor>, String)> {
     const LIMIT: usize = 2048;
 
-    let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot()).ok()?;
+    let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
 
     let offset = position.to_offset(&snapshot);
     let mut token_start = offset;
@@ -535,9 +544,7 @@ pub(crate) fn find_url_from_range(
 ) -> Option<String> {
     const LIMIT: usize = 2048;
 
-    let Ok(snapshot) = buffer.read_with(&cx, |buffer, _| buffer.snapshot()) else {
-        return None;
-    };
+    let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
 
     let start_offset = range.start.to_offset(&snapshot);
     let end_offset = range.end.to_offset(&snapshot);
@@ -595,7 +602,7 @@ pub(crate) async fn find_file(
     cx: &mut AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, ResolvedPath)> {
     let project = project?;
-    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot()).ok()?;
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
     let scope = snapshot.language_scope_at(position);
     let (range, candidate_file_path) = surrounding_filename(&snapshot, position)?;
     let candidate_len = candidate_file_path.len();
@@ -610,7 +617,6 @@ pub(crate) async fn find_file(
             .update(cx, |project, cx| {
                 project.resolve_path_in_buffer(candidate_file_path, buffer, cx)
             })
-            .ok()?
             .await
             .filter(|s| s.is_file())
     }

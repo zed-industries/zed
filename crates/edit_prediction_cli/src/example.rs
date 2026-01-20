@@ -1,5 +1,5 @@
+use crate::PredictionProvider;
 use crate::paths::WORKTREES_DIR;
-use crate::{PredictionProvider, PromptFormat};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use edit_prediction::example_spec::ExampleSpec;
@@ -9,11 +9,12 @@ use http_client::Url;
 use language::{Anchor, Buffer};
 use project::Project;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use std::{
     borrow::Cow,
-    io::{Read, Write},
+    collections::VecDeque,
+    io::Read,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use zeta_prompt::RelatedFile;
 
@@ -25,12 +26,7 @@ pub struct Example {
     /// The full content of the file where an edit is being predicted, and the
     /// actual cursor offset.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub buffer: Option<ExampleBuffer>,
-
-    /// The context retrieved for the prediction. This requires the worktree to
-    /// be loaded and the language server to be started.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context: Option<ExampleContext>,
+    pub prompt_inputs: Option<ExamplePromptInputs>,
 
     /// The input and expected output from the edit prediction model.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -59,23 +55,20 @@ pub struct ExampleState {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExampleContext {
-    pub files: Arc<[RelatedFile]>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExampleBuffer {
+pub struct ExamplePromptInputs {
     pub content: String,
     pub cursor_row: u32,
     pub cursor_column: u32,
     pub cursor_offset: usize,
+    pub edit_history: Vec<Arc<zeta_prompt::Event>>,
+    pub related_files: Option<Vec<RelatedFile>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExamplePrompt {
     pub input: String,
     pub expected_output: String,
-    pub format: PromptFormat,
+    pub provider: PredictionProvider,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -213,20 +206,6 @@ pub fn read_example_files(inputs: &[PathBuf]) -> Vec<Example> {
     examples
 }
 
-pub fn write_examples(examples: &[Example], output_path: Option<&PathBuf>) {
-    let mut content = String::new();
-    for example in examples {
-        let line = serde_json::to_string(example).unwrap();
-        content.push_str(&line);
-        content.push('\n');
-    }
-    if let Some(output_path) = output_path {
-        std::fs::write(output_path, content).expect("Failed to write examples");
-    } else {
-        std::io::stdout().write_all(&content.as_bytes()).unwrap();
-    }
-}
-
 pub fn sort_examples_by_repo_and_rev(examples: &mut [Example]) {
     examples.sort_by(|a, b| {
         a.spec
@@ -236,9 +215,9 @@ pub fn sort_examples_by_repo_and_rev(examples: &mut [Example]) {
     });
 }
 
-pub fn group_examples_by_repo(examples: &mut [Example]) -> Vec<Vec<&mut Example>> {
+pub fn group_examples_by_repo(examples: Vec<Example>) -> VecDeque<Vec<Example>> {
     let mut examples_by_repo = HashMap::default();
-    for example in examples.iter_mut() {
+    for example in examples {
         examples_by_repo
             .entry(example.spec.repository_url.clone())
             .or_insert_with(Vec::new)
@@ -251,8 +230,7 @@ fn parse_markdown_example(input: &str) -> Result<Example> {
     let spec = ExampleSpec::from_markdown(input)?;
     Ok(Example {
         spec,
-        buffer: None,
-        context: None,
+        prompt_inputs: None,
         prompt: None,
         predictions: Vec::new(),
         score: Vec::new(),

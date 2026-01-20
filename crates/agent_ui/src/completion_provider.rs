@@ -4,14 +4,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use acp_thread::MentionUri;
-use agent::{HistoryEntry, HistoryStore};
+use crate::acp::AcpThreadHistory;
+use acp_thread::{AgentSessionInfo, MentionUri};
 use anyhow::Result;
 use editor::{
     CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
 };
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
-use gpui::{App, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, BackgroundExecutor, Entity, SharedString, Task, WeakEntity};
 use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
 use ordered_float::OrderedFloat;
@@ -137,8 +137,8 @@ impl PromptContextType {
 pub(crate) enum Match {
     File(FileMatch),
     Symbol(SymbolMatch),
-    Thread(HistoryEntry),
-    RecentThread(HistoryEntry),
+    Thread(AgentSessionInfo),
+    RecentThread(AgentSessionInfo),
     Fetch(SharedString),
     Rules(RulesContextEntry),
     Entry(EntryMatch),
@@ -161,6 +161,14 @@ impl Match {
 pub struct EntryMatch {
     mat: Option<StringMatch>,
     entry: PromptContextEntry,
+}
+
+fn session_title(session: &AgentSessionInfo) -> SharedString {
+    session
+        .title
+        .clone()
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| SharedString::new_static("New Thread"))
 }
 
 #[derive(Debug, Clone)]
@@ -191,7 +199,7 @@ pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     source: Arc<T>,
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
-    history_store: Entity<HistoryStore>,
+    history: WeakEntity<AcpThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
 }
@@ -201,7 +209,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: T,
         editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
-        history_store: Entity<HistoryStore>,
+        history: WeakEntity<AcpThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -210,7 +218,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             editor,
             mention_set,
             workspace,
-            history_store,
+            history,
             prompt_store,
         }
     }
@@ -253,7 +261,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     }
 
     fn completion_for_thread(
-        thread_entry: HistoryEntry,
+        thread_entry: AgentSessionInfo,
         source_range: Range<Anchor>,
         recent: bool,
         source: Arc<T>,
@@ -262,7 +270,11 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         workspace: Entity<Workspace>,
         cx: &mut App,
     ) -> Completion {
-        let uri = thread_entry.mention_uri();
+        let title = session_title(&thread_entry);
+        let uri = MentionUri::Thread {
+            id: thread_entry.session_id,
+            name: title.to_string(),
+        };
 
         let icon_for_completion = if recent {
             IconName::HistoryRerun.path().into()
@@ -276,7 +288,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         Completion {
             replace_range: source_range.clone(),
             new_text,
-            label: CodeLabel::plain(thread_entry.title().to_string(), None),
+            label: CodeLabel::plain(title.to_string(), None),
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
@@ -284,7 +296,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             snippet_deduplication_key: None,
             icon_path: Some(icon_for_completion),
             confirm: Some(confirm_completion_callback(
-                thread_entry.title().clone(),
+                title,
                 source_range.start,
                 new_text_len - 1,
                 uri,
@@ -757,15 +769,16 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             }
 
             Some(PromptContextType::Thread) => {
-                let search_threads_task =
-                    search_threads(query, cancellation_flag, &self.history_store, cx);
-                cx.background_spawn(async move {
-                    search_threads_task
-                        .await
-                        .into_iter()
-                        .map(Match::Thread)
-                        .collect()
-                })
+                if let Some(history) = self.history.upgrade() {
+                    let sessions = history.read(cx).sessions().to_vec();
+                    let search_task =
+                        filter_sessions_by_query(query, cancellation_flag, sessions, cx);
+                    cx.spawn(async move |_cx| {
+                        search_task.await.into_iter().map(Match::Thread).collect()
+                    })
+                } else {
+                    Task::ready(Vec::new())
+                }
             }
 
             Some(PromptContextType::Fetch) => {
@@ -795,20 +808,23 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             Some(PromptContextType::Diagnostics) => Task::ready(Vec::new()),
 
             None if query.is_empty() => {
-                let mut matches = self.recent_context_picker_entries(&workspace, cx);
+                let recent_task = self.recent_context_picker_entries(&workspace, cx);
+                let entries = self
+                    .available_context_picker_entries(&workspace, cx)
+                    .into_iter()
+                    .map(|mode| {
+                        Match::Entry(EntryMatch {
+                            entry: mode,
+                            mat: None,
+                        })
+                    })
+                    .collect::<Vec<_>>();
 
-                matches.extend(
-                    self.available_context_picker_entries(&workspace, cx)
-                        .into_iter()
-                        .map(|mode| {
-                            Match::Entry(EntryMatch {
-                                entry: mode,
-                                mat: None,
-                            })
-                        }),
-                );
-
-                Task::ready(matches)
+                cx.spawn(async move |_cx| {
+                    let mut matches = recent_task.await;
+                    matches.extend(entries);
+                    matches
+                })
             }
             None => {
                 let executor = cx.background_executor().clone();
@@ -864,7 +880,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         &self,
         workspace: &Entity<Workspace>,
         cx: &mut App,
-    ) -> Vec<Match> {
+    ) -> Task<Vec<Match>> {
         let mut recent = Vec::with_capacity(6);
 
         let mut mentions = self
@@ -920,21 +936,32 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 }),
         );
 
-        if self.source.supports_context(PromptContextType::Thread, cx) {
-            const RECENT_COUNT: usize = 2;
-            let threads = self
-                .history_store
-                .read(cx)
-                .recently_opened_entries(cx)
-                .into_iter()
-                .filter(|thread| !mentions.contains(&thread.mention_uri()))
-                .take(RECENT_COUNT)
-                .collect::<Vec<_>>();
-
-            recent.extend(threads.into_iter().map(Match::RecentThread));
+        if !self.source.supports_context(PromptContextType::Thread, cx) {
+            return Task::ready(recent);
         }
 
-        recent
+        if let Some(history) = self.history.upgrade() {
+            const RECENT_COUNT: usize = 2;
+            recent.extend(
+                history
+                    .read(cx)
+                    .sessions()
+                    .into_iter()
+                    .filter(|session| {
+                        let uri = MentionUri::Thread {
+                            id: session.session_id.clone(),
+                            name: session_title(session).to_string(),
+                        };
+                        !mentions.contains(&uri)
+                    })
+                    .take(RECENT_COUNT)
+                    .cloned()
+                    .map(Match::RecentThread),
+            );
+            return Task::ready(recent);
+        }
+
+        Task::ready(recent)
     }
 
     fn available_context_picker_entries(
@@ -1257,7 +1284,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                 }
                             })
                             .collect::<Vec<_>>()
-                    })?;
+                    });
 
                     Ok(vec![CompletionResponse {
                         completions,
@@ -1715,29 +1742,30 @@ pub(crate) fn search_symbols(
         let Some(symbols) = symbols_task.await.log_err() else {
             return Vec::new();
         };
-        let Some((visible_match_candidates, external_match_candidates)): Option<(Vec<_>, Vec<_>)> =
-            project
-                .update(cx, |project, cx| {
-                    symbols
-                        .iter()
-                        .enumerate()
-                        .map(|(id, symbol)| {
-                            StringMatchCandidate::new(id, symbol.label.filter_text())
-                        })
-                        .partition(|candidate| match &symbols[candidate.id].path {
-                            SymbolLocation::InProject(project_path) => project
-                                .entry_for_path(project_path, cx)
-                                .is_some_and(|e| !e.is_ignored),
-                            SymbolLocation::OutsideProject { .. } => false,
-                        })
-                })
-                .log_err()
-        else {
-            return Vec::new();
-        };
-
+        let (visible_match_candidates, external_match_candidates): (Vec<_>, Vec<_>) = project
+            .update(cx, |project, cx| {
+                symbols
+                    .iter()
+                    .enumerate()
+                    .map(|(id, symbol)| StringMatchCandidate::new(id, symbol.label.filter_text()))
+                    .partition(|candidate| match &symbols[candidate.id].path {
+                        SymbolLocation::InProject(project_path) => project
+                            .entry_for_path(project_path, cx)
+                            .is_some_and(|e| !e.is_ignored),
+                        SymbolLocation::OutsideProject { .. } => false,
+                    })
+            });
+        // Try to support rust-analyzer's path based symbols feature which
+        // allows to search by rust path syntax, in that case we only want to
+        // filter names by the last segment
+        // Ideally this was a first class LSP feature (rich queries)
+        let query = query
+            .rsplit_once("::")
+            .map_or(&*query, |(_, suffix)| suffix)
+            .to_owned();
+        // Note if you make changes to this filtering below, also change `project_symbols::ProjectSymbolsDelegate::filter`
         const MAX_MATCHES: usize = 100;
-        let mut visible_matches = cx.background_executor().block(fuzzy::match_strings(
+        let mut visible_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
             &visible_match_candidates,
             &query,
             false,
@@ -1746,7 +1774,7 @@ pub(crate) fn search_symbols(
             &cancellation_flag,
             cx.background_executor().clone(),
         ));
-        let mut external_matches = cx.background_executor().block(fuzzy::match_strings(
+        let mut external_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
             &external_match_candidates,
             &query,
             false,
@@ -1779,40 +1807,48 @@ pub(crate) fn search_symbols(
     })
 }
 
-pub(crate) fn search_threads(
+fn filter_sessions_by_query(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
-    thread_store: &Entity<HistoryStore>,
+    sessions: Vec<AgentSessionInfo>,
     cx: &mut App,
-) -> Task<Vec<HistoryEntry>> {
-    let threads = thread_store.read(cx).entries().collect();
+) -> Task<Vec<AgentSessionInfo>> {
     if query.is_empty() {
-        return Task::ready(threads);
+        return Task::ready(sessions);
     }
-
     let executor = cx.background_executor().clone();
     cx.background_spawn(async move {
-        let candidates = threads
-            .iter()
-            .enumerate()
-            .map(|(id, thread)| StringMatchCandidate::new(id, thread.title()))
-            .collect::<Vec<_>>();
-        let matches = fuzzy::match_strings(
-            &candidates,
-            &query,
-            false,
-            true,
-            100,
-            &cancellation_flag,
-            executor,
-        )
-        .await;
-
-        matches
-            .into_iter()
-            .map(|mat| threads[mat.candidate_id].clone())
-            .collect()
+        filter_sessions(query, cancellation_flag, sessions, executor).await
     })
+}
+
+async fn filter_sessions(
+    query: String,
+    cancellation_flag: Arc<AtomicBool>,
+    sessions: Vec<AgentSessionInfo>,
+    executor: BackgroundExecutor,
+) -> Vec<AgentSessionInfo> {
+    let titles = sessions.iter().map(session_title).collect::<Vec<_>>();
+    let candidates = titles
+        .iter()
+        .enumerate()
+        .map(|(id, title)| StringMatchCandidate::new(id, title.as_ref()))
+        .collect::<Vec<_>>();
+    let matches = fuzzy::match_strings(
+        &candidates,
+        &query,
+        false,
+        true,
+        100,
+        &cancellation_flag,
+        executor,
+    )
+    .await;
+
+    matches
+        .into_iter()
+        .map(|mat| sessions[mat.candidate_id].clone())
+        .collect()
 }
 
 pub(crate) fn search_rules(
@@ -1939,6 +1975,7 @@ fn selection_ranges(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
 
     #[test]
     fn test_prompt_completion_parse() {
@@ -2148,6 +2185,19 @@ mod tests {
 
         assert_eq!(
             MentionCompletion::try_parse(
+                "Lorem @symbol agent_ui::completion_provider",
+                0,
+                &supported_modes
+            ),
+            Some(MentionCompletion {
+                source_range: 6..43,
+                mode: Some(PromptContextType::Symbol),
+                argument: Some("agent_ui::completion_provider".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
                 "Lorem @diagnostics",
                 0,
                 &supported_modes_with_diagnostics
@@ -2182,5 +2232,29 @@ mod tests {
             None,
             "Should not parse with a space after @ at the start of the line"
         );
+    }
+
+    #[gpui::test]
+    async fn test_filter_sessions_by_query(cx: &mut TestAppContext) {
+        let mut alpha = AgentSessionInfo::new("session-alpha");
+        alpha.title = Some("Alpha Session".into());
+        let mut beta = AgentSessionInfo::new("session-beta");
+        beta.title = Some("Beta Session".into());
+
+        let sessions = vec![alpha.clone(), beta];
+
+        let task = {
+            let mut app = cx.app.borrow_mut();
+            filter_sessions_by_query(
+                "Alpha".into(),
+                Arc::new(AtomicBool::default()),
+                sessions,
+                &mut app,
+            )
+        };
+
+        let results = task.await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].session_id, alpha.session_id);
     }
 }

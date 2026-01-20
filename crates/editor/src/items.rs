@@ -29,7 +29,7 @@ use project::{
 use rpc::proto::{self, update_view};
 use settings::Settings;
 use std::{
-    any::TypeId,
+    any::{Any, TypeId},
     borrow::Cow,
     cmp::{self, Ordering},
     iter,
@@ -398,7 +398,7 @@ async fn update_editor_from_message(
             .into_iter()
             .map(|id| BufferId::new(id).map(|id| project.open_buffer_by_id(id, cx)))
             .collect::<Result<Vec<_>>>()
-    })??;
+    })?;
     let _inserted_excerpt_buffers = try_join_all(inserted_excerpt_buffers).await?;
 
     // Update the editor's excerpts.
@@ -593,11 +593,11 @@ impl Item for Editor {
 
     fn navigate(
         &mut self,
-        data: Box<dyn std::any::Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if let Ok(data) = data.downcast::<NavigationData>() {
+        if let Some(data) = data.downcast_ref::<NavigationData>() {
             let newest_selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
             let buffer = self.buffer.read(cx).read(cx);
             let offset = if buffer.can_resolve(&data.cursor_anchor) {
@@ -892,7 +892,7 @@ impl Item for Editor {
                 project
                     .update(cx, |project, cx| {
                         project.save_buffers(buffers_to_save.clone(), cx)
-                    })?
+                    })
                     .await?;
             }
 
@@ -938,15 +938,13 @@ impl Item for Editor {
             this.update(cx, |editor, cx| {
                 editor.request_autoscroll(Autoscroll::fit(), cx)
             })?;
-            buffer
-                .update(cx, |buffer, cx| {
-                    if let Some(transaction) = transaction
-                        && !buffer.is_singleton()
-                    {
-                        buffer.push_transaction(&transaction.0, cx);
-                    }
-                })
-                .ok();
+            buffer.update(cx, |buffer, cx| {
+                if let Some(transaction) = transaction
+                    && !buffer.is_singleton()
+                {
+                    buffer.push_transaction(&transaction.0, cx);
+                }
+            });
             Ok(())
         })
     }
@@ -1103,7 +1101,7 @@ impl SerializableItem for Editor {
                 let project = project.clone();
                 async move |cx| {
                     let language_registry =
-                        project.read_with(cx, |project, _| project.languages().clone())?;
+                        project.read_with(cx, |project, _| project.languages().clone());
 
                     let language = if let Some(language_name) = language {
                         // We don't fail here, because we'd rather not set the language if the name changed
@@ -1118,21 +1116,18 @@ impl SerializableItem for Editor {
 
                     // First create the empty buffer
                     let buffer = project
-                        .update(cx, |project, cx| project.create_buffer(true, cx))?
+                        .update(cx, |project, cx| project.create_buffer(language, true, cx))
                         .await
                         .context("Failed to create buffer while deserializing editor")?;
 
                     // Then set the text so that the dirty bit is set correctly
                     buffer.update(cx, |buffer, cx| {
                         buffer.set_language_registry(language_registry);
-                        if let Some(language) = language {
-                            buffer.set_language(Some(language), cx);
-                        }
                         buffer.set_text(contents, cx);
                         if let Some(entry) = buffer.peek_undo_stack() {
                             buffer.forget_transaction(entry.transaction_id());
                         }
-                    })?;
+                    });
 
                     cx.update(|window, cx| {
                         cx.new(|cx| {
@@ -1187,7 +1182,7 @@ impl SerializableItem for Editor {
                                     if let Some(entry) = buffer.peek_undo_stack() {
                                         buffer.forget_transaction(entry.transaction_id());
                                     }
-                                })?;
+                                });
                             }
 
                             cx.update(|window, cx| {
@@ -1229,7 +1224,7 @@ impl SerializableItem for Editor {
                 ..
             } => window.spawn(cx, async move |cx| {
                 let buffer = project
-                    .update(cx, |project, cx| project.create_buffer(true, cx))?
+                    .update(cx, |project, cx| project.create_buffer(None, true, cx))
                     .await
                     .context("Failed to create buffer")?;
 

@@ -2036,7 +2036,11 @@ impl OutlinePanel {
 
         if let Some(working_directory) = working_directory {
             window.dispatch_action(
-                workspace::OpenTerminal { working_directory }.boxed_clone(),
+                workspace::OpenTerminal {
+                    working_directory,
+                    local: false,
+                }
+                .boxed_clone(),
                 cx,
             )
         }
@@ -2084,7 +2088,7 @@ impl OutlinePanel {
                             let entry = worktree.read(cx).entry_for_id(entry_id)?.clone();
                             Some((worktree, entry))
                         })
-                })?,
+                }),
                 PanelEntry::Outline(outline_entry) => {
                     let (buffer_id, excerpt_id) = outline_entry.ids();
                     outline_panel.update(cx, |outline_panel, cx| {

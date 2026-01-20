@@ -112,7 +112,7 @@ notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 prompt_store.workspace = true
-recent_projects.workspace = true
+recent_projects = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 remote = { workspace = true, features = ["test-support"] }
 remote_server.workspace = true
@@ -125,6 +125,7 @@ smol.workspace = true
 sqlx = { version = "0.8", features = ["sqlite"] }
 task.workspace = true
 theme.workspace = true
+title_bar = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }

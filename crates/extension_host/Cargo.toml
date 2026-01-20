@@ -47,11 +47,13 @@ task.workspace = true
 telemetry.workspace = true
 tempfile.workspace = true
 toml.workspace = true
+tracing.workspace = true
 url.workspace = true
 util.workspace = true
 wasmparser.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true
+ztracing.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
@@ -71,3 +73,6 @@ zlog.workspace = true
 [[bench]]
 name = "extension_compilation_benchmark"
 harness = false
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]

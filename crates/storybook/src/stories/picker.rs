@@ -93,8 +93,8 @@ impl PickerDelegate for Delegate {
     ) -> Task<()> {
         let candidates = self.candidates.clone();
         self.matches = cx
-            .background_executor()
-            .block(fuzzy::match_strings(
+            .foreground_executor()
+            .block_on(fuzzy::match_strings(
                 &candidates,
                 &query,
                 true,
