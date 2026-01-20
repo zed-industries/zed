@@ -109,11 +109,11 @@ impl RateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::future::{Either, select};
     use futures::stream;
     use smol::lock::Barrier;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Duration;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
 
     /// Tests that nested requests without bypass_rate_limit cause deadlock,
     /// while requests with bypass_rate_limit complete successfully.
@@ -176,23 +176,32 @@ mod tests {
             }
 
             // With bypass=true for nested requests, this should complete quickly
-            let timeout = smol::Timer::after(Duration::from_secs(2));
-            let all_done = async {
-                for handle in handles {
-                    handle.await;
-                }
-            };
+            let timed_out = Arc::new(AtomicBool::new(false));
+            let timed_out_clone = timed_out.clone();
 
-            match select(Box::pin(all_done), Box::pin(timeout)).await {
-                Either::Left(_) => {
-                    assert_eq!(completed.load(Ordering::SeqCst), 2);
+            // Spawn a watchdog that sets timed_out after 2 seconds
+            let watchdog = smol::spawn(async move {
+                let start = Instant::now();
+                while start.elapsed() < Duration::from_secs(2) {
+                    smol::future::yield_now().await;
                 }
-                Either::Right(_) => {
-                    panic!(
-                        "Test timed out - deadlock detected! This means bypass_rate_limit is not working."
-                    );
-                }
+                timed_out_clone.store(true, Ordering::SeqCst);
+            });
+
+            // Wait for all handles to complete
+            for handle in handles {
+                handle.await;
             }
+
+            // Cancel the watchdog
+            drop(watchdog);
+
+            if timed_out.load(Ordering::SeqCst) {
+                panic!(
+                    "Test timed out - deadlock detected! This means bypass_rate_limit is not working."
+                );
+            }
+            assert_eq!(completed.load(Ordering::SeqCst), 2);
         });
     }
 
@@ -252,30 +261,34 @@ mod tests {
 
             // This SHOULD timeout because of deadlock (both parents hold permits,
             // both nested requests wait for permits)
-            let timeout = smol::Timer::after(Duration::from_millis(100));
-            let all_done = async {
-                for handle in handles {
-                    handle.await;
-                }
-            };
+            let timed_out = Arc::new(AtomicBool::new(false));
+            let timed_out_clone = timed_out.clone();
 
-            match select(Box::pin(all_done), Box::pin(timeout)).await {
-                Either::Left(_) => {
-                    panic!(
-                        "Test completed when it should have deadlocked! completed={}",
-                        completed.load(Ordering::SeqCst)
-                    );
+            // Spawn a watchdog that sets timed_out after 100ms
+            let watchdog = smol::spawn(async move {
+                let start = Instant::now();
+                while start.elapsed() < Duration::from_millis(100) {
+                    smol::future::yield_now().await;
                 }
-                Either::Right(_) => {
-                    // Expected - deadlock occurred, which proves the bypass is necessary
-                    let count = completed.load(Ordering::SeqCst);
-                    assert_eq!(
-                        count, 0,
-                        "Expected complete deadlock (0 completed) but {} requests completed",
-                        count
-                    );
-                }
+                timed_out_clone.store(true, Ordering::SeqCst);
+            });
+
+            // Poll briefly to let everything run
+            let start = Instant::now();
+            while start.elapsed() < Duration::from_millis(100) {
+                smol::future::yield_now().await;
             }
+
+            // Cancel the watchdog
+            drop(watchdog);
+
+            // Expected - deadlock occurred, which proves the bypass is necessary
+            let count = completed.load(Ordering::SeqCst);
+            assert_eq!(
+                count, 0,
+                "Expected complete deadlock (0 completed) but {} requests completed",
+                count
+            );
         });
     }
 }
