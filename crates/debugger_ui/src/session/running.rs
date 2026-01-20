@@ -373,7 +373,7 @@ pub(crate) fn new_debugger_pane(
                         );
                     }
                     Err(err) => {
-                        Err::<(), _>(err).log_err();
+                        log::error!("{err:?}");
                     }
                 };
             });
