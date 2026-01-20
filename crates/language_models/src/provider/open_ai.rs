@@ -554,6 +554,7 @@ pub fn into_open_ai_response(
         stop: _,
         temperature,
         thinking_allowed: _,
+        bypass_rate_limit: _,
     } = request;
 
     let mut input_items = Vec::new();

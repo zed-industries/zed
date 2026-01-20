@@ -2235,6 +2235,7 @@ impl Thread {
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: true,
+            bypass_rate_limit: false,
         };
 
         log::debug!("Completion request built successfully");
