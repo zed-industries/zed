@@ -11,7 +11,7 @@ jobs:
     steps:
     - id: list-repos
       name: extension_workflow_rollout::fetch_extension_repos::get_repositories
-      uses: actions/github-script@v7
+      uses: actions/github-script@v8
       with:
         script: |
           const repos = await github.paginate(github.rest.repos.listForOrg, {
@@ -78,7 +78,7 @@ jobs:
       working-directory: zed
     - id: create-pr
       name: extension_workflow_rollout::rollout_workflows_to_extension::create_pull_request
-      uses: peter-evans/create-pull-request@v7
+      uses: peter-evans/create-pull-request@v8
       with:
         path: extension
         title: Update CI workflows to `zed@${{ steps.short-sha.outputs.sha_short }}`

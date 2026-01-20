@@ -106,7 +106,7 @@ jobs:
         echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
       shell: bash -euxo pipefail {0}
     - name: extension_bump::create_pull_request
-      uses: peter-evans/create-pull-request@v7
+      uses: peter-evans/create-pull-request@v8
       with:
         title: Bump version to ${{ steps.bump-version.outputs.new_version }}
         body: This PR bumps the version of this extension to v${{ steps.bump-version.outputs.new_version }}
@@ -136,7 +136,7 @@ jobs:
       with:
         clean: false
     - name: extension_bump::create_version_tag
-      uses: actions/github-script@v7
+      uses: actions/github-script@v8
       with:
         script: |-
           github.rest.git.createRef({
