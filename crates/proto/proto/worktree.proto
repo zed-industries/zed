@@ -117,6 +117,11 @@ message DeleteProjectEntry {
   bool use_trash = 3;
 }
 
+message DeleteProjectEntryResponse {
+  optional TrashedEntry entry = 1;
+  uint64 worktree_scan_id = 2;
+}
+
 message TrashedEntry {
   string path = 1;
   string original_path = 2;

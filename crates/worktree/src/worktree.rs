@@ -969,7 +969,7 @@ impl Worktree {
         this: Entity<Self>,
         request: proto::DeleteProjectEntry,
         mut cx: AsyncApp,
-    ) -> Result<proto::ProjectEntryResponse> {
+    ) -> Result<proto::DeleteProjectEntryResponse> {
         let (scan_id, task) = this.update(&mut cx, |this, cx| {
             (
                 this.scan_id(),
@@ -980,10 +980,11 @@ impl Worktree {
                 ),
             )
         });
-        task.ok_or_else(|| anyhow::anyhow!("invalid entry"))?
+        let trashed_entry = task
+            .ok_or_else(|| anyhow::anyhow!("invalid entry"))?
             .await?;
-        Ok(proto::ProjectEntryResponse {
-            entry: None,
+        Ok(proto::DeleteProjectEntryResponse {
+            entry: trashed_entry.as_ref().map(proto::TrashedEntry::from),
             worktree_scan_id: scan_id as u64,
         })
     }
@@ -2090,8 +2091,7 @@ impl RemoteWorktree {
                 this.snapshot = snapshot.clone();
             })?;
 
-            // TODO: Remote trash doesn't return TrashItem yet - needs protocol changes
-            Ok(None)
+            response.entry.map(TrashedEntry::try_from).transpose()
         }))
     }
 

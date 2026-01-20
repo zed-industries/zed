@@ -80,6 +80,7 @@ message Envelope {
         RenameProjectEntry rename_project_entry = 47;
         CopyProjectEntry copy_project_entry = 48;
         DeleteProjectEntry delete_project_entry = 49;
+        DeleteProjectEntryResponse delete_project_entry_response = 414;
         RestoreProjectEntry restore_project_entry = 413;
         ProjectEntryResponse project_entry_response = 50;
         ExpandProjectEntry expand_project_entry = 51;

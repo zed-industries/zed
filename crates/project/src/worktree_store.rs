@@ -990,7 +990,7 @@ impl WorktreeStore {
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::DeleteProjectEntry>,
         mut cx: AsyncApp,
-    ) -> Result<proto::ProjectEntryResponse> {
+    ) -> Result<proto::DeleteProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this.update(&mut cx, |this, cx| {
             let Some((_, project_id)) = this.downstream_client else {
