@@ -554,11 +554,12 @@ pub enum Event {
 }
 
 pub enum ProjectPanelOperation {
+    Batch(Vec<ProjectPanelOperation>),
     Trash {
-        project_path: ProjectPath,
         is_directory: bool,
+        project_path: ProjectPath,
     },
-    Restore {
+    Create {
         is_directory: bool,
         project_path: ProjectPath,
     },
@@ -1787,7 +1788,7 @@ impl ProjectPanel {
                 return None;
             }
             edited_entry_id = entry.id;
-            edit_task = self.rename_entry(entry.id, (worktree_id, new_path).into(), cx);
+            edit_task = self.rename_entry(entry.id, (worktree_id, new_path).into(), true, cx);
         };
 
         // Reborrow so lifetime does not overlap `self.confirm_undoable_rename_entry()`
@@ -2071,13 +2072,13 @@ impl ProjectPanel {
                 let Some(entry_id) = self
                     .project
                     .read(cx)
-                    .entry_for_path(&old_path, cx)
+                    .entry_for_path(&new_path, cx)
                     .map(|e| e.id)
                 else {
                     return Task::ready(Err(anyhow!("no entry for path")));
                 };
                 let task = self.project.update(cx, |project, cx| {
-                    project.rename_entry(entry_id, new_path.clone(), cx)
+                    project.rename_entry(entry_id, old_path.clone(), cx)
                 });
                 cx.spawn(async move |_, _| {
                     task.await?;
@@ -2087,7 +2088,7 @@ impl ProjectPanel {
                     })
                 })
             }
-            ProjectPanelOperation::Restore {
+            ProjectPanelOperation::Create {
                 is_directory,
                 project_path,
             } => {
@@ -2125,10 +2126,24 @@ impl ProjectPanel {
 
                 cx.spawn(async move |_, _cx| {
                     task.await?;
-                    Ok(ProjectPanelOperation::Restore {
+                    Ok(ProjectPanelOperation::Create {
                         is_directory,
                         project_path,
                     })
+                })
+            }
+            ProjectPanelOperation::Batch(operations) => {
+                let tasks: Vec<_> = operations
+                    .into_iter()
+                    .map(|op| self.revert_operation(op, cx))
+                    .collect();
+
+                cx.spawn(async move |_, _| {
+                    let mut reversed = Vec::with_capacity(tasks.len());
+                    for task in tasks {
+                        reversed.push(task.await?);
+                    }
+                    Ok(ProjectPanelOperation::Batch(reversed))
                 })
             }
         }
@@ -2138,6 +2153,7 @@ impl ProjectPanel {
         &self,
         entry_id: ProjectEntryId,
         new_path: ProjectPath,
+        record_operation: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<CreatedEntry>> {
         let Some(old_path) = self.project.read(cx).path_for_entry(entry_id, cx) else {
@@ -2148,13 +2164,12 @@ impl ProjectPanel {
         });
         cx.spawn(async move |this, cx| {
             let created_entry = rename_task.await?;
-            this.update(cx, |this, _cx| {
-                this.record_operation(ProjectPanelOperation::Rename {
-                    old_path: new_path,
-                    new_path: old_path,
+            if record_operation {
+                this.update(cx, |this, _cx| {
+                    this.record_operation(ProjectPanelOperation::Rename { old_path, new_path })
                 })
-            })
-            .ok();
+                .ok();
+            }
             Ok(created_entry)
         })
     }
@@ -3087,8 +3102,15 @@ impl ProjectPanel {
                 .filter(|clipboard| !clipboard.items().is_empty())?;
 
             enum PasteTask {
-                Rename(Task<Result<CreatedEntry>>),
-                Copy(Task<Result<Option<Entry>>>),
+                Rename {
+                    task: Task<Result<CreatedEntry>>,
+                    old_path: ProjectPath,
+                    new_path: ProjectPath,
+                },
+                Copy {
+                    task: Task<Result<Option<Entry>>>,
+                    destination: ProjectPath,
+                },
             }
 
             let mut paste_tasks = Vec::new();
@@ -3098,14 +3120,20 @@ impl ProjectPanel {
                 let (new_path, new_disambiguation_range) =
                     self.create_paste_path(clipboard_entry, self.selected_sub_entry(cx)?, cx)?;
                 let clip_entry_id = clipboard_entry.entry_id;
+                let destination: ProjectPath = (worktree_id, new_path).into();
                 let task = if clipboard_entries.is_cut() {
-                    let task = self.rename_entry(clip_entry_id, (worktree_id, new_path).into(), cx);
-                    PasteTask::Rename(task)
+                    let old_path = self.project.read(cx).path_for_entry(clip_entry_id, cx)?;
+                    let task = self.rename_entry(clip_entry_id, destination.clone(), false, cx);
+                    PasteTask::Rename {
+                        task,
+                        old_path,
+                        new_path: destination,
+                    }
                 } else {
                     let task = self.project.update(cx, |project, cx| {
-                        project.copy_entry(clip_entry_id, (worktree_id, new_path).into(), cx)
+                        project.copy_entry(clip_entry_id, destination.clone(), cx)
                     });
-                    PasteTask::Copy(task)
+                    PasteTask::Copy { task, destination }
                 };
                 paste_tasks.push(task);
                 disambiguation_range = new_disambiguation_range.or(disambiguation_range);
@@ -3115,22 +3143,47 @@ impl ProjectPanel {
 
             cx.spawn_in(window, async move |project_panel, cx| {
                 let mut last_succeed = None;
+                let mut operations = Vec::new();
+
                 for task in paste_tasks {
                     match task {
-                        PasteTask::Rename(task) => {
+                        PasteTask::Rename {
+                            task,
+                            old_path,
+                            new_path,
+                        } => {
                             if let Some(CreatedEntry::Included(entry)) =
                                 task.await.notify_async_err(cx)
                             {
+                                operations
+                                    .push(ProjectPanelOperation::Rename { old_path, new_path });
                                 last_succeed = Some(entry);
                             }
                         }
-                        PasteTask::Copy(task) => {
+                        PasteTask::Copy { task, destination } => {
                             if let Some(Some(entry)) = task.await.notify_async_err(cx) {
+                                operations.push(ProjectPanelOperation::Create {
+                                    is_directory: entry.is_dir(),
+                                    project_path: destination,
+                                });
                                 last_succeed = Some(entry);
                             }
                         }
                     }
                 }
+
+                if !operations.is_empty() {
+                    project_panel
+                        .update(cx, |this, _| {
+                            if operations.len() == 1 {
+                                this.record_operation(operations.pop().unwrap());
+                            } else {
+                                this.record_operation(ProjectPanelOperation::Batch(operations));
+                            }
+                        })
+                        .ok();
+                }
+
                 // update selection
                 if let Some(entry) = last_succeed {
                     project_panel
@@ -3465,6 +3518,7 @@ impl ProjectPanel {
         let rename_task = self.rename_entry(
             entry_to_move,
             (destination_worktree_id, new_path).into(),
+            true,
             cx,
         );
 
