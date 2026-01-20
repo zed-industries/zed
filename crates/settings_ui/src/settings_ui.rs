@@ -4162,7 +4162,7 @@ pub mod test {
                 has_query: false,
                 content_handles: Vec::default(),
                 search_task: None,
-                sub_page_scroll_handle: ScrollHandle::new(),
+                sub_page_stack: Vec::default(),
                 focus_handle: cx.focus_handle(),
                 navbar_focus_handle: NonFocusableHandle::new(
                     NAVBAR_CONTAINER_TAB_INDEX,
