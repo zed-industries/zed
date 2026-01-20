@@ -380,13 +380,11 @@ fn jupytext_cells(
         .map(|comment_prefix| format!("{comment_prefix}%%"))
         .collect::<Vec<_>>();
 
-    let mut snippet_start_row = None;
     loop {
         if jupytext_prefixes
             .iter()
             .any(|prefix| buffer.contains_str_at(Point::new(current_row, 0), prefix))
         {
-            snippet_start_row = Some(current_row);
             break;
         } else if current_row > 0 {
             current_row -= 1;
@@ -395,6 +393,7 @@ fn jupytext_cells(
         }
     }
 
+    let snippet_start_row = Some(current_row);
     let mut snippets = Vec::new();
     if let Some(mut snippet_start_row) = snippet_start_row {
         for current_row in range.start.row + 1..=buffer.max_point().row {
