@@ -1542,7 +1542,9 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
 
 pub fn handle_settings_file_changes(
     mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
+    user_settings_watcher: gpui::Task<()>,
     mut global_settings_file_rx: mpsc::UnboundedReceiver<String>,
+    global_settings_watcher: gpui::Task<()>,
     cx: &mut App,
 ) {
     MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
@@ -1564,6 +1566,8 @@ pub fn handle_settings_file_changes(
 
     // Watch for changes in both files
     cx.spawn(async move |cx| {
+        let _user_settings_watcher = user_settings_watcher;
+        let _global_settings_watcher = global_settings_watcher;
         let mut settings_streams = futures::stream::select(
             global_settings_file_rx.map(Either::Left),
             user_settings_file_rx.map(Either::Right),
@@ -1601,6 +1605,7 @@ pub fn handle_settings_file_changes(
 
 pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
+    user_keymap_watcher: gpui::Task<()>,
     cx: &mut App,
 ) {
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
@@ -1659,6 +1664,7 @@ pub fn handle_keymap_file_changes(
     let notification_id = NotificationId::unique::<KeymapParseErrorNotification>();
 
     cx.spawn(async move |cx| {
+        let _user_keymap_watcher = user_keymap_watcher;
         let mut user_keymap_content = String::new();
         let mut migrating_in_memory = false;
         loop {
@@ -4509,23 +4515,29 @@ mod tests {
             .unwrap();
         executor.run_until_parked();
         cx.update(|cx| {
-            let settings_rx = watch_config_file(
+            let (settings_rx, settings_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/settings.json"),
             );
-            let keymap_rx = watch_config_file(
+            let (keymap_rx, keymap_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/keymap.json"),
             );
-            let global_settings_rx = watch_config_file(
+            let (global_settings_rx, global_settings_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/global_settings.json"),
             );
-            handle_settings_file_changes(settings_rx, global_settings_rx, cx);
-            handle_keymap_file_changes(keymap_rx, cx);
+            handle_settings_file_changes(
+                settings_rx,
+                settings_watcher,
+                global_settings_rx,
+                global_settings_watcher,
+                cx,
+            );
+            handle_keymap_file_changes(keymap_rx, keymap_watcher, cx);
         });
         workspace
             .update(cx, |workspace, _, cx| {
@@ -4626,24 +4638,30 @@ mod tests {
             .unwrap();
 
         cx.update(|cx| {
-            let settings_rx = watch_config_file(
+            let (settings_rx, settings_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/settings.json"),
             );
-            let keymap_rx = watch_config_file(
+            let (keymap_rx, keymap_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/keymap.json"),
             );
 
-            let global_settings_rx = watch_config_file(
+            let (global_settings_rx, global_settings_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/global_settings.json"),
             );
-            handle_settings_file_changes(settings_rx, global_settings_rx, cx);
-            handle_keymap_file_changes(keymap_rx, cx);
+            handle_settings_file_changes(
+                settings_rx,
+                settings_watcher,
+                global_settings_rx,
+                global_settings_watcher,
+                cx,
+            );
+            handle_keymap_file_changes(keymap_rx, keymap_watcher, cx);
         });
 
         cx.background_executor.run_until_parked();
