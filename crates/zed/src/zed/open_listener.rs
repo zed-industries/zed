@@ -30,7 +30,7 @@ use util::ResultExt;
 use util::paths::PathWithPosition;
 use workspace::PathList;
 use workspace::item::ItemHandle;
-use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
+use workspace::{AppState, MultiWorkspace, OpenOptions, SerializedWorkspaceLocation};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -320,7 +320,7 @@ pub async fn open_paths_with_positions(
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
 ) -> Result<(
-    WindowHandle<Workspace>,
+    WindowHandle<MultiWorkspace>,
     Vec<Option<Result<Box<dyn ItemHandle>>>>,
 )> {
     let mut caret_positions = HashMap::default();
@@ -347,8 +347,11 @@ pub async fn open_paths_with_positions(
     for diff_pair in diff_paths {
         let old_path = Path::new(&diff_pair[0]).canonicalize()?;
         let new_path = Path::new(&diff_pair[1]).canonicalize()?;
-        if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
-            FileDiffView::open(old_path, new_path, workspace, window, cx)
+        let workspace_weak = workspace.read_with(cx, |multi_workspace, _cx| {
+            multi_workspace.workspace().downgrade()
+        })?;
+        if let Ok(diff_view) = workspace.update(cx, |_multi_workspace, window, cx| {
+            FileDiffView::open(old_path, new_path, workspace_weak, window, cx)
         }) {
             if let Some(diff_view) = diff_view.await.log_err() {
                 items.push(Some(Ok(Box::new(diff_view))))

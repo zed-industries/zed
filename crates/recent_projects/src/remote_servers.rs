@@ -48,7 +48,7 @@ use util::{
     rel_path::RelPath,
 };
 use workspace::{
-    ModalView, OpenOptions, Toast, Workspace,
+    ModalView, MultiWorkspace, OpenOptions, Toast, Workspace,
     notifications::{DetachAndPromptErr, NotificationId},
     open_remote_project_with_existing_connection,
 };
@@ -323,10 +323,11 @@ impl ProjectPicker {
                         .log_err()?;
                     let window = cx
                         .open_window(options, |window, cx| {
-                            cx.new(|cx| {
+                            let workspace = cx.new(|cx| {
                                 telemetry::event!("SSH Project Created");
                                 Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                            })
+                            });
+                            cx.new(|_cx| MultiWorkspace::new(workspace))
                         })
                         .log_err()?;
 
@@ -1357,7 +1358,7 @@ impl RemoteServerProjects {
 
                 let replace_window = match (create_new_window, secondary_confirm) {
                     (true, false) | (false, true) => None,
-                    (true, true) | (false, false) => window.window_handle().downcast::<Workspace>(),
+                    (true, true) | (false, false) => window.window_handle().downcast::<MultiWorkspace>(),
                 };
 
                 cx.spawn_in(window, async move |_, cx| {
@@ -1597,7 +1598,7 @@ impl RemoteServerProjects {
             return;
         };
 
-        let replace_window = window.window_handle().downcast::<Workspace>();
+        let replace_window = window.window_handle().downcast::<MultiWorkspace>();
 
         cx.spawn_in(window, async move |entity, cx| {
             let (connection, starting_dir) =

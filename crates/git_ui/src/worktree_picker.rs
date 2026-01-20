@@ -20,7 +20,7 @@ use remote::{RemoteConnectionOptions, remote_client::ConnectionIdentifier};
 use std::{path::PathBuf, sync::Arc};
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
+use workspace::{ModalView, MultiWorkspace, Workspace, notifications::DetachAndPromptErr};
 
 actions!(git, [WorktreeFromDefault, WorktreeFromDefaultOnWindow]);
 
@@ -446,37 +446,43 @@ async fn open_remote_worktree(
     cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
     let workspace_window = window
-        .downcast::<Workspace>()
+        .downcast::<MultiWorkspace>()
         .ok_or_else(|| anyhow::anyhow!("Window is not a Workspace window"))?;
 
-    let connect_task = workspace_window.update(cx, |workspace, window, cx| {
-        workspace.toggle_modal(window, cx, |window, cx| {
-            RemoteConnectionModal::new(&connection_options, Vec::new(), window, cx)
-        });
+    let connect_task = workspace_window.update(cx, |multi_workspace, window, cx| {
+        let workspace = multi_workspace.workspace().clone();
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                RemoteConnectionModal::new(&connection_options, Vec::new(), window, cx)
+            });
 
-        let prompt = workspace
-            .active_modal::<RemoteConnectionModal>(cx)
-            .expect("Modal just created")
-            .read(cx)
-            .prompt
-            .clone();
+            let prompt = workspace
+                .active_modal::<RemoteConnectionModal>(cx)
+                .expect("Modal just created")
+                .read(cx)
+                .prompt
+                .clone();
 
-        connect(
-            ConnectionIdentifier::setup(),
-            connection_options.clone(),
-            prompt,
-            window,
-            cx,
-        )
-        .prompt_err("Failed to connect", window, cx, |_, _, _| None)
+            connect(
+                ConnectionIdentifier::setup(),
+                connection_options.clone(),
+                prompt,
+                window,
+                cx,
+            )
+            .prompt_err("Failed to connect", window, cx, |_, _, _| None)
+        })
     })?;
 
     let session = connect_task.await;
 
-    workspace_window.update(cx, |workspace, _window, cx| {
-        if let Some(prompt) = workspace.active_modal::<RemoteConnectionModal>(cx) {
-            prompt.update(cx, |prompt, cx| prompt.finished(cx))
-        }
+    workspace_window.update(cx, |multi_workspace, _window, cx| {
+        let workspace = multi_workspace.workspace().clone();
+        workspace.update(cx, |workspace, cx| {
+            if let Some(prompt) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                prompt.update(cx, |prompt, cx| prompt.finished(cx))
+            }
+        });
     })?;
 
     let Some(Some(session)) = session else {
@@ -511,12 +517,13 @@ async fn open_remote_worktree(
         options.window_bounds = workspace_position.window_bounds;
 
         cx.open_window(options, |window, cx| {
-            cx.new(|cx| {
+            let workspace = cx.new(|cx| {
                 let mut workspace =
                     Workspace::new(None, new_project.clone(), app_state.clone(), window, cx);
                 workspace.centered_layout = workspace_position.centered_layout;
                 workspace
-            })
+            });
+            cx.new(|_cx| MultiWorkspace::new(workspace))
         })?
     };
 

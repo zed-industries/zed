@@ -6,7 +6,7 @@ use editor::{Editor, EditorEvent, MultiBuffer};
 use futures::{FutureExt, select_biased};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, Render, Task, Window,
+    Focusable, IntoElement, Render, Task, WeakEntity, Window,
 };
 use language::{Buffer, LanguageRegistry};
 use project::Project;
@@ -39,11 +39,10 @@ impl FileDiffView {
     pub fn open(
         old_path: PathBuf,
         new_path: PathBuf,
-        workspace: &Workspace,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        let workspace = workspace.weak_handle();
         window.spawn(cx, async move |cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
             let old_buffer = project
@@ -406,7 +405,7 @@ mod tests {
                 FileDiffView::open(
                     path!("/test/old_file.txt").into(),
                     path!("/test/new_file.txt").into(),
-                    workspace,
+                    workspace.weak_handle(),
                     window,
                     cx,
                 )
@@ -540,7 +539,7 @@ mod tests {
                 FileDiffView::open(
                     PathBuf::from(path!("/test/old_file.txt")),
                     PathBuf::from(path!("/test/new_file.txt")),
-                    workspace,
+                    workspace.weak_handle(),
                     window,
                     cx,
                 )

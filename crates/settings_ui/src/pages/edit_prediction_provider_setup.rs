@@ -22,7 +22,9 @@ pub(crate) fn render_edit_prediction_setup_page(
 ) -> AnyElement {
     let project = settings_window.original_window.as_ref().and_then(|window| {
         window
-            .read_with(cx, |workspace, _| workspace.project().clone())
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace.workspace().read(cx).project().clone()
+            })
             .ok()
     });
     let providers = [

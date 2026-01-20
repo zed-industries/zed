@@ -2285,6 +2285,7 @@ mod tests {
         Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, TestAppContext, UpdateGlobal,
         VisualTestContext, WindowHandle, actions,
     };
+    use workspace::MultiWorkspace;
     use language::LanguageRegistry;
     use languages::{markdown_lang, rust_lang};
     use pretty_assertions::{assert_eq, assert_ne};
@@ -2432,7 +2433,7 @@ mod tests {
 
         // Replace existing windows
         let window = cx
-            .update(|cx| cx.windows()[0].downcast::<Workspace>())
+            .update(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
             .unwrap();
         cx.update(|cx| {
             open_paths(
@@ -2449,11 +2450,12 @@ mod tests {
         .unwrap();
         cx.background_executor.run_until_parked();
         assert_eq!(cx.read(|cx| cx.windows().len()), 2);
-        let workspace_1 = cx
-            .update(|cx| cx.windows()[0].downcast::<Workspace>())
+        let multi_workspace_1 = cx
+            .update(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
             .unwrap();
-        workspace_1
-            .update(cx, |workspace, window, cx| {
+        multi_workspace_1
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
                 assert_eq!(
                     workspace
                         .worktrees(cx)

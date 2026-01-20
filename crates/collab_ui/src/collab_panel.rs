@@ -36,7 +36,8 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
-    CopyRoomId, Deafen, LeaveCall, Mute, OpenChannelNotes, ScreenShare, ShareProject, Workspace,
+    CopyRoomId, Deafen, LeaveCall, MultiWorkspace, Mute, OpenChannelNotes, ScreenShare,
+    ShareProject, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt},
 };
@@ -2267,7 +2268,7 @@ impl CollabPanel {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let Some(handle) = window.window_handle().downcast::<Workspace>() else {
+        let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() else {
             return;
         };
         workspace::join_channel(
