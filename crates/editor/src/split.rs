@@ -681,24 +681,24 @@ impl SplittableEditor {
             .primary_editor
             .update(cx, |editor, cx| editor.display_snapshot(cx));
 
+        assert_eq!(
+            lhs_snapshot.max_point().row(),
+            rhs_snapshot.max_point().row(),
+            "mismatch in display row count"
+        );
+
+        for (lhs_excerpt, rhs_excerpt) in lhs_snapshot
+            .excerpt_boundaries_in_range(MultiBufferOffset(0)..)
+            .zip(rhs_snapshot.excerpt_boundaries_in_range(MultiBufferOffset(0)..))
+        {
+            let lhs_point =
+                lhs_snapshot.point_to_display_point(Point::new(lhs_excerpt.row.0, 0), Bias::Left);
+            let rhs_point =
+                rhs_snapshot.point_to_display_point(Point::new(rhs_excerpt.row.0, 0), Bias::Left);
+            assert_eq!(lhs_point, rhs_point, "mismatch in excerpt position");
+        }
+
         if quiesced {
-            assert_eq!(
-                lhs_snapshot.max_point().row(),
-                rhs_snapshot.max_point().row(),
-                "mismatch in display row count"
-            );
-
-            for (lhs_excerpt, rhs_excerpt) in lhs_snapshot
-                .excerpt_boundaries_in_range(MultiBufferOffset(0)..)
-                .zip(rhs_snapshot.excerpt_boundaries_in_range(MultiBufferOffset(0)..))
-            {
-                let lhs_point = lhs_snapshot
-                    .point_to_display_point(Point::new(lhs_excerpt.row.0, 0), Bias::Left);
-                let rhs_point = rhs_snapshot
-                    .point_to_display_point(Point::new(rhs_excerpt.row.0, 0), Bias::Left);
-                assert_eq!(lhs_point, rhs_point, "mismatch in excerpt position");
-            }
-
             for (lhs_hunk, rhs_hunk) in lhs_snapshot.diff_hunks().zip(rhs_snapshot.diff_hunks()) {
                 assert_eq!(
                     lhs_hunk.diff_base_byte_range, rhs_hunk.diff_base_byte_range,
@@ -1056,9 +1056,9 @@ impl SplittableEditor {
         use std::env;
         use util::RandomCharIter;
 
-        let max_excerpts = env::var("MAX_EXCERPTS")
-            .map(|i| i.parse().expect("invalid `MAX_EXCERPTS` variable"))
-            .unwrap_or(5);
+        let max_buffers = env::var("MAX_BUFFERS")
+            .map(|i| i.parse().expect("invalid `MAX_BUFFERS` variable"))
+            .unwrap_or(4);
 
         for _ in 0..mutation_count {
             let paths = self
@@ -1088,17 +1088,10 @@ impl SplittableEditor {
                 continue;
             }
 
-            if excerpt_ids.is_empty() || (rng.random_bool(0.8) && excerpt_ids.len() < max_excerpts)
-            {
+            if excerpt_ids.is_empty() || (rng.random_bool(0.8) && paths.len() < max_buffers) {
                 let len = rng.random_range(100..500);
                 let text = RandomCharIter::new(&mut *rng).take(len).collect::<String>();
-                let buffer = cx.new(|cx| {
-                    let mut buffer = Buffer::local(text, cx);
-                    if std::env::var("ENSURE_FINAL_NEWLINE").is_ok() {
-                        buffer.ensure_final_newline(cx);
-                    }
-                    buffer
-                });
+                let buffer = cx.new(|cx| Buffer::local(text, cx));
                 log::info!(
                     "Creating new buffer {} with text: {:?}",
                     buffer.read(cx).remote_id(),
@@ -1109,33 +1102,19 @@ impl SplittableEditor {
                 // Create some initial diff hunks.
                 buffer.update(cx, |buffer, cx| {
                     buffer.randomly_edit(rng, 1, cx);
-                    if std::env::var("ENSURE_FINAL_NEWLINE").is_ok() {
-                        buffer.ensure_final_newline(cx);
-                    }
                 });
                 let buffer_snapshot = buffer.read(cx).text_snapshot();
                 diff.update(cx, |diff, cx| {
                     diff.recalculate_diff_sync(&buffer_snapshot, cx);
                 });
                 let path = PathKey::for_buffer(&buffer, cx);
-                if max_excerpts == 1 {
-                    self.set_excerpts_for_path(
-                        path,
-                        buffer.clone(),
-                        vec![Point::new(0, 0)..buffer.read(cx).max_point()],
-                        0,
-                        diff,
-                        cx,
-                    );
-                } else {
-                    let ranges = diff.update(cx, |diff, cx| {
-                        diff.snapshot(cx)
-                            .hunks(&buffer_snapshot)
-                            .map(|hunk| hunk.buffer_range.to_point(&buffer_snapshot))
-                            .collect::<Vec<_>>()
-                    });
-                    self.set_excerpts_for_path(path, buffer, ranges, 2, diff, cx);
-                }
+                let ranges = diff.update(cx, |diff, cx| {
+                    diff.snapshot(cx)
+                        .hunks(&buffer_snapshot)
+                        .map(|hunk| hunk.buffer_range.to_point(&buffer_snapshot))
+                        .collect::<Vec<_>>()
+                });
+                self.set_excerpts_for_path(path, buffer, ranges, 2, diff, cx);
             } else {
                 log::info!("removing excerpts");
                 let remove_count = rng.random_range(1..=paths.len());
@@ -1466,9 +1445,6 @@ mod tests {
         let operations = std::env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
-        let max_excerpts = std::env::var("MAX_EXCERPTS")
-            .map(|i| i.parse().expect("invalid `MAX_EXCERPTS` variable"))
-            .unwrap_or(5);
         let rng = &mut rng;
         for _ in 0..operations {
             let buffers = editor.update(cx, |editor, cx| {
@@ -1498,15 +1474,9 @@ mod tests {
                         if rng.random() {
                             log::info!("randomly editing single buffer");
                             buffer.randomly_edit(rng, 5, cx);
-                            if std::env::var("ENSURE_FINAL_NEWLINE").is_ok() {
-                                buffer.ensure_final_newline(cx);
-                            }
                         } else {
                             log::info!("randomly undoing/redoing in single buffer");
                             buffer.randomly_undo_redo(rng, cx);
-                            if std::env::var("ENSURE_FINAL_NEWLINE").is_ok() {
-                                buffer.ensure_final_newline(cx);
-                            }
                         }
                     });
                 }
@@ -1547,17 +1517,15 @@ mod tests {
                             diff.recalculate_diff_sync(&buffer_snapshot, cx);
                         });
                         cx.run_until_parked();
-                        if max_excerpts > 1 {
-                            let diff_snapshot = diff.read_with(cx, |diff, cx| diff.snapshot(cx));
-                            let ranges = diff_snapshot
-                                .hunks(&buffer_snapshot)
-                                .map(|hunk| hunk.range)
-                                .collect::<Vec<_>>();
-                            editor.update(cx, |editor, cx| {
-                                let path = PathKey::for_buffer(&buffer, cx);
-                                editor.set_excerpts_for_path(path, buffer, ranges, 2, diff, cx);
-                            });
-                        }
+                        let diff_snapshot = diff.read_with(cx, |diff, cx| diff.snapshot(cx));
+                        let ranges = diff_snapshot
+                            .hunks(&buffer_snapshot)
+                            .map(|hunk| hunk.range)
+                            .collect::<Vec<_>>();
+                        editor.update(cx, |editor, cx| {
+                            let path = PathKey::for_buffer(&buffer, cx);
+                            editor.set_excerpts_for_path(path, buffer, ranges, 2, diff, cx);
+                        });
                     }
                     quiesced = true;
                 }
