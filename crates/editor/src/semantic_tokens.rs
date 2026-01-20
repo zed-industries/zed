@@ -8,7 +8,7 @@ use gpui::{
 use itertools::Itertools as _;
 use language::language_settings::language_settings;
 use project::{
-    lsp_store::{BufferSemanticToken, RefreshForServer},
+    lsp_store::{BufferSemanticToken, BufferSemanticTokens, RefreshForServer},
     project_settings::ProjectSettings,
 };
 use settings::{
@@ -125,7 +125,12 @@ impl Editor {
 
                 for (buffer_id, query_version, tokens) in all_semantic_tokens {
                     let tokens = match tokens {
-                        Ok(tokens) => tokens,
+                        Ok(BufferSemanticTokens { tokens: Some(tokens) }) => {
+                            tokens
+                        },
+                        Ok(BufferSemanticTokens { tokens: None }) => {
+                            continue;
+                        },
                         Err(e) => {
                             log::error!("Failed to fetch semantic tokens for buffer {buffer_id:?}: {e:#}");
                             continue;
@@ -147,9 +152,8 @@ impl Editor {
 
                     editor.display_map.update(cx, |display_map, cx| {
                         let lsp_store = project.read(cx).lsp_store().read(cx);
-
                         let mut token_highlights = Vec::new();
-                        for (&server_id, server_tokens) in &tokens.tokens {
+                        for (server_id, server_tokens) in tokens {
                             let Some(legend) = lsp_store
                                 .lsp_server_capabilities
                                 .get(&server_id)
@@ -167,7 +171,7 @@ impl Editor {
                             };
                             let stylizer = SemanticTokenStylizer::new(legend, cx);
                             token_highlights.extend(buffer_into_editor_highlights(
-                                server_tokens,
+                                &server_tokens,
                                 &stylizer,
                                 &all_excerpts,
                                 &multi_buffer_snapshot,

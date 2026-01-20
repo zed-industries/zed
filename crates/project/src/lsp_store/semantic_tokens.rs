@@ -95,41 +95,56 @@ impl LspStore {
             .spawn(async move |lsp_store, cx| {
                 let buffer = task_buffer;
                 let version_queried_for = task_version_queried_for;
-                let new_tokens = new_tokens.await.unwrap_or_default();
-                let raw_tokens = lsp_store
-                    .update(cx, |lsp_store, cx| {
-                        let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
-                        let semantic_tokens_data = lsp_data.semantic_tokens.get_or_insert_default();
+                if let Some(new_tokens) = new_tokens.await {
+                    let raw_tokens = lsp_store
+                        .update(cx, |lsp_store, cx| {
+                            let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
+                            let semantic_tokens_data =
+                                lsp_data.semantic_tokens.get_or_insert_default();
 
-                        if version_queried_for == lsp_data.buffer_version {
-                            for (server_id, new_tokens_response) in new_tokens {
-                                match new_tokens_response {
-                                    SemanticTokensResponse::Full { data, result_id } => {
-                                        semantic_tokens_data.raw_tokens.servers.insert(
-                                            server_id,
-                                            ServerSemanticTokens::from_full(data, result_id),
-                                        );
-                                    }
-                                    SemanticTokensResponse::Delta { edits, result_id } => {
-                                        if let Some(tokens) = semantic_tokens_data
-                                            .raw_tokens
-                                            .servers
-                                            .get_mut(&server_id)
-                                        {
-                                            tokens.result_id = result_id;
-                                            tokens.apply(&edits);
+                            if version_queried_for == lsp_data.buffer_version {
+                                for (server_id, new_tokens_response) in new_tokens {
+                                    match new_tokens_response {
+                                        SemanticTokensResponse::Full { data, result_id } => {
+                                            semantic_tokens_data.raw_tokens.servers.insert(
+                                                server_id,
+                                                ServerSemanticTokens::from_full(data, result_id),
+                                            );
+                                        }
+                                        SemanticTokensResponse::Delta { edits, result_id } => {
+                                            if let Some(tokens) = semantic_tokens_data
+                                                .raw_tokens
+                                                .servers
+                                                .get_mut(&server_id)
+                                            {
+                                                tokens.result_id = result_id;
+                                                tokens.apply(&edits);
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
-                        semantic_tokens_data.raw_tokens.clone()
-                    })
-                    .map_err(Arc::new)?;
+                            semantic_tokens_data.raw_tokens.clone()
+                        })
+                        .map_err(Arc::new)?;
 
-                let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-                let tokens = raw_to_buffer_semantic_tokens(&raw_tokens, &buffer_snapshot);
-                Ok(BufferSemanticTokens { tokens })
+                    let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                    let tokens = raw_to_buffer_semantic_tokens(&raw_tokens, &buffer_snapshot);
+                    Ok(BufferSemanticTokens {
+                        tokens: Some(tokens),
+                    })
+                } else {
+                    lsp_store.update(cx, |lsp_store, cx| {
+                        if let Some(current_lsp_data) =
+                            lsp_store.current_lsp_data(buffer.read(cx).remote_id())
+                        {
+                            if current_lsp_data.buffer_version == version_queried_for {
+                                current_lsp_data.semantic_tokens = None;
+                            }
+                        }
+                    })?;
+                    Ok(BufferSemanticTokens { tokens: None })
+                }
             })
             .shared();
 
@@ -254,6 +269,9 @@ impl LspStore {
                     Some(async move { (server_id, request_task.await) })
                 })
                 .collect::<Vec<_>>();
+            if token_tasks.is_empty() {
+                return Task::ready(None);
+            }
 
             cx.background_spawn(async move {
                 Some(
@@ -309,9 +327,9 @@ impl LspStore {
 pub type SemanticTokensTask =
     Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>>;
 
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct BufferSemanticTokens {
-    pub tokens: HashMap<LanguageServerId, Arc<[BufferSemanticToken]>>,
+    pub tokens: Option<HashMap<LanguageServerId, Arc<[BufferSemanticToken]>>>,
 }
 
 #[derive(Debug, Clone)]

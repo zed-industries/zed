@@ -209,7 +209,7 @@ pub enum LspFormatTarget {
     Ranges(BTreeMap<BufferId, Vec<Range<Anchor>>>),
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OpenLspBufferHandle(Entity<OpenLspBuffer>);
 
 struct OpenLspBuffer(Entity<Buffer>);
@@ -9293,66 +9293,66 @@ impl LspStore {
                 .await?;
                 let for_server = semantic_tokens.for_server.map(LanguageServerId::from_proto);
                 lsp_store.update(&mut cx, |lsp_store, cx| {
-                    let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
-                    let key = LspKey {
-                        request_type: TypeId::of::<SemanticTokensFull>(),
-                        server_queried: server_id,
-                    };
-                    if <SemanticTokensFull as LspCommand>::ProtoRequest::stop_previous_requests() {
-                        if let Some(lsp_requests) = lsp_data.lsp_requests.get_mut(&key) {
-                            lsp_requests.clear();
+                    if let Some((client, project_id)) = lsp_store.downstream_client.clone() {
+                        let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
+                        let key = LspKey {
+                            request_type: TypeId::of::<SemanticTokensFull>(),
+                            server_queried: server_id,
                         };
-                    }
+                        if <SemanticTokensFull as LspCommand>::ProtoRequest::stop_previous_requests() {
+                            if let Some(lsp_requests) = lsp_data.lsp_requests.get_mut(&key) {
+                                lsp_requests.clear();
+                            };
+                        }
 
-                    lsp_data.lsp_requests.entry(key).or_default().insert(
-                        lsp_request_id,
-                        cx.spawn(async move |lsp_store, cx| {
-                            let tokens_fetch = lsp_store
-                                .update(cx, |lsp_store, cx| {
-                                    lsp_store
-                                        .fetch_semantic_tokens_for_buffer(&buffer, for_server, cx)
-                                })
-                                .ok();
-                            if let Some(tokens_fetch) = tokens_fetch {
-                                let new_tokens = tokens_fetch.await.unwrap_or_default();
-                                lsp_store
+                        lsp_data.lsp_requests.entry(key).or_default().insert(
+                            lsp_request_id,
+                            cx.spawn(async move |lsp_store, cx| {
+                                let tokens_fetch = lsp_store
                                     .update(cx, |lsp_store, cx| {
-                                        if let Some((client, project_id)) =
-                                            lsp_store.downstream_client.clone()
-                                        {
-                                            let response = new_tokens
-                                                .into_iter()
-                                                .map(|(server_id, response)| {
-                                                    (
-                                                        server_id.to_proto(),
-                                                        SemanticTokensFull::response_to_proto(
-                                                            response,
-                                                            lsp_store,
-                                                            sender_id,
-                                                            &buffer_version,
-                                                            cx,
-                                                        ),
-                                                    )
-                                                })
-                                                .collect::<HashMap<_, _>>();
-                                            match client.send_lsp_response::<<SemanticTokensFull as LspCommand>::ProtoRequest>(
-                                                project_id,
-                                                lsp_request_id,
-                                                response,
-                                            ) {
-                                                Ok(()) => {}
-                                                Err(e) => {
-                                                    log::error!(
-                                                        "Failed to send semantic tokens LSP response: {e:#}",
-                                                    )
-                                                }
-                                            }
-                                        }
+                                        lsp_store
+                                            .fetch_semantic_tokens_for_buffer(&buffer, for_server, cx)
                                     })
                                     .ok();
-                            }
-                        }),
-                    );
+                                if let Some(tokens_fetch) = tokens_fetch {
+                                    let new_tokens = tokens_fetch.await;
+                                    if let Some(new_tokens) = new_tokens {
+                                        lsp_store
+                                            .update(cx, |lsp_store, cx| {
+                                                let response = new_tokens
+                                                    .into_iter()
+                                                    .map(|(server_id, response)| {
+                                                        (
+                                                            server_id.to_proto(),
+                                                            SemanticTokensFull::response_to_proto(
+                                                                response,
+                                                                lsp_store,
+                                                                sender_id,
+                                                                &buffer_version,
+                                                                cx,
+                                                            ),
+                                                        )
+                                                    })
+                                                    .collect::<HashMap<_, _>>();
+                                                match client.send_lsp_response::<<SemanticTokensFull as LspCommand>::ProtoRequest>(
+                                                    project_id,
+                                                    lsp_request_id,
+                                                    response,
+                                                ) {
+                                                    Ok(()) => {}
+                                                    Err(e) => {
+                                                        log::error!(
+                                                            "Failed to send semantic tokens LSP response: {e:#}",
+                                                        )
+                                                    }
+                                                }
+                                            })
+                                            .ok();
+                                    }
+                                }
+                            }),
+                        );
+                    }
                 });
             }
         }

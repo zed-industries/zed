@@ -223,7 +223,7 @@ impl DisplayMap {
             diagnostics_max_severity,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
-            semantic_token_highlights: Default::default(),
+            semantic_token_highlights: TreeMap::default(),
             clip_at_line_ends: false,
             masked: false,
         }
