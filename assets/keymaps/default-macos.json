@@ -447,6 +447,7 @@
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPreviousMatch",
       "cmd-shift-a": "quick_search::ToggleSplitMenu",
+      "alt-h": "quick_search::ToggleHistory",
     },
   },
   {

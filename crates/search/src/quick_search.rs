@@ -7,14 +7,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{
-    SearchOption, SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive,
-    ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
+    NextHistoryQuery, PreviousHistoryQuery, SearchOption, SearchOptions, SelectNextMatch,
+    SelectPreviousMatch, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace,
+    ToggleWholeWord,
 };
 use editor::EditorSettings;
 use editor::{Editor, EditorEvent, EditorMode, RowHighlightOptions};
 use gpui::{
     Action, App, AsyncApp, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Global, HighlightStyle, KeyContext, ParentElement, Render, Styled, StyledText,
+    Focusable, HighlightStyle, KeyContext, ParentElement, Render, Styled, StyledText,
     Subscription, Task, WeakEntity, Window, actions, px, relative,
 };
 use language::Buffer;
@@ -23,7 +24,8 @@ use menu;
 use multi_buffer::{ExcerptRange, MultiBuffer};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::SearchResults;
-use project::search::{SearchQuery, SearchResult};
+use project::search::{SearchQuery, SearchResult, SearchInputKind};
+use project::search_history::SearchHistoryCursor;
 use project::{Project, ProjectPath};
 use settings::Settings;
 use text::{Anchor, Point, ToOffset};
@@ -37,7 +39,7 @@ use util::{ResultExt, paths::PathMatcher};
 use workspace::{ModalView, SplitDirection, Workspace, pane};
 pub use zed_actions::quick_search::Toggle;
 
-actions!(quick_search, [ReplaceNext, ReplaceAll, ToggleFilters, ToggleSplitMenu]);
+actions!(quick_search, [ReplaceNext, ReplaceAll, ToggleFilters, ToggleSplitMenu, ToggleHistory]);
 
 const SEARCH_DEBOUNCE_MS: u64 = 100;
 
@@ -51,30 +53,6 @@ enum InputPanel {
 struct SearchMatchHighlight;
 struct SearchMatchLineHighlight;
 
-/// Global state for storing the recent search query.
-struct RecentSearchState {
-    last_query: String,
-}
-
-impl Global for RecentSearchState {}
-
-fn get_recent_query(cx: &App) -> Option<String> {
-    cx.try_global::<RecentSearchState>().and_then(|state| {
-        if state.last_query.is_empty() {
-            None
-        } else {
-            Some(state.last_query.clone())
-        }
-    })
-}
-
-fn save_recent_query(query: &str, cx: &mut App) {
-    cx.set_global(RecentSearchState {
-        last_query: query.to_string(),
-    });
-}
-
-/// Initialize the quick_search module.
 pub fn init(cx: &mut App) {
     cx.observe_new(QuickSearch::register).detach();
 }
@@ -192,6 +170,13 @@ impl QuickSearch {
 
         let focus_handle = cx.focus_handle();
 
+        let initial_query = project
+            .read(cx)
+            .search_history(SearchInputKind::Query)
+            .iter()
+            .next()
+            .map(|s| s.to_string());
+
         let delegate = QuickSearchDelegate::new(
             workspace,
             project,
@@ -199,7 +184,7 @@ impl QuickSearch {
             replacement_editor.clone(),
             included_files_editor.clone(),
             excluded_files_editor.clone(),
-            get_recent_query(cx),
+            initial_query,
             cx,
         );
         let picker = cx.new(|cx| {
@@ -209,7 +194,8 @@ impl QuickSearch {
         });
 
         let subscriptions = vec![
-            cx.subscribe_in(&picker, window, |_, _, _: &DismissEvent, _, cx| {
+            cx.subscribe_in(&picker, window, |this, _, _: &DismissEvent, _, cx| {
+                this.save_history(cx);
                 cx.emit(DismissEvent);
             }),
             cx.subscribe_in(
@@ -236,6 +222,7 @@ impl QuickSearch {
             ),
             cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
                 if window.is_window_active() && !this.focus_handle.contains_focused(window, cx) {
+                    this.save_history(cx);
                     cx.emit(DismissEvent);
                 }
             }),
@@ -279,6 +266,27 @@ impl QuickSearch {
             _subscriptions: subscriptions,
             _autosave_task: None,
         }
+    }
+
+    fn save_history(&mut self, cx: &mut Context<Self>) {
+        self.picker.update(cx, |picker, cx| {
+            let delegate = &mut picker.delegate;
+            let query = delegate.current_query.clone();
+
+            if query.is_empty() {
+                return;
+            }
+
+            delegate.project.update(cx, |project, _| {
+                // Only add to history if it's different from the last entry
+                let last_query = project.search_history(SearchInputKind::Query).iter().next();
+                if last_query != Some(query.as_str()) {
+                    project
+                        .search_history_mut(SearchInputKind::Query)
+                        .add(&mut delegate.search_history_cursor, query);
+                }
+            });
+        });
     }
 
     fn replacement(&self, cx: &App) -> String {
@@ -430,6 +438,92 @@ impl QuickSearch {
             })
             .detach_and_log_err(cx);
     }
+
+    fn next_history_query(
+        &mut self,
+        _: &NextHistoryQuery,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let picker = self.picker.read(cx);
+
+        if picker.focus_handle(cx).is_focused(window) {
+            let new_query = self.picker.update(cx, |picker, cx| {
+                let project = picker.delegate.project.clone();
+                project.update(cx, |project, _| {
+                    project
+                        .search_history_mut(SearchInputKind::Query)
+                        .next(&mut picker.delegate.search_history_cursor)
+                        .map(str::to_string)
+                })
+            });
+
+            if let Some(new_query) = new_query {
+                self.picker.update(cx, |picker, cx| {
+                    picker.set_query(new_query, window, cx);
+                });
+            } else {
+                self.picker.update(cx, |picker, cx| {
+                    picker.delegate.search_history_cursor.reset();
+                    picker.set_query("".to_string(), window, cx);
+                });
+            }
+        }
+    }
+
+    fn previous_history_query(
+        &mut self,
+        _: &PreviousHistoryQuery,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let picker = self.picker.read(cx);
+
+        if picker.focus_handle(cx).is_focused(window) {
+            let query_text = picker.query(cx);
+
+            let new_query = self.picker.update(cx, |picker, cx| {
+                let project = picker.delegate.project.clone();
+                let mut new_query = None;
+
+                if query_text.is_empty() {
+                    new_query = project.update(cx, |project, _| {
+                        project
+                            .search_history(SearchInputKind::Query)
+                            .current(&picker.delegate.search_history_cursor)
+                            .map(str::to_string)
+                    });
+                }
+
+                if new_query.is_none() {
+                    new_query = project.update(cx, |project, _| {
+                        project
+                            .search_history_mut(SearchInputKind::Query)
+                            .previous(&mut picker.delegate.search_history_cursor)
+                            .map(str::to_string)
+                    });
+                }
+
+                if let Some(q) = &new_query {
+                    if q == &query_text {
+                        new_query = project.update(cx, |project, _| {
+                            project
+                                .search_history_mut(SearchInputKind::Query)
+                                .previous(&mut picker.delegate.search_history_cursor)
+                                .map(str::to_string)
+                        });
+                    }
+                }
+                new_query
+            });
+
+            if let Some(new_query) = new_query {
+                self.picker.update(cx, |picker, cx| {
+                    picker.set_query(new_query, window, cx);
+                });
+            }
+        }
+    }
 }
 
 impl Render for QuickSearch {
@@ -483,6 +577,24 @@ impl Render for QuickSearch {
                     };
                     window.focus(&focus_handle, cx);
                 });
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, action: &NextHistoryQuery, window, cx| {
+                this.next_history_query(action, window, cx);
+            }))
+            .on_action(
+                cx.listener(|this, action: &PreviousHistoryQuery, window, cx| {
+                    this.previous_history_query(action, window, cx);
+                }),
+            )
+            .on_action(cx.listener(|this, _: &ToggleHistory, window, cx| {
+                let handle = this
+                    .picker
+                    .read(cx)
+                    .delegate
+                    .history_popover_menu_handle
+                    .clone();
+                handle.toggle(window, cx);
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleCaseSensitive, window, cx| {
@@ -915,6 +1027,9 @@ pub struct QuickSearchDelegate {
     pending_initial_query: RefCell<Option<String>>,
     panels_with_errors: HashMap<InputPanel, String>,
     split_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
+    history_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
+    search_history_cursor: SearchHistoryCursor,
+    current_query: String,
 }
 
 impl QuickSearchDelegate {
@@ -948,6 +1063,9 @@ impl QuickSearchDelegate {
             pending_initial_query: RefCell::new(initial_query),
             panels_with_errors: HashMap::default(),
             split_popover_menu_handle: PopoverMenuHandle::default(),
+            history_popover_menu_handle: PopoverMenuHandle::default(),
+            search_history_cursor: SearchHistoryCursor::default(),
+            current_query: String::new(),
         }
     }
 
@@ -1199,6 +1317,37 @@ impl QuickSearchDelegate {
 
         buffer_data
     }
+    fn render_history_menu(
+        project: &Entity<Project>,
+        editor: &Entity<Editor>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Entity<ContextMenu>> {
+        let history_entries: Vec<String> = project
+            .read(cx)
+            .search_history(SearchInputKind::Query)
+            .iter()
+            .map(str::to_string)
+            .collect();
+        
+        let editor = editor.clone();
+        Some(ContextMenu::build(window, cx, move |mut menu, _window, _| {
+            if history_entries.is_empty() {
+                menu.header("No recent searches")
+            } else {
+                for query in history_entries {
+                    let editor = editor.clone();
+                    let query_for_click: String = query.clone();
+                    menu = menu.entry(query, None, move |window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.set_text(query_for_click.clone(), window, cx);
+                        });
+                    });
+                }
+                menu
+            }
+        }))
+    }
 }
 
 impl PickerDelegate for QuickSearchDelegate {
@@ -1242,21 +1391,48 @@ impl PickerDelegate for QuickSearchDelegate {
                     .gap_1()
                     .items_start()
                     .child(
-                        div()
+                        h_flex()
                             .flex_1()
                             .overflow_hidden()
                             .py_1p5()
                             .border_1()
                             .rounded_md()
-                            .px_1()
+                            .pl_0p5()
+                            .pr_1()
                             .border_color(
                                 if self.panels_with_errors.contains_key(&InputPanel::Query) {
                                     Color::Error.color(cx)
                                 } else {
                                     gpui::transparent_black()
-                                }
+                                },
                             )
-                            .child(editor.clone()),
+                            .gap_1()
+                            .child(
+                                PopoverMenu::new("history-menu-popover")
+                                    .with_handle(self.history_popover_menu_handle.clone())
+                                    .trigger(
+                                        IconButton::new("search-history", IconName::MagnifyingGlass)
+                                            .tooltip({
+                                                let focus_handle = editor.focus_handle(cx);
+                                                move |_window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Search History",
+                                                        &ToggleHistory,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                }
+                                            }),
+                                    )
+                                    .menu({
+                                        let editor = editor.clone();
+                                        let project = self.project.clone();
+                                        move |window, cx| {
+                                            Self::render_history_menu(&project, &editor, window, cx)
+                                        }
+                                    }),
+                            )
+                            .child(div().flex_1().min_w_0().child(editor.clone())),
                     )
                     .child({
                         let focus_handle = focus_handle.clone();
@@ -1522,9 +1698,7 @@ impl PickerDelegate for QuickSearchDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        if !query.is_empty() {
-            save_recent_query(&query, cx);
-        }
+        self.current_query = query.clone();
 
         self.cancel_flag
             .store(true, std::sync::atomic::Ordering::SeqCst);
