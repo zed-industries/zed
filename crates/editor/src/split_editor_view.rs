@@ -515,6 +515,7 @@ impl SplitBufferHeadersElement {
         let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
 
         let mut header = v_flex()
+            .id("sticky-buffer-header")
             .w(available_width)
             .relative()
             .child(
@@ -692,7 +693,8 @@ impl SplitBufferHeadersElement {
                     .when(is_sticky, |el| el.shadow_md())
                     .border_1()
                     .map(|border| {
-                        let border_color = if is_selected
+                        let border_color = if !is_sticky
+                            && is_selected
                             && is_folded
                             && focus_handle.contains_focused(window, cx)
                         {
