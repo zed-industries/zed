@@ -1236,6 +1236,7 @@ impl EditorElement {
         editor: &mut Editor,
         event: &MouseMoveEvent,
         position_map: &PositionMap,
+        split_side: Option<SplitSide>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
@@ -1363,7 +1364,7 @@ impl EditorElement {
             indicator.is_active && indicator.display_row == valid_point.row()
         });
 
-        let breakpoint_indicator = if gutter_hovered && !is_on_diff_review_button_row {
+        let breakpoint_indicator = if gutter_hovered && !is_on_diff_review_button_row && split_side.is_none() {
             let buffer_anchor = position_map
                 .snapshot
                 .display_point_to_anchor(valid_point, Bias::Left);
@@ -2505,6 +2506,11 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
+        // Don't show code actions in split diff view
+        if self.split_side.is_some() {
+            return None;
+        }
+
         if !snapshot
             .show_code_actions
             .unwrap_or(EditorSettings::get_global(cx).inline_code_actions)
@@ -3084,6 +3090,11 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
+        // Don't show breakpoints in split diff view
+        if self.split_side.is_some() {
+            return Vec::new();
+        }
+
         self.editor.update(cx, |editor, cx| {
             breakpoints
                 .into_iter()
@@ -3184,6 +3195,11 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
+        // Don't show run indicators in split diff view
+        if self.split_side.is_some() {
+            return Vec::new();
+        }
+
         self.editor.update(cx, |editor, cx| {
             let active_task_indicator_row =
                 // TODO: add edit button on the right side of each row in the context menu
@@ -8005,6 +8021,7 @@ impl EditorElement {
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
+            let split_side = self.split_side;
 
             move |event: &MouseMoveEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble {
@@ -8018,7 +8035,7 @@ impl EditorElement {
                             Self::mouse_dragged(editor, event, &position_map, window, cx)
                         }
 
-                        Self::mouse_moved(editor, event, &position_map, window, cx)
+                        Self::mouse_moved(editor, event, &position_map, split_side, window, cx)
                     });
                 }
             }
