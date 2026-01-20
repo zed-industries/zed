@@ -663,6 +663,8 @@ impl SplittableEditor {
         use multi_buffer::MultiBufferOffset;
         use text::Bias;
 
+        use crate::display_map::{Block, DisplayRow};
+
         self.debug_print(cx);
 
         let secondary = self.secondary.as_ref().unwrap();
@@ -681,22 +683,31 @@ impl SplittableEditor {
             .primary_editor
             .update(cx, |editor, cx| editor.display_snapshot(cx));
 
-        assert_eq!(
-            lhs_snapshot.max_point().row(),
-            rhs_snapshot.max_point().row(),
-            "mismatch in display row count"
-        );
+        let lhs_max_row = lhs_snapshot.max_point().row();
+        let rhs_max_row = rhs_snapshot.max_point().row();
+        assert_eq!(lhs_max_row, rhs_max_row, "mismatch in display row count");
 
-        for (lhs_excerpt, rhs_excerpt) in lhs_snapshot
-            .excerpt_boundaries_in_range(MultiBufferOffset(0)..)
-            .zip(rhs_snapshot.excerpt_boundaries_in_range(MultiBufferOffset(0)..))
-        {
-            let lhs_point =
-                lhs_snapshot.point_to_display_point(Point::new(lhs_excerpt.row.0, 0), Bias::Left);
-            let rhs_point =
-                rhs_snapshot.point_to_display_point(Point::new(rhs_excerpt.row.0, 0), Bias::Left);
-            assert_eq!(lhs_point, rhs_point, "mismatch in excerpt position");
-        }
+        let lhs_excerpt_block_rows = lhs_snapshot
+            .blocks_in_range(DisplayRow(0)..lhs_max_row + 1)
+            .filter(|(_, block)| {
+                matches!(
+                    block,
+                    Block::BufferHeader { .. } | Block::ExcerptBoundary { .. }
+                )
+            })
+            .map(|(row, _)| row)
+            .collect::<Vec<_>>();
+        let rhs_excerpt_block_rows = rhs_snapshot
+            .blocks_in_range(DisplayRow(0)..rhs_max_row + 1)
+            .filter(|(_, block)| {
+                matches!(
+                    block,
+                    Block::BufferHeader { .. } | Block::ExcerptBoundary { .. }
+                )
+            })
+            .map(|(row, _)| row)
+            .collect::<Vec<_>>();
+        assert_eq!(lhs_excerpt_block_rows, rhs_excerpt_block_rows);
 
         if quiesced {
             for (lhs_hunk, rhs_hunk) in lhs_snapshot.diff_hunks().zip(rhs_snapshot.diff_hunks()) {
