@@ -1104,12 +1104,13 @@ impl BlockMap {
                 continue;
             };
 
-            let (our_baseline, their_baseline) =
-                if *first_boundary == first_group.end && first_group.end != first_group.start {
-                    (first_group.end, first_range.end)
-                } else {
-                    (first_group.start, first_range.start)
-                };
+            let (our_baseline, their_baseline) = if first_group.start < *first_boundary {
+                (first_group.start, first_range.start)
+            } else if let Some((prev_boundary, prev_range)) = row_mapping.prev_boundary {
+                (prev_boundary, prev_range.end)
+            } else {
+                (*first_boundary, first_range.start)
+            };
 
             let first_our_wrap = wrap_snapshot
                 .make_wrap_point(our_baseline, Bias::Left)
@@ -1145,7 +1146,7 @@ impl BlockMap {
                 };
                 let (new_delta, spacer) =
                     determine_spacer(current_boundary, companion_point, delta);
-                if !align_at_start || current_range.end > first_range.end {
+                if !align_at_start {
                     delta = new_delta;
                 }
                 if let Some((wrap_row, height)) = spacer {

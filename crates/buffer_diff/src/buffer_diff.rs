@@ -495,6 +495,7 @@ impl BufferDiffSnapshot {
     ) -> (
         impl 'a + Iterator<Item = Range<Point>>,
         Option<Range<Point>>,
+        Option<(Point, Range<Point>)>,
     ) {
         let original_snapshot = self.original_buffer_snapshot();
 
@@ -519,6 +520,12 @@ impl BufferDiffSnapshot {
                 new: new_start..new_end,
             });
         }
+        if !self.inner.base_text_exists {
+            hunk_edits.push(Edit {
+                old: Point::zero()..original_snapshot.max_point(),
+                new: Point::zero()..Point::zero(),
+            });
+        }
         let hunk_patch = Patch::new(hunk_edits);
 
         let composed = inverted_edits_since.compose(&hunk_patch);
@@ -526,22 +533,26 @@ impl BufferDiffSnapshot {
         let mut points = points.into_iter().peekable();
 
         let first_group = points.peek().map(|point| {
-            if !self.inner.base_text_exists {
-                return Point::zero()..Point::zero();
-            }
             let (_, old_range) = translate_point_through_patch(&composed, *point);
             old_range
         });
 
-        let iter = points.map(move |point| {
-            if !self.inner.base_text_exists {
-                return Point::zero()..Point::zero();
+        let prev_boundary = points.peek().and_then(|first_point| {
+            if first_point.row > 0 {
+                let prev_point = Point::new(first_point.row - 1, 0);
+                let (range, _) = translate_point_through_patch(&composed, prev_point);
+                Some((prev_point, range))
+            } else {
+                None
             }
+        });
+
+        let iter = points.map(move |point| {
             let (range, _) = translate_point_through_patch(&composed, point);
             range
         });
 
-        (iter, first_group)
+        (iter, first_group, prev_boundary)
     }
 
     pub fn base_text_rows_to_rows_naive<'a>(
@@ -551,6 +562,7 @@ impl BufferDiffSnapshot {
     ) -> (
         impl 'a + Iterator<Item = Range<Point>>,
         Option<Range<Point>>,
+        Option<(Point, Range<Point>)>,
     ) {
         let original_snapshot = self.original_buffer_snapshot();
 
@@ -564,12 +576,16 @@ impl BufferDiffSnapshot {
                 .offset_to_point(hunk.diff_base_byte_range.end);
             let new_start = hunk.buffer_range.start.to_point(original_snapshot);
             let new_end = hunk.buffer_range.end.to_point(original_snapshot);
-            if old_start != old_end || new_start != new_end {
-                hunk_edits.push(Edit {
-                    old: old_start..old_end,
-                    new: new_start..new_end,
-                });
-            }
+            hunk_edits.push(Edit {
+                old: old_start..old_end,
+                new: new_start..new_end,
+            });
+        }
+        if !self.inner.base_text_exists {
+            hunk_edits.push(Edit {
+                old: Point::zero()..Point::zero(),
+                new: Point::zero()..original_snapshot.max_point(),
+            })
         }
         let hunk_patch = Patch::new(hunk_edits);
 
@@ -583,22 +599,26 @@ impl BufferDiffSnapshot {
         let mut points = points.into_iter().peekable();
 
         let first_group = points.peek().map(|point| {
-            if !self.inner.base_text_exists {
-                return Point::zero()..buffer.max_point();
-            }
             let (_, result) = translate_point_through_patch(&composed, *point);
             result
         });
 
-        let iter = points.map(move |point| {
-            if !self.inner.base_text_exists {
-                return Point::zero()..buffer.max_point();
+        let prev_boundary = points.peek().and_then(|first_point| {
+            if first_point.row > 0 {
+                let prev_point = Point::new(first_point.row - 1, 0);
+                let (range, _) = translate_point_through_patch(&composed, prev_point);
+                Some((prev_point, range))
+            } else {
+                None
             }
+        });
+
+        let iter = points.map(move |point| {
             let (range, _) = translate_point_through_patch(&composed, point);
             range
         });
 
-        (iter, first_group)
+        (iter, first_group, prev_boundary)
     }
 }
 
@@ -4260,7 +4280,7 @@ mod tests {
         );
 
         let base_points = vec![Point::new(0, 0)];
-        let (rows_iter, _) =
+        let (rows_iter, _, _) =
             diff_snapshot.base_text_rows_to_rows_naive(base_points, &buffer_snapshot);
         let buffer_rows: Vec<_> = rows_iter.collect();
 
@@ -4708,7 +4728,8 @@ mod tests {
 
         let row_count = buffer_snapshot.max_point().row + 1;
         let points: Vec<Point> = (0..row_count).map(|row| Point::new(row, 0)).collect();
-        let (rows_iter, _) = diff_snapshot.rows_to_base_text_rows_naive(points, &buffer_snapshot);
+        let (rows_iter, _, _) =
+            diff_snapshot.rows_to_base_text_rows_naive(points, &buffer_snapshot);
         let base_rows: Vec<_> = rows_iter.collect();
 
         assert_eq!(
@@ -4748,7 +4769,8 @@ mod tests {
 
         let row_count = buffer_snapshot.max_point().row + 1;
         let points: Vec<Point> = (0..row_count).map(|row| Point::new(row, 0)).collect();
-        let (rows_iter, _) = diff_snapshot.rows_to_base_text_rows_naive(points, &buffer_snapshot);
+        let (rows_iter, _, _) =
+            diff_snapshot.rows_to_base_text_rows_naive(points, &buffer_snapshot);
         let base_rows: Vec<_> = rows_iter.collect();
 
         assert_eq!(

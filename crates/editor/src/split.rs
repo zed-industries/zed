@@ -39,8 +39,9 @@ pub(crate) fn convert_lhs_rows_to_rhs(
         rhs_snapshot,
         lhs_bounds,
         |diff, points, buffer| {
-            let (points, first_group) = diff.base_text_rows_to_rows_naive(points, buffer);
-            (points.collect(), first_group)
+            let (points, first_group, prev_boundary) =
+                diff.base_text_rows_to_rows_naive(points, buffer);
+            (points.collect(), first_group, prev_boundary)
         },
     )
 }
@@ -57,8 +58,9 @@ pub(crate) fn convert_rhs_rows_to_lhs(
         lhs_snapshot,
         rhs_bounds,
         |diff, points, buffer| {
-            let (points, first_group) = diff.rows_to_base_text_rows_naive(points, buffer);
-            (points.collect(), first_group)
+            let (points, first_group, prev_boundary) =
+                diff.rows_to_base_text_rows_naive(points, buffer);
+            (points.collect(), first_group, prev_boundary)
         },
     )
 }
@@ -75,7 +77,11 @@ where
         &BufferDiffSnapshot,
         Vec<Point>,
         &text::BufferSnapshot,
-    ) -> (Vec<Range<Point>>, Option<Range<Point>>),
+    ) -> (
+        Vec<Range<Point>>,
+        Option<Range<Point>>,
+        Option<(Point, Range<Point>)>,
+    ),
 {
     let mut result = Vec::new();
 
@@ -112,7 +118,11 @@ where
         &BufferDiffSnapshot,
         Vec<Point>,
         &text::BufferSnapshot,
-    ) -> (Vec<Range<Point>>, Option<Range<Point>>),
+    ) -> (
+        Vec<Range<Point>>,
+        Option<Range<Point>>,
+        Option<(Point, Range<Point>)>,
+    ),
 {
     let target_excerpt_id = excerpt_map.get(&source_excerpt_id).copied()?;
     let target_buffer = target_snapshot.buffer_for_excerpt(target_excerpt_id)?;
@@ -134,7 +144,8 @@ where
         input_points.push(local_end);
     }
 
-    let (translated_ranges, first_group) = translate_fn(&diff, input_points.clone(), rhs_buffer);
+    let (translated_ranges, first_group, prev_boundary) =
+        translate_fn(&diff, input_points.clone(), rhs_buffer);
 
     let source_multibuffer_range = source_snapshot.range_for_excerpt(source_excerpt_id)?;
     let source_excerpt_start_in_multibuffer = source_multibuffer_range.start;
@@ -168,18 +179,33 @@ where
             )
         })
         .collect();
-    let first_group = first_group.map(|first_group_start| {
+    let first_group = first_group.map(|first_group| {
         let start = source_excerpt_start_in_multibuffer
-            + (first_group_start.start
-                - source_excerpt_start_in_buffer.min(first_group_start.start));
+            + (first_group.start - source_excerpt_start_in_buffer.min(first_group.start));
         let end = source_excerpt_start_in_multibuffer
-            + (first_group_start.end - source_excerpt_start_in_buffer.min(first_group_start.end));
+            + (first_group.end - source_excerpt_start_in_buffer.min(first_group.end));
         start..end
+    });
+
+    let prev_boundary = prev_boundary.and_then(|(source_buffer_point, target_range)| {
+        let source_multibuffer_point = source_excerpt_start_in_multibuffer
+            + (source_buffer_point - source_excerpt_start_in_buffer.min(source_buffer_point));
+
+        let target_multibuffer_start = target_excerpt_start_in_multibuffer
+            + (target_range.start - target_excerpt_start_in_buffer.min(target_range.start));
+        let target_multibuffer_end = target_excerpt_start_in_multibuffer
+            + (target_range.end - target_excerpt_start_in_buffer.min(target_range.end));
+
+        Some((
+            source_multibuffer_point,
+            target_multibuffer_start..target_multibuffer_end,
+        ))
     });
 
     Some(MultiBufferRowMapping {
         boundaries,
         first_group,
+        prev_boundary,
     })
 }
 
@@ -1193,7 +1219,7 @@ impl SecondaryEditor {
             .into_iter()
             .map(|(_, excerpt_range)| {
                 let point_range_to_base_text_point_range = |range: Range<Point>| {
-                    let (mut translated, _) = diff_snapshot.rows_to_base_text_rows_naive(
+                    let (mut translated, _, _) = diff_snapshot.rows_to_base_text_rows_naive(
                         [Point::new(range.start.row, 0), Point::new(range.end.row, 0)],
                         main_buffer,
                     );
