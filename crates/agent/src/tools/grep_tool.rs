@@ -66,17 +66,12 @@ pub struct GrepToolInput {
 const RESULTS_PER_PAGE: usize = 20;
 
 pub(crate) struct GrepTool {
-    project: Entity<Project>,
     ongoing_project_searches: Entity<ProjectSearchStore>,
 }
 
 impl GrepTool {
-    pub(crate) fn new(
-        project: Entity<Project>,
-        ongoing_project_searches: Entity<ProjectSearchStore>,
-    ) -> Self {
+    pub(crate) fn new(ongoing_project_searches: Entity<ProjectSearchStore>) -> Self {
         Self {
-            project,
             ongoing_project_searches,
         }
     }
@@ -145,56 +140,49 @@ impl AgentTool for GrepTool {
 
             let mut output = String::new();
 
+            let search_result = futures::select! {
+                result = rx.next().fuse() => result,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Search cancelled by user");
+                }
+            }.context("Failed to get search results")?;
+
+            let mut current_file_path = None;
+            let count = search_result.items.len();
+            for (buffer, hit) in search_result.items {
+                let (Some(path), snapshot)= buffer.read_with(cx, |buffer, cx| {
+                    (buffer.file().map(|file| file.full_path(cx)), buffer.snapshot())
+                }) else {
+                    continue;
+                };
+
+                if current_file_path.as_ref().is_none_or(|prev_path| *prev_path != path) {
+                        current_file_path = Some(path.clone());
+                    writeln!(output, "\n## Matches in {}", path.display())?;
+                }
 
 
-                let search_result = futures::select! {
-                    result = rx.next().fuse() => result,
-                    _ = event_stream.cancelled_by_user().fuse() => {
-                        anyhow::bail!("Search cancelled by user");
-                    }
-                }.context("Failed to get search results")?;
+                let end_row = hit.range.end.row;
+                output.push_str("\n### ");
 
-                let mut current_file_path = None;
-                let count = search_result.items.len();
-               for (buffer, hit) in search_result.items {
+                for symbol in hit.parent_symbols {
+                    write!(output, "{} › ", symbol.text)?;
+                }
 
-                    let (Some(path), snapshot)= buffer.read_with(cx, |buffer, cx| {
-                        (buffer.file().map(|file| file.full_path(cx)), buffer.snapshot())
-                    }) else {
-                        continue;
-                    };
+                if hit.range.start.row == end_row {
+                    writeln!(output, "L{}", hit.range.start.row + 1)?;
+                } else {
+                    writeln!(output, "L{}-{}", hit.range.start.row + 1, end_row + 1)?;
+                }
 
-                    if current_file_path.as_ref().is_none_or(|prev_path| *prev_path != path) {
-                         current_file_path = Some(path.clone());
-                        writeln!(output, "\n## Matches in {}", path.display())?;
-                    }
+                output.push_str("```\n");
+                output.extend(snapshot.text_for_range(hit.range));
+                output.push_str("\n```\n");
 
-
-                    let end_row = hit.range.end.row;
-                    output.push_str("\n### ");
-
-                    for symbol in hit.parent_symbols {
-                        write!(output, "{} › ", symbol.text)?;
-                    }
-
-                    if hit.range.start.row == end_row {
-                        writeln!(output, "L{}", hit.range.start.row + 1)?;
-                    } else {
-                        writeln!(output, "L{}-{}", hit.range.start.row + 1, end_row + 1)?;
-                    }
-
-                    output.push_str("```\n");
-                    output.extend(snapshot.text_for_range(hit.range));
-                    output.push_str("\n```\n");
-
-                    if let Some(ancestor_range) = hit.ancestor_range
-                        && end_row < ancestor_range.end.row {
-                            let remaining_lines = ancestor_range.end.row - end_row;
-                            writeln!(output, "\n{} lines remaining in ancestor node. Read the file to see all.", remaining_lines)?;
-                        }
-
-
-
+                if let Some(ancestor_range) = hit.ancestor_range && end_row < ancestor_range.end.row {
+                    let remaining_lines = ancestor_range.end.row - end_row;
+                    writeln!(output, "\n{} lines remaining in ancestor node. Read the file to see all.", remaining_lines)?;
+                }
             }
 
             if count == 0 {
@@ -276,7 +264,7 @@ impl ProjectSearchStore {
                 ongoing_search.get().results.clone()
             }
             hash_map::Entry::Vacant(vacant) => {
-                let results = Self::new_search(&self.project, key.clone(), cx)?;
+                let results = Self::new_search(&self.project, key, cx)?;
 
                 let (tx, rx) = smol::channel::bounded::<SearchBatch>(1);
                 let project = self.project.downgrade();
@@ -489,7 +477,7 @@ mod tests {
     use crate::ToolCallEventStream;
 
     use super::*;
-    use gpui::{TestAppContext, UpdateGlobal};
+    use gpui::{AppContext, TestAppContext, UpdateGlobal};
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
@@ -941,7 +929,6 @@ mod tests {
         let tool = Arc::new(GrepTool {
             ongoing_project_searches: cx
                 .update(|cx| cx.new(|_| ProjectSearchStore::new(project.clone()))),
-            project,
         });
         let task = cx.update(|cx| tool.run(input, ToolCallEventStream::test().0, cx));
 

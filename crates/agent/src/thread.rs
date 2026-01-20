@@ -1175,10 +1175,7 @@ impl Thread {
         ));
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
         self.add_tool(FindPathTool::new(self.project.clone()));
-        self.add_tool(GrepTool::new(
-            self.project.clone(),
-            self.project_searches.clone(),
-        ));
+        self.add_tool(GrepTool::new(self.project_searches.clone()));
         self.add_tool(ListDirectoryTool::new(self.project.clone()));
         self.add_tool(MovePathTool::new(self.project.clone()));
         self.add_tool(NowTool);
