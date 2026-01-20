@@ -1911,7 +1911,7 @@ impl PickerDelegate for QuickSearchDelegate {
             ];
 
             let snapshot = search_match.buffer.read(cx).snapshot();
-            let syntax_theme = cx.theme().syntax().clone();
+            let syntax_theme = cx.theme().syntax();
             let mut current_offset = 0;
 
             for (range, is_match) in ranges {
