@@ -645,6 +645,59 @@ pub struct ProjectPanelAutoOpenSettings {
 
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+pub struct ProjectPanelActionBarSettings {
+    /// Whether to show the action bar in the project panel.
+    ///
+    /// Default: true
+    pub show: Option<bool>,
+    /// Whether to show the "New File" button.
+    ///
+    /// Default: true
+    pub new_file: Option<bool>,
+    /// Whether to show the "New Folder" button.
+    ///
+    /// Default: true
+    pub new_folder: Option<bool>,
+    /// Whether to show the "Delete" button.
+    ///
+    /// Default: true
+    pub delete: Option<bool>,
+    /// Whether to show the "Reveal in Finder" button.
+    ///
+    /// Default: true
+    pub reveal_in_finder: Option<bool>,
+    /// Whether to show the "Open in Terminal" button.
+    ///
+    /// Default: true
+    pub open_in_terminal: Option<bool>,
+    /// Whether to show the "Copy Path" button.
+    ///
+    /// Default: true
+    pub copy_path: Option<bool>,
+    /// Whether to show the "Search in Directory" button.
+    ///
+    /// Default: true
+    pub search: Option<bool>,
+    /// Whether to show the "Toggle Hidden Files" button.
+    ///
+    /// Default: true
+    pub toggle_hidden: Option<bool>,
+    /// Whether to show the "Toggle Gitignored Files" button.
+    ///
+    /// Default: true
+    pub toggle_gitignore: Option<bool>,
+    /// Whether to show the "Collapse All" button.
+    ///
+    /// Default: true
+    pub collapse_all: Option<bool>,
+    /// Whether to show the "Expand All" button.
+    ///
+    /// Default: true
+    pub expand_all: Option<bool>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct ProjectPanelSettingsContent {
     /// Whether to show the project panel button in the status bar.
     ///
@@ -729,6 +782,8 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: directories_first
     pub sort_mode: Option<ProjectPanelSortMode>,
+    /// Settings for the action bar at the top of the project panel.
+    pub action_bar: Option<ProjectPanelActionBarSettings>,
 }
 
 #[derive(

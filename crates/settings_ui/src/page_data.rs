@@ -4728,6 +4728,324 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
+    fn action_bar_section() -> [SettingsPageItem; 13] {
+        [
+            SettingsPageItem::SectionHeader("Action Bar"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Action Bar",
+                description: "Whether to show the action bar at the top of the project panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.action_bar.show"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .action_bar
+                            .as_ref()?
+                            .show
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .action_bar
+                            .get_or_insert_default()
+                            .show = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "New File Button",
+                description: "Show the \"New File\" button in the action bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.action_bar.new_file"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .action_bar
+                            .as_ref()?
+                            .new_file
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .action_bar
+                            .get_or_insert_default()
+                            .new_file = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "New Folder Button",
+                description: "Show the \"New Folder\" button in the action bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.action_bar.new_folder"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .action_bar
+                            .as_ref()?
+                            .new_folder
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .action_bar
+                            .get_or_insert_default()
+                            .new_folder = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Delete Button",
+                description: "Show the \"Delete\" button in the action bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.action_bar.delete"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .action_bar
+                            .as_ref()?
+                            .delete
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .action_bar
+                            .get_or_insert_default()
+                            .delete = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Reveal in Finder Button",
+                description: "Show the \"Reveal in Finder\" button in the action bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.action_bar.reveal_in_finder"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .action_bar
+                            .as_ref()?
+                            .reveal_in_finder
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .action_bar
+                            .get_or_insert_default()
+                            .reveal_in_finder = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Open in Terminal Button",
+                description: "Show the \"Open in Terminal\" button in the action bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.action_bar.open_in_terminal"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .action_bar
+                            .as_ref()?
+                            .open_in_terminal
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .action_bar
+                            .get_or_insert_default()
+                            .open_in_terminal = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Copy Path Button",
+                description: "Show the \"Copy Path\" button in the action bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.action_bar.copy_path"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .action_bar
+                            .as_ref()?
+                            .copy_path
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .action_bar
+                            .get_or_insert_default()
+                            .copy_path = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Search Button",
+                description: "Show the \"Search in Directory\" button in the action bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.action_bar.search"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .action_bar
+                            .as_ref()?
+                            .search
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .action_bar
+                            .get_or_insert_default()
+                            .search = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Toggle Hidden Files Button",
+                description: "Show the \"Toggle Hidden Files\" button in the action bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.action_bar.toggle_hidden"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .action_bar
+                            .as_ref()?
+                            .toggle_hidden
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .action_bar
+                            .get_or_insert_default()
+                            .toggle_hidden = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Toggle Gitignored Files Button",
+                description: "Show the \"Toggle Gitignored Files\" button in the action bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.action_bar.toggle_gitignore"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .action_bar
+                            .as_ref()?
+                            .toggle_gitignore
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .action_bar
+                            .get_or_insert_default()
+                            .toggle_gitignore = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Collapse All Button",
+                description: "Show the \"Collapse All\" button in the action bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.action_bar.collapse_all"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .action_bar
+                            .as_ref()?
+                            .collapse_all
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .action_bar
+                            .get_or_insert_default()
+                            .collapse_all = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Expand All Button",
+                description: "Show the \"Expand All\" button in the action bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.action_bar.expand_all"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .action_bar
+                            .as_ref()?
+                            .expand_all
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .action_bar
+                            .get_or_insert_default()
+                            .expand_all = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn terminal_panel_section() -> [SettingsPageItem; 2] {
         [
             SettingsPageItem::SectionHeader("Terminal Panel"),
@@ -5354,6 +5672,7 @@ fn panels_page() -> SettingsPage {
         items: concat_sections![
             project_panel_section(),
             auto_open_files_section(),
+            action_bar_section(),
             terminal_panel_section(),
             outline_panel_section(),
             git_panel_section(),

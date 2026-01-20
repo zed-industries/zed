@@ -796,6 +796,33 @@
       // Whether to automatically open files dropped from external sources.
       "on_drop": true,
     },
+    // Settings for the action bar at the top of the project panel.
+    "action_bar": {
+      // Whether to show the action bar in the project panel.
+      "show": true,
+      // Whether to show the "New File" button.
+      "new_file": true,
+      // Whether to show the "New Folder" button.
+      "new_folder": true,
+      // Whether to show the "Delete" button.
+      "delete": true,
+      // Whether to show the "Reveal in Finder" button.
+      "reveal_in_finder": true,
+      // Whether to show the "Open in Terminal" button.
+      "open_in_terminal": true,
+      // Whether to show the "Copy Path" button.
+      "copy_path": true,
+      // Whether to show the "Search in Directory" button.
+      "search": true,
+      // Whether to show the "Toggle Hidden Files" button.
+      "toggle_hidden": true,
+      // Whether to show the "Toggle Gitignored Files" button.
+      "toggle_gitignore": true,
+      // Whether to show the "Collapse All" button.
+      "collapse_all": true,
+      // Whether to show the "Expand All" button.
+      "expand_all": true,
+    },
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar

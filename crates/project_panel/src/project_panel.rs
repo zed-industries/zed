@@ -57,10 +57,10 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing,
-    ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
-    v_flex,
+    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconButton, IconDecoration,
+    IconDecorationKind, IconSize, IndentGuideColors, IndentGuideLayout, KeyBinding, Label,
+    LabelSize, ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars,
+    StickyCandidate, Tab, Tooltip, WithScrollbar, prelude::*, v_flex,
 };
 use util::{
     ResultExt, TakeUntilExt, TryFutureExt, maybe,
@@ -287,6 +287,8 @@ actions!(
         CollapseSelectedEntry,
         /// Collapses all entries in the project tree.
         CollapseAllEntries,
+        /// Expands all entries in the project tree.
+        ExpandAllEntries,
         /// Creates a new directory.
         NewDirectory,
         /// Creates a new file.
@@ -430,6 +432,14 @@ pub fn init(cx: &mut App) {
             if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
                 panel.update(cx, |panel, cx| {
                     panel.collapse_all_entries(action, window, cx);
+                });
+            }
+        });
+
+        workspace.register_action(|workspace, action: &ExpandAllEntries, window, cx| {
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel.expand_all_entries(action, window, cx);
                 });
             }
         });
@@ -1387,6 +1397,35 @@ impl ProjectPanel {
                     None => *expanded_entries = Default::default(),
                 };
             });
+
+        self.update_visible_entries(None, false, false, window, cx);
+        cx.notify();
+    }
+
+    pub fn expand_all_entries(
+        &mut self,
+        _: &ExpandAllEntries,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.project.read(cx);
+
+        for worktree in project.worktrees(cx) {
+            let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
+            let worktree_snapshot = worktree.snapshot();
+
+            let mut directory_ids: Vec<ProjectEntryId> = worktree_snapshot
+                .entries(false, 0)
+                .filter(|entry| entry.is_dir())
+                .map(|entry| entry.id)
+                .collect();
+            directory_ids.sort();
+
+            self.state
+                .expanded_dir_ids
+                .insert(worktree_id, directory_ids);
+        }
 
         self.update_visible_entries(None, false, false, window, cx);
         cx.notify();
@@ -3208,6 +3247,18 @@ impl ProjectPanel {
                 .update(cx, |workspace, cx| {
                     search::ProjectSearchView::new_search_in_directory(
                         workspace, &dir_path, window, cx,
+                    );
+                })
+                .ok();
+        } else {
+            // No selection, open project-wide search
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    search::ProjectSearchView::new_search_in_directory(
+                        workspace,
+                        RelPath::empty(),
+                        window,
+                        cx,
                     );
                 })
                 .ok();
@@ -5890,13 +5941,284 @@ fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -
     item_width
 }
 
+impl ProjectPanel {
+    fn render_action_bar(&self, cx: &mut Context<Self>) -> Div {
+        let is_read_only = self.project.read(cx).is_read_only(cx);
+        let is_local = self.project.read(cx).is_local();
+        let has_selection = self.state.selection.is_some();
+        let focus_handle = self.focus_handle(cx);
+        let settings = ProjectPanelSettings::get_global(cx);
+        let hide_gitignore = settings.hide_gitignore;
+        let hide_hidden = settings.hide_hidden;
+        let action_bar = settings.action_bar;
+
+        h_flex()
+            .h(Tab::container_height(cx))
+            .flex_none()
+            .px_2()
+            .gap_1()
+            .justify_between()
+            .bg(cx.theme().colors().tab_bar_background)
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                // Left side: View controls (search, filters, expand/collapse)
+                h_flex()
+                    .gap_0p5()
+                    .when(action_bar.search, |this| {
+                        this.child(
+                            IconButton::new("search", IconName::MagnifyingGlass)
+                                .icon_size(IconSize::Small)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Search in Directory",
+                                            &NewSearchInDirectory,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.new_search_in_directory(&NewSearchInDirectory, window, cx);
+                                })),
+                        )
+                    })
+                    .when(action_bar.toggle_hidden, |this| {
+                        this.child(
+                            IconButton::new("toggle-hidden", IconName::Eye)
+                                .icon_size(IconSize::Small)
+                                .toggle_state(!hide_hidden)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            if hide_hidden {
+                                                "Show Hidden Files"
+                                            } else {
+                                                "Hide Hidden Files"
+                                            },
+                                            &ToggleHideHidden,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(|_, _, window, cx| {
+                                    window.dispatch_action(ToggleHideHidden.boxed_clone(), cx);
+                                })),
+                        )
+                    })
+                    .when(action_bar.toggle_gitignore, |this| {
+                        this.child(
+                            IconButton::new("toggle-gitignore", IconName::GitBranch)
+                                .icon_size(IconSize::Small)
+                                .toggle_state(!hide_gitignore)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            if hide_gitignore {
+                                                "Show Gitignored Files"
+                                            } else {
+                                                "Hide Gitignored Files"
+                                            },
+                                            &ToggleHideGitIgnore,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(|_, _, window, cx| {
+                                    window.dispatch_action(ToggleHideGitIgnore.boxed_clone(), cx);
+                                })),
+                        )
+                    })
+                    .when(action_bar.collapse_all, |this| {
+                        this.child(
+                            IconButton::new("collapse-all", IconName::ListCollapse)
+                                .icon_size(IconSize::Small)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Collapse All",
+                                            &CollapseAllEntries,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.collapse_all_entries(&CollapseAllEntries, window, cx);
+                                })),
+                        )
+                    })
+                    .when(action_bar.expand_all, |this| {
+                        this.child(
+                            IconButton::new("expand-all", IconName::ListTree)
+                                .icon_size(IconSize::Small)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Expand All",
+                                            &ExpandAllEntries,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.expand_all_entries(&ExpandAllEntries, window, cx);
+                                })),
+                        )
+                    }),
+            )
+            .child(
+                // Right side: File operations (delete, reveal, terminal, copy path, new folder, new file)
+                h_flex()
+                    .gap_0p5()
+                    .when(!is_read_only && action_bar.delete, |this| {
+                        this.child(
+                            IconButton::new("trash", IconName::Trash)
+                                .icon_size(IconSize::Small)
+                                .disabled(!has_selection)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Delete",
+                                            &Delete { skip_prompt: false },
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.delete(&Delete { skip_prompt: false }, window, cx);
+                                })),
+                        )
+                    })
+                    .when(is_local && action_bar.reveal_in_finder, |this| {
+                        this.child(
+                            IconButton::new("reveal-in-finder", IconName::FolderEye)
+                                .icon_size(IconSize::Small)
+                                .disabled(!has_selection)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            if cfg!(target_os = "macos") {
+                                                "Reveal in Finder"
+                                            } else {
+                                                "Reveal in File Manager"
+                                            },
+                                            &RevealInFileManager,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.reveal_in_finder(&RevealInFileManager, window, cx);
+                                })),
+                        )
+                    })
+                    .when(is_local && action_bar.open_in_terminal, |this| {
+                        this.child(
+                            IconButton::new("open-in-terminal", IconName::TerminalAlt)
+                                .icon_size(IconSize::Small)
+                                .disabled(!has_selection)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Open in Terminal",
+                                            &OpenInTerminal,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_in_terminal(&OpenInTerminal, window, cx);
+                                })),
+                        )
+                    })
+                    .when(action_bar.copy_path, |this| {
+                        this.child(
+                            IconButton::new("copy-path", IconName::Copy)
+                                .icon_size(IconSize::Small)
+                                .disabled(!has_selection)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Copy Path",
+                                            &zed_actions::workspace::CopyPath,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.copy_path(&zed_actions::workspace::CopyPath, window, cx);
+                                })),
+                        )
+                    })
+                    .when(!is_read_only && action_bar.new_folder, |this| {
+                        this.child(
+                            IconButton::new("new-folder", IconName::FolderPlus)
+                                .icon_size(IconSize::Small)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            "New Folder",
+                                            &NewDirectory,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.new_directory(&NewDirectory, window, cx);
+                                })),
+                        )
+                    })
+                    .when(!is_read_only && action_bar.new_file, |this| {
+                        this.child(
+                            IconButton::new("new-file", IconName::FilePlus)
+                                .icon_size(IconSize::Small)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            "New File",
+                                            &NewFile,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.new_file(&NewFile, window, cx);
+                                })),
+                        )
+                    }),
+            )
+    }
+}
+
 impl Render for ProjectPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_worktree = !self.state.visible_entries.is_empty();
-        let project = self.project.read(cx);
         let panel_settings = ProjectPanelSettings::get_global(cx);
         let indent_size = panel_settings.indent_size;
         let show_indent_guides = panel_settings.indent_guides.show == ShowIndentGuides::Always;
+        let drag_and_drop_enabled = panel_settings.drag_and_drop;
         let show_sticky_entries = {
             if panel_settings.sticky_scroll {
                 let is_scrollable = self.scroll_handle.is_scrollable();
@@ -5907,6 +6229,13 @@ impl Render for ProjectPanel {
             }
         };
 
+        let show_action_bar = panel_settings.action_bar.should_show();
+        let action_bar = if show_action_bar {
+            Some(self.render_action_bar(cx))
+        } else {
+            None
+        };
+        let project = self.project.read(cx);
         let is_local = project.is_local();
 
         if has_worktree {
@@ -5987,7 +6316,7 @@ impl Render for ProjectPanel {
             h_flex()
                 .id("project-panel")
                 .group("project-panel")
-                .when(panel_settings.drag_and_drop, |this| {
+                .when(drag_and_drop_enabled, |this| {
                     this.on_drag_move(cx.listener(handle_drag_move::<ExternalPaths>))
                         .on_drag_move(cx.listener(handle_drag_move::<DraggedSelection>))
                 })
@@ -6018,6 +6347,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
+                .on_action(cx.listener(Self::expand_all_entries))
                 .on_action(cx.listener(Self::open))
                 .on_action(cx.listener(Self::open_permanent))
                 .on_action(cx.listener(Self::open_split_vertical))
@@ -6056,6 +6386,7 @@ impl Render for ProjectPanel {
                 .track_focus(&self.focus_handle(cx))
                 .child(
                     v_flex()
+                        .children(action_bar)
                         .child(
                             uniform_list("entries", item_count, {
                                 cx.processor(|this, range: Range<usize>, window, cx| {
@@ -6476,7 +6807,7 @@ impl Render for ProjectPanel {
                         })),
                 )
                 .when(is_local, |div| {
-                    div.when(panel_settings.drag_and_drop, |div| {
+                    div.when(drag_and_drop_enabled, |div| {
                         div.drag_over::<ExternalPaths>(|style, _, _, cx| {
                             style.bg(cx.theme().colors().drop_target_background)
                         })

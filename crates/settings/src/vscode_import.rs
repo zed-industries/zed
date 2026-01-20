@@ -686,6 +686,7 @@ impl VsCodeSettings {
             starts_open: None,
             sticky_scroll: None,
             auto_open: None,
+            action_bar: None,
         };
 
         if let (Some(false), Some(false)) = (

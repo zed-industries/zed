@@ -34,6 +34,7 @@ pub struct ProjectPanelSettings {
     pub drag_and_drop: bool,
     pub auto_open: AutoOpenSettings,
     pub sort_mode: ProjectPanelSortMode,
+    pub action_bar: ActionBarSettings,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -54,6 +55,42 @@ pub struct AutoOpenSettings {
     pub on_create: bool,
     pub on_paste: bool,
     pub on_drop: bool,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ActionBarSettings {
+    pub show: bool,
+    pub new_file: bool,
+    pub new_folder: bool,
+    pub delete: bool,
+    pub reveal_in_finder: bool,
+    pub open_in_terminal: bool,
+    pub copy_path: bool,
+    pub search: bool,
+    pub toggle_hidden: bool,
+    pub toggle_gitignore: bool,
+    pub collapse_all: bool,
+    pub expand_all: bool,
+}
+
+impl ActionBarSettings {
+    pub fn has_any_button_enabled(&self) -> bool {
+        self.new_file
+            || self.new_folder
+            || self.delete
+            || self.reveal_in_finder
+            || self.open_in_terminal
+            || self.copy_path
+            || self.search
+            || self.toggle_hidden
+            || self.toggle_gitignore
+            || self.collapse_all
+            || self.expand_all
+    }
+
+    pub fn should_show(&self) -> bool {
+        self.show && self.has_any_button_enabled()
+    }
 }
 
 impl AutoOpenSettings {
@@ -125,6 +162,23 @@ impl Settings for ProjectPanelSettings {
             sort_mode: project_panel
                 .sort_mode
                 .unwrap_or(ProjectPanelSortMode::DirectoriesFirst),
+            action_bar: {
+                let action_bar = project_panel.action_bar.unwrap_or_default();
+                ActionBarSettings {
+                    show: action_bar.show.unwrap_or(true),
+                    new_file: action_bar.new_file.unwrap_or(true),
+                    new_folder: action_bar.new_folder.unwrap_or(true),
+                    delete: action_bar.delete.unwrap_or(true),
+                    reveal_in_finder: action_bar.reveal_in_finder.unwrap_or(true),
+                    open_in_terminal: action_bar.open_in_terminal.unwrap_or(true),
+                    copy_path: action_bar.copy_path.unwrap_or(true),
+                    search: action_bar.search.unwrap_or(true),
+                    toggle_hidden: action_bar.toggle_hidden.unwrap_or(true),
+                    toggle_gitignore: action_bar.toggle_gitignore.unwrap_or(true),
+                    collapse_all: action_bar.collapse_all.unwrap_or(true),
+                    expand_all: action_bar.expand_all.unwrap_or(true),
+                }
+            },
         }
     }
 }
