@@ -22917,6 +22917,7 @@ impl Editor {
                         modifiers: window.modifiers(),
                     },
                     &position_map,
+                    None,
                     window,
                     cx,
                 );
