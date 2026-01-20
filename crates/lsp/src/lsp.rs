@@ -1870,7 +1870,8 @@ impl FakeLanguageServer {
 
     /// Simulate that the server has started work and notifies about its progress with the specified token.
     pub async fn start_progress(&self, token: impl Into<String>) {
-        self.start_progress_with(token, Default::default(), Default::default()).await
+        self.start_progress_with(token, Default::default(), Default::default())
+            .await
     }
 
     pub async fn start_progress_with(
@@ -1880,9 +1881,11 @@ impl FakeLanguageServer {
         request_timeout: Duration,
     ) {
         let token = token.into();
-        self.request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams {
-            token: NumberOrString::String(token.clone()),
-            }, request_timeout
+        self.request::<request::WorkDoneProgressCreate>(
+            WorkDoneProgressCreateParams {
+                token: NumberOrString::String(token.clone()),
+            },
+            request_timeout,
         )
         .await
         .into_response()
@@ -2015,32 +2018,34 @@ mod tests {
             Default::default(),
             &mut cx.to_async(),
         );
-    
+
         cx.update(|cx| {
-                let params = server.default_initialize_params(false, cx);
-                let configuration = DidChangeConfigurationParams {
-                    settings: Default::default(),
-                };
-                server.initialize(
-                    params,
-                    configuration.into(),
-                    DEFAULT_LSP_REQUEST_TIMEOUT,
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
+            let params = server.default_initialize_params(false, cx);
+            let configuration = DidChangeConfigurationParams {
+                settings: Default::default(),
+            };
+            server.initialize(
+                params,
+                configuration.into(),
+                DEFAULT_LSP_REQUEST_TIMEOUT,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
 
         let progress_token = 42;
         // NB: I highly doubt any LSP operations will take under a nanosecond to complete
         let short_timeout = Duration::from_nanos(1);
-        fake
-            .request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams {
+        fake.request::<request::WorkDoneProgressCreate>(
+            WorkDoneProgressCreateParams {
                 token: ProgressToken::Number(progress_token),
-            }, short_timeout)
-            .await
-            .into_response()
-            .expect_err("work done request should have timed out");
+            },
+            short_timeout,
+        )
+        .await
+        .into_response()
+        .expect_err("work done request should have timed out");
     }
 
     #[gpui::test]

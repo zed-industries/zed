@@ -34,7 +34,7 @@ use language::{
 use language_settings::Formatter;
 use languages::markdown_lang;
 use languages::rust_lang;
-use lsp::CompletionParams;
+use lsp::{CompletionParams, DEFAULT_LSP_REQUEST_TIMEOUT};
 use multi_buffer::{
     ExcerptRange, IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey,
 };
@@ -13073,26 +13073,29 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
             async move {
                 lock.lock().await;
                 fake.server
-                    .request::<lsp::request::ApplyWorkspaceEdit>(lsp::ApplyWorkspaceEditParams {
-                        label: None,
-                        edit: lsp::WorkspaceEdit {
-                            changes: Some(
-                                [(
-                                    lsp::Uri::from_file_path(path!("/file.rs")).unwrap(),
-                                    vec![lsp::TextEdit {
-                                        range: lsp::Range::new(
-                                            lsp::Position::new(0, 0),
-                                            lsp::Position::new(0, 0),
-                                        ),
-                                        new_text: "applied-code-action-1-command\n".into(),
-                                    }],
-                                )]
-                                .into_iter()
-                                .collect(),
-                            ),
-                            ..Default::default()
+                    .request::<lsp::request::ApplyWorkspaceEdit>(
+                        lsp::ApplyWorkspaceEditParams {
+                            label: None,
+                            edit: lsp::WorkspaceEdit {
+                                changes: Some(
+                                    [(
+                                        lsp::Uri::from_file_path(path!("/file.rs")).unwrap(),
+                                        vec![lsp::TextEdit {
+                                            range: lsp::Range::new(
+                                                lsp::Position::new(0, 0),
+                                                lsp::Position::new(0, 0),
+                                            ),
+                                            new_text: "applied-code-action-1-command\n".into(),
+                                        }],
+                                    )]
+                                    .into_iter()
+                                    .collect(),
+                                ),
+                                ..Default::default()
+                            },
                         },
-                    })
+                        DEFAULT_LSP_REQUEST_TIMEOUT,
+                    )
                     .await
                     .into_response()
                     .unwrap();
@@ -25015,6 +25018,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
                                     ..lsp::WorkspaceEdit::default()
                                 },
                             },
+                            DEFAULT_LSP_REQUEST_TIMEOUT,
                         )
                         .await
                         .into_response()
