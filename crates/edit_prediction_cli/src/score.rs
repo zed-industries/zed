@@ -3,6 +3,7 @@ use crate::{
     example::{Example, ExampleScore},
     headless::EpAppState,
     metrics,
+    parse_output::parse_prediction_output,
     predict::run_prediction,
     progress::{ExampleProgress, Step},
 };
@@ -37,7 +38,27 @@ pub async fn run_scoring(
     progress.set_substatus("computing metrics");
     let mut scores = vec![];
     for prediction in &example.predictions {
-        let actual_text = match apply_diff_to_string(&prediction.actual_patch, original_text) {
+        let actual_patch = match &prediction.actual_patch {
+            Some(patch) => patch.clone(),
+            None => {
+                if prediction.actual_output.is_empty() {
+                    scores.push(ExampleScore { delta_chr_f: 0.0 });
+                    continue;
+                }
+                match parse_prediction_output(
+                    example,
+                    &prediction.actual_output,
+                    prediction.provider,
+                ) {
+                    Ok(patch) => patch,
+                    Err(_) => {
+                        scores.push(ExampleScore { delta_chr_f: 0.0 });
+                        continue;
+                    }
+                }
+            }
+        };
+        let actual_text = match apply_diff_to_string(&actual_patch, original_text) {
             Ok(text) => text,
             Err(_) => {
                 scores.push(ExampleScore { delta_chr_f: 0.0 });

@@ -6,6 +6,7 @@ mod git;
 mod headless;
 mod load_project;
 mod metrics;
+mod parse_output;
 mod paths;
 mod predict;
 mod progress;
@@ -130,6 +131,9 @@ enum Command {
     FormatPrompt(FormatPromptArgs),
     /// Runs edit prediction
     Predict(PredictArgs),
+    /// Parse model outputs (actual_output) into unified diffs (actual_patch).
+    /// Requires format-prompt to have been run first. Uses provider from prompt.
+    ParseOutput,
     /// Computes a score based on actual and expected patches
     Score(PredictArgs),
     /// Prepares a distillation dataset by copying expected outputs to
@@ -159,6 +163,7 @@ impl Display for Command {
             Command::Predict(args) => {
                 write!(f, "predict --provider={}", args.provider)
             }
+            Command::ParseOutput => write!(f, "parse-output"),
             Command::Score(args) => {
                 write!(f, "score --provider={}", args.provider)
             }
@@ -600,6 +605,9 @@ fn main() {
                                                 cx.clone(),
                                             )
                                             .await?;
+                                        }
+                                        Command::ParseOutput => {
+                                            parse_output::run_parse_output(example)?;
                                         }
                                         Command::Distill => {
                                             run_distill(example).await?;
