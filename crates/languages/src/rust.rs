@@ -2,12 +2,13 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
+use futures::lock::OwnedMutexGuard;
 use gpui::{App, AppContext, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
-use lsp::{InitializeParams, LanguageServerBinary};
+use lsp::{InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
 use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
@@ -18,6 +19,7 @@ use smol::fs::{self};
 use std::cmp::Reverse;
 use std::fmt::Display;
 use std::ops::Range;
+use std::process::Stdio;
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -66,6 +68,68 @@ enum LibcType {
 }
 
 impl RustLspAdapter {
+    fn convert_rust_analyzer_schema(raw_schema: &serde_json::Value) -> serde_json::Value {
+        let Some(schema_array) = raw_schema.as_array() else {
+            return raw_schema.clone();
+        };
+
+        let mut root_properties = serde_json::Map::new();
+
+        for item in schema_array {
+            if let Some(props) = item.get("properties").and_then(|p| p.as_object()) {
+                for (key, value) in props {
+                    let parts: Vec<&str> = key.split('.').collect();
+
+                    if parts.is_empty() {
+                        continue;
+                    }
+
+                    let parts_to_process = if parts.first() == Some(&"rust-analyzer") {
+                        &parts[1..]
+                    } else {
+                        &parts[..]
+                    };
+
+                    if parts_to_process.is_empty() {
+                        continue;
+                    }
+
+                    let mut current = &mut root_properties;
+
+                    for (i, part) in parts_to_process.iter().enumerate() {
+                        let is_last = i == parts_to_process.len() - 1;
+
+                        if is_last {
+                            current.insert(part.to_string(), value.clone());
+                        } else {
+                            let next_current = current
+                                .entry(part.to_string())
+                                .or_insert_with(|| {
+                                    serde_json::json!({
+                                        "type": "object",
+                                        "properties": {}
+                                    })
+                                })
+                                .as_object_mut()
+                                .expect("should be an object")
+                                .entry("properties")
+                                .or_insert_with(|| serde_json::json!({}))
+                                .as_object_mut()
+                                .expect("properties should be an object");
+
+                            current = next_current;
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::json!({
+            "type": "object",
+            "properties": root_properties
+        })
+    }
+
     #[cfg(target_os = "linux")]
     async fn determine_libc_type() -> LibcType {
         use futures::pin_mut;
@@ -448,6 +512,55 @@ impl LspAdapter for RustLspAdapter {
         Some(label)
     }
 
+    async fn initialization_options_schema(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        let binary = self
+            .get_language_server_command(
+                delegate.clone(),
+                None,
+                LanguageServerBinaryOptions {
+                    allow_path_lookup: true,
+                    allow_binary_download: false,
+                    pre_release: false,
+                },
+                cached_binary,
+                cx.clone(),
+            )
+            .await
+            .0
+            .ok()?;
+
+        let mut command = util::command::new_smol_command(&binary.path);
+        command
+            .arg("--print-config-schema")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let cmd = command
+            .spawn()
+            .map_err(|e| log::debug!("failed to spawn command {command:?}: {e}"))
+            .ok()?;
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| log::debug!("failed to execute command {command:?}: {e}"))
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+
+        let raw_schema: serde_json::Value = serde_json::from_slice(output.stdout.as_slice())
+            .map_err(|e| log::debug!("failed to parse rust-analyzer's JSON schema output: {e}"))
+            .ok()?;
+
+        // Convert rust-analyzer's array-based schema format to nested JSON Schema
+        let converted_schema = Self::convert_rust_analyzer_schema(&raw_schema);
+        Some(converted_schema)
+    }
+
     async fn label_for_symbol(
         &self,
         name: &str,
@@ -455,13 +568,25 @@ impl LspAdapter for RustLspAdapter {
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         let (prefix, suffix) = match kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", " () {}"),
-            lsp::SymbolKind::STRUCT => ("struct ", " {}"),
-            lsp::SymbolKind::ENUM => ("enum ", " {}"),
-            lsp::SymbolKind::INTERFACE => ("trait ", " {}"),
-            lsp::SymbolKind::CONSTANT => ("const ", ": () = ();"),
-            lsp::SymbolKind::MODULE => ("mod ", " {}"),
-            lsp::SymbolKind::TYPE_PARAMETER => ("type ", " {}"),
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", "();"),
+            lsp::SymbolKind::STRUCT => ("struct ", ";"),
+            lsp::SymbolKind::ENUM => ("enum ", "{}"),
+            lsp::SymbolKind::INTERFACE => ("trait ", "{}"),
+            lsp::SymbolKind::CONSTANT => ("const ", ":()=();"),
+            lsp::SymbolKind::MODULE => ("mod ", ";"),
+            lsp::SymbolKind::PACKAGE => ("extern crate ", ";"),
+            lsp::SymbolKind::TYPE_PARAMETER => ("type ", "=();"),
+            lsp::SymbolKind::ENUM_MEMBER => {
+                let prefix = "enum E {";
+                return Some(CodeLabel::new(
+                    name.to_string(),
+                    0..name.len(),
+                    language.highlight_text(
+                        &Rope::from_iter([prefix, name, "}"]),
+                        prefix.len()..prefix.len() + name.len(),
+                    ),
+                ));
+            }
             _ => return None,
         };
 
@@ -1711,6 +1836,28 @@ mod tests {
                 vec![(0..4, highlight_keyword), (5..10, highlight_type)],
             ))
         );
+
+        assert_eq!(
+            adapter
+                .label_for_symbol("zed", lsp::SymbolKind::PACKAGE, &language)
+                .await,
+            Some(CodeLabel::new(
+                "extern crate zed".to_string(),
+                13..16,
+                vec![(0..6, highlight_keyword), (7..12, highlight_keyword),],
+            ))
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_symbol("Variant", lsp::SymbolKind::ENUM_MEMBER, &language)
+                .await,
+            Some(CodeLabel::new(
+                "Variant".to_string(),
+                0..7,
+                vec![(0..7, highlight_type)],
+            ))
+        );
     }
 
     #[gpui::test]
@@ -1911,5 +2058,91 @@ mod tests {
             "--bin=x",
         );
         check([], "/project/src/main.rs", "--");
+    }
+
+    #[test]
+    fn test_convert_rust_analyzer_schema() {
+        let raw_schema = serde_json::json!([
+            {
+                "title": "Assist",
+                "properties": {
+                    "rust-analyzer.assist.emitMustUse": {
+                        "markdownDescription": "Insert #[must_use] when generating `as_` methods for enum variants.",
+                        "default": false,
+                        "type": "boolean"
+                    }
+                }
+            },
+            {
+                "title": "Assist",
+                "properties": {
+                    "rust-analyzer.assist.expressionFillDefault": {
+                        "markdownDescription": "Placeholder expression to use for missing expressions in assists.",
+                        "default": "todo",
+                        "type": "string"
+                    }
+                }
+            },
+            {
+                "title": "Cache Priming",
+                "properties": {
+                    "rust-analyzer.cachePriming.enable": {
+                        "markdownDescription": "Warm up caches on project load.",
+                        "default": true,
+                        "type": "boolean"
+                    }
+                }
+            }
+        ]);
+
+        let converted = RustLspAdapter::convert_rust_analyzer_schema(&raw_schema);
+
+        assert_eq!(
+            converted.get("type").and_then(|v| v.as_str()),
+            Some("object")
+        );
+
+        let properties = converted
+            .pointer("/properties")
+            .expect("should have properties")
+            .as_object()
+            .expect("properties should be object");
+
+        assert!(properties.contains_key("assist"));
+        assert!(properties.contains_key("cachePriming"));
+        assert!(!properties.contains_key("rust-analyzer"));
+
+        let assist_props = properties
+            .get("assist")
+            .expect("should have assist")
+            .pointer("/properties")
+            .expect("assist should have properties")
+            .as_object()
+            .expect("assist properties should be object");
+
+        assert!(assist_props.contains_key("emitMustUse"));
+        assert!(assist_props.contains_key("expressionFillDefault"));
+
+        let emit_must_use = assist_props
+            .get("emitMustUse")
+            .expect("should have emitMustUse");
+        assert_eq!(
+            emit_must_use.get("type").and_then(|v| v.as_str()),
+            Some("boolean")
+        );
+        assert_eq!(
+            emit_must_use.get("default").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+
+        let cache_priming_props = properties
+            .get("cachePriming")
+            .expect("should have cachePriming")
+            .pointer("/properties")
+            .expect("cachePriming should have properties")
+            .as_object()
+            .expect("cachePriming properties should be object");
+
+        assert!(cache_priming_props.contains_key("enable"));
     }
 }

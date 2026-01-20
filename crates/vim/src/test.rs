@@ -1303,6 +1303,39 @@ async fn test_mouse_selection(cx: &mut TestAppContext) {
     cx.assert_state("one «ˇtwo» three", Mode::Visual)
 }
 
+#[gpui::test]
+async fn test_mouse_drag_across_anchor_does_not_drift(cx: &mut TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state("ˇone two three four", Mode::Normal);
+
+    let click_pos = cx.pixel_position("one ˇtwo three four");
+    let drag_left = cx.pixel_position("ˇone two three four");
+    let anchor_pos = cx.pixel_position("one tˇwo three four");
+
+    cx.simulate_mouse_down(click_pos, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    cx.simulate_mouse_move(drag_left, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    cx.assert_state("«ˇone t»wo three four", Mode::Visual);
+
+    cx.simulate_mouse_move(anchor_pos, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    cx.simulate_mouse_move(drag_left, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    cx.assert_state("«ˇone t»wo three four", Mode::Visual);
+
+    cx.simulate_mouse_move(anchor_pos, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    cx.simulate_mouse_move(drag_left, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    cx.assert_state("«ˇone t»wo three four", Mode::Visual);
+
+    cx.simulate_mouse_up(drag_left, MouseButton::Left, Modifiers::none());
+}
+
 #[perf]
 #[gpui::test]
 async fn test_lowercase_marks(cx: &mut TestAppContext) {

@@ -431,6 +431,7 @@ impl X11WindowState {
             // https://stackoverflow.com/questions/43218127/x11-xlib-xcb-creating-a-window-requires-border-pixel-if-specifying-colormap-wh
             .border_pixel(visual_set.black_pixel)
             .colormap(colormap)
+            .override_redirect((params.kind == WindowKind::PopUp) as u32)
             .event_mask(
                 xproto::EventMask::EXPOSURE
                     | xproto::EventMask::STRUCTURE_NOTIFY
@@ -1456,6 +1457,24 @@ impl PlatformWindow for X11Window {
         state.background_appearance = background_appearance;
         let transparent = state.is_transparent();
         state.renderer.update_transparency(transparent);
+    }
+
+    fn background_appearance(&self) -> WindowBackgroundAppearance {
+        self.0.state.borrow().background_appearance
+    }
+
+    fn is_subpixel_rendering_supported(&self) -> bool {
+        self.0
+            .state
+            .borrow()
+            .client
+            .0
+            .upgrade()
+            .map(|ref_cell| {
+                let state = ref_cell.borrow();
+                state.gpu_context.supports_dual_source_blending()
+            })
+            .unwrap_or_default()
     }
 
     fn minimize(&self) {

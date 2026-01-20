@@ -39,8 +39,10 @@ members = [
     "crates/command_palette",
     "crates/command_palette_hooks",
     "crates/component",
+    "crates/component_preview",
     "crates/context_server",
     "crates/copilot",
+    "crates/copilot_chat",
     "crates/crashes",
     "crates/credentials_provider",
     "crates/dap",
@@ -51,6 +53,7 @@ members = [
     "crates/debugger_ui",
     "crates/deepseek",
     "crates/denoise",
+    "crates/dev_container",
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/edit_prediction",
@@ -58,6 +61,7 @@ members = [
     "crates/edit_prediction_ui",
     "crates/edit_prediction_context",
     "crates/editor",
+    "crates/encoding_selector",
     "crates/eval",
     "crates/eval_utils",
     "crates/explorer_command_injector",
@@ -150,6 +154,7 @@ members = [
     "crates/search",
     "crates/session",
     "crates/settings",
+    "crates/settings_content",
     "crates/settings_json",
     "crates/settings_macros",
     "crates/settings_profile_selector",
@@ -275,8 +280,11 @@ collections = { path = "crates/collections", version = "0.1.0" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
+component_preview  = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
 copilot = { path = "crates/copilot" }
+copilot_chat = { path = "crates/copilot_chat" }
+copilot_ui = { path = "crates/copilot_ui" }
 crashes = { path = "crates/crashes" }
 credentials_provider = { path = "crates/credentials_provider" }
 crossbeam = "0.8.4"
@@ -288,8 +296,10 @@ debugger_tools = { path = "crates/debugger_tools" }
 debugger_ui = { path = "crates/debugger_ui" }
 deepseek = { path = "crates/deepseek" }
 derive_refineable = { path = "crates/refineable/derive_refineable" }
+dev_container = { path = "crates/dev_container" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
+encoding_selector = { path = "crates/encoding_selector" }
 eval_utils = { path = "crates/eval_utils" }
 extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
@@ -376,9 +386,11 @@ rodio = { git = "https://github.com/RustAudio/rodio", rev ="e2074c6c2acf07b57cf7
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
+scheduler = { path = "crates/scheduler" }
 search = { path = "crates/search" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
+settings_content = { path = "crates/settings_content" }
 settings_json = { path = "crates/settings_json" }
 settings_macros = { path = "crates/settings_macros" }
 settings_ui = { path = "crates/settings_ui" }
@@ -439,13 +451,13 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 # External crates
 #
 
-agent-client-protocol = { version = "=0.9.2", features = ["unstable"] }
+agent-client-protocol = { version = "=0.9.3", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = "0.25.1-rc1"
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
-ashpd = { version = "0.11", default-features = false, features = ["async-std"] }
+ashpd = { version = "0.12.1", default-features = false, features = ["async-std"] }
 async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"
@@ -471,9 +483,9 @@ backtrace = "0.3"
 base64 = "0.22"
 bincode = "1.2.1"
 bitflags = "2.6.0"
-blade-graphics = { version = "0.7.0" }
-blade-macros = { version = "0.3.0" }
-blade-util = { version = "0.3.0" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "e3cf011ca18a6dfd907d1dedd93e85e21f005fe3" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "e3cf011ca18a6dfd907d1dedd93e85e21f005fe3" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "e3cf011ca18a6dfd907d1dedd93e85e21f005fe3" }
 brotli = "8.0.2"
 bytes = "1.0"
 cargo_metadata = "0.19"
@@ -597,7 +609,7 @@ profiling = "1"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
-pulldown-cmark = { version = "0.12.0", default-features = false }
+pulldown-cmark = { version = "0.13.0", default-features = false }
 quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"
@@ -772,6 +784,7 @@ features = [
 ]
 
 [patch.crates-io]
+async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
 notify = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }

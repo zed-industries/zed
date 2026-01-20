@@ -1,51 +1,58 @@
+# Generated from xtask::workflows::bump_patch_version
+# Rebuild with `cargo xtask workflows`.
 name: bump_patch_version
-
 on:
   workflow_dispatch:
     inputs:
       branch:
-        description: "Branch name to run on"
+        description: Branch name to run on
         required: true
+        type: string
+jobs:
+  run_bump_patch_version:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - id: get-app-token
+      name: steps::authenticate_as_zippy
+      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    - name: steps::checkout_repo_with_token
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+        token: ${{ steps.get-app-token.outputs.token }}
+        ref: ${{ inputs.branch }}
+    - name: bump_patch_version::run_bump_patch_version::bump_patch_version
+      run: |
+        channel="$(cat crates/zed/RELEASE_CHANNEL)"
 
+        tag_suffix=""
+        case $channel in
+          stable)
+            ;;
+          preview)
+            tag_suffix="-pre"
+            ;;
+          *)
+            echo "this must be run on either of stable|preview release branches" >&2
+            exit 1
+            ;;
+        esac
+        which cargo-set-version > /dev/null || cargo install cargo-edit -f --no-default-features --features "set-version"
+        output="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
+        git commit -am "Bump to $output for @$GITHUB_ACTOR"
+        git tag "v${output}${tag_suffix}"
+        git push origin HEAD "v${output}${tag_suffix}"
+      shell: bash -euxo pipefail {0}
+      env:
+        GIT_COMMITTER_NAME: Zed Zippy
+        GIT_COMMITTER_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
+        GIT_AUTHOR_NAME: Zed Zippy
+        GIT_AUTHOR_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
+        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
 concurrency:
-  # Allow only one workflow per any non-`main` branch.
   group: ${{ github.workflow }}-${{ inputs.branch }}
   cancel-in-progress: true
-
-jobs:
-  bump_patch_version:
-    if: github.repository_owner == 'zed-industries'
-    runs-on:
-      - namespace-profile-16x32-ubuntu-2204
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          ref: ${{ github.event.inputs.branch }}
-          ssh-key: ${{ secrets.ZED_BOT_DEPLOY_KEY }}
-
-      - name: Bump Patch Version
-        run: |
-          set -eux
-
-          channel="$(cat crates/zed/RELEASE_CHANNEL)"
-
-          tag_suffix=""
-          case $channel in
-            stable)
-              ;;
-            preview)
-              tag_suffix="-pre"
-              ;;
-            *)
-              echo "this must be run on either of stable|preview release branches" >&2
-              exit 1
-              ;;
-          esac
-          which cargo-set-version > /dev/null || cargo install cargo-edit -f --no-default-features --features "set-version"
-          output="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
-          export GIT_COMMITTER_NAME="Zed Bot"
-          export GIT_COMMITTER_EMAIL="hi@zed.dev"
-          git commit -am "Bump to $output for @$GITHUB_ACTOR" --author "Zed Bot <hi@zed.dev>"
-          git tag "v${output}${tag_suffix}"
-          git push origin HEAD "v${output}${tag_suffix}"

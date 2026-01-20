@@ -9,6 +9,7 @@ use ec4rs::{
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers, SharedString};
 use itertools::{Either, Itertools};
+use settings::IntoGpui;
 
 pub use settings::{
     CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
@@ -392,6 +393,8 @@ pub struct EditPredictionSettings {
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
+    pub examples_dir: Option<Arc<Path>>,
+    pub example_capture_rate: Option<u16>,
 }
 
 impl EditPredictionSettings {
@@ -448,7 +451,9 @@ impl AllLanguageSettings {
 
         let editorconfig_properties = location.and_then(|location| {
             cx.global::<SettingsStore>()
-                .editorconfig_properties(location.worktree_id, location.path)
+                .editorconfig_store
+                .read(cx)
+                .properties(location.worktree_id, location.path)
         });
         if let Some(editorconfig_properties) = editorconfig_properties {
             let mut settings = settings.clone();
@@ -582,7 +587,9 @@ impl settings::Settings for AllLanguageSettings {
                     show_background: inlay_hints.show_background.unwrap(),
                     edit_debounce_ms: inlay_hints.edit_debounce_ms.unwrap(),
                     scroll_debounce_ms: inlay_hints.scroll_debounce_ms.unwrap(),
-                    toggle_on_modifiers_press: inlay_hints.toggle_on_modifiers_press,
+                    toggle_on_modifiers_press: inlay_hints
+                        .toggle_on_modifiers_press
+                        .map(|m| m.into_gpui()),
                 },
                 use_autoclose: settings.use_autoclose.unwrap(),
                 use_auto_surround: settings.use_auto_surround.unwrap(),
@@ -621,7 +628,7 @@ impl settings::Settings for AllLanguageSettings {
             let mut language_settings = all_languages.defaults.clone();
             settings::merge_from::MergeFrom::merge_from(&mut language_settings, settings);
             languages.insert(
-                LanguageName(language_name.clone()),
+                LanguageName(language_name.clone().into()),
                 load_from_content(language_settings),
             );
         }
@@ -699,6 +706,8 @@ impl settings::Settings for AllLanguageSettings {
                 copilot: copilot_settings,
                 codestral: codestral_settings,
                 enabled_in_text_threads,
+                examples_dir: edit_predictions.examples_dir,
+                example_capture_rate: edit_predictions.example_capture_rate,
             },
             defaults: default_language_settings,
             languages,

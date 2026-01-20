@@ -198,13 +198,10 @@ impl ActiveToolchain {
                     .or_else(|| toolchains.toolchains.first())
                     .cloned();
                 if let Some(toolchain) = &default_choice {
-                    let worktree_root_path = project
-                        .read_with(cx, |this, cx| {
-                            this.worktree_for_id(worktree_id, cx)
-                                .map(|worktree| worktree.read(cx).abs_path())
-                        })
-                        .ok()
-                        .flatten()?;
+                    let worktree_root_path = project.read_with(cx, |this, cx| {
+                        this.worktree_for_id(worktree_id, cx)
+                            .map(|worktree| worktree.read(cx).abs_path())
+                    })?;
                     workspace::WORKSPACE_DB
                         .set_toolchain(
                             workspace_id,
@@ -225,7 +222,6 @@ impl ActiveToolchain {
                                 cx,
                             )
                         })
-                        .ok()?
                         .await;
                 }
 

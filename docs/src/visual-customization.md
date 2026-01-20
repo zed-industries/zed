@@ -332,7 +332,11 @@ TBD: Centered layout related settings
     // Show/hide a button that displays the buffer's line-ending mode.
     // Clicking the button brings up the line-ending selector.
     // Defaults to false.
-    "line_endings_button": false
+    "line_endings_button": false,
+    // Show/hide a button that displays the buffer's character encoding.
+    // If set to "non_utf8", the button is hidden only for UTF-8 without BOM.
+    // Defaults to "non_utf8".
+    "active_encoding_button": "non_utf8"
   },
   "global_lsp_settings": {
     // Show/hide the LSP button in the status bar.

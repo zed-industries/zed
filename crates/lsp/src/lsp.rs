@@ -761,6 +761,7 @@ impl LanguageServer {
                                 properties: vec![
                                     "additionalTextEdits".to_string(),
                                     "command".to_string(),
+                                    "detail".to_string(),
                                     "documentation".to_string(),
                                     // NB: Do not have this resolved, otherwise Zed becomes slow to complete things
                                     // "textEdit".to_string(),
@@ -1745,13 +1746,11 @@ impl FakeLanguageServer {
         T: request::Request,
         T::Result: 'static + Send,
     {
-        self.server.executor.start_waiting();
         self.server.request::<T>(params).await
     }
 
     /// Attempts [`Self::try_receive_notification`], unwrapping if it has not received the specified type yet.
     pub async fn receive_notification<T: notification::Notification>(&mut self) -> T::Params {
-        self.server.executor.start_waiting();
         self.try_receive_notification::<T>().await.unwrap()
     }
 
