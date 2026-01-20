@@ -27,6 +27,7 @@ fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 heck.workspace = true
+itertools.workspace = true
 log.workspace = true
 menu.workspace = true
 paths.workspace = true

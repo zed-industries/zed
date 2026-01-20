@@ -7,109 +7,91 @@ use feature_flags::FeatureFlagAppExt as _;
 use gpui::{Entity, ScrollHandle, prelude::*};
 use language_models::provider::mistral::{CODESTRAL_API_URL, codestral_api_key};
 use project::Project;
-use ui::{ButtonLink, ConfiguredApiCard, WithScrollbar, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, prelude::*};
 
 use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPageItem, SettingsWindow, USER,
     components::{SettingsInputField, SettingsSectionHeader},
 };
 
-pub struct EditPredictionSetupPage {
-    settings_window: Entity<SettingsWindow>,
-    scroll_handle: ScrollHandle,
-}
-
-impl EditPredictionSetupPage {
-    pub fn new(settings_window: Entity<SettingsWindow>) -> Self {
-        Self {
-            settings_window,
-            scroll_handle: ScrollHandle::new(),
-        }
-    }
-}
-
-impl Render for EditPredictionSetupPage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings_window = self.settings_window.clone();
-        let project = settings_window
-            .read(cx)
-            .original_window
-            .as_ref()
-            .and_then(|window| {
-                window
-                    .read_with(cx, |workspace, _| workspace.project().clone())
-                    .ok()
-            });
-        let providers = [
-            project.and_then(|project| {
-                Some(render_github_copilot_provider(project, window, cx)?.into_any_element())
-            }),
-            cx.has_flag::<MercuryFeatureFlag>().then(|| {
-                render_api_key_provider(
-                    IconName::Inception,
-                    "Mercury",
-                    "https://platform.inceptionlabs.ai/dashboard/api-keys".into(),
-                    mercury_api_token(cx),
-                    |_cx| MERCURY_CREDENTIALS_URL,
-                    None,
-                    window,
-                    cx,
-                )
-                .into_any_element()
-            }),
-            cx.has_flag::<SweepFeatureFlag>().then(|| {
-                render_api_key_provider(
-                    IconName::SweepAi,
-                    "Sweep",
-                    "https://app.sweep.dev/".into(),
-                    sweep_api_token(cx),
-                    |_cx| SWEEP_CREDENTIALS_URL,
-                    None,
-                    window,
-                    cx,
-                )
-                .into_any_element()
-            }),
-            Some(
-                render_api_key_provider(
-                    IconName::AiMistral,
-                    "Codestral",
-                    "https://console.mistral.ai/codestral".into(),
-                    codestral_api_key(cx),
-                    |cx| language_models::MistralLanguageModelProvider::api_url(cx),
-                    Some(settings_window.update(cx, |settings_window, cx| {
-                        let codestral_settings = codestral_settings();
-                        settings_window
-                            .render_sub_page_items_section(
-                                codestral_settings.iter().enumerate(),
-                                None,
-                                window,
-                                cx,
-                            )
-                            .into_any_element()
-                    })),
-                    window,
-                    cx,
-                )
-                .into_any_element(),
-            ),
-        ];
-
-        div()
-            .size_full()
-            .vertical_scrollbar_for(&self.scroll_handle, window, cx)
-            .child(
-                v_flex()
-                    .id("ep-setup-page")
-                    .min_w_0()
-                    .size_full()
-                    .px_8()
-                    .pb_16()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll_handle)
-                    .children(providers.into_iter().flatten()),
+pub(crate) fn render_edit_prediction_setup_page(
+    settings_window: &SettingsWindow,
+    scroll_handle: &ScrollHandle,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let project = settings_window.original_window.as_ref().and_then(|window| {
+        window
+            .read_with(cx, |workspace, _| workspace.project().clone())
+            .ok()
+    });
+    let providers = [
+        project.and_then(|project| {
+            render_github_copilot_provider(project, window, cx).map(IntoElement::into_any_element)
+        }),
+        cx.has_flag::<MercuryFeatureFlag>().then(|| {
+            render_api_key_provider(
+                IconName::Inception,
+                "Mercury",
+                "https://platform.inceptionlabs.ai/dashboard/api-keys".into(),
+                mercury_api_token(cx),
+                |_cx| MERCURY_CREDENTIALS_URL,
+                None,
+                window,
+                cx,
             )
-    }
+            .into_any_element()
+        }),
+        cx.has_flag::<SweepFeatureFlag>().then(|| {
+            render_api_key_provider(
+                IconName::SweepAi,
+                "Sweep",
+                "https://app.sweep.dev/".into(),
+                sweep_api_token(cx),
+                |_cx| SWEEP_CREDENTIALS_URL,
+                None,
+                window,
+                cx,
+            )
+            .into_any_element()
+        }),
+        Some(
+            render_api_key_provider(
+                IconName::AiMistral,
+                "Codestral",
+                "https://console.mistral.ai/codestral".into(),
+                codestral_api_key(cx),
+                |cx| language_models::MistralLanguageModelProvider::api_url(cx),
+                Some(
+                    settings_window
+                        .render_sub_page_items_section(
+                            codestral_settings().iter().enumerate(),
+                            window,
+                            cx,
+                        )
+                        .into_any_element(),
+                ),
+                window,
+                cx,
+            )
+            .into_any_element(),
+        ),
+    ];
+
+    div()
+        .size_full()
+        .child(
+            v_flex()
+                .id("ep-setup-page")
+                .min_w_0()
+                .size_full()
+                .px_8()
+                .pb_16()
+                .overflow_y_scroll()
+                .track_scroll(&scroll_handle)
+                .children(providers.into_iter().flatten()),
+        )
+        .into_any_element()
 }
 
 fn render_api_key_provider(
@@ -120,7 +102,7 @@ fn render_api_key_provider(
     current_url: fn(&mut App) -> SharedString,
     additional_fields: Option<AnyElement>,
     window: &mut Window,
-    cx: &mut Context<EditPredictionSetupPage>,
+    cx: &mut Context<SettingsWindow>,
 ) -> impl IntoElement {
     let weak_page = cx.weak_entity();
     _ = window.use_keyed_state(title, cx, |_, cx| {
