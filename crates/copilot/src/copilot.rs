@@ -1356,6 +1356,7 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use pretty_assertions::assert_eq;
     use util::{
         path,
         paths::PathStyle,
@@ -1364,6 +1365,7 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {
+        init_test(cx);
         let (copilot, mut lsp) = Copilot::fake(cx);
 
         let buffer_1 = cx.new(|cx| Buffer::local("Hello", cx));
@@ -1458,19 +1460,31 @@ mod tests {
             .update(cx, |copilot, cx| copilot.sign_out(cx))
             .await
             .unwrap();
+        macro_rules! receive_document_notifications {
+            ($notifications_count:expr, $document_notification_type:ty) => {{
+                let mut received_notifications = Vec::new();
+                for _ in 0..$notifications_count {
+                    received_notifications.push(
+                        lsp.receive_notification::<$document_notification_type>()
+                            .await,
+                    );
+                }
+                received_notifications
+                    .sort_by_key(|document| document.text_document.uri.path().to_owned());
+                received_notifications
+            }};
+        }
+
         assert_eq!(
-            lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
-                .await,
-            lsp::DidCloseTextDocumentParams {
-                text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri.clone()),
-            }
-        );
-        assert_eq!(
-            lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
-                .await,
-            lsp::DidCloseTextDocumentParams {
-                text_document: lsp::TextDocumentIdentifier::new(buffer_2_uri.clone()),
-            }
+            receive_document_notifications!(2, lsp::notification::DidCloseTextDocument),
+            vec![
+                lsp::DidCloseTextDocumentParams {
+                    text_document: lsp::TextDocumentIdentifier::new(buffer_2_uri.clone()),
+                },
+                lsp::DidCloseTextDocumentParams {
+                    text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri.clone()),
+                },
+            ]
         );
 
         // Ensure all previously-registered buffers are re-opened when signing in.
@@ -1500,28 +1514,25 @@ mod tests {
         });
 
         assert_eq!(
-            lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
-                .await,
-            lsp::DidOpenTextDocumentParams {
-                text_document: lsp::TextDocumentItem::new(
-                    buffer_1_uri.clone(),
-                    "plaintext".into(),
-                    0,
-                    "Hello world".into()
-                ),
-            }
-        );
-        assert_eq!(
-            lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
-                .await,
-            lsp::DidOpenTextDocumentParams {
-                text_document: lsp::TextDocumentItem::new(
-                    buffer_2_uri.clone(),
-                    "plaintext".into(),
-                    0,
-                    "Goodbye".into()
-                ),
-            }
+            receive_document_notifications!(2, lsp::notification::DidOpenTextDocument),
+            vec![
+                lsp::DidOpenTextDocumentParams {
+                    text_document: lsp::TextDocumentItem::new(
+                        buffer_2_uri.clone(),
+                        "plaintext".into(),
+                        0,
+                        "Goodbye".into()
+                    ),
+                },
+                lsp::DidOpenTextDocumentParams {
+                    text_document: lsp::TextDocumentItem::new(
+                        buffer_1_uri.clone(),
+                        "plaintext".into(),
+                        0,
+                        "Hello world".into()
+                    ),
+                },
+            ]
         );
         // Dropping a buffer causes it to be closed on the LSP side as well.
         cx.update(|_| drop(buffer_2));
@@ -1592,10 +1603,13 @@ mod tests {
             unimplemented!()
         }
     }
-}
 
-#[cfg(test)]
-#[ctor::ctor]
-fn init_logger() {
-    zlog::init_test();
+    fn init_test(cx: &mut TestAppContext) {
+        zlog::init_test();
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
 }

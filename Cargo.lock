@@ -3691,6 +3691,7 @@ dependencies = [
  "node_runtime",
  "parking_lot",
  "paths",
+ "pretty_assertions",
  "project",
  "rpc",
  "semver",
