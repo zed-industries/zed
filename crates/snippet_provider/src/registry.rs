@@ -42,7 +42,7 @@ impl SnippetRegistry {
         let kind = file_path
             .file_stem()
             .and_then(|stem| stem.to_str().and_then(file_stem_to_key));
-        let snippets = crate::file_to_snippets(snippets_in_file);
+        let snippets = crate::file_to_snippets(snippets_in_file, file_path);
         self.snippets.write().insert(kind, snippets);
 
         Ok(())

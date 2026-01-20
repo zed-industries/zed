@@ -998,9 +998,9 @@ impl OutlinePanel {
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         } else {
-            self.filter_editor.focus_handle(cx).focus(window);
+            self.filter_editor.focus_handle(cx).focus(window, cx);
         }
 
         if self.context_menu.is_some() {
@@ -1153,9 +1153,9 @@ impl OutlinePanel {
                 }
 
                 if change_focus {
-                    active_editor.focus_handle(cx).focus(window);
+                    active_editor.focus_handle(cx).focus(window, cx);
                 } else {
-                    self.focus_handle.focus(window);
+                    self.focus_handle.focus(window, cx);
                 }
             }
         }
@@ -1458,7 +1458,7 @@ impl OutlinePanel {
                     Box::new(zed_actions::workspace::CopyRelativePath),
                 )
         });
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe(&context_menu, |outline_panel, _, _: &DismissEvent, cx| {
             outline_panel.context_menu.take();
             cx.notify();
@@ -2036,7 +2036,11 @@ impl OutlinePanel {
 
         if let Some(working_directory) = working_directory {
             window.dispatch_action(
-                workspace::OpenTerminal { working_directory }.boxed_clone(),
+                workspace::OpenTerminal {
+                    working_directory,
+                    local: false,
+                }
+                .boxed_clone(),
                 cx,
             )
         }
@@ -2084,7 +2088,7 @@ impl OutlinePanel {
                             let entry = worktree.read(cx).entry_for_id(entry_id)?.clone();
                             Some((worktree, entry))
                         })
-                })?,
+                }),
                 PanelEntry::Outline(outline_entry) => {
                     let (buffer_id, excerpt_id) = outline_entry.ids();
                     outline_panel.update(cx, |outline_panel, cx| {
@@ -4539,7 +4543,7 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) {
         if focus {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         }
         let ix = self
             .cached_entries
@@ -4799,6 +4803,8 @@ impl OutlinePanel {
             (IconName::Pin, "Pin Active Outline")
         };
 
+        let has_query = self.query(cx).is_some();
+
         h_flex()
             .p_2()
             .h(Tab::container_height(cx))
@@ -4817,12 +4823,32 @@ impl OutlinePanel {
                     .child(self.filter_editor.clone()),
             )
             .child(
-                IconButton::new("pin_button", icon)
-                    .tooltip(Tooltip::text(icon_tooltip))
-                    .shape(IconButtonShape::Square)
-                    .on_click(cx.listener(|outline_panel, _, window, cx| {
-                        outline_panel.toggle_active_editor_pin(&ToggleActiveEditorPin, window, cx);
-                    })),
+                h_flex()
+                    .when(has_query, |this| {
+                        this.child(
+                            IconButton::new("clear_filter", IconName::Close)
+                                .shape(IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Clear Filter"))
+                                .on_click(cx.listener(|outline_panel, _, window, cx| {
+                                    outline_panel.filter_editor.update(cx, |editor, cx| {
+                                        editor.set_text("", window, cx);
+                                    });
+                                    cx.notify();
+                                })),
+                        )
+                    })
+                    .child(
+                        IconButton::new("pin_button", icon)
+                            .tooltip(Tooltip::text(icon_tooltip))
+                            .shape(IconButtonShape::Square)
+                            .on_click(cx.listener(|outline_panel, _, window, cx| {
+                                outline_panel.toggle_active_editor_pin(
+                                    &ToggleActiveEditorPin,
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    ),
             )
     }
 

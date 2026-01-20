@@ -1,10 +1,9 @@
+use crate::Oid;
 use crate::commit::get_messages;
 use crate::repository::RepoPath;
-use crate::{GitRemote, Oid};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use futures::AsyncWriteExt;
-use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use std::{ops::Range, path::Path};
@@ -19,14 +18,6 @@ pub use git2 as libgit;
 pub struct Blame {
     pub entries: Vec<BlameEntry>,
     pub messages: HashMap<Oid, String>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct ParsedCommitMessage {
-    pub message: SharedString,
-    pub permalink: Option<url::Url>,
-    pub pull_request: Option<crate::hosting_provider::PullRequest>,
-    pub remote: Option<GitRemote>,
 }
 
 impl Blame {
@@ -67,18 +58,22 @@ async fn run_git_blame(
     contents: &Rope,
     line_ending: LineEnding,
 ) -> Result<String> {
-    let mut child = util::command::new_smol_command(git_binary)
-        .current_dir(working_directory)
-        .arg("blame")
-        .arg("--incremental")
-        .arg("--contents")
-        .arg("-")
-        .arg(path.as_unix_str())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("starting git blame process")?;
+    let mut child = {
+        let span = ztracing::debug_span!("spawning git-blame command", path = path.as_unix_str());
+        let _enter = span.enter();
+        util::command::new_smol_command(git_binary)
+            .current_dir(working_directory)
+            .arg("blame")
+            .arg("--incremental")
+            .arg("--contents")
+            .arg("-")
+            .arg(path.as_unix_str())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("starting git blame process")?
+    };
 
     let stdin = child
         .stdin

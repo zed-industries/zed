@@ -48,6 +48,9 @@ pub(crate) fn run_tests() -> Workflow {
     let mut jobs = vec![
         orchestrate,
         check_style(),
+        should_run_tests.guard(clippy(Platform::Windows)),
+        should_run_tests.guard(clippy(Platform::Linux)),
+        should_run_tests.guard(clippy(Platform::Mac)),
         should_run_tests.guard(run_platform_tests(Platform::Windows)),
         should_run_tests.guard(run_platform_tests(Platform::Linux)),
         should_run_tests.guard(run_platform_tests(Platform::Mac)),
@@ -236,11 +239,11 @@ fn check_style() -> NamedJob {
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::setup_pnpm())
-            .add_step(steps::script("./script/prettier"))
+            .add_step(steps::prettier())
+            .add_step(steps::cargo_fmt())
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
-            .add_step(check_for_typos())
-            .add_step(steps::cargo_fmt()),
+            .add_step(check_for_typos()),
     )
 }
 
@@ -304,6 +307,29 @@ fn check_workspace_binaries() -> NamedJob {
     )
 }
 
+pub(crate) fn clippy(platform: Platform) -> NamedJob {
+    let runner = match platform {
+        Platform::Windows => runners::WINDOWS_DEFAULT,
+        Platform::Linux => runners::LINUX_DEFAULT,
+        Platform::Mac => runners::MAC_DEFAULT,
+    };
+    NamedJob {
+        name: format!("clippy_{platform}"),
+        job: release_job(&[])
+            .runs_on(runner)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(platform))
+            .when(platform == Platform::Linux, |this| {
+                this.add_step(steps::cache_rust_dependencies_namespace())
+            })
+            .when(
+                platform == Platform::Linux,
+                steps::install_linux_dependencies,
+            )
+            .add_step(steps::clippy(platform)),
+    }
+}
+
 pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
@@ -324,7 +350,6 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
                 steps::install_linux_dependencies,
             )
             .add_step(steps::setup_node())
-            .add_step(steps::clippy(platform))
             .when(platform == Platform::Linux, |job| {
                 job.add_step(steps::cargo_install_nextest())
             })
@@ -448,6 +473,7 @@ fn check_docs() -> NamedJob {
                 lychee_link_check("./docs/src/**/*"), // check markdown links
             )
             .map(steps::install_linux_dependencies)
+            .add_step(steps::script("./script/generate-action-metadata"))
             .add_step(install_mdbook())
             .add_step(build_docs())
             .add_step(

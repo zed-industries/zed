@@ -10,7 +10,7 @@ pub use agent_api_keys_onboarding::{ApiKeysWithProviders, ApiKeysWithoutProvider
 pub use agent_panel_onboarding_card::AgentPanelOnboardingCard;
 pub use agent_panel_onboarding_content::AgentPanelOnboarding;
 pub use ai_upsell_card::AiUpsellCard;
-use cloud_llm_client::{Plan, PlanV1, PlanV2};
+use cloud_llm_client::{Plan, PlanV2};
 pub use edit_prediction_onboarding_content::EditPredictionOnboarding;
 pub use plan_definitions::PlanDefinitions;
 pub use young_account_banner::YoungAccountBanner;
@@ -117,7 +117,7 @@ impl ZedAiOnboarding {
                     .color(Color::Muted)
                     .mb_2(),
             )
-            .child(PlanDefinitions.pro_plan(true, false))
+            .child(PlanDefinitions.pro_plan())
             .child(
                 Button::new("sign_in", "Try Zed Pro for Free")
                     .disabled(signing_in)
@@ -135,7 +135,7 @@ impl ZedAiOnboarding {
             .into_any_element()
     }
 
-    fn render_free_plan_state(&self, is_v2: bool, cx: &mut App) -> AnyElement {
+    fn render_free_plan_state(&self, cx: &mut App) -> AnyElement {
         if self.account_too_young {
             v_flex()
                 .relative()
@@ -158,7 +158,7 @@ impl ZedAiOnboarding {
                                 )
                                 .child(Divider::horizontal()),
                         )
-                        .child(PlanDefinitions.pro_plan(is_v2, true))
+                        .child(PlanDefinitions.pro_plan())
                         .child(
                             Button::new("pro", "Get Started")
                                 .full_width()
@@ -201,7 +201,7 @@ impl ZedAiOnboarding {
                                 )
                                 .child(Divider::horizontal()),
                         )
-                        .child(PlanDefinitions.free_plan(is_v2)),
+                        .child(PlanDefinitions.free_plan()),
                 )
                 .children(self.render_dismiss_button())
                 .child(
@@ -219,7 +219,7 @@ impl ZedAiOnboarding {
                                 )
                                 .child(Divider::horizontal()),
                         )
-                        .child(PlanDefinitions.pro_trial(is_v2, true))
+                        .child(PlanDefinitions.pro_trial(true))
                         .child(
                             Button::new("pro", "Start Free Trial")
                                 .full_width()
@@ -237,7 +237,7 @@ impl ZedAiOnboarding {
         }
     }
 
-    fn render_trial_state(&self, is_v2: bool, _cx: &mut App) -> AnyElement {
+    fn render_trial_state(&self, _cx: &mut App) -> AnyElement {
         v_flex()
             .relative()
             .gap_1()
@@ -247,12 +247,12 @@ impl ZedAiOnboarding {
                     .color(Color::Muted)
                     .mb_2(),
             )
-            .child(PlanDefinitions.pro_trial(is_v2, false))
+            .child(PlanDefinitions.pro_trial(false))
             .children(self.render_dismiss_button())
             .into_any_element()
     }
 
-    fn render_pro_plan_state(&self, is_v2: bool, _cx: &mut App) -> AnyElement {
+    fn render_pro_plan_state(&self, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_1()
             .child(Headline::new("Welcome to Zed Pro"))
@@ -261,7 +261,7 @@ impl ZedAiOnboarding {
                     .color(Color::Muted)
                     .mb_2(),
             )
-            .child(PlanDefinitions.pro_plan(is_v2, false))
+            .child(PlanDefinitions.pro_plan())
             .children(self.render_dismiss_button())
             .into_any_element()
     }
@@ -271,16 +271,10 @@ impl RenderOnce for ZedAiOnboarding {
     fn render(self, _window: &mut ui::Window, cx: &mut App) -> impl IntoElement {
         if matches!(self.sign_in_status, SignInStatus::SignedIn) {
             match self.plan {
-                None => self.render_free_plan_state(true, cx),
-                Some(plan @ (Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree))) => {
-                    self.render_free_plan_state(plan.is_v2(), cx)
-                }
-                Some(plan @ (Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial))) => {
-                    self.render_trial_state(plan.is_v2(), cx)
-                }
-                Some(plan @ (Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro))) => {
-                    self.render_pro_plan_state(plan.is_v2(), cx)
-                }
+                None => self.render_free_plan_state(cx),
+                Some(Plan::V2(PlanV2::ZedFree)) => self.render_free_plan_state(cx),
+                Some(Plan::V2(PlanV2::ZedProTrial)) => self.render_trial_state(cx),
+                Some(Plan::V2(PlanV2::ZedPro)) => self.render_pro_plan_state(cx),
             }
         } else {
             self.render_sign_in_disclaimer(cx)

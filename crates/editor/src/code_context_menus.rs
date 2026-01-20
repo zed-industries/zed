@@ -44,7 +44,7 @@ use crate::{
     ResolvedTasks, actions::ConfirmCompletion, split_words, styled_runs_for_code_label,
 };
 use collections::{HashSet, VecDeque};
-use settings::{Settings, SnippetSortOrder};
+use settings::{CompletionDetailAlignment, Settings, SnippetSortOrder};
 
 pub const MENU_GAP: Pixels = px(4.);
 pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
@@ -52,6 +52,8 @@ pub const MENU_ASIDE_MIN_WIDTH: Pixels = px(260.);
 pub const MENU_ASIDE_MAX_WIDTH: Pixels = px(500.);
 pub const COMPLETION_MENU_MIN_WIDTH: Pixels = px(280.);
 pub const COMPLETION_MENU_MAX_WIDTH: Pixels = px(540.);
+pub const CODE_ACTION_MENU_MIN_WIDTH: Pixels = px(220.);
+pub const CODE_ACTION_MENU_MAX_WIDTH: Pixels = px(540.);
 
 // Constants for the markdown cache. The purpose of this cache is to reduce flickering due to
 // documentation not yet being parsed.
@@ -186,7 +188,7 @@ impl CodeContextMenu {
     ) -> Option<AnyElement> {
         match self {
             CodeContextMenu::Completions(menu) => menu.render_aside(max_size, window, cx),
-            CodeContextMenu::CodeActions(_) => None,
+            CodeContextMenu::CodeActions(menu) => menu.render_aside(max_size, window, cx),
         }
     }
 
@@ -792,6 +794,8 @@ impl CompletionsMenu {
         cx: &mut Context<Editor>,
     ) -> AnyElement {
         let show_completion_documentation = self.show_completion_documentation;
+        let completion_detail_alignment =
+            EditorSettings::get_global(cx).completion_detail_alignment;
         let widest_completion_ix = if self.display_options.dynamic_width {
             let completions = self.completions.borrow();
             let widest_completion_ix = self
@@ -845,6 +849,7 @@ impl CompletionsMenu {
                         };
 
                         let filter_start = completion.label.filter_range.start;
+
                         let highlights = gpui::combine_highlights(
                             mat.ranges().map(|range| {
                                 (
@@ -886,8 +891,58 @@ impl CompletionsMenu {
                             }),
                         );
 
-                        let completion_label = StyledText::new(completion.label.text.clone())
-                            .with_default_highlights(&style.text, highlights);
+                        let highlights: Vec<_> = highlights.collect();
+
+                        let filter_range = &completion.label.filter_range;
+                        let full_text = &completion.label.text;
+
+                        let main_text: String = full_text[filter_range.clone()].to_string();
+                        let main_highlights: Vec<_> = highlights
+                            .iter()
+                            .filter_map(|(range, highlight)| {
+                                if range.end <= filter_range.start
+                                    || range.start >= filter_range.end
+                                {
+                                    return None;
+                                }
+                                let clamped_start =
+                                    range.start.max(filter_range.start) - filter_range.start;
+                                let clamped_end =
+                                    range.end.min(filter_range.end) - filter_range.start;
+                                Some((clamped_start..clamped_end, (*highlight)))
+                            })
+                            .collect();
+                        let main_label = StyledText::new(main_text)
+                            .with_default_highlights(&style.text, main_highlights);
+
+                        let suffix_text: String = full_text[filter_range.end..].to_string();
+                        let suffix_highlights: Vec<_> = highlights
+                            .iter()
+                            .filter_map(|(range, highlight)| {
+                                if range.end <= filter_range.end {
+                                    return None;
+                                }
+                                let shifted_start = range.start.saturating_sub(filter_range.end);
+                                let shifted_end = range.end - filter_range.end;
+                                Some((shifted_start..shifted_end, (*highlight)))
+                            })
+                            .collect();
+                        let suffix_label = if !suffix_text.is_empty() {
+                            Some(
+                                StyledText::new(suffix_text)
+                                    .with_default_highlights(&style.text, suffix_highlights),
+                            )
+                        } else {
+                            None
+                        };
+
+                        let left_aligned_suffix =
+                            matches!(completion_detail_alignment, CompletionDetailAlignment::Left);
+
+                        let right_aligned_suffix = matches!(
+                            completion_detail_alignment,
+                            CompletionDetailAlignment::Right,
+                        );
 
                         let documentation_label = match documentation {
                             Some(CompletionDocumentation::SingleLine(text))
@@ -899,7 +954,7 @@ impl CompletionsMenu {
                                     None
                                 } else {
                                     Some(
-                                        Label::new(text.clone())
+                                        Label::new(text.trim().to_string())
                                             .ml_4()
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),
@@ -948,7 +1003,24 @@ impl CompletionsMenu {
                                         }
                                     }))
                                     .start_slot::<AnyElement>(start_slot)
-                                    .child(h_flex().overflow_hidden().child(completion_label))
+                                    .child(
+                                        h_flex()
+                                            .min_w_0()
+                                            .w_full()
+                                            .when(left_aligned_suffix, |this| this.justify_start())
+                                            .when(right_aligned_suffix, |this| {
+                                                this.justify_between()
+                                            })
+                                            .child(
+                                                div()
+                                                    .flex_none()
+                                                    .whitespace_nowrap()
+                                                    .child(main_label),
+                                            )
+                                            .when_some(suffix_label, |this, suffix| {
+                                                this.child(div().truncate().child(suffix))
+                                            }),
+                                    )
                                     .end_slot::<Label>(documentation_label),
                             )
                     })
@@ -1437,6 +1509,7 @@ impl CodeActionsItem {
         };
         Some(action)
     }
+
     pub fn as_debug_scenario(&self) -> Option<&DebugScenario> {
         let Self::DebugScenario(scenario) = self else {
             return None;
@@ -1449,6 +1522,14 @@ impl CodeActionsItem {
             Self::CodeAction { action, .. } => action.lsp_action.title().to_string(),
             Self::Task(_, task) => task.resolved_label.clone(),
             Self::DebugScenario(scenario) => scenario.label.to_string(),
+        }
+    }
+
+    pub fn menu_label(&self) -> String {
+        match self {
+            Self::CodeAction { action, .. } => action.lsp_action.title().replace("\n", ""),
+            Self::Task(_, task) => task.resolved_label.replace("\n", ""),
+            Self::DebugScenario(scenario) => format!("debug: {}", scenario.label),
         }
     }
 }
@@ -1476,34 +1557,24 @@ pub fn create_code_actions_popover(
         task_context,
         task_position,
         UniformListScrollHandle::default(),
-        |item| match item {
-            CodeActionsItem::CodeAction { action, .. } => {
-                action.lsp_action.title().replace("\n", "")
-            }
-            CodeActionsItem::Task(_, task) => task.resolved_label.replace("\n", ""),
-            CodeActionsItem::DebugScenario(scenario) => {
-                format!("debug: {}", scenario.label)
-            }
-        },
+        |item| item.menu_label(),
         move |item, match_positions, selected, cx| {
             use ui::ListItem;
-            let label = match item {
-                CodeActionsItem::CodeAction { action, .. } => {
-                    action.lsp_action.title().replace("\n", "")
-                }
-                CodeActionsItem::Task(_, task) => task.resolved_label.replace("\n", ""),
-                CodeActionsItem::DebugScenario(scenario) => {
-                    format!("debug: {}", scenario.label)
-                }
-            };
+            let label = item.menu_label();
+            let colors = cx.theme().colors();
 
             ListItem::new(SharedString::from(label.clone()))
                 .inset(true)
                 .toggle_state(selected)
+                .overflow_x()
                 .child(
-                    h_flex()
+                    div()
+                        .min_w(CODE_ACTION_MENU_MIN_WIDTH)
+                        .max_w(CODE_ACTION_MENU_MAX_WIDTH)
                         .overflow_hidden()
+                        .text_ellipsis()
                         .when(is_quick_action_bar, |this| this.text_ui(cx))
+                        .when(selected, |this| this.text_color(colors.text_accent))
                         .child(ui::HighlightedLabel::new(label, match_positions)),
                 )
                 .into_any_element()

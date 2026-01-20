@@ -36,14 +36,6 @@ actions!(
     ]
 );
 
-pub fn register(workspace: &mut Workspace) {
-    workspace.register_action(|workspace, branch: &zed_actions::git::Branch, window, cx| {
-        open(workspace, branch, window, cx);
-    });
-    workspace.register_action(switch);
-    workspace.register_action(checkout_branch);
-}
-
 pub fn checkout_branch(
     workspace: &mut Workspace,
     _: &zed_actions::git::CheckoutBranch,
@@ -69,13 +61,39 @@ pub fn open(
     cx: &mut Context<Workspace>,
 ) {
     let workspace_handle = workspace.weak_handle();
-    let repository = workspace.project().read(cx).active_repository(cx);
-    let style = BranchListStyle::Modal;
+    let project = workspace.project().clone();
+
+    // Check if there's a worktree override from the project dropdown.
+    // This ensures the branch picker shows branches for the project the user
+    // explicitly selected in the title bar, not just the focused file's project.
+    // This is only relevant if for multi-projects workspaces.
+    let repository = workspace
+        .active_worktree_override()
+        .and_then(|override_id| {
+            let project_ref = project.read(cx);
+            project_ref
+                .worktree_for_id(override_id, cx)
+                .and_then(|worktree| {
+                    let worktree_abs_path = worktree.read(cx).abs_path();
+                    let git_store = project_ref.git_store().read(cx);
+                    git_store
+                        .repositories()
+                        .values()
+                        .find(|repo| {
+                            let repo_path = &repo.read(cx).work_directory_abs_path;
+                            *repo_path == worktree_abs_path
+                                || worktree_abs_path.starts_with(repo_path.as_ref())
+                        })
+                        .cloned()
+                })
+        })
+        .or_else(|| project.read(cx).active_repository(cx));
+
     workspace.toggle_modal(window, cx, |window, cx| {
         BranchList::new(
-            Some(workspace_handle),
+            workspace_handle,
             repository,
-            style,
+            BranchListStyle::Modal,
             rems(34.),
             window,
             cx,
@@ -84,22 +102,33 @@ pub fn open(
 }
 
 pub fn popover(
+    workspace: WeakEntity<Workspace>,
+    modal_style: bool,
     repository: Option<Entity<Repository>>,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<BranchList> {
+    let (style, width) = if modal_style {
+        (BranchListStyle::Modal, rems(34.))
+    } else {
+        (BranchListStyle::Popover, rems(20.))
+    };
+
     cx.new(|cx| {
-        let list = BranchList::new(
-            None,
-            repository,
-            BranchListStyle::Popover,
-            rems(20.),
-            window,
-            cx,
-        );
-        list.focus_handle(cx).focus(window);
+        let list = BranchList::new(workspace, repository, style, width, window, cx);
+        list.focus_handle(cx).focus(window, cx);
         list
     })
+}
+
+pub fn create_embedded(
+    workspace: WeakEntity<Workspace>,
+    repository: Option<Entity<Repository>>,
+    width: Rems,
+    window: &mut Window,
+    cx: &mut Context<BranchList>,
+) -> BranchList {
+    BranchList::new_embedded(workspace, repository, width, window, cx)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -112,24 +141,42 @@ pub struct BranchList {
     width: Rems,
     pub picker: Entity<Picker<BranchListDelegate>>,
     picker_focus_handle: FocusHandle,
-    _subscription: Subscription,
+    _subscription: Option<Subscription>,
+    embedded: bool,
 }
 
 impl BranchList {
     fn new(
-        workspace: Option<WeakEntity<Workspace>>,
+        workspace: WeakEntity<Workspace>,
         repository: Option<Entity<Repository>>,
         style: BranchListStyle,
         width: Rems,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let mut this = Self::new_inner(workspace, repository, style, width, false, window, cx);
+        this._subscription = Some(cx.subscribe(&this.picker, |_, _, _, cx| {
+            cx.emit(DismissEvent);
+        }));
+        this
+    }
+
+    fn new_inner(
+        workspace: WeakEntity<Workspace>,
+        repository: Option<Entity<Repository>>,
+        style: BranchListStyle,
+        width: Rems,
+        embedded: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let all_branches_request = repository
             .clone()
             .map(|repository| repository.update(cx, |repository, _| repository.branches()));
-        let default_branch_request = repository
-            .clone()
-            .map(|repository| repository.update(cx, |repository, _| repository.default_branch()));
+
+        let default_branch_request = repository.clone().map(|repository| {
+            repository.update(cx, |repository, _| repository.default_branch(false))
+        });
 
         cx.spawn_in(window, async move |this, cx| {
             let mut all_branches = all_branches_request
@@ -185,25 +232,49 @@ impl BranchList {
         .detach_and_log_err(cx);
 
         let delegate = BranchListDelegate::new(workspace, repository, style, cx);
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .show_scrollbar(true)
+                .modal(!embedded)
+        });
         let picker_focus_handle = picker.focus_handle(cx);
+
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
-        });
-
-        let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
-            cx.emit(DismissEvent);
         });
 
         Self {
             picker,
             picker_focus_handle,
             width,
-            _subscription,
+            _subscription: None,
+            embedded,
         }
     }
 
-    fn handle_modifiers_changed(
+    fn new_embedded(
+        workspace: WeakEntity<Workspace>,
+        repository: Option<Entity<Repository>>,
+        width: Rems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new_inner(
+            workspace,
+            repository,
+            BranchListStyle::Modal,
+            width,
+            true,
+            window,
+            cx,
+        );
+        this._subscription = Some(cx.subscribe(&this.picker, |_, _, _, cx| {
+            cx.emit(DismissEvent);
+        }));
+        this
+    }
+
+    pub fn handle_modifiers_changed(
         &mut self,
         ev: &ModifiersChangedEvent,
         _: &mut Window,
@@ -213,7 +284,7 @@ impl BranchList {
             .update(cx, |picker, _| picker.delegate.modifiers = ev.modifiers)
     }
 
-    fn handle_delete(
+    pub fn handle_delete(
         &mut self,
         _: &branch_picker::DeleteBranch,
         window: &mut Window,
@@ -226,7 +297,7 @@ impl BranchList {
         })
     }
 
-    fn handle_filter(
+    pub fn handle_filter(
         &mut self,
         _: &branch_picker::FilterRemotes,
         window: &mut Window,
@@ -258,10 +329,12 @@ impl Render for BranchList {
             .on_action(cx.listener(Self::handle_delete))
             .on_action(cx.listener(Self::handle_filter))
             .child(self.picker.clone())
-            .on_mouse_down_out({
-                cx.listener(move |this, _, window, cx| {
-                    this.picker.update(cx, |this, cx| {
-                        this.cancel(&Default::default(), window, cx);
+            .when(!self.embedded, |this| {
+                this.on_mouse_down_out({
+                    cx.listener(move |this, _, window, cx| {
+                        this.picker.update(cx, |this, cx| {
+                            this.cancel(&Default::default(), window, cx);
+                        })
                     })
                 })
             })
@@ -316,23 +389,23 @@ impl Entry {
 
 #[derive(Clone, Copy, PartialEq)]
 enum BranchFilter {
-    /// Only show local branches
-    Local,
-    /// Only show remote branches
+    /// Show both local and remote branches.
+    All,
+    /// Only show remote branches.
     Remote,
 }
 
 impl BranchFilter {
     fn invert(&self) -> Self {
         match self {
-            BranchFilter::Local => BranchFilter::Remote,
-            BranchFilter::Remote => BranchFilter::Local,
+            BranchFilter::All => BranchFilter::Remote,
+            BranchFilter::Remote => BranchFilter::All,
         }
     }
 }
 
 pub struct BranchListDelegate {
-    workspace: Option<WeakEntity<Workspace>>,
+    workspace: WeakEntity<Workspace>,
     matches: Vec<Entry>,
     all_branches: Option<Vec<Branch>>,
     default_branch: Option<SharedString>,
@@ -360,7 +433,7 @@ enum PickerState {
 
 impl BranchListDelegate {
     fn new(
-        workspace: Option<WeakEntity<Workspace>>,
+        workspace: WeakEntity<Workspace>,
         repo: Option<Entity<Repository>>,
         style: BranchListStyle,
         cx: &mut Context<BranchList>,
@@ -375,7 +448,7 @@ impl BranchListDelegate {
             selected_index: 0,
             last_query: Default::default(),
             modifiers: Default::default(),
-            branch_filter: BranchFilter::Local,
+            branch_filter: BranchFilter::All,
             state: PickerState::List,
             focus_handle: cx.focus_handle(),
         }
@@ -396,7 +469,7 @@ impl BranchListDelegate {
         cx.spawn(async move |_, cx| {
             repo.update(cx, |repo, _| {
                 repo.create_branch(new_branch_name, base_branch)
-            })?
+            })
             .await??;
 
             Ok(())
@@ -443,11 +516,11 @@ impl BranchListDelegate {
                 Entry::Branch { branch, .. } => match branch.remote_name() {
                     Some(remote_name) => {
                         is_remote = true;
-                        repo.update(cx, |repo, _| repo.remove_remote(remote_name.to_string()))?
+                        repo.update(cx, |repo, _| repo.remove_remote(remote_name.to_string()))
                             .await?
                     }
                     None => {
-                        repo.update(cx, |repo, _| repo.delete_branch(branch.name().to_string()))?
+                        repo.update(cx, |repo, _| repo.delete_branch(branch.name().to_string()))
                             .await?
                     }
                 },
@@ -464,7 +537,7 @@ impl BranchListDelegate {
                     log::error!("Failed to delete branch: {}", e);
                 }
 
-                if let Some(workspace) = workspace.and_then(|w| w.upgrade()) {
+                if let Some(workspace) = workspace.upgrade() {
                     cx.update(|_window, cx| {
                         if is_remote {
                             show_error_toast(
@@ -518,7 +591,7 @@ impl PickerDelegate for BranchListDelegate {
         match self.state {
             PickerState::List | PickerState::NewRemote | PickerState::NewBranch => {
                 match self.branch_filter {
-                    BranchFilter::Local => "Select branch…",
+                    BranchFilter::All => "Select branch or remote…",
                     BranchFilter::Remote => "Select remote…",
                 }
             }
@@ -560,8 +633,8 @@ impl PickerDelegate for BranchListDelegate {
                         self.editor_position() == PickerEditorPosition::End,
                         |this| {
                             let tooltip_label = match self.branch_filter {
-                                BranchFilter::Local => "Turn Off Remote Filter",
-                                BranchFilter::Remote => "Filter Remote Branches",
+                                BranchFilter::All => "Filter Remote Branches",
+                                BranchFilter::Remote => "Show All Branches",
                             };
 
                             this.gap_1().justify_between().child({
@@ -625,40 +698,38 @@ impl PickerDelegate for BranchListDelegate {
             return Task::ready(());
         };
 
-        let display_remotes = self.branch_filter;
+        let branch_filter = self.branch_filter;
         cx.spawn_in(window, async move |picker, cx| {
+            let branch_matches_filter = |branch: &Branch| match branch_filter {
+                BranchFilter::All => true,
+                BranchFilter::Remote => branch.is_remote(),
+            };
+
             let mut matches: Vec<Entry> = if query.is_empty() {
-                all_branches
+                let mut matches: Vec<Entry> = all_branches
                     .into_iter()
-                    .filter(|branch| {
-                        if display_remotes == BranchFilter::Remote {
-                            branch.is_remote()
-                        } else {
-                            !branch.is_remote()
-                        }
-                    })
+                    .filter(|branch| branch_matches_filter(branch))
                     .map(|branch| Entry::Branch {
                         branch,
                         positions: Vec::new(),
                     })
-                    .collect()
+                    .collect();
+
+                // Keep the existing recency sort within each group, but show local branches first.
+                matches.sort_by_key(|entry| entry.as_branch().is_some_and(|b| b.is_remote()));
+
+                matches
             } else {
                 let branches = all_branches
                     .iter()
-                    .filter(|branch| {
-                        if display_remotes == BranchFilter::Remote {
-                            branch.is_remote()
-                        } else {
-                            !branch.is_remote()
-                        }
-                    })
+                    .filter(|branch| branch_matches_filter(branch))
                     .collect::<Vec<_>>();
                 let candidates = branches
                     .iter()
                     .enumerate()
                     .map(|(ix, branch)| StringMatchCandidate::new(ix, branch.name()))
                     .collect::<Vec<StringMatchCandidate>>();
-                fuzzy::match_strings(
+                let mut matches: Vec<Entry> = fuzzy::match_strings(
                     &candidates,
                     &query,
                     true,
@@ -673,7 +744,12 @@ impl PickerDelegate for BranchListDelegate {
                     branch: branches[candidate.candidate_id].clone(),
                     positions: candidate.positions,
                 })
-                .collect()
+                .collect();
+
+                // Keep fuzzy-relevance ordering within local/remote groups, but show locals first.
+                matches.sort_by_key(|entry| entry.as_branch().is_some_and(|b| b.is_remote()));
+
+                matches
             };
             picker
                 .update(cx, |picker, _| {
@@ -759,7 +835,7 @@ impl PickerDelegate for BranchListDelegate {
 
                 let branch = branch.clone();
                 cx.spawn(async move |_, cx| {
-                    repo.update(cx, |repo, _| repo.change_branch(branch.name().to_string()))?
+                    repo.update(cx, |repo, _| repo.change_branch(branch.name().to_string()))
                         .await??;
 
                     anyhow::Ok(())
@@ -841,10 +917,13 @@ impl PickerDelegate for BranchListDelegate {
             Entry::NewUrl { .. } | Entry::NewBranch { .. } | Entry::NewRemoteName { .. } => {
                 Icon::new(IconName::Plus).color(Color::Muted)
             }
-            Entry::Branch { .. } => match self.branch_filter {
-                BranchFilter::Local => Icon::new(IconName::GitBranchAlt).color(Color::Muted),
-                BranchFilter::Remote => Icon::new(IconName::Screen).color(Color::Muted),
-            },
+            Entry::Branch { branch, .. } => {
+                if branch.is_remote() {
+                    Icon::new(IconName::Screen).color(Color::Muted)
+                } else {
+                    Icon::new(IconName::GitBranchAlt).color(Color::Muted)
+                }
+            }
         };
 
         let entry_title = match entry {
@@ -874,19 +953,21 @@ impl PickerDelegate for BranchListDelegate {
             Entry::NewUrl { .. } | Entry::NewBranch { .. } | Entry::NewRemoteName { .. }
         );
 
-        let delete_branch_button = IconButton::new("delete", IconName::Trash)
-            .tooltip(move |_, cx| {
-                Tooltip::for_action_in(
-                    "Delete Branch",
-                    &branch_picker::DeleteBranch,
-                    &focus_handle,
-                    cx,
-                )
-            })
-            .on_click(cx.listener(|this, _, window, cx| {
-                let selected_idx = this.delegate.selected_index();
-                this.delegate.delete_at(selected_idx, window, cx);
-            }));
+        let deleted_branch_icon = |entry_ix: usize, is_head_branch: bool| {
+            IconButton::new(("delete", entry_ix), IconName::Trash)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in(
+                        "Delete Branch",
+                        &branch_picker::DeleteBranch,
+                        &focus_handle,
+                        cx,
+                    )
+                })
+                .disabled(is_head_branch)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.delegate.delete_at(entry_ix, window, cx);
+                }))
+        };
 
         let create_from_default_button = self.default_branch.as_ref().map(|default_branch| {
             let tooltip_label: SharedString = format!("Create New From: {default_branch}").into();
@@ -963,12 +1044,12 @@ impl PickerDelegate for BranchListDelegate {
                                                             "No commits found".into(),
                                                             |subject| {
                                                                 if show_author_name
-                                                                    && author_name.is_some()
+                                                                    && let Some(author) =
+                                                                        author_name
                                                                 {
                                                                     format!(
                                                                         "{}  •  {}",
-                                                                        author_name.unwrap(),
-                                                                        subject
+                                                                        author, subject
                                                                     )
                                                                 } else {
                                                                     subject.to_string()
@@ -1002,10 +1083,12 @@ impl PickerDelegate for BranchListDelegate {
                     self.editor_position() == PickerEditorPosition::End && !is_new_items,
                     |this| {
                         this.map(|this| {
+                            let is_head_branch =
+                                entry.as_branch().is_some_and(|branch| branch.is_head);
                             if self.selected_index() == ix {
-                                this.end_slot(delete_branch_button)
+                                this.end_slot(deleted_branch_icon(ix, is_head_branch))
                             } else {
-                                this.end_hover_slot(delete_branch_button)
+                                this.end_hover_slot(deleted_branch_icon(ix, is_head_branch))
                             }
                         })
                     },
@@ -1036,8 +1119,8 @@ impl PickerDelegate for BranchListDelegate {
     ) -> Option<AnyElement> {
         matches!(self.state, PickerState::List).then(|| {
             let label = match self.branch_filter {
-                BranchFilter::Local => "Local",
-                BranchFilter::Remote => "Remote",
+                BranchFilter::All => "Branches",
+                BranchFilter::Remote => "Remotes",
             };
 
             ListHeader::new(label).inset(true).into_any_element()
@@ -1230,7 +1313,7 @@ mod tests {
 
     use super::*;
     use git::repository::{CommitSummary, Remote};
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{AppContext, TestAppContext, VisualTestContext};
     use project::{FakeFs, Project};
     use rand::{Rng, rngs::StdRng};
     use serde_json::json;
@@ -1279,35 +1362,48 @@ mod tests {
         ]
     }
 
-    fn init_branch_list_test(
+    async fn init_branch_list_test(
         repository: Option<Entity<Repository>>,
         branches: Vec<Branch>,
         cx: &mut TestAppContext,
     ) -> (Entity<BranchList>, VisualTestContext) {
-        let window = cx.add_window(|window, cx| {
-            let mut delegate =
-                BranchListDelegate::new(None, repository, BranchListStyle::Modal, cx);
-            delegate.all_branches = Some(branches);
-            let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
-            let picker_focus_handle = picker.focus_handle(cx);
-            picker.update(cx, |picker, _| {
-                picker.delegate.focus_handle = picker_focus_handle.clone();
-            });
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
 
-            let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
-                cx.emit(DismissEvent);
-            });
+        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
 
-            BranchList {
-                picker,
-                picker_focus_handle,
-                width: rems(34.),
-                _subscription,
-            }
-        });
+        let branch_list = workspace
+            .update(cx, |workspace, window, cx| {
+                cx.new(|cx| {
+                    let mut delegate = BranchListDelegate::new(
+                        workspace.weak_handle(),
+                        repository,
+                        BranchListStyle::Modal,
+                        cx,
+                    );
+                    delegate.all_branches = Some(branches);
+                    let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+                    let picker_focus_handle = picker.focus_handle(cx);
+                    picker.update(cx, |picker, _| {
+                        picker.delegate.focus_handle = picker_focus_handle.clone();
+                    });
 
-        let branch_list = window.root(cx).unwrap();
-        let cx = VisualTestContext::from_window(*window, cx);
+                    let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
+                        cx.emit(DismissEvent);
+                    });
+
+                    BranchList {
+                        picker,
+                        picker_focus_handle,
+                        width: rems(34.),
+                        _subscription: Some(_subscription),
+                        embedded: false,
+                    }
+                })
+            })
+            .unwrap();
+
+        let cx = VisualTestContext::from_window(*workspace, cx);
 
         (branch_list, cx)
     }
@@ -1343,7 +1439,7 @@ mod tests {
         init_test(cx);
 
         let branches = create_test_branches();
-        let (branch_list, mut ctx) = init_branch_list_test(None, branches, cx);
+        let (branch_list, mut ctx) = init_branch_list_test(None, branches, cx).await;
         let cx = &mut ctx;
 
         branch_list
@@ -1410,7 +1506,6 @@ mod tests {
         cx.spawn(async move |mut cx| {
             for branch in branch_names {
                 repo.update(&mut cx, |repo, _| repo.create_branch(branch, None))
-                    .unwrap()
                     .await
                     .unwrap()
                     .unwrap();
@@ -1419,7 +1514,7 @@ mod tests {
         .await;
         cx.run_until_parked();
 
-        let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx);
+        let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx).await;
         let cx = &mut ctx;
 
         update_branch_list_matches_with_empty_query(&branch_list, cx).await;
@@ -1475,7 +1570,6 @@ mod tests {
                 repo.update(&mut cx, |repo, _| {
                     repo.create_remote(branch, String::from("test"))
                 })
-                .unwrap()
                 .await
                 .unwrap()
                 .unwrap();
@@ -1484,7 +1578,7 @@ mod tests {
         .await;
         cx.run_until_parked();
 
-        let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx);
+        let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx).await;
         let cx = &mut ctx;
         // Enable remote filter
         branch_list.update(cx, |branch_list, cx| {
@@ -1532,7 +1626,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_update_remote_matches_with_query(cx: &mut TestAppContext) {
+    async fn test_branch_filter_shows_all_then_remotes_and_applies_query(cx: &mut TestAppContext) {
         init_test(cx);
 
         let branches = vec![
@@ -1542,39 +1636,54 @@ mod tests {
             create_test_branch("develop", false, None, Some(700)),
         ];
 
-        let (branch_list, mut ctx) = init_branch_list_test(None, branches, cx);
+        let (branch_list, mut ctx) = init_branch_list_test(None, branches, cx).await;
         let cx = &mut ctx;
 
         update_branch_list_matches_with_empty_query(&branch_list, cx).await;
 
-        // Check matches, it should match all existing branches and no option to create new branch
-        branch_list
-            .update_in(cx, |branch_list, window, cx| {
-                branch_list.picker.update(cx, |picker, cx| {
-                    assert_eq!(picker.delegate.matches.len(), 2);
-                    let branches = picker
-                        .delegate
-                        .matches
-                        .iter()
-                        .map(|be| be.name())
-                        .collect::<HashSet<_>>();
-                    assert_eq!(
-                        branches,
-                        ["feature-ui", "develop"]
-                            .into_iter()
-                            .collect::<HashSet<_>>()
-                    );
+        branch_list.update(cx, |branch_list, cx| {
+            branch_list.picker.update(cx, |picker, _cx| {
+                assert_eq!(picker.delegate.matches.len(), 4);
 
-                    // Verify the last entry is NOT the "create new branch" option
-                    let last_match = picker.delegate.matches.last().unwrap();
-                    assert!(!last_match.is_new_branch());
-                    assert!(!last_match.is_new_url());
-                    picker.delegate.branch_filter = BranchFilter::Remote;
-                    picker.delegate.update_matches(String::new(), window, cx)
-                })
+                let branches = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .map(|be| be.name())
+                    .collect::<HashSet<_>>();
+                assert_eq!(
+                    branches,
+                    ["origin/main", "fork/feature-auth", "feature-ui", "develop"]
+                        .into_iter()
+                        .collect::<HashSet<_>>()
+                );
+
+                // Locals should be listed before remotes.
+                let ordered = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .map(|be| be.name())
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    ordered,
+                    vec!["feature-ui", "develop", "origin/main", "fork/feature-auth"]
+                );
+
+                // Verify the last entry is NOT the "create new branch" option
+                let last_match = picker.delegate.matches.last().unwrap();
+                assert!(!last_match.is_new_branch());
+                assert!(!last_match.is_new_url());
             })
-            .await;
-        cx.run_until_parked();
+        });
+
+        branch_list.update(cx, |branch_list, cx| {
+            branch_list.picker.update(cx, |picker, _cx| {
+                picker.delegate.branch_filter = BranchFilter::Remote;
+            })
+        });
+
+        update_branch_list_matches_with_empty_query(&branch_list, cx).await;
 
         branch_list
             .update_in(cx, |branch_list, window, cx| {
@@ -1637,7 +1746,8 @@ mod tests {
             create_test_branch(FEATURE_BRANCH, false, None, Some(900)),
         ];
 
-        let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, test_cx);
+        let (branch_list, mut ctx) =
+            init_branch_list_test(repository.into(), branches, test_cx).await;
         let cx = &mut ctx;
 
         branch_list
@@ -1696,7 +1806,7 @@ mod tests {
         let repository = init_fake_repository(cx).await;
         let branches = vec![create_test_branch("main", true, None, Some(1000))];
 
-        let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx);
+        let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx).await;
         let cx = &mut ctx;
 
         branch_list
@@ -1774,7 +1884,7 @@ mod tests {
         init_test(cx);
 
         let branches = vec![create_test_branch("main_branch", true, None, Some(1000))];
-        let (branch_list, mut ctx) = init_branch_list_test(None, branches, cx);
+        let (branch_list, mut ctx) = init_branch_list_test(None, branches, cx).await;
         let cx = &mut ctx;
 
         branch_list
@@ -1837,7 +1947,7 @@ mod tests {
         init_test(cx);
         let branches = vec![create_test_branch("main", true, None, Some(1000))];
 
-        let (branch_list, mut ctx) = init_branch_list_test(None, branches, cx);
+        let (branch_list, mut ctx) = init_branch_list_test(None, branches, cx).await;
         let cx = &mut ctx;
 
         let subscription = cx.update(|_, cx| {
@@ -1848,7 +1958,12 @@ mod tests {
 
         branch_list
             .update_in(cx, |branch_list, window, cx| {
-                window.focus(&branch_list.picker_focus_handle);
+                window.focus(&branch_list.picker_focus_handle, cx);
+                assert!(
+                    branch_list.picker_focus_handle.is_focused(window),
+                    "Branch picker should be focused when selecting an entry"
+                );
+
                 branch_list.picker.update(cx, |picker, cx| {
                     picker
                         .delegate
@@ -1860,6 +1975,9 @@ mod tests {
         cx.run_until_parked();
 
         branch_list.update_in(cx, |branch_list, window, cx| {
+            // Re-focus the picker since workspace initialization during run_until_parked
+            window.focus(&branch_list.picker_focus_handle, cx);
+
             branch_list.picker.update(cx, |picker, cx| {
                 let last_match = picker.delegate.matches.last().unwrap();
                 assert!(last_match.is_new_url());
@@ -1893,7 +2011,7 @@ mod tests {
             .map(|i| create_test_branch(&format!("branch-{:02}", i), i == 0, None, Some(i * 100)))
             .collect();
 
-        let (branch_list, mut ctx) = init_branch_list_test(None, branches, cx);
+        let (branch_list, mut ctx) = init_branch_list_test(None, branches, cx).await;
         let cx = &mut ctx;
 
         update_branch_list_matches_with_empty_query(&branch_list, cx).await;

@@ -431,11 +431,7 @@ impl<T: 'static> Entity<T> {
 
     /// Read the entity referenced by this handle with the given function.
     #[inline]
-    pub fn read_with<R, C: AppContext>(
-        &self,
-        cx: &C,
-        f: impl FnOnce(&T, &App) -> R,
-    ) -> C::Result<R> {
+    pub fn read_with<R, C: AppContext>(&self, cx: &C, f: impl FnOnce(&T, &App) -> R) -> R {
         cx.read_entity(self, f)
     }
 
@@ -445,18 +441,18 @@ impl<T: 'static> Entity<T> {
         &self,
         cx: &mut C,
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
-    ) -> C::Result<R> {
+    ) -> R {
         cx.update_entity(self, update)
     }
 
     /// Updates the entity referenced by this handle with the given function.
     #[inline]
-    pub fn as_mut<'a, C: AppContext>(&self, cx: &'a mut C) -> C::Result<GpuiBorrow<'a, T>> {
+    pub fn as_mut<'a, C: AppContext>(&self, cx: &'a mut C) -> GpuiBorrow<'a, T> {
         cx.as_mut(self)
     }
 
     /// Updates the entity referenced by this handle with the given function.
-    pub fn write<C: AppContext>(&self, cx: &mut C, value: T) -> C::Result<()> {
+    pub fn write<C: AppContext>(&self, cx: &mut C, value: T) {
         self.update(cx, |entity, cx| {
             *entity = value;
             cx.notify();
@@ -465,7 +461,7 @@ impl<T: 'static> Entity<T> {
 
     /// Updates the entity referenced by this handle with the given function if
     /// the referenced entity still exists, within a visual context that has a window.
-    /// Returns an error if the entity has been released.
+    /// Returns an error if the window has been closed.
     #[inline]
     pub fn update_in<R, C: VisualContext>(
         &self,
@@ -749,13 +745,9 @@ impl<T: 'static> WeakEntity<T> {
     ) -> Result<R>
     where
         C: AppContext,
-        Result<C::Result<R>>: crate::Flatten<R>,
     {
-        crate::Flatten::flatten(
-            self.upgrade()
-                .context("entity released")
-                .map(|this| cx.update_entity(&this, update)),
-        )
+        let entity = self.upgrade().context("entity released")?;
+        Ok(cx.update_entity(&entity, update))
     }
 
     /// Updates the entity referenced by this handle with the given function if
@@ -768,14 +760,13 @@ impl<T: 'static> WeakEntity<T> {
     ) -> Result<R>
     where
         C: VisualContext,
-        Result<C::Result<R>>: crate::Flatten<R>,
     {
         let window = cx.window_handle();
-        let this = self.upgrade().context("entity released")?;
+        let entity = self.upgrade().context("entity released")?;
 
-        crate::Flatten::flatten(window.update(cx, |_, window, cx| {
-            this.update(cx, |entity, cx| update(entity, window, cx))
-        }))
+        window.update(cx, |_, window, cx| {
+            entity.update(cx, |entity, cx| update(entity, window, cx))
+        })
     }
 
     /// Reads the entity referenced by this handle with the given function if
@@ -784,13 +775,9 @@ impl<T: 'static> WeakEntity<T> {
     pub fn read_with<C, R>(&self, cx: &C, read: impl FnOnce(&T, &App) -> R) -> Result<R>
     where
         C: AppContext,
-        Result<C::Result<R>>: crate::Flatten<R>,
     {
-        crate::Flatten::flatten(
-            self.upgrade()
-                .context("entity released")
-                .map(|this| cx.read_entity(&this, read)),
-        )
+        let entity = self.upgrade().context("entity released")?;
+        Ok(cx.read_entity(&entity, read))
     }
 
     /// Create a new weak entity that can never be upgraded.

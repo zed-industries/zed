@@ -6,10 +6,10 @@ use crate::markdown_elements::{
 };
 use fs::normalize_path;
 use gpui::{
-    AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, Div, Element,
-    ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke,
-    Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle,
-    WeakEntity, Window, div, img, rems,
+    AbsoluteLength, AnyElement, App, AppContext as _, Context, Div, Element, ElementId, Entity,
+    HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Modifiers,
+    ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle, WeakEntity,
+    Window, div, img, rems,
 };
 use settings::Settings;
 use std::{
@@ -18,12 +18,7 @@ use std::{
     vec,
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
-use ui::{
-    ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
-    InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, Pixels, Rems,
-    StatefulInteractiveElement, StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover,
-    h_flex, tooltip_container, v_flex,
-};
+use ui::{CopyButton, LinkPreview, ToggleState, prelude::*, tooltip_container};
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
 pub struct CheckboxClickedEvent {
@@ -521,7 +516,8 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
                 .children(render_markdown_text(&cell.children, cx))
                 .px_2()
                 .py_1()
-                .border_1()
+                .when(col_idx > 0, |this| this.border_l_1())
+                .when(row_idx > 0, |this| this.border_t_1())
                 .border_color(cx.border_color)
                 .when(cell.is_header, |this| {
                     this.bg(cx.title_bar_background_color)
@@ -551,7 +547,8 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
             }
 
             let empty_cell = div()
-                .border_1()
+                .when(col_idx > 0, |this| this.border_l_1())
+                .when(row_idx > 0, |this| this.border_t_1())
                 .border_color(cx.border_color)
                 .when(row_idx % 2 == 1, |this| this.bg(cx.panel_background_color));
 
@@ -564,12 +561,16 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         .when_some(parsed.caption.as_ref(), |this, caption| {
             this.children(render_markdown_text(caption, cx))
         })
+        .border_1()
+        .border_color(cx.border_color)
+        .rounded_sm()
+        .overflow_hidden()
         .child(
             div()
+                .min_w_0()
+                .w_full()
                 .grid()
                 .grid_cols(max_column_count as u16)
-                .border_1()
-                .border_color(cx.border_color)
                 .children(cells),
         )
         .into_any()
@@ -622,15 +623,8 @@ fn render_markdown_code_block(
         StyledText::new(parsed.contents.clone())
     };
 
-    let copy_block_button = IconButton::new("copy-code", IconName::Copy)
-        .icon_size(IconSize::Small)
-        .on_click({
-            let contents = parsed.contents.clone();
-            move |_, _window, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(contents.to_string()));
-            }
-        })
-        .tooltip(Tooltip::text("Copy code block"))
+    let copy_block_button = CopyButton::new(parsed.contents.clone())
+        .tooltip_label("Copy Codeblock")
         .visible_on_hover("markdown-block");
 
     let font = gpui::Font {

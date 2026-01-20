@@ -121,7 +121,9 @@ pub struct ProxySettings {
 impl ProxySettings {
     pub fn proxy_url(&self) -> Option<Url> {
         self.proxy
-            .as_ref()
+            .as_deref()
+            .map(str::trim)
+            .filter(|input| !input.is_empty())
             .and_then(|input| {
                 input
                     .parse::<Url>()
@@ -135,7 +137,12 @@ impl ProxySettings {
 impl Settings for ProxySettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         Self {
-            proxy: content.proxy.clone(),
+            proxy: content
+                .proxy
+                .as_deref()
+                .map(str::trim)
+                .filter(|proxy| !proxy.is_empty())
+                .map(ToOwned::to_owned),
         }
     }
 }
@@ -336,7 +343,7 @@ impl ClientCredentialsProvider {
     }
 
     fn server_url(&self, cx: &AsyncApp) -> Result<String> {
-        cx.update(|cx| ClientSettings::get_global(cx).server_url.clone())
+        Ok(cx.update(|cx| ClientSettings::get_global(cx).server_url.clone()))
     }
 
     /// Reads the credentials from the provider.
@@ -927,10 +934,10 @@ impl Client {
         let connect_task = cx.update({
             let cloud_client = self.cloud_client.clone();
             move |cx| cloud_client.connect(cx)
-        })??;
+        })?;
         let connection = connect_task.await?;
 
-        let (mut messages, task) = cx.update(|cx| connection.spawn(cx))?;
+        let (mut messages, task) = cx.update(|cx| connection.spawn(cx));
         task.detach();
 
         cx.spawn({
@@ -970,8 +977,7 @@ impl Client {
                 }
             })
             .detach();
-        })
-        .log_err();
+        });
 
         let credentials = self.sign_in(try_provider, cx).await?;
 
@@ -996,8 +1002,7 @@ impl Client {
                 }
             })
             .detach_and_log_err(cx);
-        })
-        .log_err();
+        });
 
         Ok(())
     }
@@ -1242,14 +1247,8 @@ impl Client {
         credentials: &Credentials,
         cx: &AsyncApp,
     ) -> Task<Result<Connection, EstablishConnectionError>> {
-        let release_channel = cx
-            .update(|cx| ReleaseChannel::try_global(cx))
-            .ok()
-            .flatten();
-        let app_version = cx
-            .update(|cx| AppVersion::global(cx).to_string())
-            .ok()
-            .unwrap_or_default();
+        let release_channel = cx.update(|cx| ReleaseChannel::try_global(cx));
+        let app_version = cx.update(|cx| AppVersion::global(cx).to_string());
 
         let http = self.http.clone();
         let proxy = http.proxy().cloned();
@@ -1286,7 +1285,7 @@ impl Client {
                         None => Box::new(TcpStream::connect(rpc_host).await?),
                     })
                 }
-            })?
+            })
             .await?;
 
             log::info!("connected to rpc endpoint {}", rpc_url);
@@ -1354,12 +1353,12 @@ impl Client {
             let (open_url_tx, open_url_rx) = oneshot::channel::<String>();
             cx.update(|cx| {
                 cx.spawn(async move |cx| {
-                    let url = open_url_rx.await?;
-                    cx.update(|cx| cx.open_url(&url))
+                    if let Ok(url) = open_url_rx.await {
+                        cx.update(|cx| cx.open_url(&url));
+                    }
                 })
-                .detach_and_log_err(cx);
-            })
-            .log_err();
+                .detach();
+            });
 
             let credentials = background
                 .clone()
@@ -1461,7 +1460,7 @@ impl Client {
                 })
                 .await?;
 
-            cx.update(|cx| cx.activate(true))?;
+            cx.update(|cx| cx.activate(true));
             Ok(credentials)
         })
     }
@@ -1680,8 +1679,7 @@ impl Client {
             for handler in self.message_to_client_handlers.lock().iter() {
                 handler(&message, cx);
             }
-        })
-        .ok();
+        });
     }
 
     pub fn telemetry(&self) -> &Arc<Telemetry> {
@@ -1730,23 +1728,59 @@ impl ProtoClient for Client {
 /// prefix for the zed:// url scheme
 pub const ZED_URL_SCHEME: &str = "zed";
 
+/// A parsed Zed link that can be handled internally by the application.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ZedLink {
+    /// Join a channel: `zed.dev/channel/channel-name-123` or `zed://channel/channel-name-123`
+    Channel { channel_id: u64 },
+    /// Open channel notes: `zed.dev/channel/channel-name-123/notes` or with heading `notes#heading`
+    ChannelNotes {
+        channel_id: u64,
+        heading: Option<String>,
+    },
+}
+
 /// Parses the given link into a Zed link.
 ///
-/// Returns a [`Some`] containing the unprefixed link if the link is a Zed link.
-/// Returns [`None`] otherwise.
-pub fn parse_zed_link<'a>(link: &'a str, cx: &App) -> Option<&'a str> {
+/// Returns a [`Some`] containing the parsed link if the link is a recognized Zed link
+/// that should be handled internally by the application.
+/// Returns [`None`] for links that should be opened in the browser.
+pub fn parse_zed_link(link: &str, cx: &App) -> Option<ZedLink> {
     let server_url = &ClientSettings::get_global(cx).server_url;
-    if let Some(stripped) = link
+    let path = link
         .strip_prefix(server_url)
         .and_then(|result| result.strip_prefix('/'))
-    {
-        return Some(stripped);
+        .or_else(|| {
+            link.strip_prefix(ZED_URL_SCHEME)
+                .and_then(|result| result.strip_prefix("://"))
+        })?;
+
+    let mut parts = path.split('/');
+
+    if parts.next() != Some("channel") {
+        return None;
     }
-    if let Some(stripped) = link
-        .strip_prefix(ZED_URL_SCHEME)
-        .and_then(|result| result.strip_prefix("://"))
-    {
-        return Some(stripped);
+
+    let slug = parts.next()?;
+    let id_str = slug.split('-').next_back()?;
+    let channel_id = id_str.parse::<u64>().ok()?;
+
+    let Some(next) = parts.next() else {
+        return Some(ZedLink::Channel { channel_id });
+    };
+
+    if let Some(heading) = next.strip_prefix("notes#") {
+        return Some(ZedLink::ChannelNotes {
+            channel_id,
+            heading: Some(heading.to_string()),
+        });
+    }
+
+    if next == "notes" {
+        return Some(ZedLink::ChannelNotes {
+            channel_id,
+            heading: None,
+        });
     }
 
     None
@@ -1764,6 +1798,19 @@ mod tests {
     use proto::TypedEnvelope;
     use settings::SettingsStore;
     use std::future;
+
+    #[test]
+    fn test_proxy_settings_trims_and_ignores_empty_proxy() {
+        let mut content = SettingsContent::default();
+        content.proxy = Some("   ".to_owned());
+        assert_eq!(ProxySettings::from_settings(&content).proxy, None);
+
+        content.proxy = Some("http://127.0.0.1:10809".to_owned());
+        assert_eq!(
+            ProxySettings::from_settings(&content).proxy.as_deref(),
+            Some("http://127.0.0.1:10809")
+        );
+    }
 
     #[gpui::test(iterations = 10)]
     async fn test_reconnection(cx: &mut TestAppContext) {
@@ -2045,7 +2092,7 @@ mod tests {
         let (done_tx2, done_rx2) = smol::channel::unbounded();
         AnyProtoClient::from(client.clone()).add_entity_message_handler(
             move |entity: Entity<TestEntity>, _: TypedEnvelope<proto::JoinProject>, cx| {
-                match entity.read_with(&cx, |entity, _| entity.id).unwrap() {
+                match entity.read_with(&cx, |entity, _| entity.id) {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
                     _ => unreachable!(),

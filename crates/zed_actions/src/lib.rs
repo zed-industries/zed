@@ -70,6 +70,8 @@ actions!(
         OpenTelemetryLog,
         /// Opens the performance profiler.
         OpenPerformanceProfiler,
+        /// Opens the onboarding view.
+        OpenOnboarding,
     ]
 );
 
@@ -101,6 +103,12 @@ pub struct Extensions {
     #[serde(default)]
     pub id: Option<String>,
 }
+
+/// Opens the external agent registry.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct AgentRegistry;
 
 /// Decreases the font size in the editor buffer.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
@@ -186,6 +194,25 @@ pub mod dev {
     );
 }
 
+pub mod remote_debug {
+    use gpui::actions;
+
+    actions!(
+        remote_debug,
+        [
+            /// Simulates a disconnection from the remote server for testing purposes.
+            /// This will trigger the reconnection logic.
+            SimulateDisconnect,
+            /// Simulates a timeout/slow connection to the remote server for testing purposes.
+            /// This will cause heartbeat failures and trigger reconnection.
+            SimulateTimeout,
+            /// Simulates a timeout/slow connection to the remote server for testing purposes.
+            /// This will cause heartbeat failures and attempting a reconnection while having exhausted all attempts.
+            SimulateTimeoutExhausted,
+        ]
+    );
+}
+
 pub mod workspace {
     use gpui::actions;
 
@@ -225,7 +252,9 @@ pub mod git {
             /// Opens the git stash selector.
             ViewStash,
             /// Opens the git worktree selector.
-            Worktree
+            Worktree,
+            /// Creates a pull request for the current branch.
+            CreatePullRequest
         ]
     );
 }
@@ -352,6 +381,8 @@ pub mod agent {
             ResetAgentZoom,
             /// Toggles the utility/agent pane open/closed state.
             ToggleAgentPane,
+            /// Pastes clipboard content without any formatting.
+            PasteRaw,
         ]
     );
 }

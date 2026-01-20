@@ -70,12 +70,6 @@ pub(crate) mod m_2025_05_08 {
     pub(crate) use settings::SETTINGS_PATTERNS;
 }
 
-pub(crate) mod m_2025_05_29 {
-    mod settings;
-
-    pub(crate) use settings::SETTINGS_PATTERNS;
-}
-
 pub(crate) mod m_2025_06_16 {
     mod settings;
 
@@ -164,4 +158,10 @@ pub(crate) mod m_2025_12_08 {
     mod keymap;
 
     pub(crate) use keymap::KEYMAP_PATTERNS;
+}
+
+pub(crate) mod m_2025_12_15 {
+    mod settings;
+
+    pub(crate) use settings::SETTINGS_PATTERNS;
 }

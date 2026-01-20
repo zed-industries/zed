@@ -1,8 +1,8 @@
 use crate::{Editor, code_context_menus::ContextMenuOrigin};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, Context, Entity, ListSizingBehavior, ScrollStrategy, UniformListScrollHandle,
-    Window, div, px, uniform_list,
+    AnyElement, Context, Entity, ListSizingBehavior, Pixels, ScrollStrategy, Size,
+    UniformListScrollHandle, Window, div, px, uniform_list,
 };
 use language::Buffer;
 use multi_buffer::Anchor;
@@ -85,7 +85,7 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
                 cx.background_executor().clone(),
             );
 
-            let matches = cx.background_executor().block(matches_task);
+            let matches = smol::block_on(matches_task);
             let mut filtered = Vec::new();
             for mat in &matches {
                 filtered.push(self.items[mat.candidate_id].clone());
@@ -305,5 +305,14 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
         };
 
         Popover::new().children(children).into_any_element()
+    }
+
+    pub fn render_aside(
+        &mut self,
+        _max_size: Size<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) -> Option<AnyElement> {
+        None
     }
 }

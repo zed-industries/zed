@@ -8,8 +8,7 @@ use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use language_extension::LspAccess;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
-use project::Project;
-use project::project_settings::ProjectSettings;
+use project::{Project, project_settings::ProjectSettings};
 use release_channel::{AppCommitSha, AppVersion};
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
@@ -37,6 +36,10 @@ impl ProjectCache {
 
     pub fn get(&self, repository_url: &String) -> Option<Entity<Project>> {
         self.0.lock().unwrap().get(repository_url).cloned()
+    }
+
+    pub fn remove(&self, repository_url: &String) {
+        self.0.lock().unwrap().remove(repository_url);
     }
 }
 

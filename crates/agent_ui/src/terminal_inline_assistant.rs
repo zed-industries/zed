@@ -1,11 +1,12 @@
 use crate::{
+    acp::AcpThreadHistory,
     context::load_context,
     inline_prompt_editor::{
         CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
     },
     terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen},
 };
-use agent::HistoryStore;
+use agent::ThreadStore;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 
@@ -61,8 +62,9 @@ impl TerminalInlineAssistant {
         terminal_view: &Entity<TerminalView>,
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        thread_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: WeakEntity<AcpThreadHistory>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -88,6 +90,7 @@ impl TerminalInlineAssistant {
                 self.fs.clone(),
                 thread_store.clone(),
                 prompt_store.clone(),
+                history,
                 project.clone(),
                 workspace.clone(),
                 window,
@@ -127,7 +130,7 @@ impl TerminalInlineAssistant {
         if let Some(prompt_editor) = assist.prompt_editor.as_ref() {
             prompt_editor.update(cx, |this, cx| {
                 this.editor.update(cx, |editor, cx| {
-                    window.focus(&editor.focus_handle(cx));
+                    window.focus(&editor.focus_handle(cx), cx);
                     editor.select_all(&SelectAll, window, cx);
                 });
             });
@@ -265,7 +268,6 @@ impl TerminalInlineAssistant {
             LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
-                mode: None,
                 intent: Some(CompletionIntent::TerminalInlineAssist),
                 messages: vec![request_message],
                 tools: Vec::new(),
@@ -292,7 +294,7 @@ impl TerminalInlineAssistant {
                 .terminal
                 .update(cx, |this, cx| {
                     this.clear_block_below_cursor(cx);
-                    this.focus_handle(cx).focus(window);
+                    this.focus_handle(cx).focus(window, cx);
                 })
                 .log_err();
 
@@ -369,7 +371,7 @@ impl TerminalInlineAssistant {
             .terminal
             .update(cx, |this, cx| {
                 this.clear_block_below_cursor(cx);
-                this.focus_handle(cx).focus(window);
+                this.focus_handle(cx).focus(window, cx);
             })
             .is_ok()
     }
