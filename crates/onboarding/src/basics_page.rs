@@ -209,19 +209,19 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
     ) {
         let fs = <dyn Fs>::global(cx);
         let theme = theme.into();
-        update_settings_file(fs, cx, move |settings, cx| {
-            if theme_mode == ThemeAppearanceMode::System {
+        update_settings_file(fs, cx, move |settings, cx| match theme_mode.try_into() {
+            Err(_) => {
                 let (light_theme, dark_theme) =
                     get_theme_family_themes(&theme).unwrap_or((theme.as_ref(), theme.as_ref()));
 
                 settings.theme.theme = Some(settings::ThemeSelection::Dynamic {
-                    mode: ThemeAppearanceMode::System,
+                    mode: theme_mode,
                     light: ThemeName(light_theme.into()),
                     dark: ThemeName(dark_theme.into()),
                 });
-            } else {
-                let appearance = *SystemAppearance::global(cx);
-                theme::set_theme(settings, theme, appearance, appearance);
+            }
+            Ok(appearance) => {
+                theme::set_theme(settings, theme, appearance, *SystemAppearance::global(cx))
             }
         });
     }
