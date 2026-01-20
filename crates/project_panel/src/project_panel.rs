@@ -4209,9 +4209,14 @@ impl ProjectPanel {
 
                 cx.spawn_in(window, async move |project_panel, cx| {
                     let mut last_succeed = None;
+                    let mut operations = Vec::new();
                     for task in copy_tasks.into_iter() {
                         if let Some(Some(entry)) = task.await.log_err() {
                             last_succeed = Some(entry.id);
+                            operations.push(ProjectPanelOperation::Create {
+                                is_directory: entry.is_dir(),
+                                project_path: (worktree_id, entry.path).into(),
+                            });
                         }
                     }
                     // update selection
@@ -4222,6 +4227,13 @@ impl ProjectPanel {
                                     worktree_id,
                                     entry_id,
                                 });
+
+                                if operations.len() == 1 {
+                                    project_panel.record_operation(operations.pop().unwrap());
+                                } else {
+                                    project_panel
+                                        .record_operation(ProjectPanelOperation::Batch(operations));
+                                }
 
                                 // if only one entry was dragged and it was disambiguated, open the rename editor
                                 if item_count == 1 && disambiguation_range.is_some() {
