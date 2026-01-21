@@ -317,6 +317,24 @@ fn count_ngrams(text: &str, n: usize) -> Counts {
     counts
 }
 
+pub fn braces_disbalance(text: &str) -> usize {
+    let mut disbalance = 0isize;
+
+    let a = text.chars().filter(|&c| c == '{').count() as isize;
+    let b = text.chars().filter(|&c| c == '}').count() as isize;
+    disbalance += (a - b).abs();
+
+    let a = text.chars().filter(|&c| c == '(').count() as isize;
+    let b = text.chars().filter(|&c| c == ')').count() as isize;
+    disbalance += (a - b).abs();
+
+    let a = text.chars().filter(|&c| c == '[').count() as isize;
+    let b = text.chars().filter(|&c| c == ']').count() as isize;
+    disbalance += (a - b).abs();
+
+    disbalance as usize
+}
+
 #[cfg(test)]
 mod test_optimization {
     use super::*;
@@ -528,5 +546,17 @@ mod test {
         let text = "unchanged text";
         let score = delta_chr_f(text, text, text);
         assert!((score - 100.0).abs() < 1e-2);
+    }
+
+    #[test]
+    fn test_braces_disbalance() {
+        let text = "let x = { 1 + 2 };";
+        assert_eq!(braces_disbalance(text), 0);
+
+        let text = "let x = { 1 + 2";
+        assert_eq!(braces_disbalance(text), 1);
+
+        let text = "let x = { 1 + 2 )";
+        assert_eq!(braces_disbalance(text), 2);
     }
 }
