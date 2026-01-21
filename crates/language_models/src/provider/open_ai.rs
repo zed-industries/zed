@@ -556,7 +556,6 @@ impl OpenAiEventMapper {
         };
 
         if let Some(delta) = choice.delta.as_ref() {
-            // Handle reasoning content (thinking blocks)
             if let Some(reasoning_content) = delta.reasoning_content.clone() {
                 if !reasoning_content.is_empty() {
                     events.push(Ok(LanguageModelCompletionEvent::Thinking {
@@ -565,7 +564,6 @@ impl OpenAiEventMapper {
                     }));
                 }
             }
-            // Only accumulate non-empty content to allow proper thinking block display
             if let Some(content) = delta.content.clone() {
                 if !content.is_empty() {
                     events.push(Ok(LanguageModelCompletionEvent::Text(content)));
