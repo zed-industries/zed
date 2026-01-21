@@ -792,6 +792,14 @@ impl OpenAiEventMapper {
         };
 
         if let Some(delta) = choice.delta.as_ref() {
+            // Handle reasoning_content field (used by OpenAI-compatible providers like Z.ai)
+            if let Some(reasoning_content) = delta.reasoning_content.clone() {
+                events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                    text: reasoning_content,
+                    signature: None,
+                }));
+            }
+
             if let Some(content) = delta.content.clone() {
                 events.push(Ok(LanguageModelCompletionEvent::Text(content)));
             }
@@ -1374,6 +1382,7 @@ mod tests {
         ResponseFunctionToolCall, ResponseOutputItem, ResponseOutputMessage, ResponseStatusDetails,
         ResponseSummary, ResponseUsage, StreamEvent as ResponsesStreamEvent,
     };
+    use open_ai::{ChoiceDelta, ResponseMessageDelta, ResponseStreamEvent};
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
