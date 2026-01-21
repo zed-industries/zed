@@ -405,21 +405,21 @@ pub struct BuiltinAgentServerSettings {
     /// These are the model IDs as reported by the agent.
     ///
     /// Default: []
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub favorite_models: Vec<String>,
     /// Default values for session config options.
     ///
     /// This is a map from config option ID to value ID.
     ///
     /// Default: {}
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub default_config_options: HashMap<String, String>,
     /// Favorited values for session config options.
     ///
     /// This is a map from config option ID to a list of favorited value IDs.
     ///
     /// Default: {}
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub favorite_config_option_values: HashMap<String, Vec<String>>,
 }
 
@@ -430,10 +430,10 @@ pub enum CustomAgentServerSettings {
     Custom {
         #[serde(rename = "command")]
         path: PathBuf,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         args: Vec<String>,
         /// Default: {}
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         env: HashMap<String, String>,
         /// The default mode to use for this agent.
         ///
@@ -452,28 +452,28 @@ pub enum CustomAgentServerSettings {
         /// These are the model IDs as reported by the agent.
         ///
         /// Default: []
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
         ///
         /// Default: {}
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         default_config_options: HashMap<String, String>,
         /// Favorited values for session config options.
         ///
         /// This is a map from config option ID to a list of favorited value IDs.
         ///
         /// Default: {}
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
     Extension {
         /// Additional environment variables to pass to the agent.
         ///
         /// Default: {}
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         env: HashMap<String, String>,
         /// The default mode to use for this agent.
         ///
@@ -492,28 +492,28 @@ pub enum CustomAgentServerSettings {
         /// These are the model IDs as reported by the agent.
         ///
         /// Default: []
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
         ///
         /// Default: {}
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         default_config_options: HashMap<String, String>,
         /// Favorited values for session config options.
         ///
         /// This is a map from config option ID to a list of favorited value IDs.
         ///
         /// Default: {}
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
     Registry {
         /// Additional environment variables to pass to the agent.
         ///
         /// Default: {}
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         env: HashMap<String, String>,
         /// The default mode to use for this agent.
         ///
@@ -532,21 +532,21 @@ pub enum CustomAgentServerSettings {
         /// These are the model IDs as reported by the agent.
         ///
         /// Default: []
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
         ///
         /// Default: {}
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         default_config_options: HashMap<String, String>,
         /// Favorited values for session config options.
         ///
         /// This is a map from config option ID to a list of favorited value IDs.
         ///
         /// Default: {}
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
 }
