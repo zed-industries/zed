@@ -3604,6 +3604,17 @@ impl AcpThreadView {
                 .into_any_element()
         });
 
+        let has_expandable_content = thread_read.entries().iter().rev().any(|entry| {
+            if let AgentThreadEntry::AssistantMessage(msg) = entry {
+                msg.chunks.iter().any(|chunk| match chunk {
+                    AssistantMessageChunk::Message { block } => block.markdown().is_some(),
+                    AssistantMessageChunk::Thought { block } => block.markdown().is_some(),
+                })
+            } else {
+                false
+            }
+        });
+
         v_flex()
             .w_full()
             .rounded_md()
@@ -3649,28 +3660,30 @@ impl AcpThreadView {
                                 )
                             }),
                     )
-                    .child(
-                        Disclosure::new(
-                            SharedString::from(format!(
-                                "subagent-disclosure-inner-{}-{}",
-                                entry_ix, context_ix
-                            )),
-                            is_expanded,
-                        )
-                        .opened_icon(IconName::ChevronUp)
-                        .closed_icon(IconName::ChevronDown)
-                        .visible_on_hover(card_header_id)
-                        .on_click(cx.listener({
-                            move |this, _, _, cx| {
-                                if this.expanded_subagents.contains(&session_id) {
-                                    this.expanded_subagents.remove(&session_id);
-                                } else {
-                                    this.expanded_subagents.insert(session_id.clone());
+                    .when(has_expandable_content, |this| {
+                        this.child(
+                            Disclosure::new(
+                                SharedString::from(format!(
+                                    "subagent-disclosure-inner-{}-{}",
+                                    entry_ix, context_ix
+                                )),
+                                is_expanded,
+                            )
+                            .opened_icon(IconName::ChevronUp)
+                            .closed_icon(IconName::ChevronDown)
+                            .visible_on_hover(card_header_id)
+                            .on_click(cx.listener({
+                                move |this, _, _, cx| {
+                                    if this.expanded_subagents.contains(&session_id) {
+                                        this.expanded_subagents.remove(&session_id);
+                                    } else {
+                                        this.expanded_subagents.insert(session_id.clone());
+                                    }
+                                    cx.notify();
                                 }
-                                cx.notify();
-                            }
-                        })),
-                    ),
+                            })),
+                        )
+                    }),
             )
             .when(is_expanded, |this| {
                 this.child(
