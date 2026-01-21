@@ -860,6 +860,7 @@ impl Motion {
             | Up { .. }
             | WrappingLeft
             | WrappingRight => false,
+
             EndOfDocument
             | EndOfParagraph
             | GoToPercentage
@@ -983,7 +984,7 @@ impl Motion {
             } => down_display(map, point, goal, times, text_layout_details),
             Up {
                 display_lines: false,
-            } => up_down_buffer_rows(map, point, goal, 0 - times as isize, text_layout_details),
+            } => up_down_buffer_rows(map, point, goal, -(times as isize), text_layout_details),
             Up {
                 display_lines: true,
             } => up_display(map, point, goal, times, text_layout_details),
@@ -1548,6 +1549,12 @@ fn up_down_buffer_rows(
     mut times: isize,
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
+    // Return early if we're already on the first/last row of the buffer and
+    // trying to move further in that direction.
+    if (point.row() == 0 && times < 0) || (point.row() == map.max_point().row() && times > 0) {
+        return (point, goal);
+    }
+
     let bias = if times < 0 { Bias::Left } else { Bias::Right };
 
     while map.is_folded_buffer_header(point.row()) {
