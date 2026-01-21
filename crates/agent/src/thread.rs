@@ -2,13 +2,13 @@ use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SubagentTool, SystemPromptTemplate, Template, Templates,
-    TerminalTool, ThinkingTool, ToolPermissionDecision, WebSearchTool,
-    decide_permission_from_settings,
+    RestoreFileFromDiskTool, SaveFileTool, StreamingEditFileTool, SubagentTool,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, ToolPermissionDecision,
+    WebSearchTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _, SubagentsFeatureFlag};
 
 use agent_client_protocol as acp;
 use agent_settings::{
@@ -1191,6 +1191,12 @@ impl Thread {
         self.add_tool(EditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
+            language_registry.clone(),
+            Templates::new(),
+        ));
+        self.add_tool(StreamingEditFileTool::new(
+            self.project.clone(),
+            cx.weak_entity(),
             language_registry,
             Templates::new(),
         ));
@@ -2310,14 +2316,31 @@ impl Thread {
             }
         }
 
+        let use_streaming_edit_tool =
+            cx.has_flag::<AgentV2FeatureFlag>() && model.supports_streaming_tools();
+
         let mut tools = self
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
+                // For streaming_edit_file, check profile against "edit_file" since that's what users configure
+                let profile_tool_name = if tool_name == "streaming_edit_file" {
+                    "edit_file"
+                } else {
+                    tool_name.as_ref()
+                };
+
                 if tool.supports_provider(&model.provider_id())
-                    && profile.is_tool_enabled(tool_name)
+                    && profile.is_tool_enabled(profile_tool_name)
                 {
-                    Some((truncate(tool_name), tool.clone()))
+                    match (tool_name.as_ref(), use_streaming_edit_tool) {
+                        ("streaming_edit_file", true) => {
+                            // Expose streaming tool as "edit_file"
+                            Some((SharedString::from("edit_file"), tool.clone()))
+                        }
+                        ("edit_file", true) => None,
+                        _ => Some((truncate(tool_name), tool.clone())),
+                    }
                 } else {
                     None
                 }
