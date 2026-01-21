@@ -653,6 +653,13 @@ impl Item for Editor {
         None
     }
 
+    fn has_auxiliary_focus(&self, window: &mut Window, cx: &App) -> bool {
+        self.context_menu()
+            .borrow()
+            .as_ref()
+            .is_some_and(|menu| menu.focused(window, cx))
+    }
+
     fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
         if let Some(path) = path_for_buffer(&self.buffer, detail, true, cx) {
             path.to_string().into()

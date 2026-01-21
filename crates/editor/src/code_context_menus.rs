@@ -189,12 +189,11 @@ impl CodeContextMenu {
         }
     }
 
-    pub fn focused(&self, window: &mut Window, cx: &mut Context<Editor>) -> bool {
+    pub fn focused(&self, window: &Window, cx: &App) -> bool {
         match self {
-            CodeContextMenu::Completions(completions_menu) => completions_menu
-                .get_or_create_entry_markdown(completions_menu.selected_item, cx)
-                .as_ref()
-                .is_some_and(|markdown| markdown.focus_handle(cx).contains_focused(window, cx)),
+            CodeContextMenu::Completions(completions_menu) => {
+                completions_menu.get_existing_entry_markdown_focus(window, cx)
+            }
             CodeContextMenu::CodeActions(menu) => menu.focused(window, cx),
         }
     }
@@ -676,6 +675,19 @@ impl CompletionsMenu {
             Some(_) => None,
             _ => None,
         }
+    }
+
+    fn get_existing_entry_markdown_focus(&self, window: &Window, cx: &App) -> bool {
+        let entries = self.entries.borrow();
+        if self.selected_item >= entries.len() {
+            return false;
+        }
+        let selected_candidate_id = entries[self.selected_item].candidate_id;
+        let cache = self.markdown_cache.borrow();
+        cache
+            .iter()
+            .find(|(key, _)| matches!(key, MarkdownCacheKey::ForCandidate { candidate_id } if *candidate_id == selected_candidate_id))
+            .is_some_and(|(_, markdown)| markdown.focus_handle(cx).contains_focused(window, cx))
     }
 
     fn get_or_create_markdown(
