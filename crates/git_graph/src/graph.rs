@@ -173,17 +173,6 @@ impl LaneState {
         }
     }
 
-    fn is_parent_commit(&self, other: &Oid, is_original: bool) -> bool {
-        match self {
-            LaneState::Empty => false,
-            LaneState::Active {
-                parent,
-                destination_column,
-                ..
-            } => parent == other && destination_column.is_none_or(|_| !is_original),
-        }
-    }
-
     fn is_empty(&self) -> bool {
         match self {
             LaneState::Empty => true,
@@ -277,6 +266,7 @@ struct CommitLineKey {
 pub struct GraphData {
     lane_states: SmallVec<[LaneState; 8]>,
     lane_colors: HashMap<ActiveLaneIdx, BranchColor>,
+    parent_to_lanes: HashMap<Oid, SmallVec<[usize; 1]>>,
     next_color: BranchColor,
     accent_colors_count: usize,
     pub commits: Vec<Rc<CommitEntry>>,
@@ -292,6 +282,7 @@ impl GraphData {
         GraphData {
             lane_states: SmallVec::default(),
             lane_colors: HashMap::default(),
+            parent_to_lanes: HashMap::default(),
             next_color: BranchColor(0),
             accent_colors_count,
             commits: Vec::default(),
@@ -306,6 +297,7 @@ impl GraphData {
     pub fn clear(&mut self) {
         self.lane_states.clear();
         self.lane_colors.clear();
+        self.parent_to_lanes.clear();
         self.commits.clear();
         self.lines.clear();
         self.active_commit_lines.clear();
@@ -342,52 +334,51 @@ impl GraphData {
             let commit_row = self.commits.len();
 
             let commit_lane = self
-                .lane_states
-                .iter()
-                .position(|lane: &LaneState| lane.is_parent_commit(&commit.sha, true));
+                .parent_to_lanes
+                .get(&commit.sha)
+                .and_then(|lanes| lanes.first().copied());
 
             let commit_lane = commit_lane.unwrap_or_else(|| self.first_empty_lane_idx());
 
             let commit_color = self.get_lane_color(commit_lane);
 
-            for lane_column in 0..self.lane_states.len() {
-                let state = &mut self.lane_states[lane_column];
-                if !state.is_parent_commit(&commit.sha, false) {
-                    continue;
-                }
+            if let Some(lanes) = self.parent_to_lanes.remove(&commit.sha) {
+                for lane_column in lanes {
+                    let state = &mut self.lane_states[lane_column];
 
-                if let LaneState::Active {
-                    starting_row,
-                    segments,
-                    ..
-                } = state
-                {
-                    if let Some(CommitLineSegment::Curve {
-                        to_column,
-                        curve_kind: CurveKind::Merge,
+                    if let LaneState::Active {
+                        starting_row,
+                        segments,
                         ..
-                    }) = segments.first_mut()
+                    } = state
                     {
-                        let curve_row = *starting_row + 1;
-                        let would_overlap = if lane_column != commit_lane && curve_row < commit_row
+                        if let Some(CommitLineSegment::Curve {
+                            to_column,
+                            curve_kind: CurveKind::Merge,
+                            ..
+                        }) = segments.first_mut()
                         {
-                            self.commits[curve_row..commit_row]
-                                .iter()
-                                .any(|c| c.lane == commit_lane)
-                        } else {
-                            false
-                        };
+                            let curve_row = *starting_row + 1;
+                            let would_overlap =
+                                if lane_column != commit_lane && curve_row < commit_row {
+                                    self.commits[curve_row..commit_row]
+                                        .iter()
+                                        .any(|c| c.lane == commit_lane)
+                                } else {
+                                    false
+                                };
 
-                        if would_overlap {
-                            *to_column = lane_column;
+                            if would_overlap {
+                                *to_column = lane_column;
+                            }
                         }
                     }
-                }
 
-                if let Some(commit_line) =
-                    state.to_commit_lines(commit_row, lane_column, commit_lane, commit_color)
-                {
-                    self.lines.push(Rc::new(commit_line));
+                    if let Some(commit_line) =
+                        state.to_commit_lines(commit_row, lane_column, commit_lane, commit_color)
+                    {
+                        self.lines.push(Rc::new(commit_line));
+                    }
                 }
             }
 
@@ -406,6 +397,11 @@ impl GraphData {
                             destination_column: None,
                             segments: smallvec![CommitLineSegment::Straight { to_row: usize::MAX }],
                         };
+
+                        self.parent_to_lanes
+                            .entry(*parent)
+                            .or_default()
+                            .push(commit_lane);
                     } else {
                         let new_lane = self.first_empty_lane_idx();
 
@@ -422,6 +418,11 @@ impl GraphData {
                                 curve_kind: CurveKind::Merge,
                             },],
                         };
+
+                        self.parent_to_lanes
+                            .entry(*parent)
+                            .or_default()
+                            .push(new_lane);
                     }
                 });
 
