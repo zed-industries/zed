@@ -1,6 +1,7 @@
 mod anthropic_client;
 mod distill;
 mod example;
+mod filter_languages;
 mod format_prompt;
 mod git;
 mod headless;
@@ -22,7 +23,7 @@ use collections::HashSet;
 use edit_prediction::EditPredictionStore;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
-use gpui::{AppContext as _, Application, BackgroundExecutor};
+use gpui::{AppContext as _, Application, BackgroundExecutor, Task};
 use zeta_prompt::ZetaVersion;
 
 use reqwest_client::ReqwestClient;
@@ -36,6 +37,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use crate::distill::run_distill;
 use crate::example::{Example, group_examples_by_repo, read_example_files};
+use crate::filter_languages::{FilterLanguagesArgs, run_filter_languages};
 use crate::format_prompt::run_format_prompt;
 use crate::load_project::run_load_project;
 use crate::paths::{FAILED_EXAMPLES_DIR, RUN_DIR};
@@ -153,6 +155,8 @@ enum Command {
     SplitCommit(SplitCommitArgs),
     /// Split a JSONL dataset into multiple files (stratified by repository_url if present)
     Split(SplitArgs),
+    /// Filter a JSONL dataset by programming language (based on cursor_path extension)
+    FilterLanguages(FilterLanguagesArgs),
 }
 
 impl Display for Command {
@@ -184,6 +188,7 @@ impl Display for Command {
             Command::Clean => write!(f, "clean"),
             Command::SplitCommit(_) => write!(f, "split-commit"),
             Command::Split(_) => write!(f, "split"),
+            Command::FilterLanguages(_) => write!(f, "filter-languages"),
         }
     }
 }
@@ -506,6 +511,15 @@ fn main() {
             }
             return;
         }
+        Command::FilterLanguages(filter_args) => {
+            if let Err(error) =
+                run_filter_languages(filter_args, &args.inputs, args.output.as_ref())
+            {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
         _ => {}
     }
 
@@ -535,14 +549,37 @@ fn main() {
 
                 let failfast_on_single_example = examples.len() == 1;
 
+                // For --in-place, write to a temp file and rename at the end to avoid data loss on interruption
+                let in_place_temp_path = if args.in_place {
+                    output.as_ref().map(|path| {
+                        let mut temp_path = path.clone();
+                        temp_path.set_extension("jsonl.tmp");
+                        temp_path
+                    })
+                } else {
+                    None
+                };
+
                 let output_sender: Option<mpsc::UnboundedSender<String>> =
                     if args.output.is_some() || !matches!(command, Command::Eval(_)) {
-                        output.as_ref().map(|path| {
-                            let file = OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open(path)
-                                .expect("Failed to open output file");
+                        let write_path = in_place_temp_path.as_ref().or(output.as_ref());
+                        write_path.map(|path| {
+                            let file = if args.in_place {
+                                // For --in-place, write to temp file (truncate if exists)
+                                OpenOptions::new()
+                                    .create(true)
+                                    .write(true)
+                                    .truncate(true)
+                                    .open(path)
+                                    .expect("Failed to open temp output file")
+                            } else {
+                                // For regular output, append to support resuming
+                                OpenOptions::new()
+                                    .create(true)
+                                    .append(true)
+                                    .open(path)
+                                    .expect("Failed to open output file")
+                            };
                             let mut writer = BufWriter::new(file);
                             let (sender, mut receiver) = mpsc::unbounded::<String>();
                             cx.background_spawn(async move {
@@ -634,7 +671,8 @@ fn main() {
                                         Command::Clean
                                         | Command::Synthesize(_)
                                         | Command::SplitCommit(_)
-                                        | Command::Split(_) => {
+                                        | Command::Split(_)
+                                        | Command::FilterLanguages(_) => {
                                             unreachable!()
                                         }
                                     }
@@ -674,23 +712,35 @@ fn main() {
                                 }
                             }
 
-                            if let Some(state) =
-                                repo_examples.first().and_then(|e| e.state.as_ref())
-                            {
+                            let repo_url = &repo_examples.first().unwrap().spec.repository_url;
+                            let project = repo_examples
+                                .iter()
+                                .find_map(|e| e.state.as_ref().map(|s| s.project.clone()))
+                                .or_else(|| app_state.project_cache.get(repo_url));
+
+                            if let Some(project) = project {
                                 let mut cx = cx.clone();
+
+                                let shutdown_task: Task<()> =
+                                    project.update(&mut cx, |project, cx| {
+                                        let lsp_store = project.lsp_store();
+                                        lsp_store.update(cx, |lsp_store, cx| {
+                                            lsp_store.shutdown_all_language_servers(cx)
+                                        })
+                                    });
+
+                                shutdown_task.await;
+
                                 if let Some(ep_store) =
                                     cx.update(|cx| EditPredictionStore::try_global(cx))
                                 {
-                                    let project = state.project.clone();
                                     ep_store.update(&mut cx, |store, _| {
                                         store.remove_project(&project);
                                     });
                                 }
                             }
 
-                            app_state
-                                .project_cache
-                                .remove(&repo_examples.first().unwrap().spec.repository_url);
+                            app_state.project_cache.remove(repo_url);
                             for example in &mut repo_examples {
                                 example.state.take();
                             }
@@ -716,6 +766,12 @@ fn main() {
                     Command::Eval(_) => score::print_report(&finished_examples.lock().unwrap()),
                     _ => (),
                 };
+
+                // For --in-place, atomically rename temp file to original
+                if let (Some(temp_path), Some(final_path)) = (&in_place_temp_path, &output) {
+                    std::fs::rename(temp_path, final_path)
+                        .expect("Failed to rename temp file to final output");
+                }
 
                 anyhow::Ok(())
             }

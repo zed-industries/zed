@@ -3547,21 +3547,25 @@ impl AcpThreadView {
             ToolCallStatus::Pending | ToolCallStatus::InProgress
         );
 
-        v_flex().ml_5().mr_5().my_1p5().gap_1().children(
-            subagent_threads
-                .into_iter()
-                .enumerate()
-                .map(|(context_ix, thread)| {
-                    self.render_subagent_card(
-                        entry_ix,
-                        context_ix,
-                        &thread,
-                        tool_call_in_progress,
-                        window,
-                        cx,
-                    )
-                }),
-        )
+        v_flex()
+            .mx_5()
+            .my_1p5()
+            .gap_3()
+            .children(
+                subagent_threads
+                    .into_iter()
+                    .enumerate()
+                    .map(|(context_ix, thread)| {
+                        self.render_subagent_card(
+                            entry_ix,
+                            context_ix,
+                            &thread,
+                            tool_call_in_progress,
+                            window,
+                            cx,
+                        )
+                    }),
+            )
     }
 
     fn render_subagent_card(
@@ -3598,6 +3602,17 @@ impl AcpThreadView {
                 .size(IconSize::Small)
                 .color(Color::Success)
                 .into_any_element()
+        });
+
+        let has_expandable_content = thread_read.entries().iter().rev().any(|entry| {
+            if let AgentThreadEntry::AssistantMessage(msg) = entry {
+                msg.chunks.iter().any(|chunk| match chunk {
+                    AssistantMessageChunk::Message { block } => block.markdown().is_some(),
+                    AssistantMessageChunk::Thought { block } => block.markdown().is_some(),
+                })
+            } else {
+                false
+            }
         });
 
         v_flex()
@@ -3645,28 +3660,30 @@ impl AcpThreadView {
                                 )
                             }),
                     )
-                    .child(
-                        Disclosure::new(
-                            SharedString::from(format!(
-                                "subagent-disclosure-inner-{}-{}",
-                                entry_ix, context_ix
-                            )),
-                            is_expanded,
-                        )
-                        .opened_icon(IconName::ChevronUp)
-                        .closed_icon(IconName::ChevronDown)
-                        .visible_on_hover(card_header_id)
-                        .on_click(cx.listener({
-                            move |this, _, _, cx| {
-                                if this.expanded_subagents.contains(&session_id) {
-                                    this.expanded_subagents.remove(&session_id);
-                                } else {
-                                    this.expanded_subagents.insert(session_id.clone());
+                    .when(has_expandable_content, |this| {
+                        this.child(
+                            Disclosure::new(
+                                SharedString::from(format!(
+                                    "subagent-disclosure-inner-{}-{}",
+                                    entry_ix, context_ix
+                                )),
+                                is_expanded,
+                            )
+                            .opened_icon(IconName::ChevronUp)
+                            .closed_icon(IconName::ChevronDown)
+                            .visible_on_hover(card_header_id)
+                            .on_click(cx.listener({
+                                move |this, _, _, cx| {
+                                    if this.expanded_subagents.contains(&session_id) {
+                                        this.expanded_subagents.remove(&session_id);
+                                    } else {
+                                        this.expanded_subagents.insert(session_id.clone());
+                                    }
+                                    cx.notify();
                                 }
-                                cx.notify();
-                            }
-                        })),
-                    ),
+                            })),
+                        )
+                    }),
             )
             .when(is_expanded, |this| {
                 this.child(
@@ -3708,25 +3725,39 @@ impl AcpThreadView {
             .clone();
 
         scroll_handle.scroll_to_bottom();
+        let editor_bg = cx.theme().colors().editor_background;
+
+        let gradient_overlay = {
+            div().absolute().inset_0().bg(linear_gradient(
+                180.,
+                linear_color_stop(editor_bg, 0.),
+                linear_color_stop(editor_bg.opacity(0.), 0.15),
+            ))
+        };
 
         div()
-            .id(format!("subagent-content-{}", session_id))
+            .relative()
             .w_full()
             .max_h_56()
-            .p_2()
+            .p_2p5()
+            .text_ui(cx)
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
-            .bg(cx.theme().colors().editor_background.opacity(0.2))
+            .bg(editor_bg.opacity(0.4))
             .overflow_hidden()
-            .track_scroll(&scroll_handle)
-            .when_some(last_assistant_markdown, |this, markdown| {
-                this.child(
-                    self.render_markdown(
-                        markdown,
-                        default_markdown_style(false, false, window, cx),
-                    ),
-                )
-            })
+            .child(
+                div()
+                    .id(format!("subagent-content-{}", session_id))
+                    .size_full()
+                    .track_scroll(&scroll_handle)
+                    .when_some(last_assistant_markdown, |this, markdown| {
+                        this.child(self.render_markdown(
+                            markdown,
+                            default_markdown_style(false, false, window, cx),
+                        ))
+                    }),
+            )
+            .child(gradient_overlay)
     }
 
     fn render_markdown_output(
@@ -4326,7 +4357,7 @@ impl AcpThreadView {
                     }))
                     .child(
                         div().absolute().top_1().right_1().child(
-                            CopyButton::new(command_source.to_string())
+                            CopyButton::new("copy-command", command_source.to_string())
                                 .tooltip_label("Copy Command")
                                 .visible_on_hover(command_group),
                         ),
@@ -5569,13 +5600,21 @@ impl AcpThreadView {
     ) -> impl IntoElement {
         let editor_bg_color = cx.theme().colors().editor_background;
 
+        // Sort edited files alphabetically for consistency with Git diff view
+        let mut sorted_buffers: Vec<_> = changed_buffers.iter().collect();
+        sorted_buffers.sort_by(|(buffer_a, _), (buffer_b, _)| {
+            let path_a = buffer_a.read(cx).file().map(|f| f.path().clone());
+            let path_b = buffer_b.read(cx).file().map(|f| f.path().clone());
+            path_a.cmp(&path_b)
+        });
+
         v_flex()
             .id("edited_files_list")
             .max_h_40()
             .overflow_y_scroll()
             .children(
-                changed_buffers
-                    .iter()
+                sorted_buffers
+                    .into_iter()
                     .enumerate()
                     .flat_map(|(index, (buffer, diff))| {
                         let file = buffer.read(cx).file()?;
@@ -7755,7 +7794,7 @@ impl AcpThreadView {
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
         let message = message.into();
 
-        CopyButton::new(message).tooltip_label("Copy Error Message")
+        CopyButton::new("copy-error-message", message).tooltip_label("Copy Error Message")
     }
 
     fn dismiss_error_button(&self, cx: &mut Context<Self>) -> impl IntoElement {

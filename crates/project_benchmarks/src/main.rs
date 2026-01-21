@@ -160,7 +160,10 @@ fn main() -> Result<(), anyhow::Error> {
                     registry,
                     fs,
                     Some(Default::default()),
-                    false,
+                    project::LocalProjectFlags {
+                        init_worktree_trust: false,
+                        ..Default::default()
+                    },
                     cx,
                 ))
                 };

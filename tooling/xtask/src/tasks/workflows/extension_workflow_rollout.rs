@@ -11,8 +11,6 @@ use crate::tasks::workflows::{
     vars::{self, StepOutput},
 };
 
-const EXCLUDED_REPOS: &[&str] = &["workflows", "material-icon-theme"];
-
 pub(crate) fn extension_workflow_rollout() -> Workflow {
     let fetch_repos = fetch_extension_repos();
     let rollout_workflows = rollout_workflows_to_extension(&fetch_repos);
@@ -26,34 +24,24 @@ pub(crate) fn extension_workflow_rollout() -> Workflow {
 
 fn fetch_extension_repos() -> NamedJob {
     fn get_repositories() -> (Step<Use>, StepOutput) {
-        let exclusion_filter = EXCLUDED_REPOS
-            .iter()
-            .map(|repo| format!("repo.name !== '{}'", repo))
-            .collect::<Vec<_>>()
-            .join(" && ");
-
         let step = named::uses("actions", "github-script", "v7")
             .id("list-repos")
             .add_with((
                 "script",
-                format!(
-                    indoc! {r#"
-                        const repos = await github.paginate(github.rest.repos.listForOrg, {{
-                            org: 'zed-extensions',
-                            type: 'public',
-                            per_page: 100,
-                        }});
+                indoc! {r#"
+                    const repos = await github.paginate(github.rest.repos.listForOrg, {
+                        org: 'zed-extensions',
+                        type: 'public',
+                        per_page: 100,
+                    });
 
-                        const filteredRepos = repos
-                            .filter(repo => !repo.archived)
-                            .filter(repo => {})
-                            .map(repo => repo.name);
+                    const filteredRepos = repos
+                        .filter(repo => !repo.archived)
+                        .map(repo => repo.name);
 
-                        console.log(`Found ${{filteredRepos.length}} extension repos`);
-                        return filteredRepos;
-                    "#},
-                    exclusion_filter
-                ),
+                    console.log(`Found ${filteredRepos.length} extension repos`);
+                    return filteredRepos;
+                "#},
             ))
             .add_with(("result-encoding", "json"));
 
@@ -89,7 +77,11 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
     fn copy_workflow_files() -> Step<Run> {
         named::bash(indoc! {r#"
             mkdir -p extension/.github/workflows
-            cp zed/extensions/workflows/shared/*.yml extension/.github/workflows/
+            if [ "${{ matrix.repo }}" = "workflows" ]; then
+                cp zed/extensions/workflows/*.yml extension/.github/workflows/
+            else
+                cp zed/extensions/workflows/shared/*.yml extension/.github/workflows/
+            fi
         "#})
     }
 

@@ -246,7 +246,8 @@ impl Output {
                             let traceback_text = traceback.read(cx).full_text();
                             let full_error = format!("{}: {}\n{}", ename, evalue, traceback_text);
 
-                            CopyButton::new(full_error).tooltip_label("Copy Full Error")
+                            CopyButton::new("copy-full-error", full_error)
+                                .tooltip_label("Copy Full Error")
                         })
                         .child(
                             IconButton::new(

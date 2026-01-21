@@ -22,7 +22,6 @@ jobs:
 
           const filteredRepos = repos
               .filter(repo => !repo.archived)
-              .filter(repo => repo.name !== 'workflows' && repo.name !== 'material-icon-theme')
               .map(repo => repo.name);
 
           console.log(`Found ${filteredRepos.length} extension repos`);
@@ -68,7 +67,11 @@ jobs:
     - name: extension_workflow_rollout::rollout_workflows_to_extension::copy_workflow_files
       run: |
         mkdir -p extension/.github/workflows
-        cp zed/extensions/workflows/shared/*.yml extension/.github/workflows/
+        if [ "${{ matrix.repo }}" = "workflows" ]; then
+            cp zed/extensions/workflows/*.yml extension/.github/workflows/
+        else
+            cp zed/extensions/workflows/shared/*.yml extension/.github/workflows/
+        fi
       shell: bash -euxo pipefail {0}
     - id: short-sha
       name: extension_workflow_rollout::rollout_workflows_to_extension::get_short_sha

@@ -941,10 +941,10 @@ fn initialize_settings(
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) -> watch::Receiver<Option<NodeBinaryOptions>> {
-    let user_settings_file_rx =
+    let (user_settings_file_rx, watcher_task) =
         watch_config_file(cx.background_executor(), fs, paths::settings_file().clone());
 
-    handle_settings_file_changes(user_settings_file_rx, cx, {
+    handle_settings_file_changes(user_settings_file_rx, watcher_task, cx, {
         move |err, _cx| {
             if let Some(e) = err {
                 log::info!("Server settings failed to change: {}", e);
@@ -1007,6 +1007,7 @@ fn initialize_settings(
 
 pub fn handle_settings_file_changes(
     mut server_settings_file: mpsc::UnboundedReceiver<String>,
+    watcher_task: gpui::Task<()>,
     cx: &mut App,
     settings_changed: impl Fn(Option<anyhow::Error>, &mut App) + 'static,
 ) {
@@ -1020,6 +1021,7 @@ pub fn handle_settings_file_changes(
             .log_err();
     });
     cx.spawn(async move |cx| {
+        let _watcher_task = watcher_task;
         while let Some(server_settings_content) = server_settings_file.next().await {
             cx.update_global(|store: &mut SettingsStore, cx| {
                 let result = store.set_server_settings(&server_settings_content, cx);

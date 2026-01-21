@@ -362,17 +362,17 @@ fn main() {
     }
 
     let fs = Arc::new(RealFs::new(git_binary_path, app.background_executor()));
-    let user_settings_file_rx = watch_config_file(
+    let (user_settings_file_rx, user_settings_watcher) = watch_config_file(
         &app.background_executor(),
         fs.clone(),
         paths::settings_file().clone(),
     );
-    let global_settings_file_rx = watch_config_file(
+    let (global_settings_file_rx, global_settings_watcher) = watch_config_file(
         &app.background_executor(),
         fs.clone(),
         paths::global_settings_file().clone(),
     );
-    let user_keymap_file_rx = watch_config_file(
+    let (user_keymap_file_rx, user_keymap_watcher) = watch_config_file(
         &app.background_executor(),
         fs.clone(),
         paths::keymap_file().clone(),
@@ -435,8 +435,14 @@ fn main() {
         }
         settings::init(cx);
         zlog_settings::init(cx);
-        handle_settings_file_changes(user_settings_file_rx, global_settings_file_rx, cx);
-        handle_keymap_file_changes(user_keymap_file_rx, cx);
+        handle_settings_file_changes(
+            user_settings_file_rx,
+            user_settings_watcher,
+            global_settings_file_rx,
+            global_settings_watcher,
+            cx,
+        );
+        handle_keymap_file_changes(user_keymap_file_rx, user_keymap_watcher, cx);
 
         let user_agent = format!(
             "Zed/{} ({}; {})",

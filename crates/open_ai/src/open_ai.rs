@@ -463,6 +463,8 @@ pub struct ResponseMessageDelta {
     pub content: Option<String>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
+    #[serde(default, skip_serializing_if = "is_none_or_empty")]
+    pub reasoning_content: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
