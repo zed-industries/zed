@@ -129,6 +129,16 @@ pub fn selections_creases(
         if selected_text.is_empty() {
             continue;
         }
+
+        // Get actual file line numbers (not multibuffer row numbers)
+        let start_buffer_row = snapshot
+            .point_to_buffer_point(range.start)
+            .map(|(_, point, _)| point.row)
+            .unwrap_or(range.start.row);
+        let end_buffer_row = snapshot
+            .point_to_buffer_point(range.end)
+            .map(|(_, point, _)| point.row)
+            .unwrap_or(range.end.row);
         let start_language = snapshot.language_at(range.start);
         let end_language = snapshot.language_at(range.end);
         let language_name = if start_language == end_language {
@@ -174,7 +184,7 @@ pub fn selections_creases(
 
             let fence = codeblock_fence_for_path(
                 filename.as_deref(),
-                Some(range.start.row..=range.end.row),
+                Some(start_buffer_row..=end_buffer_row),
             );
 
             if let Some((line_comment_prefix, outline_text)) = line_comment_prefix.zip(outline_text)
@@ -186,8 +196,8 @@ pub fn selections_creases(
             }
         };
         let crease_title = if let Some(path) = filename {
-            let start_line = range.start.row + 1;
-            let end_line = range.end.row + 1;
+            let start_line = start_buffer_row + 1;
+            let end_line = end_buffer_row + 1;
             if start_line == end_line {
                 format!("{path}, Line {start_line}")
             } else {

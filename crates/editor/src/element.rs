@@ -917,6 +917,13 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        // Handle diff review drag completion
+        if editor.diff_review_drag_state.is_some() {
+            editor.end_diff_review_drag(window, cx);
+            cx.stop_propagation();
+            return;
+        }
+
         let text_hitbox = &position_map.text_hitbox;
         let end_selection = editor.has_pending_selection();
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
@@ -1215,6 +1222,11 @@ impl EditorElement {
         let point_for_position = position_map.point_for_position(event.position);
         let valid_point = point_for_position.previous_valid;
 
+        // Update diff review drag state if we're dragging
+        if editor.diff_review_drag_state.is_some() {
+            editor.update_diff_review_drag(valid_point.row(), cx);
+        }
+
         let hovered_diff_control = position_map
             .diff_hunk_control_bounds
             .iter()
@@ -1310,7 +1322,8 @@ impl EditorElement {
             }
 
             Some(PhantomDiffReviewIndicator {
-                display_row: valid_point.row(),
+                start_row: valid_point.row(),
+                end_row: valid_point.row(),
                 is_active: is_visible,
             })
         } else {
@@ -1325,7 +1338,7 @@ impl EditorElement {
 
         // Don't show breakpoint indicator when diff review indicator is active on this row
         let is_on_diff_review_button_row = diff_review_indicator.is_some_and(|indicator| {
-            indicator.is_active && indicator.display_row == valid_point.row()
+            indicator.is_active && indicator.start_row == valid_point.row()
         });
 
         let breakpoint_indicator = if gutter_hovered && !is_on_diff_review_button_row {
@@ -3109,7 +3122,7 @@ impl EditorElement {
             return None;
         }
 
-        let display_row = indicator.display_row;
+        let display_row = indicator.start_row;
         let row_index = (display_row.0.saturating_sub(range.start.0)) as usize;
 
         let row_info = row_infos.get(row_index);
@@ -9671,12 +9684,44 @@ impl Element for EditorElement {
                             .or_insert(background);
                     }
 
-                    let highlighted_gutter_ranges =
+                    // Add diff review drag selection highlight to text area
+                    if let Some(drag_state) = self.editor.read(cx).diff_review_drag_state {
+                        let range = drag_state.row_range();
+                        let start_row = range.start().0;
+                        let end_row = range.end().0;
+                        let drag_highlight_color = cx.theme().colors().editor_active_line_background;
+                        let drag_highlight = LineHighlight {
+                            background: solid_background(drag_highlight_color),
+                            border: Some(cx.theme().colors().border_focused),
+                            include_gutter: false,
+                            type_id: None,
+                        };
+                        for row_num in start_row..=end_row {
+                            highlighted_rows.entry(DisplayRow(row_num)).or_insert(drag_highlight.clone());
+                        }
+                    }
+
+                    let mut highlighted_gutter_ranges =
                         self.editor.read(cx).gutter_highlights_in_range(
                             start_anchor..end_anchor,
                             &snapshot.display_snapshot,
                             cx,
                         );
+
+                    // Add diff review drag selection highlight
+                    if let Some(drag_state) = self.editor.read(cx).diff_review_drag_state {
+                        let range = drag_state.row_range();
+                        let start_display_row = *range.start();
+                        let end_display_row = *range.end();
+                        let drag_highlight_color = cx.theme().colors().editor_active_line_background;
+                        highlighted_gutter_ranges.push((
+                            Range {
+                                start: DisplayPoint::new(start_display_row, 0),
+                                end: DisplayPoint::new(end_display_row, 0),
+                            },
+                            drag_highlight_color,
+                        ));
+                    }
 
                     let document_colors = self
                         .editor
