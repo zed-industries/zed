@@ -19,13 +19,13 @@ use git::status::GitSummary;
 use git_ui;
 use git_ui::file_diff_view::FileDiffView;
 use gpui::{
-    Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context, CursorStyle,
-    DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
-    Hsla, InteractiveElement, KeyContext, KeyDownEvent, ListHorizontalSizingBehavior,
+    Action, AnchoredForceSnap, AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context,
+    CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths,
+    FocusHandle, Focusable, Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior,
     ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored,
-    deferred, div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
+    ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
+    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
+    div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
     uniform_list,
 };
 use language::DiagnosticSeverity;
@@ -57,8 +57,9 @@ use std::{
     time::Duration,
 };
 use theme::ThemeSettings;
+use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
-    Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Divider, Icon, IconDecoration,
+    Color, ContextMenu, ContextMenuItem, DecoratedIcon, Divider, Icon, IconDecoration,
     IconDecorationKind, IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize,
     ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip,
     WithScrollbar, prelude::*, v_flex,
@@ -128,7 +129,12 @@ pub struct ProjectPanel {
     folded_directory_drag_target: Option<FoldedDirectoryDragTarget>,
     drag_target_entry: Option<DragTarget>,
     marked_entries: Vec<SelectedEntry>,
-    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    context_menu: Option<(
+        Entity<ContextMenu>,
+        Point<Pixels>,
+        Subscription,
+        Option<AnchoredForceSnap>,
+    )>,
     filename_editor: Entity<Editor>,
     clipboard: Option<ClipboardEntry>,
     _dragged_entry_destination: Option<Arc<Path>>,
@@ -1067,7 +1073,7 @@ impl ProjectPanel {
 
     fn deploy_context_menu(
         &mut self,
-        position: Point<Pixels>,
+        event_position: Point<Pixels>,
         entry_id: ProjectEntryId,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1226,12 +1232,16 @@ impl ProjectPanel {
                 })
             });
 
+            let items = context_menu.read(cx).get_items();
+            let (position, force_snap) =
+                self.get_context_menu_position(event_position, items, window, cx);
+
             window.focus(&context_menu.focus_handle(cx), cx);
             let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
                 this.context_menu.take();
                 cx.notify();
             });
-            self.context_menu = Some((context_menu, position, subscription));
+            self.context_menu = Some((context_menu, position, subscription, force_snap));
         }
 
         cx.notify();
@@ -1252,6 +1262,73 @@ impl ProjectPanel {
         };
 
         self.deploy_context_menu(window.mouse_position(), entry_id, window, cx);
+    }
+
+    fn get_context_menu_position(
+        &self,
+        event_position: Point<Pixels>,
+        context_menu_items: &Vec<ContextMenuItem>,
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) -> (Point<Pixels>, Option<AnchoredForceSnap>) {
+        let entry_id = self.state.selection.as_ref().map(|s| s.entry_id);
+
+        if entry_id.is_none() || entry_id == Some(ProjectEntryId::from_usize(0)) {
+            return (event_position, None);
+        }
+
+        if let Some(selection) = &self.state.selection {
+            let titlebar_height = PlatformTitleBar::height(window);
+            let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx).to_f64();
+
+            let mut separators = 0;
+            let mut actions = 0;
+
+            for item in context_menu_items {
+                match item {
+                    ContextMenuItem::Separator => {
+                        separators += 1;
+                    }
+                    ContextMenuItem::Entry(_) => {
+                        actions += 1;
+                    }
+                    _ => continue,
+                }
+            }
+
+            let dynamic_spacing = DynamicSpacing::Base04.px(cx).to_f64() * 2.0;
+            let total_actions_height = (ui_font_size + dynamic_spacing) * (actions as f64);
+            let total_separators_height = (dynamic_spacing + 1.0) * (separators as f64);
+            let total_menu_height =
+                total_actions_height + total_separators_height + dynamic_spacing;
+
+            let (_, entry_ix, _) = self
+                .index_for_selection(selection.clone())
+                .unwrap_or_default();
+
+            let offset_y = self.scroll_handle.offset().y.to_f64();
+            let viewport_height = window.viewport_size().height;
+
+            let entry_height = ui_font_size + 10.0;
+            let mut entry_y =
+                (((entry_ix + 1) as f64) * entry_height + titlebar_height.to_f64()) + offset_y;
+
+            let space_below = viewport_height.to_f64() - entry_y;
+            let should_be_snapped = total_menu_height > space_below;
+            let mut force_snap: Option<AnchoredForceSnap> = None;
+
+            if should_be_snapped {
+                entry_y -= entry_height;
+                force_snap = Some(AnchoredForceSnap::Above);
+            }
+
+            (
+                Point::new(event_position.x, Pixels::from(entry_y)),
+                force_snap,
+            )
+        } else {
+            (event_position, None)
+        }
     }
 
     fn has_git_changes(&self, entry_id: ProjectEntryId) -> bool {
@@ -6703,15 +6780,20 @@ impl Render for ProjectPanel {
                     window,
                     cx,
                 )
-                .children(self.context_menu.as_ref().map(|(menu, position, _)| {
-                    deferred(
-                        anchored()
-                            .position(*position)
-                            .anchor(gpui::Corner::TopLeft)
-                            .child(menu.clone()),
-                    )
-                    .with_priority(3)
-                }))
+                .children(
+                    self.context_menu
+                        .as_ref()
+                        .map(|(menu, position, _, force_snap)| {
+                            deferred(
+                                anchored()
+                                    .position(*position)
+                                    .anchor(gpui::Corner::TopLeft)
+                                    .force_snap(*force_snap)
+                                    .child(menu.clone()),
+                            )
+                            .with_priority(3)
+                        }),
+                )
         } else {
             let focus_handle = self.focus_handle(cx);
 

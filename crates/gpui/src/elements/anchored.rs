@@ -20,6 +20,7 @@ pub struct Anchored {
     anchor_position: Option<Point<Pixels>>,
     position_mode: AnchoredPositionMode,
     offset: Option<Point<Pixels>>,
+    force_snap: Option<AnchoredForceSnap>,
 }
 
 /// anchored gives you an element that will avoid overflowing the window bounds.
@@ -32,6 +33,7 @@ pub fn anchored() -> Anchored {
         anchor_position: None,
         position_mode: AnchoredPositionMode::Window,
         offset: None,
+        force_snap: None,
     }
 }
 
@@ -73,6 +75,12 @@ impl Anchored {
     /// Snap to window edge and leave some margins.
     pub fn snap_to_window_with_margin(mut self, edges: impl Into<Edges<Pixels>>) -> Self {
         self.fit_mode = AnchoredFitMode::SnapToWindowWithMargin(edges.into());
+        self
+    }
+
+    /// Force snap the anchored element to preferred side.
+    pub fn force_snap(mut self, snap: Option<AnchoredForceSnap>) -> Self {
+        self.force_snap = snap;
         self
     }
 }
@@ -179,6 +187,19 @@ impl Element for Anchored {
                     desired = switched;
                 }
             }
+
+            if let Some(force_snap) = self.force_snap {
+                let vertical_switched = Bounds::from_corner_and_size(
+                    anchor_corner.other_side_corner_along(Axis::Vertical),
+                    origin,
+                    size,
+                );
+
+                match force_snap {
+                    AnchoredForceSnap::Above => desired = vertical_switched,
+                    _ => {}
+                }
+            }
         }
 
         let client_inset = window.client_inset.unwrap_or(px(0.));
@@ -238,6 +259,15 @@ impl IntoElement for Anchored {
     fn into_element(self) -> Self::Element {
         self
     }
+}
+
+/// Enum for force snapping the anchored element.
+#[derive(Copy, Clone, PartialEq)]
+pub enum AnchoredForceSnap {
+    /// Force snap the anchored element above
+    Above,
+    /// Force snap the anchored element below
+    Below,
 }
 
 /// Which algorithm to use when fitting the anchored element to be inside the window.
