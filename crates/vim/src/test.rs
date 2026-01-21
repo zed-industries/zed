@@ -23,10 +23,15 @@ use ui::Pixels;
 use util::test::marked_text_ranges;
 pub use vim_test_context::*;
 
+use gpui::VisualTestContext;
 use indoc::indoc;
+use project::FakeFs;
 use search::BufferSearchBar;
+use search::{ProjectSearchView, project_search};
+use serde_json::json;
+use workspace::DeploySearch;
 
-use crate::{PushSneak, PushSneakBackward, insert::NormalBefore, motion, state::Mode};
+use crate::{PushSneak, PushSneakBackward, VimAddon, insert::NormalBefore, motion, state::Mode};
 
 use util_macros::perf;
 
@@ -2532,5 +2537,59 @@ async fn test_deactivate(cx: &mut gpui::TestAppContext) {
 
     cx.update_editor(|editor, _window, _cx| {
         assert_eq!(editor.cursor_shape(), CursorShape::Underline);
+    });
+}
+
+#[gpui::test]
+async fn test_project_search_opens_in_normal_mode(cx: &mut gpui::TestAppContext) {
+    VimTestContext::init(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "file_a.rs": "// File A.",
+            "file_b.rs": "// File B.",
+        }),
+    )
+    .await;
+
+    let project = project::Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let workspace =
+        cx.add_window(|window, cx| workspace::Workspace::test_new(project.clone(), window, cx));
+
+    cx.update(|cx| {
+        VimTestContext::init_keybindings(true, cx);
+    });
+
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    workspace
+        .update(cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(workspace, &DeploySearch::default(), window, cx)
+        })
+        .unwrap();
+
+    let search_view = workspace
+        .update(cx, |workspace, _, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .items()
+                .find_map(|item| item.downcast::<ProjectSearchView>())
+                .expect("Project search view should be active")
+        })
+        .unwrap();
+
+    project_search::perform_project_search(&search_view, "File A", cx);
+
+    search_view.update(cx, |search_view, cx| {
+        let vim_mode = search_view
+            .results_editor()
+            .read(cx)
+            .addon::<VimAddon>()
+            .map(|addon| addon.entity.read(cx).mode);
+
+        assert_eq!(vim_mode, Some(Mode::Normal));
     });
 }
