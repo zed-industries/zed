@@ -311,6 +311,9 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
                     .overflow_hidden()
                     .child(
                         v_flex()
+                            .on_action(cx.listener(|editor, _: &menu::Cancel, window, cx| {
+                                editor.hide_context_menu(window, cx);
+                            }))
                             .on_action(cx.listener(|editor, _: &MoveUp, _window, cx| {
                                 if let Some(menu) = editor.context_menu.borrow_mut().as_mut() {
                                     match menu {
@@ -349,9 +352,11 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
                             .when(self.visible_len() > 0, |this| this.child(list))
                             .when(self.visible_len() == 0, |this| {
                                 this.child(
-                                    h_flex()
-                                        .p_2()
-                                        .child(Label::new("No matches").color(Color::Muted)),
+                                    h_flex().p_2().child(
+                                        Label::new("No matches")
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small),
+                                    ),
                                 )
                             }),
                     ),
