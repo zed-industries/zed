@@ -1883,24 +1883,6 @@ impl AcpThreadView {
                     "You reached your free usage limit. Upgrade to Zed Pro for more prompts."
                         .into(),
                 ),
-                ThreadError::ModelRequestLimitReached(plan) => {
-                    let message = match plan {
-                        cloud_llm_client::Plan::V1(PlanV1::ZedPro) => {
-                            "Upgrade to usage-based billing for more prompts."
-                        }
-                        cloud_llm_client::Plan::V1(PlanV1::ZedProTrial)
-                        | cloud_llm_client::Plan::V1(PlanV1::ZedFree) => {
-                            "Upgrade to Zed Pro for more prompts."
-                        }
-                        cloud_llm_client::Plan::V2(_) => "Model prompt limit reached.",
-                    };
-                    ("model_request_limit_reached", None, message.into())
-                }
-                ThreadError::ToolUseLimitReached => (
-                    "tool_use_limit_reached",
-                    None,
-                    "Consecutive tool use limit reached.".into(),
-                ),
                 ThreadError::Refusal => {
                     let model_or_agent_name = self.current_model_name(cx);
                     let message = format!(
