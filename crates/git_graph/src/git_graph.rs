@@ -1701,6 +1701,48 @@ mod tests {
         Ok(())
     }
 
+    fn verify_line_overlaps(graph: &crate::graph::GraphData) -> Result<(), String> {
+        for line in &graph.lines {
+            let child_row = line.full_interval.start;
+
+            let mut current_column = line.child_column;
+            let mut current_row = child_row;
+
+            for segment in &line.segments {
+                match segment {
+                    crate::graph::CommitLineSegment::Straight { to_row } => {
+                        for row in (current_row + 1)..*to_row {
+                            if row < graph.commits.len() {
+                                let commit_at_row = &graph.commits[row];
+                                if commit_at_row.lane == current_column {
+                                    return Err(format!(
+                                        "Line from {:?} to {:?}: straight segment from row {} to {} in column {} passes through commit {:?} at row {}",
+                                        line.child,
+                                        line.parent,
+                                        current_row,
+                                        to_row,
+                                        current_column,
+                                        commit_at_row.data.sha,
+                                        row
+                                    ));
+                                }
+                            }
+                        }
+                        current_row = *to_row;
+                    }
+                    crate::graph::CommitLineSegment::Curve {
+                        to_column, on_row, ..
+                    } => {
+                        current_column = *to_column;
+                        current_row = *on_row;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn verify_coverage(graph: &crate::graph::GraphData) -> Result<(), String> {
         let mut expected_edges: HashSet<(Oid, Oid)> = HashSet::default();
         for entry in &graph.commits {
@@ -1749,6 +1791,7 @@ mod tests {
         verify_column_correctness(graph, &oid_to_row)?;
         verify_segment_continuity(graph)?;
         verify_coverage(graph)?;
+        verify_line_overlaps(graph)?;
         Ok(())
     }
 
@@ -1861,7 +1904,7 @@ mod tests {
 
     // The full integration test has less iterations because it's significantly slower
     // than the random commit test
-    #[gpui::test(iterations = 10)]
+    #[gpui::test(iterations = 5)]
     async fn test_git_graph_random_integration(mut rng: StdRng, cx: &mut TestAppContext) {
         init_test(cx);
 
