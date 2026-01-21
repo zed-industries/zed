@@ -154,6 +154,8 @@ pub struct MultiBufferRowMapping {
     pub first_group: Option<Range<MultiBufferPoint>>,
     pub boundaries: Vec<(MultiBufferPoint, Range<MultiBufferPoint>)>,
     pub prev_boundary: Option<(MultiBufferPoint, Range<MultiBufferPoint>)>,
+    pub source_excerpt_end: MultiBufferPoint,
+    pub target_excerpt_end: MultiBufferPoint,
 }
 
 pub type ConvertMultiBufferRows = fn(

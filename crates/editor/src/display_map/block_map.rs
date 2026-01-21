@@ -1157,6 +1157,7 @@ impl BlockMap {
 
                 // This can only occur at the end of an excerpt.
                 if current_boundary.column > 0 {
+                    debug_assert_eq!(current_boundary, row_mapping.source_excerpt_end);
                     break;
                 }
 
@@ -1185,6 +1186,7 @@ impl BlockMap {
 
                 // This can only occur at the end of an excerpt.
                 if current_boundary.column > 0 {
+                    debug_assert_eq!(current_boundary, row_mapping.source_excerpt_end);
                     break;
                 }
 
@@ -1216,9 +1218,10 @@ impl BlockMap {
                 }
             }
 
-            let (last_boundary, last_range) = row_mapping.boundaries.last().cloned().unwrap();
-            if last_boundary.column > 0 {
-                let (_new_delta, spacer) = determine_spacer(last_boundary, last_range.end, delta);
+            let (last_boundary, _last_range) = row_mapping.boundaries.last().cloned().unwrap();
+            if last_boundary == row_mapping.source_excerpt_end {
+                let (_new_delta, spacer) =
+                    determine_spacer(last_boundary, row_mapping.target_excerpt_end, delta);
                 if let Some((wrap_row, height)) = spacer {
                     result.push((
                         BlockPlacement::Below(wrap_row),

@@ -222,6 +222,10 @@ where
         boundaries,
         first_group,
         prev_boundary,
+        source_excerpt_end: source_excerpt_start_in_multibuffer
+            + (source_excerpt_end_in_buffer - source_excerpt_start_in_buffer),
+        target_excerpt_end: target_excerpt_start_in_multibuffer
+            + (target_excerpt_end_in_buffer - target_excerpt_start_in_buffer),
     })
 }
 
