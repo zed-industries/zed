@@ -7819,10 +7819,10 @@ impl EditorElement {
                             editor.scroll_manager.cancel_animation();
                             current_scroll_position
                         } else {
-                            editor
-                                .scroll_manager
-                                .scroll_animation()
-                                .map(|a| a.target_position)
+                            position_map
+                                .snapshot
+                                .scroll_animation
+                                .map(|animation| animation.target_position)
                                 .unwrap_or(current_scroll_position)
                         };
 

@@ -219,7 +219,7 @@ use crate::{
         InlineValueCache,
         inlay_hints::{LspInlayHintData, inlay_hint_settings},
     },
-    scroll::{ScrollOffset, ScrollPixelOffset},
+    scroll::{ScrollAnimation, ScrollOffset, ScrollPixelOffset},
     selections_collection::resolve_selections_wrapping_blocks,
     signature_help::{SignatureHelpHiddenBy, SignatureHelpState},
 };
@@ -1360,6 +1360,7 @@ pub struct EditorSnapshot {
     pub placeholder_display_snapshot: Option<DisplaySnapshot>,
     is_focused: bool,
     scroll_anchor: ScrollAnchor,
+    pub scroll_animation: Option<ScrollAnimation>,
     ongoing_scroll: OngoingScroll,
     current_line_highlight: CurrentLineHighlight,
     gutter_hovered: bool,
@@ -3062,6 +3063,7 @@ impl Editor {
                 .as_ref()
                 .map(|display_map| display_map.update(cx, |map, cx| map.snapshot(cx))),
             scroll_anchor: self.scroll_manager.anchor(),
+            scroll_animation: self.scroll_manager.scroll_animation().copied(),
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             is_focused: self.focus_handle.is_focused(window),
             current_line_highlight: self
