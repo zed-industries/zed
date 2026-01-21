@@ -101,17 +101,53 @@ When prompted for credentials, use the graphical askpass dialog. If it doesn't a
 
 Zed supports opening folders inside of WSL natively on Windows.
 
+### Open Zed from a WSL terminal
+
+To run `zed` from inside WSL and open the Windows Zed app, install the CLI
+shim into your WSL distributions:
+
+```sh
+zed --install-wsl
+```
+
+Then, in your WSL terminal:
+
+```sh
+zed .
+```
+
+> **Note:** This relies on WSL interop. If Windows binaries do not launch from
+> WSL, ensure interop is enabled and `wsl.exe` can list your distros.
+
 ### Opening a local folder in WSL
 
-To open a local folder inside a WSL container, use the `projects: open in wsl` action and select the folder you want to open. You will be presented with a list of available WSL distributions to open the folder in.
+To open a local folder inside a WSL container, use the
+`projects: open in wsl` action and select the folder you want to open. You
+will be presented with a list of available WSL distributions to open the
+folder in.
 
 ### Opening a folder already in WSL
 
-To open a folder that's already located inside of a WSL container, use the `projects: open wsl` action and select the WSL distribution. The distribution will be added to the `Remote Projects` window where you will be able to open the folder.
+To open a folder that's already located inside of a WSL container, use the
+`projects: open wsl` action and select the WSL distribution. The distribution
+will be added to the `Remote Projects` window where you will be able to open
+the folder.
+
+### Clearing the WSL server cache
+
+If you need to reset the WSL remote server binaries (for example after a
+failed upgrade), run:
+
+```sh
+zed --clear-wsl-cache
+```
 
 ## Port forwarding
 
-If you'd like to be able to connect to ports on your remote server from your local machine, you can configure port forwarding in your settings file. This is particularly useful for developing websites so you can load the site in your browser while working.
+If you'd like to be able to connect to ports on your remote server from your
+local machine, you can configure port forwarding in your settings file. This
+is particularly useful for developing websites so you can load the site in
+your browser while working.
 
 ```json [settings]
 {

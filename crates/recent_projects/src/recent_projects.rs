@@ -8,6 +8,8 @@ use std::path::PathBuf;
 
 #[cfg(target_os = "windows")]
 mod wsl_picker;
+#[cfg(target_os = "windows")]
+mod wsl_welcome;
 
 use dev_container::start_dev_container;
 use remote::RemoteConnectionOptions;

@@ -5,6 +5,8 @@ use crate::{
     },
     ssh_config::parse_ssh_config_hosts,
 };
+#[cfg(target_os = "windows")]
+use crate::wsl_welcome;
 use dev_container::start_dev_container;
 use editor::Editor;
 use file_finder::OpenPathDelegate;
@@ -890,6 +892,9 @@ impl RemoteServerProjects {
                     };
 
                     crate::add_wsl_distro(fs, &connection_options, cx);
+                    if let Some(workspace) = this.workspace.upgrade() {
+                        wsl_welcome::maybe_show_wsl_welcome(workspace, window, cx);
+                    }
                     this.mode = Mode::default_mode(&BTreeSet::new(), cx);
                     this.focus_handle(cx).focus(window, cx);
                     cx.notify();
