@@ -86,18 +86,6 @@ impl From<WindowAppearance> for Appearance {
     }
 }
 
-impl TryFrom<ThemeAppearanceMode> for Appearance {
-    type Error = ();
-
-    fn try_from(value: ThemeAppearanceMode) -> Result<Self, Self::Error> {
-        match value {
-            ThemeAppearanceMode::Light => Ok(Self::Light),
-            ThemeAppearanceMode::Dark => Ok(Self::Dark),
-            ThemeAppearanceMode::System => Err(()),
-        }
-    }
-}
-
 impl From<Appearance> for ThemeAppearanceMode {
     fn from(value: Appearance) -> Self {
         match value {
