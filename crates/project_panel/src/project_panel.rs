@@ -3102,6 +3102,9 @@ impl ProjectPanel {
             return;
         }
 
+        let total_files = files_to_download.len();
+        let workspace = self.workspace.clone();
+
         let destination_dir = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -3110,10 +3113,46 @@ impl ProjectPanel {
         });
 
         let fs = self.fs.clone();
-        cx.spawn_in(window, async move |_this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             if let Ok(Ok(Some(mut paths))) = destination_dir.await {
                 if let Some(dest_dir) = paths.pop() {
-                    for (worktree_id, entry_path, relative_path) in files_to_download {
+                    // Show initial toast
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_toast(
+                                workspace::Toast::new(
+                                    workspace::notifications::NotificationId::Named(
+                                        "download-progress".into(),
+                                    ),
+                                    format!("Downloading 0/{} files...", total_files),
+                                ),
+                                cx,
+                            );
+                        })
+                        .ok();
+
+                    for (index, (worktree_id, entry_path, relative_path)) in
+                        files_to_download.into_iter().enumerate()
+                    {
+                        // Update progress toast
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.show_toast(
+                                    workspace::Toast::new(
+                                        workspace::notifications::NotificationId::Named(
+                                            "download-progress".into(),
+                                        ),
+                                        format!(
+                                            "Downloading {}/{} files...",
+                                            index + 1,
+                                            total_files
+                                        ),
+                                    ),
+                                    cx,
+                                );
+                            })
+                            .ok();
+
                         let destination_path = dest_dir.join(&relative_path);
 
                         // Create parent directories if needed
@@ -3123,7 +3162,7 @@ impl ProjectPanel {
                             }
                         }
 
-                        let download_task = _this.update(cx, |this, cx| {
+                        let download_task = this.update(cx, |this, cx| {
                             let project = this.project.clone();
                             project.update(cx, |project, cx| {
                                 project.download_file(worktree_id, entry_path, destination_path, cx)
@@ -3133,6 +3172,21 @@ impl ProjectPanel {
                             task.await.log_err();
                         }
                     }
+
+                    // Show completion toast
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_toast(
+                                workspace::Toast::new(
+                                    workspace::notifications::NotificationId::Named(
+                                        "download-progress".into(),
+                                    ),
+                                    format!("Downloaded {} files", total_files),
+                                ),
+                                cx,
+                            );
+                        })
+                        .ok();
                 }
             }
         })
