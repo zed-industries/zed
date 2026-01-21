@@ -10,7 +10,7 @@ use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, GlobalElementId, InspectorElementId, InteractiveElement, IntoElement,
     LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
-    Point, Render, ScrollDelta, ScrollWheelEvent, Styled, Task, WeakEntity, Window, actions,
+    Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled, Task, WeakEntity, Window, actions,
     canvas, div, img, opaque_grey, point, px, size,
 };
 use language::File as _;
@@ -74,6 +74,12 @@ impl ImageView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        // Start loading the image to render in the background to prevent the view
+        // from flickering in most cases.
+        let _ = image_item.update(cx, |image, cx| {
+            image.image.clone().get_render_image(window, cx)
+        });
+
         cx.subscribe(&image_item, Self::on_image_event).detach();
         cx.on_release_in(window, |this, window, cx| {
             let image_data = this.image_item.read(cx).image.clone();
@@ -253,25 +259,12 @@ impl ImageView {
 }
 
 struct ImageContentElement {
-    div: gpui::Div,
-    entity: WeakEntity<ImageView>,
+    image_view: Entity<ImageView>,
 }
 
 impl ImageContentElement {
-    fn new(entity: WeakEntity<ImageView>) -> Self {
-        Self { div: div(), entity }
-    }
-}
-
-impl gpui::Styled for ImageContentElement {
-    fn style(&mut self) -> &mut gpui::StyleRefinement {
-        self.div.style()
-    }
-}
-
-impl ParentElement for ImageContentElement {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.div.extend(elements)
+    fn new(image_view: Entity<ImageView>) -> Self {
+        Self { image_view }
     }
 }
 
@@ -284,64 +277,178 @@ impl IntoElement for ImageContentElement {
 }
 
 impl Element for ImageContentElement {
-    type RequestLayoutState = gpui::DivFrameState;
-    type PrepaintState = Option<gpui::Hitbox>;
+    type RequestLayoutState = ();
+    type PrepaintState = Option<(AnyElement, bool)>;
 
     fn id(&self) -> Option<ElementId> {
-        Element::id(&self.div)
+        None
     }
 
     fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        Element::source_location(&self.div)
+        None
     }
 
     fn request_layout(
         &mut self,
-        id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        self.div.request_layout(id, inspector_id, window, cx)
+        (
+            window.request_layout(
+                Style {
+                    size: size(relative(1.).into(), relative(1.).into()),
+                    ..Default::default()
+                },
+                [],
+                cx,
+            ),
+            (),
+        )
     }
 
     fn prepaint(
         &mut self,
-        id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        request_layout: &mut Self::RequestLayoutState,
+        _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        if let Some(entity) = self.entity.upgrade() {
-            entity.update(cx, |this, _| {
-                this.container_bounds = Some(bounds);
-            });
+        let image_view = self.image_view.read(cx);
+        let image = image_view.image_item.read(cx).image.clone();
+
+        let zoom_level = image_view.zoom_level;
+        let pan_offset = image_view.pan_offset;
+        let border_color = cx.theme().colors().border;
+
+        let is_dragging = image_view.is_dragging();
+
+        let scaled_size = image_view
+            .image_size
+            .map(|(w, h)| (px(w as f32 * zoom_level), px(h as f32 * zoom_level)));
+
+        let (mut left, mut top) = (px(0.0), px(0.0));
+        let mut scaled_width = px(0.0);
+        let mut scaled_height = px(0.0);
+
+        if let Some((width, height)) = scaled_size {
+            scaled_width = width;
+            scaled_height = height;
+
+            let center_x = bounds.size.width / 2.0;
+            let center_y = bounds.size.height / 2.0;
+
+            left = center_x - (scaled_width / 2.0) + pan_offset.x;
+            top = center_y - (scaled_height / 2.0) + pan_offset.y;
         }
-        self.div
-            .prepaint(id, inspector_id, bounds, request_layout, window, cx)
+
+        self.image_view.update(cx, |this, _| {
+            this.container_bounds = Some(bounds);
+        });
+
+        let mut image_content = div()
+            .relative()
+            .size_full()
+            .child(
+                div()
+                    .absolute()
+                    .left(left)
+                    .top(top)
+                    .w(scaled_width)
+                    .h(scaled_height)
+                    .child(
+                        canvas(
+                            |_, _, _| {},
+                            move |bounds, _, window, _cx| {
+                                let bounds_x: f32 = bounds.origin.x.into();
+                                let bounds_y: f32 = bounds.origin.y.into();
+                                let bounds_width: f32 = bounds.size.width.into();
+                                let bounds_height: f32 = bounds.size.height.into();
+                                let square_size = BASE_SQUARE_SIZE * zoom_level;
+                                let cols = (bounds_width / square_size).ceil() as i32 + 1;
+                                let rows = (bounds_height / square_size).ceil() as i32 + 1;
+                                for row in 0..rows {
+                                    for col in 0..cols {
+                                        if (row + col) % 2 == 0 {
+                                            continue;
+                                        }
+                                        let x = bounds_x + col as f32 * square_size;
+                                        let y = bounds_y + row as f32 * square_size;
+                                        let w = square_size.min(bounds_x + bounds_width - x);
+                                        let h = square_size.min(bounds_y + bounds_height - y);
+                                        if w > 0.0 && h > 0.0 {
+                                            let rect = Bounds::new(
+                                                point(px(x), px(y)),
+                                                size(px(w), px(h)),
+                                            );
+                                            window.paint_quad(gpui::fill(
+                                                rect,
+                                                opaque_grey(0.6, 1.0),
+                                            ));
+                                        }
+                                    }
+                                }
+                                let border_rect = Bounds::new(
+                                    point(px(bounds_x), px(bounds_y)),
+                                    size(px(bounds_width), px(bounds_height)),
+                                );
+                                window.paint_quad(gpui::outline(
+                                    border_rect,
+                                    border_color,
+                                    gpui::BorderStyle::default(),
+                                ));
+                            },
+                        )
+                        .size_full()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .bg(gpui::rgb(0xCCCCCD)),
+                    )
+                    .child({
+                        img(image)
+                            .id(("image-viewer-image", self.image_view.entity_id()))
+                            .size_full()
+                    }),
+            )
+            .into_any_element();
+
+        image_content.prepaint_as_root(bounds.origin, bounds.size.into(), window, cx);
+        Some((image_content, is_dragging))
     }
 
     fn paint(
         &mut self,
-        id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
-        bounds: Bounds<Pixels>,
-        request_layout: &mut Self::RequestLayoutState,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
-        self.div.paint(
-            id,
-            inspector_id,
-            bounds,
-            request_layout,
-            prepaint,
-            window,
-            cx,
-        )
+        let Some((mut element, is_dragging)) = prepaint.take() else {
+            return;
+        };
+
+        if is_dragging {
+            let image_view = self.image_view.downgrade();
+            window.on_mouse_event(move |_event: &MouseUpEvent, phase, _window, cx| {
+                if phase == DispatchPhase::Bubble
+                    && let Some(entity) = image_view.upgrade()
+                {
+                    entity.update(cx, |this, cx| {
+                        this.last_mouse_position = None;
+                        cx.notify();
+                    });
+                }
+            });
+        }
+
+        element.paint(window, cx);
     }
 }
 
@@ -579,97 +686,6 @@ impl Focusable for ImageView {
 
 impl Render for ImageView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let image = self.image_item.read(cx).image.clone();
-        let zoom_level = self.zoom_level;
-        let pan_offset = self.pan_offset;
-        let is_dragging = self.is_dragging();
-        let entity = cx.entity().downgrade();
-        let border_color = cx.theme().colors().border;
-
-        let scaled_size = self
-            .image_size
-            .map(|(w, h)| (px(w as f32 * zoom_level), px(h as f32 * zoom_level)));
-
-        let (mut left, mut top) = (px(0.0), px(0.0));
-        let mut scaled_w = px(0.0);
-        let mut scaled_h = px(0.0);
-
-        if let Some((bounds, (w, h))) = self.container_bounds.zip(scaled_size) {
-            scaled_w = w;
-            scaled_h = h;
-
-            let center_x = bounds.size.width / 2.0;
-            let center_y = bounds.size.height / 2.0;
-
-            left = center_x - (scaled_w / 2.0) + pan_offset.x;
-            top = center_y - (scaled_h / 2.0) + pan_offset.y;
-        }
-
-        let image_content = ImageContentElement::new(entity.clone()).size_full().child(
-            div()
-                .absolute()
-                .left(left)
-                .top(top)
-                .w(scaled_w)
-                .h(scaled_h)
-                .child(
-                    canvas(
-                        |_, _, _| {},
-                        move |bounds, _, window, _cx| {
-                            let bounds_x: f32 = bounds.origin.x.into();
-                            let bounds_y: f32 = bounds.origin.y.into();
-                            let bounds_width: f32 = bounds.size.width.into();
-                            let bounds_height: f32 = bounds.size.height.into();
-
-                            let square_size = BASE_SQUARE_SIZE * zoom_level;
-
-                            let cols = (bounds_width / square_size).ceil() as i32 + 1;
-                            let rows = (bounds_height / square_size).ceil() as i32 + 1;
-
-                            for row in 0..rows {
-                                for col in 0..cols {
-                                    if (row + col) % 2 == 0 {
-                                        continue;
-                                    }
-
-                                    let x = bounds_x + col as f32 * square_size;
-                                    let y = bounds_y + row as f32 * square_size;
-
-                                    let w = square_size.min(bounds_x + bounds_width - x);
-                                    let h = square_size.min(bounds_y + bounds_height - y);
-
-                                    if w > 0.0 && h > 0.0 {
-                                        let rect =
-                                            Bounds::new(point(px(x), px(y)), size(px(w), px(h)));
-
-                                        window.paint_quad(gpui::fill(rect, opaque_grey(0.6, 1.0)));
-                                    }
-                                }
-                            }
-
-                            let border_rect = Bounds::new(
-                                point(px(bounds_x), px(bounds_y)),
-                                size(px(bounds_width), px(bounds_height)),
-                            );
-                            window.paint_quad(gpui::outline(
-                                border_rect,
-                                border_color,
-                                gpui::BorderStyle::default(),
-                            ));
-                        },
-                    )
-                    .size_full()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .bg(gpui::rgb(0xCCCCCD)),
-                )
-                .child({
-                    let image_element = img(image).id("img");
-                    image_element.size_full()
-                }),
-        );
-
         div()
             .track_focus(&self.focus_handle(cx))
             .key_context("ImageViewer")
@@ -686,7 +702,7 @@ impl Render for ImageView {
                     .id("image-container")
                     .size_full()
                     .overflow_hidden()
-                    .cursor(if is_dragging {
+                    .cursor(if self.is_dragging() {
                         gpui::CursorStyle::ClosedHand
                     } else {
                         gpui::CursorStyle::OpenHand
@@ -697,33 +713,8 @@ impl Render for ImageView {
                     .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
                     .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
                     .on_mouse_move(cx.listener(Self::handle_mouse_move))
-                    .child(image_content),
+                    .child(ImageContentElement::new(cx.entity())),
             )
-            .when(is_dragging, move |div| {
-                div.child(
-                    canvas(
-                        move |_, _, _| {},
-                        move |_, _, window, _cx| {
-                            window.on_mouse_event(
-                                move |_event: &MouseUpEvent, phase, _window, cx| {
-                                    if phase == DispatchPhase::Bubble {
-                                        if let Some(entity) = entity.upgrade() {
-                                            entity.update(cx, |this, cx| {
-                                                if this.is_dragging() {
-                                                    this.last_mouse_position = None;
-                                                    cx.notify();
-                                                }
-                                            });
-                                        }
-                                    }
-                                },
-                            );
-                        },
-                    )
-                    .absolute()
-                    .size_0(),
-                )
-            })
     }
 }
 
