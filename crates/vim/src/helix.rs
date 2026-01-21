@@ -868,6 +868,7 @@ mod test {
     use search::{ProjectSearchView, project_search};
     use serde_json::json;
     use settings::SettingsStore;
+    use util::path;
     use workspace::DeploySearch;
 
     use crate::{VimAddon, state::Mode, test::VimTestContext};
@@ -1707,7 +1708,7 @@ mod test {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "file_a.rs": "// File A.",
                 "file_b.rs": "// File B.",

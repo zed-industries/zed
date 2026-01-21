@@ -20,7 +20,7 @@ use language::{CursorShape, Language, LanguageConfig, Point};
 pub use neovim_backed_test_context::*;
 use settings::SettingsStore;
 use ui::Pixels;
-use util::test::marked_text_ranges;
+use util::{path, test::marked_text_ranges};
 pub use vim_test_context::*;
 
 use gpui::VisualTestContext;
@@ -2546,7 +2546,7 @@ async fn test_project_search_opens_in_normal_mode(cx: &mut gpui::TestAppContext)
 
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        "/dir",
+        path!("/dir"),
         json!({
             "file_a.rs": "// File A.",
             "file_b.rs": "// File B.",
