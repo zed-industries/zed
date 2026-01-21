@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use terminal::PathLikeTarget;
 use util::{
     ResultExt, debug_panic,
-    paths::{PathStyle, PathWithPosition},
+    paths::{normalize_lexically, PathStyle, PathWithPosition},
     rel_path::RelPath,
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
@@ -222,17 +222,52 @@ fn possible_open_target(
                 }
             };
 
-            if let Ok(relative_path_to_check) =
-                RelPath::new(&path_to_check.path, PathStyle::local())
-                && !worktree.read(cx).is_single_file()
+            let relative_path_to_check =
+                RelPath::new(&path_to_check.path, PathStyle::local()).ok();
+            let relative_path_to_check_ref =
+                relative_path_to_check.as_ref().map(std::borrow::Cow::as_ref);
+            let normalized_relative_path = relative_cwd.as_ref().and_then(|relative_cwd| {
+                if !path_to_check.path.is_relative() {
+                    return None;
+                }
+                let joined = relative_cwd.as_ref().as_std_path().join(&path_to_check.path);
+                let normalized = normalize_lexically(&joined).ok()?;
+                RelPath::new(&normalized, PathStyle::local())
+                    .ok()
+                    .map(std::borrow::Cow::into_owned)
+            });
+
+            if !worktree.read(cx).is_single_file()
                 && let Some(entry) = relative_cwd
                     .clone()
                     .and_then(|relative_cwd| {
-                        worktree
-                            .read(cx)
-                            .entry_for_path(&relative_cwd.join(&relative_path_to_check))
+                        if let Some(relative_path_to_check) = relative_path_to_check_ref {
+                            worktree
+                                .read(cx)
+                                .entry_for_path(&relative_cwd.join(relative_path_to_check))
+                        } else if let Some(normalized_relative_path) =
+                            normalized_relative_path.as_ref()
+                        {
+                            worktree
+                                .read(cx)
+                                .entry_for_path(normalized_relative_path.as_ref())
+                        } else {
+                            None
+                        }
                     })
-                    .or_else(|| worktree.read(cx).entry_for_path(&relative_path_to_check))
+                    .or_else(|| {
+                        relative_path_to_check_ref
+                            .and_then(|relative_path_to_check| {
+                                worktree.read(cx).entry_for_path(relative_path_to_check)
+                            })
+                            .or_else(|| {
+                                normalized_relative_path.as_ref().and_then(|normalized_relative_path| {
+                                    worktree
+                                        .read(cx)
+                                        .entry_for_path(normalized_relative_path.as_ref())
+                                })
+                            })
+                    })
             {
                 open_target = Some(OpenTarget::Worktree(
                     PathWithPosition {
@@ -991,8 +1026,6 @@ mod tests {
         }
 
         // https://github.com/zed-industries/zed/issues/28339
-        // Note: These could all be found by WorktreeExact if we used
-        // `fs::normalize_path(&maybe_path)`
         #[gpui::test]
         async fn issue_28339(cx: &mut TestAppContext) {
             test_path_likes!(
@@ -1043,17 +1076,14 @@ mod tests {
                         "../foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
                         "/tmp/issue28339/foo",
-                        FileSystemBackground
+                        WorktreeExact
                     );
                 }
             )
         }
 
         // https://github.com/zed-industries/zed/issues/28339
-        // Note: These could all be found by WorktreeExact if we used
-        // `fs::normalize_path(&maybe_path)`
         #[gpui::test]
-        #[should_panic(expected = "Hover target should not be `None`")]
         async fn issue_28339_remote(cx: &mut TestAppContext) {
             test_path_likes!(
                 cx,
