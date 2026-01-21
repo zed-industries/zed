@@ -82,6 +82,7 @@ pub struct ExamplePrediction {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExampleScore {
     pub delta_chr_f: f32,
+    pub braces_disbalance: usize,
 }
 
 impl Example {
