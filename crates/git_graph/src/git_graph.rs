@@ -1634,6 +1634,80 @@ mod tests {
     }
 
     #[test]
+    fn test_git_graph_merge_commits() {
+        let mut rng = StdRng::seed_from_u64(42);
+
+        let oid1 = Oid::random(&mut rng);
+        let oid2 = Oid::random(&mut rng);
+        let oid3 = Oid::random(&mut rng);
+        let oid4 = Oid::random(&mut rng);
+
+        let commits = vec![
+            Arc::new(InitialGraphCommitData {
+                sha: oid1,
+                parents: smallvec![oid2, oid3],
+                ref_names: vec!["HEAD".into()],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: oid2,
+                parents: smallvec![oid4],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: oid3,
+                parents: smallvec![oid4],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: oid4,
+                parents: smallvec![],
+                ref_names: vec![],
+            }),
+        ];
+
+        let mut graph_data = crate::graph::GraphData::new(8);
+        graph_data.add_commits(&commits);
+
+        if let Err(error) = verify_all_invariants(&graph_data, &commits) {
+            panic!("Graph invariant violation for merge commits:\n{}", error);
+        }
+    }
+
+    #[test]
+    fn test_git_graph_linear_commits() {
+        let mut rng = StdRng::seed_from_u64(42);
+
+        let oid1 = Oid::random(&mut rng);
+        let oid2 = Oid::random(&mut rng);
+        let oid3 = Oid::random(&mut rng);
+
+        let commits = vec![
+            Arc::new(InitialGraphCommitData {
+                sha: oid1,
+                parents: smallvec![oid2],
+                ref_names: vec!["HEAD".into()],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: oid2,
+                parents: smallvec![oid3],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: oid3,
+                parents: smallvec![],
+                ref_names: vec![],
+            }),
+        ];
+
+        let mut graph_data = crate::graph::GraphData::new(8);
+        graph_data.add_commits(&commits);
+
+        if let Err(error) = verify_all_invariants(&graph_data, &commits) {
+            panic!("Graph invariant violation for linear commits:\n{}", error);
+        }
+    }
+
+    #[test]
     fn test_git_graph_random_commits() {
         for seed in 0..50 {
             let mut rng = StdRng::seed_from_u64(seed);
