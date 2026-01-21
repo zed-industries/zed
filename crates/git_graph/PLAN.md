@@ -322,7 +322,7 @@ fn init_test(cx: &mut TestAppContext) {
   - [x] Use `GraphData::add_commits` directly (simpler than full integration)
   - [x] Run all verification functions
   - [x] Include descriptive panic messages with seed info for reproducibility
-  - [x] **Test successfully catches the bug!**
+  - [x] **Test successfully catches bugs!**
   - [x] Added simple linear and merge test cases that pass
 
 - [x] **Step 10: Test and debug**
@@ -330,35 +330,126 @@ fn init_test(cx: &mut TestAppContext) {
   - [x] Add descriptive error messages for debugging failures ✓
   - [x] Verify test is deterministic (same seed = same failure) ✓
 
+- [ ] **Step 11: Fix the bug in `add_commits`**
+  - [ ] Investigate why merge commit lines to first parent are missing
+  - [ ] Fix the `parent_to_lane` HashMap logic or the original algorithm
+  - [ ] Ensure all 50 random seeds pass
+  - [ ] Verify the fix doesn't break the visual rendering
+
 ## Bug Analysis
 
-The test at seed=1 reveals the bug:
+### Test Results Summary
 
-**Commit [36]** (`c21f72b6...`) is a merge commit with two parents:
+The randomized tests at seed=1 (with 40 commits, non-adversarial) reveal bugs in the `add_commits` function:
 
-- First parent: `0e2af525...` (at row 37)
-- Second parent: `9c556dc1...` (at row 39)
+**Current code (with `parent_to_lane` optimization from commit `da06bb5e0e5193bd8e401634120ec1329782767f`):**
 
-**Expected lines:**
+- Fails with: `full_interval.end (37) != parent_row (39)`
+- Lines are created but with wrong interval endpoints
 
-- `c21f72b6... -> 0e2af525...` (to first parent at row 37)
-- `c21f72b6... -> 9c556dc1...` (to second parent at row 39)
+**Reverted code (without the optimization):**
 
-**Actual lines:**
+- Fails with: `Missing line for edge c21f72b6... -> 0e2af525...`
+- Lines are completely missing for certain merge configurations
+
+**Conclusion:** Both versions have bugs! The optimization changed the bug manifestation but didn't introduce a new bug - it exposed/changed a pre-existing issue.
+
+### Specific Failing Case
+
+At seed=1, commit [36] (`c21f72b6...`) is a merge commit:
+
+```
+[36] sha=c21f72b6..., parents=[0e2af525..., 9c556dc1...]
+     First parent: 0e2af525... (at row 37)
+     Second parent: 9c556dc1... (at row 39)
+```
+
+**Expected lines from commit [36]:**
+
+1. `c21f72b6... -> 0e2af525...` (row 36 to row 37, first parent)
+2. `c21f72b6... -> 9c556dc1...` (row 36 to row 39, second parent)
+
+**Actual lines (current code):**
+
+- `c21f72b6... -> 9c556dc1..., interval=36..39` ✓ (second parent works)
+- `c21f72b6... -> 0e2af525...` is created but with wrong interval
+
+**Actual lines (reverted code):**
 
 - `c21f72b6... -> 9c556dc1..., interval=36..39` ✓
-- **MISSING**: `c21f72b6... -> 0e2af525...`
+- **MISSING**: `c21f72b6... -> 0e2af525...` (no line at all)
 
-**Root cause:** The `add_commits` function in `graph.rs` fails to create a line to the first parent of a merge commit in certain conditions involving the `parent_to_lane` HashMap optimization introduced in commit `da06bb5e0e5193bd8e401634120ec1329782767f`.
+### Key Files
+
+- **Bug location:** `zed/crates/git_graph/src/graph.rs` - `GraphData::add_commits()` function
+- **Test location:** `zed/crates/git_graph/src/git_graph.rs` - `mod tests` at the end of file
+
+### How to Run Tests
+
+```bash
+# Run all git_graph tests
+cargo test -p git_graph test_git_graph -- --nocapture
+
+# Run just the random test
+cargo test -p git_graph test_git_graph_random_commits -- --nocapture
+
+# Run simple tests that should pass
+cargo test -p git_graph test_git_graph_linear_commits -- --nocapture
+cargo test -p git_graph test_git_graph_merge_commits -- --nocapture
+```
+
+### Algorithm Overview
+
+The `add_commits` function processes commits in order (newest first) and:
+
+1. For each commit, determines which lane it should occupy
+2. Creates `CommitLine` objects connecting child commits to parent commits
+3. Uses `LaneState` to track active lanes and their destinations
+4. The `parent_to_lane` HashMap (in current code) maps parent Oids to their expected lanes
+
+The bug appears to be in how merge commits (commits with multiple parents) handle the case where both parents need lines drawn but one parent is "closer" (fewer rows away) than expected.
+
+### Invariants Being Checked
+
+1. **Line endpoints:** `full_interval.start` == child row, `full_interval.end` == parent row
+2. **Column correctness:** `child_column` matches child's lane, ending column matches parent's lane
+3. **Segment continuity:** Segments are in row order, no gaps
+4. **Coverage:** Every parent-child edge has exactly one line, no orphans, no duplicates
+5. **Row ordering:** child_row < parent_row (children come before parents in git log output)
 
 ## Notes
 
-- The bug is in the `add_commits` function's use of `parent_to_lane` HashMap
-- Tests should be deterministic with seeded RNG for reproducibility
-- Consider using `OPERATIONS` env var pattern for configurable iteration count (like text crate)
+- The bug exists in BOTH the current code and the pre-optimization code
+- Tests are deterministic with seeded RNG for reproducibility
+- Simple linear and merge cases pass - the bug is in complex topologies
 - Curves crossing straight lines in different columns is valid - don't flag as error
-- Using full integration (Option A) because `add_commits` logic may move to background thread in Repository in the future
-- The `GitGraphTestContext` helper reduces boilerplate and makes it easy to write additional git graph tests later
+- The test uses `GraphData::add_commits` directly (unit test style) due to test-support dependency complexities with full integration
+
+## Prompt for Next Agent
+
+Use this prompt to spawn an agent to fix the bug:
+
+---
+
+**Task:** Fix the bug in `zed/crates/git_graph/src/graph.rs` in the `GraphData::add_commits()` function.
+
+**Context:** Read `zed/crates/git_graph/PLAN.md` for full context on the bug and test infrastructure.
+
+**Summary:** The `add_commits` function fails to correctly create `CommitLine` objects for merge commits in certain complex topologies. At seed=1, commit [36] is a merge with parents at rows 37 and 39, but the line to the first parent (row 37) is either missing or has incorrect interval endpoints.
+
+**Tests to run:**
+
+```bash
+cargo test -p git_graph test_git_graph -- --nocapture
+```
+
+**Success criteria:** All 3 tests pass:
+
+- `test_git_graph_linear_commits`
+- `test_git_graph_merge_commits`
+- `test_git_graph_random_commits` (50 iterations with different seeds)
+
+**Key insight:** The bug exists in both the current code (with `parent_to_lane` HashMap) and the original code (without it). The algorithm has a fundamental issue with how it handles merge commits where the first parent is at a row that already has other lines passing through it.
 
 ## Key Implementation Details
 
