@@ -633,7 +633,7 @@ impl BlockMap {
                     let companion_start = companion_new_snapshot
                         .to_point(WrapPoint::new(edit.new.start, 0), Bias::Left);
                     let companion_end = companion_new_snapshot
-                        .to_point(WrapPoint::new(edit.new.end, 0), Bias::Right);
+                        .to_point(WrapPoint::new(edit.new.end, 0), Bias::Left);
 
                     let my_start = companion
                         .convert_rows_from_companion(
@@ -660,12 +660,12 @@ impl BlockMap {
                             ),
                         )
                         .first()
-                        .and_then(|t| t.boundaries.first())
+                        .and_then(|t| t.boundaries.last())
                         .map(|(_, range)| range.end)
                         .unwrap_or(wrap_snapshot.buffer_snapshot().max_point());
 
                     let my_start = wrap_snapshot.make_wrap_point(my_start, Bias::Left);
-                    let mut my_end = wrap_snapshot.make_wrap_point(my_end, Bias::Right);
+                    let mut my_end = wrap_snapshot.make_wrap_point(my_end, Bias::Left);
                     if my_end.column() > 0 {
                         my_end.0.row += 1;
                         my_end.0.column = 0;
@@ -1075,22 +1075,6 @@ impl BlockMap {
             bounds,
         );
 
-        log::trace!(
-            "spacer_blocks: display_map_id={:?}, bounds={:?}, row_mappings count={}",
-            display_map_id,
-            bounds,
-            row_mappings.len()
-        );
-        for (i, mapping) in row_mappings.iter().enumerate() {
-            log::trace!(
-                "  row_mapping[{}]: first_group={:?}, prev_boundary={:?}, boundaries={:?}",
-                i,
-                mapping.first_group,
-                mapping.prev_boundary,
-                mapping.boundaries
-            );
-        }
-
         let determine_spacer = |our_point: Point, their_point: Point, delta: i32| {
             let our_wrap = wrap_snapshot.make_wrap_point(our_point, Bias::Left).row();
             let companion_wrap = companion_snapshot
@@ -1141,15 +1125,6 @@ impl BlockMap {
 
             let mut delta = their_baseline.0 as i32 - our_baseline.0 as i32;
 
-            log::trace!(
-                "  baseline: our={:?} (wrap_row={}), their={:?} (wrap_row={}), initial_delta={}",
-                (first_group.start, first_range.start),
-                our_baseline.0,
-                (first_range.start, first_range.end),
-                their_baseline.0,
-                delta
-            );
-
             if first_group.start < first_boundary {
                 let mut current_boundary = first_boundary;
                 let current_range = first_range;
@@ -1163,21 +1138,8 @@ impl BlockMap {
                 let (new_delta, spacer) =
                     determine_spacer(current_boundary, current_range.end, delta);
 
-                log::trace!(
-                    "    end-of-group check: our_point={:?}, companion_point={:?}, delta {} -> {}",
-                    current_boundary,
-                    current_range.end,
-                    delta,
-                    new_delta
-                );
-
                 delta = new_delta;
                 if let Some((wrap_row, height)) = spacer {
-                    log::trace!(
-                        "    -> inserting spacer Above(wrap_row={}) height={}",
-                        wrap_row.0,
-                        height
-                    );
                     result.push((
                         BlockPlacement::Above(wrap_row),
                         Block::Spacer {
@@ -1198,40 +1160,42 @@ impl BlockMap {
                     break;
                 }
 
-                // If there are more boundaries in the same group as this boundary, we want to
-                // align at the start of the companion range, to handle cases like
-                // soft-wrapping of the row just before a hunk.
-                //
-                // But if this boundary doesn't begin a nonempty group of rows,
-                // we want to align at the end of the companion range, to handle
-                // cases like pure deletion hunks.
-                let align_at_start = iter
-                    .peek()
-                    .is_some_and(|(_, next_range)| next_range.end <= current_range.end);
-                let companion_point = if align_at_start {
-                    current_range.start
-                } else {
-                    current_range.end
-                };
-                let (new_delta, spacer) =
-                    determine_spacer(current_boundary, companion_point, delta);
+                // Align the two sides at the start of this group.
+                let (delta_at_start, mut spacer_at_start) =
+                    determine_spacer(current_boundary, current_range.start, delta);
+                delta = delta_at_start;
 
-                log::trace!(
-                    "    boundary check (align_at_start={}): our_point={:?}, companion_point={:?}, delta {} -> {}",
-                    align_at_start,
-                    current_boundary,
-                    companion_point,
-                    delta,
-                    new_delta
-                );
+                while let Some((next_boundary, next_range)) = iter.peek()
+                    && next_range.end <= current_range.end
+                {
+                    if let Some((wrap_row, height)) = spacer_at_start.take() {
+                        result.push((
+                            BlockPlacement::Above(wrap_row),
+                            Block::Spacer {
+                                id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
+                                height,
+                                is_below: false,
+                            },
+                        ));
+                    }
 
-                delta = new_delta;
-                if let Some((wrap_row, height)) = spacer {
-                    log::trace!(
-                        "    -> inserting spacer Above(wrap_row={}) height={}",
-                        wrap_row.0,
-                        height
-                    );
+                    current_boundary = *next_boundary;
+                    iter.next();
+                }
+
+                // This can only occur at the end of an excerpt.
+                if current_boundary.column > 0 {
+                    break;
+                }
+
+                let (delta_at_end, spacer_at_end) =
+                    determine_spacer(current_boundary, current_range.end, delta);
+                delta = delta_at_end;
+
+                if let Some((wrap_row, mut height)) = spacer_at_start {
+                    if let Some((_, additional_height)) = spacer_at_end {
+                        height += additional_height;
+                    }
                     result.push((
                         BlockPlacement::Above(wrap_row),
                         Block::Spacer {
@@ -1240,39 +1204,7 @@ impl BlockMap {
                             is_below: false,
                         },
                     ));
-                }
-
-                // Fast-forward to the end of the group, and align there.
-                while let Some((next_boundary, next_range)) = iter.peek().cloned()
-                    && next_range.end <= current_range.end
-                {
-                    iter.next();
-                    current_boundary = next_boundary;
-                }
-
-                // This can only occur at the end of an excerpt.
-                if current_boundary.column > 0 {
-                    break;
-                }
-
-                let (new_delta, spacer) =
-                    determine_spacer(current_boundary, current_range.end, delta);
-
-                log::trace!(
-                    "    end-of-group check: our_point={:?}, companion_point={:?}, delta {} -> {}",
-                    current_boundary,
-                    current_range.end,
-                    delta,
-                    new_delta
-                );
-
-                delta = new_delta;
-                if let Some((wrap_row, height)) = spacer {
-                    log::trace!(
-                        "    -> inserting spacer Above(wrap_row={}) height={}",
-                        wrap_row.0,
-                        height
-                    );
+                } else if let Some((wrap_row, height)) = spacer_at_end {
                     result.push((
                         BlockPlacement::Above(wrap_row),
                         Block::Spacer {
@@ -1286,20 +1218,8 @@ impl BlockMap {
 
             let (last_boundary, last_range) = row_mapping.boundaries.last().cloned().unwrap();
             if last_boundary.column > 0 {
-                let (new_delta, spacer) = determine_spacer(last_boundary, last_range.end, delta);
-                log::trace!(
-                    "    excerpt-end check: our_point={:?}, companion_point={:?}, delta {} -> {}",
-                    last_boundary,
-                    last_range.end,
-                    delta,
-                    new_delta
-                );
+                let (_new_delta, spacer) = determine_spacer(last_boundary, last_range.end, delta);
                 if let Some((wrap_row, height)) = spacer {
-                    log::trace!(
-                        "    -> inserting spacer Below(wrap_row={}) height={}",
-                        wrap_row.0,
-                        height
-                    );
                     result.push((
                         BlockPlacement::Below(wrap_row),
                         Block::Spacer {
@@ -1312,7 +1232,6 @@ impl BlockMap {
             }
         }
 
-        log::trace!("spacer_blocks: returning {} spacers", result.len());
         result
     }
 

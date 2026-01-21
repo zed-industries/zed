@@ -2967,4 +2967,82 @@ mod tests {
             &mut cx,
         );
     }
+
+    #[gpui::test]
+    async fn test_soft_wrap_spacer_before_added_line(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx).await;
+
+        let base_text = "aaaa bbbb cccc dddd eeee ffff\n";
+
+        let current_text = "
+            aaaa bbbb cccc dddd eeee ffff
+            added line
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
+            editor.set_excerpts_for_path(
+                path,
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content_with_widths(
+            &editor,
+            px(400.0),
+            px(200.0),
+            "
+            § <no file>
+            § -----
+            aaaa bbbb cccc dddd eeee ffff
+            § spacer
+            § spacer
+            added line"
+                .unindent(),
+            "
+            § <no file>
+            § -----
+            aaaa bbbb\x20
+            cccc dddd\x20
+            eeee ffff
+            § spacer"
+                .unindent(),
+            &mut cx,
+        );
+
+        assert_split_content_with_widths(
+            &editor,
+            px(200.0),
+            px(400.0),
+            "
+            § <no file>
+            § -----
+            aaaa bbbb\x20
+            cccc dddd\x20
+            eeee ffff
+            added line"
+                .unindent(),
+            "
+            § <no file>
+            § -----
+            aaaa bbbb cccc dddd eeee ffff
+            § spacer
+            § spacer
+            § spacer"
+                .unindent(),
+            &mut cx,
+        );
+    }
 }
