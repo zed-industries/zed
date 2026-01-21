@@ -189,6 +189,12 @@ impl Element for Anchored {
             }
 
             if let Some(force_snap) = self.force_snap {
+                let horizontal_switched = Bounds::from_corner_and_size(
+                    anchor_corner.other_side_corner_along(Axis::Horizontal),
+                    origin,
+                    size,
+                );
+
                 let vertical_switched = Bounds::from_corner_and_size(
                     anchor_corner.other_side_corner_along(Axis::Vertical),
                     origin,
@@ -196,8 +202,12 @@ impl Element for Anchored {
                 );
 
                 match force_snap {
-                    AnchoredForceSnap::Above => desired = vertical_switched,
-                    _ => {}
+                    AnchoredForceSnap::Left | AnchoredForceSnap::Right => {
+                        desired = horizontal_switched
+                    }
+                    AnchoredForceSnap::Above | AnchoredForceSnap::Below => {
+                        desired = vertical_switched
+                    }
                 }
             }
         }
@@ -264,10 +274,14 @@ impl IntoElement for Anchored {
 /// Enum for force snapping the anchored element.
 #[derive(Copy, Clone, PartialEq)]
 pub enum AnchoredForceSnap {
-    /// Force snap the anchored element above
+    /// Force snap the anchored element above.
     Above,
-    /// Force snap the anchored element below
+    /// Force snap the anchored element below.
     Below,
+    /// Force snap the anchored element left.
+    Left,
+    /// Force snap the anchored element right.
+    Right,
 }
 
 /// Which algorithm to use when fitting the anchored element to be inside the window.
