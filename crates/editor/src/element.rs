@@ -1288,7 +1288,7 @@ impl EditorElement {
             }
         }
 
-        let breakpoint_indicator = if gutter_hovered && split_side.is_none() {
+        let breakpoint_indicator = if gutter_hovered && split_side != Some(SplitSide::Left) {
             let buffer_anchor = position_map
                 .snapshot
                 .display_point_to_anchor(valid_point, Bias::Left);
@@ -3015,8 +3015,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
-        // Don't show breakpoints in split diff view
-        if self.split_side.is_some() {
+        if self.split_side == Some(SplitSide::Left) {
             return Vec::new();
         }
 
@@ -3080,8 +3079,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
-        // Don't show run indicators in split diff view
-        if self.split_side.is_some() {
+        if self.split_side == Some(SplitSide::Left) {
             return Vec::new();
         }
 

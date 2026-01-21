@@ -585,8 +585,13 @@ impl SplittableEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.secondary.is_some() {
-            cx.stop_propagation();
+        // Only block breakpoint actions when the left (secondary) editor has focus
+        if let Some(secondary) = &self.secondary {
+            if secondary.has_latest_selection {
+                cx.stop_propagation();
+            } else {
+                cx.propagate();
+            }
         } else {
             cx.propagate();
         }
@@ -598,8 +603,13 @@ impl SplittableEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.secondary.is_some() {
-            cx.stop_propagation();
+        // Only block breakpoint actions when the left (secondary) editor has focus
+        if let Some(secondary) = &self.secondary {
+            if secondary.has_latest_selection {
+                cx.stop_propagation();
+            } else {
+                cx.propagate();
+            }
         } else {
             cx.propagate();
         }
@@ -611,8 +621,13 @@ impl SplittableEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.secondary.is_some() {
-            cx.stop_propagation();
+        // Only block breakpoint actions when the left (secondary) editor has focus
+        if let Some(secondary) = &self.secondary {
+            if secondary.has_latest_selection {
+                cx.stop_propagation();
+            } else {
+                cx.propagate();
+            }
         } else {
             cx.propagate();
         }
@@ -624,8 +639,13 @@ impl SplittableEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.secondary.is_some() {
-            cx.stop_propagation();
+        // Only block breakpoint actions when the left (secondary) editor has focus
+        if let Some(secondary) = &self.secondary {
+            if secondary.has_latest_selection {
+                cx.stop_propagation();
+            } else {
+                cx.propagate();
+            }
         } else {
             cx.propagate();
         }
