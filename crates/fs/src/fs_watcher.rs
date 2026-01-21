@@ -50,7 +50,7 @@ impl Watcher for FsWatcher {
         let tx = self.tx.clone();
         let pending_paths = self.pending_path_events.clone();
 
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
             // Return early if an ancestor of this path was already being watched.
             // saves a huge amount of memory
@@ -81,7 +81,7 @@ impl Watcher for FsWatcher {
         let root_path = SanitizedPath::new_arc(path);
         let path: Arc<std::path::Path> = path.into();
 
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
         let mode = notify::RecursiveMode::Recursive;
         #[cfg(target_os = "linux")]
         let mode = notify::RecursiveMode::NonRecursive;
@@ -166,6 +166,8 @@ pub struct GlobalWatcher {
     watcher: Mutex<notify::KqueueWatcher>,
     #[cfg(target_os = "windows")]
     watcher: Mutex<notify::ReadDirectoryChangesWatcher>,
+    #[cfg(target_os = "macos")]
+    watcher: Mutex<notify::FsEventWatcher>,
 }
 
 impl GlobalWatcher {
