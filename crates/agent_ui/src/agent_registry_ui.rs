@@ -133,10 +133,10 @@ impl AgentRegistryPage {
     fn reload_registry_agents(&mut self, cx: &mut Context<Self>) {
         self.registry_agents = self.registry_store.read(cx).agents().to_vec();
         self.registry_agents.sort_by(|left, right| {
-            left.name
+            left.name()
                 .as_ref()
-                .cmp(right.name.as_ref())
-                .then_with(|| left.id.as_ref().cmp(right.id.as_ref()))
+                .cmp(right.name().as_ref())
+                .then_with(|| left.id().as_ref().cmp(right.id().as_ref()))
         });
         self.filter_registry_agents(cx);
     }
@@ -189,19 +189,19 @@ impl AgentRegistryPage {
             .filter(|(_, agent)| {
                 // Filter out built-in agents since they already appear in the main
                 // agent configuration UI and don't need to be installed from the registry.
-                if BUILT_IN_REGISTRY_IDS.contains(&agent.id.as_ref()) {
+                if BUILT_IN_REGISTRY_IDS.contains(&agent.id().as_ref()) {
                     return false;
                 }
 
                 let matches_search = search.as_ref().is_none_or(|query| {
                     let query = query.as_str();
-                    agent.id.as_ref().to_lowercase().contains(query)
-                        || agent.name.as_ref().to_lowercase().contains(query)
-                        || agent.description.as_ref().to_lowercase().contains(query)
+                    agent.id().as_ref().to_lowercase().contains(query)
+                        || agent.name().as_ref().to_lowercase().contains(query)
+                        || agent.description().as_ref().to_lowercase().contains(query)
                 });
 
                 let install_status = installed_statuses
-                    .get(agent.id.as_ref())
+                    .get(agent.id().as_ref())
                     .copied()
                     .unwrap_or(RegistryInstallStatus::NotInstalled);
                 let matches_filter = match filter {
@@ -371,10 +371,10 @@ impl AgentRegistryPage {
         agent: &RegistryAgent,
         cx: &mut Context<Self>,
     ) -> AgentRegistryCard {
-        let install_status = self.install_status(agent.id.as_ref());
-        let supports_current_platform = agent.supports_current_platform;
+        let install_status = self.install_status(agent.id().as_ref());
+        let supports_current_platform = agent.supports_current_platform();
 
-        let icon = match agent.icon_path.as_ref() {
+        let icon = match agent.icon_path() {
             Some(icon_path) => Icon::from_external_svg(icon_path.clone()),
             None => Icon::new(IconName::Sparkle),
         }
@@ -384,10 +384,10 @@ impl AgentRegistryPage {
         let install_button =
             self.install_button(agent, install_status, supports_current_platform, cx);
 
-        let repository_button = agent.repository.as_ref().map(|repository| {
+        let repository_button = agent.repository().map(|repository| {
             let repository = repository.clone();
             IconButton::new(
-                SharedString::from(format!("agent-repo-{}", agent.id)),
+                SharedString::from(format!("agent-repo-{}", agent.id())),
                 IconName::Link,
             )
             .icon_size(IconSize::Small)
@@ -409,10 +409,11 @@ impl AgentRegistryPage {
                                     .gap_2()
                                     .items_end()
                                     .child(
-                                        Headline::new(agent.name.clone()).size(HeadlineSize::Small),
+                                        Headline::new(agent.name().clone())
+                                            .size(HeadlineSize::Small),
                                     )
                                     .child(
-                                        Headline::new(format!("v{}", agent.version))
+                                        Headline::new(format!("v{}", agent.version()))
                                             .size(HeadlineSize::XSmall),
                                     ),
                             ),
@@ -425,7 +426,7 @@ impl AgentRegistryPage {
                     .gap_2()
                     .justify_between()
                     .child(
-                        Label::new(agent.description.clone())
+                        Label::new(agent.description().clone())
                             .size(LabelSize::Small)
                             .color(Color::Default)
                             .truncate(),
@@ -437,7 +438,7 @@ impl AgentRegistryPage {
                     .gap_2()
                     .justify_between()
                     .child(
-                        Label::new(format!("ID: {}", agent.id))
+                        Label::new(format!("ID: {}", agent.id()))
                             .size(LabelSize::Small)
                             .color(Color::Muted)
                             .truncate(),
@@ -459,7 +460,7 @@ impl AgentRegistryPage {
         supports_current_platform: bool,
         cx: &mut Context<Self>,
     ) -> Button {
-        let button_id = SharedString::from(format!("install-agent-{}", agent.id));
+        let button_id = SharedString::from(format!("install-agent-{}", agent.id()));
 
         if !supports_current_platform {
             return Button::new(button_id, "Unavailable")
@@ -470,7 +471,7 @@ impl AgentRegistryPage {
         match install_status {
             RegistryInstallStatus::NotInstalled => {
                 let fs = <dyn Fs>::global(cx);
-                let agent_id = agent.id.to_string();
+                let agent_id = agent.id().to_string();
                 Button::new(button_id, "Install")
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                     .icon(IconName::Download)
@@ -496,7 +497,7 @@ impl AgentRegistryPage {
             }
             RegistryInstallStatus::InstalledRegistry => {
                 let fs = <dyn Fs>::global(cx);
-                let agent_id = agent.id.to_string();
+                let agent_id = agent.id().to_string();
                 Button::new(button_id, "Remove")
                     .style(ButtonStyle::OutlinedGhost)
                     .on_click(move |_, _, cx| {
