@@ -274,13 +274,13 @@ fn init_test(cx: &mut TestAppContext) {
 
 ## Todo List
 
-- [ ] **Step 1: Update Cargo.toml**
-  - [ ] Add `[features]` section with `test-support`
-  - [ ] Add `[dev-dependencies]` for fs, gpui, project, settings, rand, serde_json, pretty_assertions
+- [x] **Step 1: Update Cargo.toml**
+  - [x] Add `[features]` section with `test-support`
+  - [x] Add `[dev-dependencies]` for fs, gpui, project, settings, rand, serde_json, pretty_assertions
 
-- [ ] **Step 2: Update FakeGitRepositoryState**
-  - [ ] Add `graph_commits: Vec<Arc<InitialGraphCommitData>>` field
-  - [ ] Initialize in `FakeGitRepositoryState::new()`
+- [x] **Step 2: Update FakeGitRepositoryState**
+  - [x] Add `graph_commits: Vec<Arc<InitialGraphCommitData>>` field
+  - [x] Initialize in `FakeGitRepositoryState::new()`
 
 - [ ] **Step 3: Implement initial_graph_data on FakeGitRepository**
   - [ ] Read graph_commits from state

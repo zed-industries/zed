@@ -56,6 +56,7 @@ pub struct FakeGitRepositoryState {
     pub remotes: HashMap<String, String>,
     pub simulated_index_write_error_message: Option<String>,
     pub refs: HashMap<String, String>,
+    pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
 }
 
 impl FakeGitRepositoryState {
@@ -73,6 +74,7 @@ impl FakeGitRepositoryState {
             merge_base_contents: Default::default(),
             oids: Default::default(),
             remotes: HashMap::default(),
+            graph_commits: Vec::new(),
         }
     }
 }

@@ -13,6 +13,10 @@ path = "src/git_graph.rs"
 
 [features]
 default = []
+test-support = [
+    "project/test-support",
+    "gpui/test-support",
+]
 
 [dependencies]
 anyhow.workspace = true
@@ -32,3 +36,13 @@ ui.workspace = true
 ui_input.workspace = true
 util.workspace = true
 workspace.workspace = true
+
+[dev-dependencies]
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
+rand.workspace = true
+serde_json.workspace = true
+env_logger.workspace = true

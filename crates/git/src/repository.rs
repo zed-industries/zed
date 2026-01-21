@@ -69,6 +69,7 @@ pub struct GraphCommitData {
 }
 
 // todo! Should we wrap the small vec with a rc to make this cheaply clonable?
+#[derive(Debug)]
 pub struct InitialGraphCommitData {
     pub sha: Oid,
     pub parents: SmallVec<[Oid; 1]>,
