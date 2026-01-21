@@ -520,7 +520,7 @@ impl BufferDiffSnapshot {
                 new: new_start..new_end,
             });
         }
-        if !self.inner.base_text_exists {
+        if !self.inner.base_text_exists && hunk_edits.is_empty() {
             hunk_edits.push(Edit {
                 old: Point::zero()..original_snapshot.max_point(),
                 new: Point::zero()..Point::zero(),
@@ -581,7 +581,7 @@ impl BufferDiffSnapshot {
                 new: new_start..new_end,
             });
         }
-        if !self.inner.base_text_exists {
+        if !self.inner.base_text_exists && hunk_edits.is_empty() {
             hunk_edits.push(Edit {
                 old: Point::zero()..Point::zero(),
                 new: Point::zero()..original_snapshot.max_point(),
