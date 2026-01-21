@@ -250,8 +250,6 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
 
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let max_height = max_height_in_lines as f32 * ui_font_size;
-        let search_editor_height = ui_font_size * 2.5 + px(20.);
-        let list_max_height = max_height - search_editor_height;
 
         let list = uniform_list(
             "fuzzy_popover",
@@ -292,7 +290,6 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
             }),
         )
         .occlude()
-        .max_h(list_max_height)
         .with_width_from_item(
             items_for_width
                 .iter()
@@ -349,7 +346,9 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
                                     .overflow_hidden()
                                     .child(self.search_editor.clone()),
                             )
-                            .when(self.visible_len() > 0, |this| this.child(list))
+                            .when(self.visible_len() > 0, |this| {
+                                this.child(v_flex().flex_grow().overflow_hidden().child(list))
+                            })
                             .when(self.visible_len() == 0, |this| {
                                 this.child(
                                     h_flex().p_2().child(
