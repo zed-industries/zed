@@ -90,6 +90,7 @@ dependencies = [
  "text",
  "util",
  "watch",
+ "workspace",
  "zlog",
 ]
 
@@ -7226,6 +7227,7 @@ dependencies = [
 name = "git_ui"
 version = "0.1.0"
 dependencies = [
+ "action_log",
  "agent_settings",
  "anyhow",
  "askpass",

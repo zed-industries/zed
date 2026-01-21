@@ -23653,6 +23653,27 @@ impl Editor {
                 ids,
                 removed_buffer_ids,
             } => {
+                // Clean up selections that reference removed excerpts
+                let removed_excerpt_ids: collections::HashSet<_> = ids.iter().copied().collect();
+                let selections_reference_removed_excerpts = self
+                    .selections
+                    .disjoint_anchors()
+                    .iter()
+                    .any(|selection| {
+                        removed_excerpt_ids.contains(&selection.start.excerpt_id)
+                            || removed_excerpt_ids.contains(&selection.end.excerpt_id)
+                    });
+                if selections_reference_removed_excerpts {
+                    self.change_selections(
+                        SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| {
+                            selections.select_ranges([Anchor::min()..Anchor::min()]);
+                        },
+                    );
+                }
+
                 if let Some(inlay_hints) = &mut self.inlay_hints {
                     inlay_hints.remove_inlay_chunk_data(removed_buffer_ids);
                 }

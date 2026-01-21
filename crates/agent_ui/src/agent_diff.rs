@@ -1,6 +1,6 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
 use acp_thread::{AcpThread, AcpThreadEvent};
-use action_log::ActionLogTelemetry;
+use action_log::{ActionLogTelemetry, register_active_action_log};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
@@ -1201,6 +1201,9 @@ impl AgentDiff {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let action_log = thread.read(cx).action_log().clone();
+        register_active_action_log(workspace.clone(), action_log, cx);
+
         Self::global(cx).update(cx, |this, cx| {
             this.register_active_thread_impl(workspace, thread, window, cx);
         });

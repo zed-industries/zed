@@ -4,6 +4,7 @@ use crate::{
     git_panel_settings::GitPanelSettings,
     remote_button::{render_publish_button, render_push_button},
 };
+use action_log::{ActiveActionLogRegistry, get_active_action_log};
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
@@ -58,6 +59,8 @@ actions!(
         /// branch (typically main or master).
         BranchDiff,
         LeaderAndFollower,
+        /// Toggles showing only agent-made changes in the diff view.
+        ToggleOnlyAgentChanges,
     ]
 );
 
@@ -71,6 +74,9 @@ pub struct ProjectDiff {
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
     review_comment_count: usize,
+    show_only_agent_changes: bool,
+    action_log_subscription: Option<Subscription>,
+    _registry_subscription: Subscription,
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
@@ -363,6 +369,26 @@ impl ProjectDiff {
             async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
         });
 
+        let action_log_subscription =
+            get_active_action_log(&workspace.downgrade(), cx).map(|action_log| {
+                cx.observe_in(&action_log, window, |this, _action_log, window, cx| {
+                    if this.show_only_agent_changes {
+                        this._task = window.spawn(cx, {
+                            let this = cx.weak_entity();
+                            async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
+                        });
+                    }
+                    cx.notify();
+                })
+            });
+
+        let registry = ActiveActionLogRegistry::global(cx);
+        let registry_subscription =
+            cx.observe_in(&registry, window, |this, _registry, window, cx| {
+                this.update_action_log_subscription(window, cx);
+                cx.notify();
+            });
+
         Self {
             project,
             workspace: workspace.downgrade(),
@@ -373,6 +399,9 @@ impl ProjectDiff {
             buffer_diff_subscriptions: Default::default(),
             pending_scroll: None,
             review_comment_count: 0,
+            show_only_agent_changes: false,
+            action_log_subscription,
+            _registry_subscription: registry_subscription,
             _task: task,
             _subscription: Subscription::join(
                 branch_diff_subscription,
@@ -383,6 +412,65 @@ impl ProjectDiff {
 
     pub fn diff_base<'a>(&'a self, cx: &'a App) -> &'a DiffBase {
         self.branch_diff.read(cx).diff_base()
+    }
+
+    /// Returns whether the "Only Agent Changes" filter is active.
+    pub fn show_only_agent_changes(&self) -> bool {
+        self.show_only_agent_changes
+    }
+
+    /// Updates the action_log subscription when the active ActionLog changes.
+    fn update_action_log_subscription(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.action_log_subscription.is_some() {
+            return;
+        }
+
+        if let Some(action_log) = get_active_action_log(&self.workspace, cx) {
+            self.action_log_subscription = Some(cx.observe_in(
+                &action_log,
+                window,
+                |this, _action_log, window, cx| {
+                    if this.show_only_agent_changes {
+                        this._task = window.spawn(cx, {
+                            let this = cx.weak_entity();
+                            async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
+                        });
+                    }
+                    cx.notify();
+                },
+            ));
+        }
+    }
+
+    /// Toggles the "Only Agent Changes" filter on or off.
+    pub fn toggle_only_agent_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_only_agent_changes = !self.show_only_agent_changes;
+        self._task = window.spawn(cx, {
+            let this = cx.weak_entity();
+            async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
+        });
+        cx.notify();
+    }
+
+    /// Returns true if there is an active agent with changes for this workspace.
+    pub fn has_agent_changes(&self, cx: &App) -> bool {
+        get_active_action_log(&self.workspace, cx)
+            .map(|action_log| !action_log.read(cx).changed_buffers(cx).is_empty())
+            .unwrap_or(false)
+    }
+
+    /// Returns the set of paths that have been changed by the agent.
+    fn agent_changed_paths(&self, cx: &App) -> HashSet<Arc<RelPath>> {
+        get_active_action_log(&self.workspace, cx)
+            .map(|action_log| {
+                action_log
+                    .read(cx)
+                    .changed_buffers(cx)
+                    .keys()
+                    .filter_map(|buffer| buffer.read(cx).file().map(|file| file.path().clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub fn move_to_entry(
@@ -539,6 +627,8 @@ impl ProjectDiff {
             stage_all,
             unstage_all,
             is_split,
+            has_agent_changes: self.has_agent_changes(cx),
+            show_only_agent_changes: self.show_only_agent_changes,
         }
     }
 
@@ -585,6 +675,7 @@ impl ProjectDiff {
         file_status: FileStatus,
         buffer: Entity<Buffer>,
         diff: Entity<BufferDiff>,
+        agent_hunk_filter: Option<&[std::ops::Range<u32>]>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -616,6 +707,31 @@ impl ProjectDiff {
                     &snapshot,
                 )
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot));
+
+            // When agent filter is active, only include hunks that overlap with agent changes.
+            // Both ranges are sorted, so we use a merge-style linear scan for O(n+m) complexity.
+            let agent_ranges = agent_hunk_filter.unwrap_or(&[]);
+            let mut agent_iter = agent_ranges.iter().peekable();
+
+            dbg!(agent_ranges);
+            let filtered_diff_hunk_ranges = diff_hunk_ranges.filter(move |hunk_range| {
+                dbg!(&hunk_range);
+                if agent_ranges.is_empty() {
+                    return true;
+                }
+                // Advance past agent ranges that end before this hunk starts
+                while agent_iter
+                    .peek()
+                    .is_some_and(|agent_range| agent_range.end <= hunk_range.start.row)
+                {
+                    agent_iter.next();
+                }
+                // Check if current agent range overlaps with this hunk
+                agent_iter
+                    .peek()
+                    .is_some_and(|agent_range| agent_range.start < hunk_range.end.row)
+            });
+
             let conflicts = conflict_addon
                 .conflict_set(snapshot.remote_id())
                 .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts)
@@ -628,7 +744,7 @@ impl ProjectDiff {
             if conflicts.peek().is_some() {
                 conflicts.collect::<Vec<_>>()
             } else {
-                diff_hunk_ranges.collect()
+                filtered_diff_hunk_ranges.collect()
             }
         };
 
@@ -711,11 +827,26 @@ impl ProjectDiff {
                 .cloned()
                 .collect::<HashSet<_>>();
 
+            // When "Only Agent Changes" filter is active, get the set of paths changed by the agent
+            let agent_changed_paths = if this.show_only_agent_changes {
+                this.agent_changed_paths(cx)
+            } else {
+                HashSet::default()
+            };
+
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
 
                 path_keys = Vec::with_capacity(buffers_to_load.len());
                 for entry in buffers_to_load.iter() {
+                    // When filter is active, skip entries that aren't in agent-changed paths
+                    if this.show_only_agent_changes {
+                        let entry_path: &Arc<RelPath> = entry.repo_path.as_ref();
+                        if !agent_changed_paths.contains(entry_path) {
+                            continue;
+                        }
+                    }
+
                     let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
                     let path_key =
                         PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
@@ -745,7 +876,32 @@ impl ProjectDiff {
             buffers_to_load
         })?;
 
-        for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
+        // Get filter state and agent paths for use in the loop
+        let (show_only_agent_changes, agent_changed_paths) = this.update(cx, |this, cx| {
+            let paths = if this.show_only_agent_changes {
+                this.agent_changed_paths(cx)
+            } else {
+                HashSet::default()
+            };
+            (this.show_only_agent_changes, paths)
+        })?;
+
+        // Track which entries we've processed (filtering may have reduced path_keys)
+        let mut path_key_iter = path_keys.into_iter();
+
+        for entry in buffers_to_load.into_iter() {
+            // When filter is active, skip entries that aren't in agent-changed paths
+            if show_only_agent_changes {
+                let entry_path: &Arc<RelPath> = entry.repo_path.as_ref();
+                if !agent_changed_paths.contains(entry_path) {
+                    continue;
+                }
+            }
+
+            let Some(path_key) = path_key_iter.next() else {
+                break;
+            };
+
             if let Some((buffer, diff)) = entry.load.await.log_err() {
                 // We might be lagging behind enough that all future entry.load futures are no longer pending.
                 // If that is the case, this task will never yield, starving the foreground thread of execution time.
@@ -764,11 +920,21 @@ impl ProjectDiff {
                                 RefreshReason::StatusesChanged => false,
                             };
                         if !skip {
+                            // Compute agent hunk filter if the filter is active
+                            let agent_hunk_filter = if this.show_only_agent_changes {
+                                get_active_action_log(&this.workspace, cx).and_then(|action_log| {
+                                    action_log.read(cx).agent_changed_row_ranges(&buffer, cx)
+                                })
+                            } else {
+                                None
+                            };
+
                             this.register_buffer(
                                 path_key,
                                 entry.file_status,
                                 buffer,
                                 diff,
+                                agent_hunk_filter.as_deref(),
                                 window,
                                 cx,
                             )
@@ -1013,6 +1179,9 @@ impl Render for ProjectDiff {
         div()
             .track_focus(&self.focus_handle)
             .key_context(if is_empty { "EmptyPane" } else { "GitDiff" })
+            .on_action(cx.listener(|this, _: &ToggleOnlyAgentChanges, window, cx| {
+                this.toggle_only_agent_changes(window, cx);
+            }))
             .bg(cx.theme().colors().editor_background)
             .flex()
             .items_center()
@@ -1209,6 +1378,7 @@ mod persistence {
 pub struct ProjectDiffToolbar {
     project_diff: Option<WeakEntity<ProjectDiff>>,
     workspace: WeakEntity<Workspace>,
+    _subscription: Option<Subscription>,
 }
 
 impl ProjectDiffToolbar {
@@ -1216,6 +1386,7 @@ impl ProjectDiffToolbar {
         Self {
             project_diff: None,
             workspace: workspace.weak_handle(),
+            _subscription: None,
         }
     }
 
@@ -1268,10 +1439,17 @@ impl ToolbarItemView for ProjectDiffToolbar {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        self.project_diff = active_pane_item
+        let project_diff = active_pane_item
             .and_then(|item| item.act_as::<ProjectDiff>(cx))
-            .filter(|item| item.read(cx).diff_base(cx) == &DiffBase::Head)
-            .map(|entity| entity.downgrade());
+            .filter(|item| item.read(cx).diff_base(cx) == &DiffBase::Head);
+
+        self._subscription = project_diff.as_ref().map(|diff| {
+            cx.observe(diff, |_, _, cx| {
+                cx.notify();
+            })
+        });
+        self.project_diff = project_diff.map(|entity| entity.downgrade());
+
         if self.project_diff.is_some() {
             ToolbarItemLocation::PrimaryRight
         } else {
@@ -1296,6 +1474,8 @@ struct ButtonStates {
     stage_all: bool,
     unstage_all: bool,
     is_split: bool,
+    has_agent_changes: bool,
+    show_only_agent_changes: bool,
 }
 
 impl Render for ProjectDiffToolbar {
@@ -1313,6 +1493,28 @@ impl Render for ProjectDiffToolbar {
             .items_center()
             .flex_wrap()
             .justify_between()
+            // "Only Agent Changes" toggle button (only shown when agent has changes) - left justified
+            .when(button_states.has_agent_changes, |el| {
+                el.child(
+                    Button::new("only-agent-changes", "Only Agent Changes")
+                        .icon(IconName::ListFilter)
+                        .icon_position(IconPosition::Start)
+                        .toggle_state(button_states.show_only_agent_changes)
+                        .tooltip(Tooltip::for_action_title_in(
+                            "Toggle showing only agent-made changes",
+                            &ToggleOnlyAgentChanges,
+                            &focus_handle,
+                        ))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            if let Some(project_diff) = this.project_diff(cx) {
+                                project_diff.update(cx, |diff, cx| {
+                                    diff.toggle_only_agent_changes(window, cx);
+                                });
+                            }
+                        })),
+                )
+                .child(vertical_divider())
+            })
             .child(
                 h_group_sm()
                     .when(button_states.selection, |el| {

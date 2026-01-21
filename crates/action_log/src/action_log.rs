@@ -1,16 +1,18 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use clock;
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use futures::{FutureExt, StreamExt, channel::mpsc};
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
+    App, AppContext, AsyncApp, Context, Entity, Global, SharedString, Subscription, Task,
+    WeakEntity,
 };
 use language::{Anchor, Buffer, BufferEvent, Point, ToPoint};
 use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
 use std::{cmp, ops::Range, sync::Arc};
 use text::{Edit, Patch, Rope};
 use util::{RangeExt, ResultExt as _};
+use workspace::Workspace;
 
 /// Tracks actions performed by tools in a thread
 pub struct ActionLog {
@@ -774,6 +776,35 @@ impl ActionLog {
             .collect()
     }
 
+    /// Returns the row ranges that were changed by the agent for a specific buffer.
+    /// These ranges represent hunks in the agent's diff (changes since the agent started tracking).
+    pub fn agent_changed_row_ranges(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &App,
+    ) -> Option<Vec<Range<u32>>> {
+        let tracked = self.tracked_buffers.get(buffer)?;
+        if !tracked.has_edits(cx) {
+            return None;
+        }
+        let diff_snapshot = tracked.diff.read(cx).snapshot(cx);
+        let buffer_snapshot = buffer.read(cx).snapshot();
+
+        Some(
+            diff_snapshot
+                .hunks_intersecting_range(
+                    Anchor::min_max_range_for_buffer(buffer_snapshot.remote_id()),
+                    &buffer_snapshot,
+                )
+                .map(|hunk| {
+                    let start = hunk.buffer_range.start.to_point(&buffer_snapshot).row;
+                    let end = hunk.buffer_range.end.to_point(&buffer_snapshot).row;
+                    start..end
+                })
+                .collect(),
+        )
+    }
+
     /// Returns all tracked buffers for debugging purposes
     #[cfg(any(test, feature = "test-support"))]
     pub fn tracked_buffers_for_debug(
@@ -797,6 +828,71 @@ impl ActionLog {
             })
             .map(|(buffer, _)| buffer)
     }
+}
+
+/// Global registry that maps workspaces to their active ActionLog.
+/// This allows components like the Git diff view to find the ActionLog
+/// for the current workspace without depending on higher-level crates.
+#[derive(Default)]
+pub struct ActiveActionLogRegistry {
+    action_logs: HashMap<WeakEntity<Workspace>, WeakEntity<ActionLog>>,
+}
+
+struct GlobalActiveActionLogRegistry(Entity<ActiveActionLogRegistry>);
+
+impl Global for GlobalActiveActionLogRegistry {}
+
+impl ActiveActionLogRegistry {
+    /// Gets or creates the global ActiveActionLogRegistry entity.
+    pub fn global(cx: &mut App) -> Entity<Self> {
+        if let Some(global) = cx.try_global::<GlobalActiveActionLogRegistry>() {
+            global.0.clone()
+        } else {
+            let entity = cx.new(|_| Self::default());
+            cx.set_global(GlobalActiveActionLogRegistry(entity.clone()));
+            entity
+        }
+    }
+
+    /// Registers an ActionLog as the active one for a workspace.
+    /// This is called by the agent system when a thread becomes active.
+    pub fn register(
+        &mut self,
+        workspace: WeakEntity<Workspace>,
+        action_log: Entity<ActionLog>,
+        cx: &mut Context<Self>,
+    ) {
+        self.action_logs.insert(workspace, action_log.downgrade());
+        cx.notify();
+    }
+
+    /// Gets the active ActionLog for a workspace, if one exists.
+    pub fn get(&self, workspace: &WeakEntity<Workspace>) -> Option<Entity<ActionLog>> {
+        self.action_logs
+            .get(workspace)
+            .and_then(|weak| weak.upgrade())
+    }
+}
+
+/// Registers an ActionLog as the active one for a workspace.
+/// This is called by the agent system when a thread becomes active.
+pub fn register_active_action_log(
+    workspace: WeakEntity<Workspace>,
+    action_log: Entity<ActionLog>,
+    cx: &mut App,
+) {
+    ActiveActionLogRegistry::global(cx).update(cx, |registry, cx| {
+        registry.register(workspace, action_log, cx);
+    });
+}
+
+/// Gets the active ActionLog for a workspace, if one exists.
+pub fn get_active_action_log(
+    workspace: &WeakEntity<Workspace>,
+    cx: &App,
+) -> Option<Entity<ActionLog>> {
+    cx.try_global::<GlobalActiveActionLogRegistry>()
+        .and_then(|global| global.0.read(cx).get(workspace))
 }
 
 #[derive(Clone)]
