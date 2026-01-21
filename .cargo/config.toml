@@ -18,3 +18,11 @@ rustflags = [
 
 [env]
 MACOSX_DEPLOYMENT_TARGET = "10.15.7"
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=--ld-path=wild"]
+
+[target.aarch64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=--ld-path=wild"]
