@@ -1756,15 +1756,13 @@ mod tests {
         for line in &graph.lines {
             let edge = (line.child, line.parent);
 
-            if found_edges.contains(&edge) {
+            if !found_edges.insert(edge) {
                 bail!(
                     "Duplicate line found for edge {:?} -> {:?}",
                     line.child,
                     line.parent
                 );
             }
-
-            found_edges.insert(edge);
 
             if !expected_edges.contains(&edge) {
                 bail!(
@@ -1780,6 +1778,12 @@ mod tests {
                 bail!("Missing line for edge {:?} -> {:?}", child, parent);
             }
         }
+
+        assert_eq!(
+            expected_edges.symmetric_difference(&found_edges).count(),
+            0,
+            "The symmetric difference should be zero"
+        );
 
         Ok(())
     }
