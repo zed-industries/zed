@@ -1127,11 +1127,10 @@ impl BlockMap {
                 let companion_wrap = companion_snapshot
                     .make_wrap_point(Point::new(current_range.end.0, 0), Bias::Left)
                     .row();
-                dbg!(our_wrap, companion_wrap, current_boundary, excerpt_end);
 
                 let expected_delta = companion_wrap.0 as i32 - our_wrap.0 as i32;
 
-                if dbg!(expected_delta) > dbg!(delta) {
+                if expected_delta > delta {
                     let spacer_height = (expected_delta - delta) as u32;
                     let spacer_id = SpacerId(self.next_block_id.fetch_add(1, SeqCst));
 
