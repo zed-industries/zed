@@ -5600,13 +5600,21 @@ impl AcpThreadView {
     ) -> impl IntoElement {
         let editor_bg_color = cx.theme().colors().editor_background;
 
+        // Sort edited files alphabetically for consistency with Git diff view
+        let mut sorted_buffers: Vec<_> = changed_buffers.iter().collect();
+        sorted_buffers.sort_by(|(buffer_a, _), (buffer_b, _)| {
+            let path_a = buffer_a.read(cx).file().map(|f| f.path().clone());
+            let path_b = buffer_b.read(cx).file().map(|f| f.path().clone());
+            path_a.cmp(&path_b)
+        });
+
         v_flex()
             .id("edited_files_list")
             .max_h_40()
             .overflow_y_scroll()
             .children(
-                changed_buffers
-                    .iter()
+                sorted_buffers
+                    .into_iter()
                     .enumerate()
                     .flat_map(|(index, (buffer, diff))| {
                         let file = buffer.read(cx).file()?;
