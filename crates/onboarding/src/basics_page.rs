@@ -215,7 +215,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                     get_theme_family_themes(&theme).unwrap_or((theme.as_ref(), theme.as_ref()));
 
                 settings.theme.theme = Some(settings::ThemeSelection::Dynamic {
-                    mode: theme_mode,
+                    mode: ThemeAppearanceMode::System,
                     light: ThemeName(light_theme.into()),
                     dark: ThemeName(dark_theme.into()),
                 });
