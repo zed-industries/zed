@@ -7,8 +7,8 @@ use git::{
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions, FetchOptions,
-        GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
-        PushOptions, Remote, RepoPath, ResetMode, Worktree,
+        GRAPH_CHUNK_SIZE, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder,
+        LogSource, PushOptions, Remote, RepoPath, ResetMode, Worktree,
     },
     status::{
         DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
@@ -745,9 +745,20 @@ impl GitRepository for FakeGitRepository {
         &self,
         _log_source: LogSource,
         _log_order: LogOrder,
-        _request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
+        request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
     ) -> BoxFuture<'_, Result<()>> {
-        async { Ok(()) }.boxed()
+        let fs = self.fs.clone();
+        let dot_git_path = self.dot_git_path.clone();
+        async move {
+            let graph_commits =
+                fs.with_git_state(&dot_git_path, false, |state| state.graph_commits.clone())?;
+
+            for chunk in graph_commits.chunks(GRAPH_CHUNK_SIZE) {
+                request_tx.send(chunk.to_vec()).await.ok();
+            }
+            Ok(())
+        }
+        .boxed()
     }
 
     fn commit_data_reader(&self) -> Result<CommitDataReader> {

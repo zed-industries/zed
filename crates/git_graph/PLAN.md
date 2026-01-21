@@ -282,10 +282,10 @@ fn init_test(cx: &mut TestAppContext) {
   - [x] Add `graph_commits: Vec<Arc<InitialGraphCommitData>>` field
   - [x] Initialize in `FakeGitRepositoryState::new()`
 
-- [ ] **Step 3: Implement initial_graph_data on FakeGitRepository**
-  - [ ] Read graph_commits from state
-  - [ ] Send commits through channel in GRAPH_CHUNK_SIZE chunks
-  - [ ] Handle empty graph_commits case
+- [x] **Step 3: Implement initial_graph_data on FakeGitRepository**
+  - [x] Read graph_commits from state
+  - [x] Send commits through channel in GRAPH_CHUNK_SIZE chunks
+  - [x] Handle empty graph_commits case
 
 - [ ] **Step 4: Add set_graph_commits helper to FakeFs**
   - [ ] Find repo state by path
