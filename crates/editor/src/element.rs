@@ -78,7 +78,7 @@ use std::{
     fmt::{self, Write},
     iter, mem,
     ops::{Deref, Range},
-    path::{self, Path},
+    path::{self, Display, Path},
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
@@ -4738,6 +4738,7 @@ impl EditorElement {
     fn layout_sticky_headers(
         &self,
         snapshot: &EditorSnapshot,
+        _row_infos: &Vec<RowInfo>,
         editor_width: Pixels,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         line_height: Pixels,
@@ -4758,15 +4759,48 @@ impl EditorElement {
 
         let rows = Self::sticky_headers(self.editor.read(cx), snapshot, style, cx);
 
+        // let Some(rem_size) = self.rem_size(cx) else {
+        //     return None;
+        // };
+        // let line_height = &self.style.text.line_height_in_pixels(rem_size);
+        // let clipped_top = (visible_bounds.origin.y - bounds.origin.y).max(px(0.));
+        // let clipped_top_in_lines = f64::from(clipped_top / line_height);
+        // let scroll_position = snapshot.scroll_position();
+        // let max_row = snapshot.max_point().row();
+        // let start_row = cmp::min(DisplayRow(scroll_position.y.floor() as u32), max_row);
+        // let end_row = cmp::min(scroll_position.y.ceil() as u32, max_row.next_row().0);
+        // let end_row = DisplayRow(end_row);
+
+        // let row_infos = snapshot // note we only get the visual range
+        //     .row_infos(start_row)
+        //     .take((start_row..end_row).len())
+        //     .collect::<Vec<RowInfo>>();
+        // let row_infos = snapshot.row_infos(DisplayRow(0)).collect::<Vec<RowInfo>>();
+        let row_infos = snapshot.row_infos(DisplayRow(0)).collect::<Vec<RowInfo>>();
+        dbg!(row_infos.len());
+        // let row_infos = row_infos
+        //     .iter()
+        //     .filter(|row_info| row_info.buffer_id.is_some())
+        //     .collect::<Vec<&RowInfo>>();
+        // dbg!(&row_infos);
+
         let mut lines = Vec::<StickyHeaderLine>::new();
 
-        for StickyHeader {
-            item,
-            sticky_row,
-            start_point,
-            offset,
-        } in rows.into_iter().rev()
+        for (
+            StickyHeader {
+                item,
+                sticky_row,
+                start_point,
+                offset,
+            },
+            point,
+        ) in rows.into_iter().rev()
         {
+            // let Some(&row_info) = row_infos.get(start_point.row as usize) else {
+            //     continue;
+            // };
+            dbg!(item.text, start_point, point);
+
             let line = layout_line(
                 sticky_row,
                 snapshot,
@@ -4778,6 +4812,8 @@ impl EditorElement {
             );
 
             let line_number = show_line_numbers.then(|| {
+                let buffer_row_number = point.row;
+
                 let start_display_row = start_point.to_display_point(snapshot).row();
                 let relative_number = relative_to
                     .filter(|_| relative_line_numbers != RelativeLineNumbers::Disabled)
@@ -4791,7 +4827,26 @@ impl EditorElement {
                 let number = relative_number
                     .filter(|&delta| delta != 0)
                     .map(|delta| delta.unsigned_abs() as u32)
-                    .unwrap_or(start_point.row + 1);
+                    .unwrap_or(buffer_row_number + 1);
+
+                // Doesn't work in a singleton buffer, which appears to account for the sticky headers already.
+                // let number = row_infos
+                //     .get(start_point.row as usize)
+                //     .map(|row| row.buffer_row.map(|r| r + 1))
+                //     .unwrap_or(Some(number))
+                //     .unwrap();
+                // let foo = row_infos
+                //     .iter()
+                //     .find(|row_info| {
+                //         if let Some(mb_row) = row_info.multibuffer_row {
+                //             mb_row.0 == number
+                //         } else {
+                //             false
+                //         }
+                //     })
+                //     .map(|row| row.buffer_row.map(|r| r + 1))
+                //     .unwrap_or(Some(number))
+                //     .unwrap();
                 let color = cx.theme().colors().editor_line_number;
                 self.shape_line_number(SharedString::from(number.to_string()), color, window)
             });
@@ -4830,19 +4885,24 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
         cx: &App,
-    ) -> Vec<StickyHeader> {
+    ) -> Vec<(StickyHeader, Point)> {
         let scroll_top = snapshot.scroll_position().y;
 
         let mut end_rows = Vec::<DisplayRow>::new();
-        let mut rows = Vec::<StickyHeader>::new();
+        let mut rows = Vec::<(StickyHeader, Point)>::new();
 
         let items = editor
             .sticky_headers(&snapshot.display_snapshot, style, cx)
             .unwrap_or_default();
 
-        for item in items {
+        // dbg!("Items: ", items.len());
+
+        for (item, point) in items {
             let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
             let end_point = item.range.end.to_point(snapshot.buffer_snapshot());
+
+            // Start of the excerpt (visually) in a multibuffer context
+            // dbg!(&start_point, &item.text);
 
             let sticky_row = snapshot
                 .display_snapshot
@@ -4855,8 +4915,8 @@ impl EditorElement {
             let max_sticky_row = end_row.previous_row();
             if max_sticky_row <= sticky_row {
                 // TODO constraint needs to look at different row definitions in non-singleton cases
-                dbg!("Skipping sticky header, max_sticky_row <= sticky_row");
-                // continue;
+                // dbg!("Skipping sticky header, max_sticky_row <= sticky_row");
+                continue;
             }
 
             while end_rows
@@ -4871,22 +4931,25 @@ impl EditorElement {
             if sticky_row.as_f64() >= adjusted_scroll_top || end_row.as_f64() <= adjusted_scroll_top
             {
                 // TODO constraint needs to look at different row definitions in non-singleton cases
-                dbg!(
-                    "Skipping sticky header, sticky_row >= adjusted_scroll_top || end_row <= adjusted_scroll_top"
-                );
-                // continue;
+                // dbg!(
+                //     "Skipping sticky header, sticky_row >= adjusted_scroll_top || end_row <= adjusted_scroll_top"
+                // );
+                continue;
             }
 
             let max_scroll_offset = max_sticky_row.as_f64() - scroll_top;
             let offset = (depth as f64).min(max_scroll_offset);
 
             end_rows.push(end_row);
-            rows.push(StickyHeader {
-                item,
-                sticky_row,
-                start_point,
-                offset,
-            });
+            rows.push((
+                StickyHeader {
+                    item,
+                    sticky_row,
+                    start_point,
+                    offset,
+                },
+                point,
+            ));
         }
 
         rows
@@ -10120,6 +10183,7 @@ impl Element for EditorElement {
                         let relative = self.editor.read(cx).relative_line_numbers(cx);
                         self.layout_sticky_headers(
                             &snapshot,
+                            &row_infos,
                             editor_width,
                             is_row_soft_wrapped,
                             line_height,
