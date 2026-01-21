@@ -307,26 +307,6 @@ impl<T: NumberFieldType> NumberField<T> {
         }
     }
 
-    pub fn format(mut self, format: impl FnOnce(&T) -> String + 'static) -> Self {
-        self.format = Box::new(format);
-        self
-    }
-
-    pub fn small_step(mut self, step: T) -> Self {
-        self.small_step = step;
-        self
-    }
-
-    pub fn normal_step(mut self, step: T) -> Self {
-        self.step = step;
-        self
-    }
-
-    pub fn large_step(mut self, step: T) -> Self {
-        self.large_step = step;
-        self
-    }
-
     pub fn min(mut self, min: T) -> Self {
         self.min_value = min;
         self
@@ -339,14 +319,6 @@ impl<T: NumberFieldType> NumberField<T> {
 
     pub fn mode(self, mode: NumberFieldMode, cx: &mut App) -> Self {
         self.mode.write(cx, mode);
-        self
-    }
-
-    pub fn on_reset(
-        mut self,
-        on_reset: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.on_reset = Some(Box::new(on_reset));
         self
     }
 

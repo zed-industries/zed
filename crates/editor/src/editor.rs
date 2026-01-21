@@ -106,7 +106,7 @@ use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
-    Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
+    Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
     MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement, Pixels, PressureStage,
     Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled, Subscription, Task,
     TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
@@ -201,6 +201,7 @@ use ui::{
     Avatar, ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape,
     IconName, IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
 };
+use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, NavigationEntry, OpenInTerminal,
@@ -369,6 +370,11 @@ pub fn init(cx: &mut App) {
             )
             .detach();
         }
+    });
+    _ = ui_input::ERASED_EDITOR_FACTORY.set(|window, cx| {
+        Arc::new(ErasedEditorImpl(
+            cx.new(|cx| Editor::single_line(window, cx)),
+        )) as Arc<dyn ErasedEditor>
     });
 }
 
@@ -27545,6 +27551,62 @@ impl<T: InvalidationRegion> InvalidationStack<T> {
     }
 }
 
+#[derive(Clone)]
+struct ErasedEditorImpl(Entity<Editor>);
+
+impl ui_input::ErasedEditor for ErasedEditorImpl {
+    fn text(&self, cx: &App) -> String {
+        self.0.read(cx).text(cx)
+    }
+
+    fn set_text(&self, text: &str, window: &mut Window, cx: &mut App) {
+        self.0.update(cx, |this, cx| {
+            this.set_text(text, window, cx);
+        })
+    }
+
+    fn clear(&self, window: &mut Window, cx: &mut App) {
+        self.0.update(cx, |this, cx| this.clear(window, cx));
+    }
+
+    fn set_placeholder_text(&self, text: &str, window: &mut Window, cx: &mut App) {
+        self.0.update(cx, |this, cx| {
+            this.set_placeholder_text(text, window, cx);
+        });
+    }
+
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.0.read(cx).focus_handle(cx)
+    }
+
+    fn render(&self, _: &mut Window, cx: &App) -> AnyElement {
+        let settings = ThemeSettings::get_global(cx);
+        let theme_color = cx.theme().colors();
+
+        let text_style = TextStyle {
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features.clone(),
+            font_size: rems(0.875).into(),
+            font_weight: settings.buffer_font.weight,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.2),
+            color: theme_color.text,
+            ..Default::default()
+        };
+        let editor_style = EditorStyle {
+            background: theme_color.ghost_element_background,
+            local_player: cx.theme().players().local(),
+            syntax: cx.theme().syntax().clone(),
+            text: text_style,
+            ..Default::default()
+        };
+        EditorElement::new(&self.0, editor_style).into_any()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        &self.0
+    }
+}
 impl<T> Default for InvalidationStack<T> {
     fn default() -> Self {
         Self(Default::default())

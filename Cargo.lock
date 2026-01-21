@@ -5514,6 +5514,7 @@ dependencies = [
  "tree-sitter-typescript",
  "tree-sitter-yaml",
  "ui",
+ "ui_input",
  "unicode-script",
  "unicode-segmentation",
  "unindent",
@@ -15042,6 +15043,7 @@ dependencies = [
  "assets",
  "bm25",
  "client",
+ "component",
  "copilot_ui",
  "edit_prediction",
  "editor",
@@ -15075,7 +15077,6 @@ dependencies = [
  "theme",
  "title_bar",
  "ui",
- "ui_input",
  "util",
  "workspace",
  "zed_actions",
@@ -17984,11 +17985,8 @@ name = "ui_input"
 version = "0.1.0"
 dependencies = [
  "component",
- "editor",
  "gpui",
  "menu",
- "settings",
- "theme",
  "ui",
 ]
 

@@ -2301,10 +2301,15 @@ impl KeybindingEditorModal {
                 .context()
                 .and_then(KeybindContextString::local)
             {
-                input.set_text(context.clone(), window, cx);
+                input.set_text(&context, window, cx);
             }
 
-            let editor_entity = input.editor().clone();
+            let editor_entity = input.editor();
+            let editor_entity = editor_entity
+                .as_any()
+                .downcast_ref::<Entity<Editor>>()
+                .unwrap()
+                .clone();
             let workspace = workspace.clone();
             cx.spawn(async move |_input_handle, cx| {
                 let contexts = cx
@@ -2348,7 +2353,12 @@ impl KeybindingEditorModal {
                     .label("Action")
                     .label_size(LabelSize::Default);
 
-                input.editor().update(cx, |editor, _cx| {
+                let editor_entity = input.editor();
+                let editor_entity = editor_entity
+                    .as_any()
+                    .downcast_ref::<Entity<Editor>>()
+                    .unwrap();
+                editor_entity.update(cx, |editor, _cx| {
                     editor.set_completion_provider(Some(std::rc::Rc::new(
                         ActionCompletionProvider::new(actions, humanized_names),
                     )));
@@ -2715,10 +2725,18 @@ impl KeybindingEditorModal {
         self.action_editor.as_ref().is_some_and(|action_editor| {
             let focus_handle = action_editor.read(cx).focus_handle(cx);
             let editor_entity = action_editor.read(cx).editor();
+            let editor_entity = editor_entity
+                .as_any()
+                .downcast_ref::<Entity<Editor>>()
+                .unwrap();
             is_editor_showing_completions(&focus_handle, editor_entity)
         }) || {
             let focus_handle = self.context_editor.read(cx).focus_handle(cx);
             let editor_entity = self.context_editor.read(cx).editor();
+            let editor_entity = editor_entity
+                .as_any()
+                .downcast_ref::<Entity<Editor>>()
+                .unwrap();
             is_editor_showing_completions(&focus_handle, editor_entity)
         } || self
             .action_arguments_editor

@@ -38,14 +38,14 @@ use ui::{
     KeybindingHint, PopoverMenu, Scrollbars, Switch, Tooltip, TreeViewItem, WithScrollbar,
     prelude::*,
 };
-use ui_input::{NumberField, NumberFieldMode, NumberFieldType};
+
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::{AppState, OpenOptions, OpenVisible, Workspace, client_side_decorations};
 use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
 use crate::components::{
-    EnumVariantDropdown, SettingsInputField, SettingsSectionHeader, font_picker, icon_theme_picker,
-    theme_picker,
+    EnumVariantDropdown, NumberField, NumberFieldMode, NumberFieldType, SettingsInputField,
+    SettingsSectionHeader, font_picker, icon_theme_picker, theme_picker,
 };
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;

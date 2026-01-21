@@ -18,7 +18,7 @@ use workspace::{ModalView, Workspace};
 
 fn single_line_input(
     label: impl Into<SharedString>,
-    placeholder: impl Into<SharedString>,
+    placeholder: &str,
     text: Option<&str>,
     tab_index: isize,
     window: &mut Window,
