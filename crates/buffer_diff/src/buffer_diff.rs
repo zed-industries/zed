@@ -1589,7 +1589,7 @@ impl BufferDiff {
         let old_snapshot = self.snapshot(cx);
         let state = &mut self.inner;
         let new_state = update.inner;
-        let base_text_changed = update.base_text_edits.is_some();
+        let base_text_changed = update.base_text_changed;
 
         let (mut changed_range, mut base_text_changed_range) =
             match (state.base_text_exists, new_state.base_text_exists) {
