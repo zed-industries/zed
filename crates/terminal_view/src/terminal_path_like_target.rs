@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use terminal::PathLikeTarget;
 use util::{
     ResultExt, debug_panic,
-    paths::{normalize_lexically, PathStyle, PathWithPosition},
+    paths::{PathStyle, PathWithPosition, normalize_lexically},
     rel_path::RelPath,
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
@@ -222,15 +222,18 @@ fn possible_open_target(
                 }
             };
 
-            let relative_path_to_check =
-                RelPath::new(&path_to_check.path, PathStyle::local()).ok();
-            let relative_path_to_check_ref =
-                relative_path_to_check.as_ref().map(std::borrow::Cow::as_ref);
+            let relative_path_to_check = RelPath::new(&path_to_check.path, PathStyle::local()).ok();
+            let relative_path_to_check_ref = relative_path_to_check
+                .as_ref()
+                .map(std::borrow::Cow::as_ref);
             let normalized_relative_path = relative_cwd.as_ref().and_then(|relative_cwd| {
                 if !path_to_check.path.is_relative() {
                     return None;
                 }
-                let joined = relative_cwd.as_ref().as_std_path().join(&path_to_check.path);
+                let joined = relative_cwd
+                    .as_ref()
+                    .as_std_path()
+                    .join(&path_to_check.path);
                 let normalized = normalize_lexically(&joined).ok()?;
                 RelPath::new(&normalized, PathStyle::local())
                     .ok()
@@ -261,11 +264,13 @@ fn possible_open_target(
                                 worktree.read(cx).entry_for_path(relative_path_to_check)
                             })
                             .or_else(|| {
-                                normalized_relative_path.as_ref().and_then(|normalized_relative_path| {
-                                    worktree
-                                        .read(cx)
-                                        .entry_for_path(normalized_relative_path.as_ref())
-                                })
+                                normalized_relative_path.as_ref().and_then(
+                                    |normalized_relative_path| {
+                                        worktree
+                                            .read(cx)
+                                            .entry_for_path(normalized_relative_path.as_ref())
+                                    },
+                                )
                             })
                     })
             {
