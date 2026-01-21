@@ -52,6 +52,7 @@ use std::{
 };
 use util::path;
 
+mod edit_file_thread_test;
 mod test_tools;
 use test_tools::*;
 

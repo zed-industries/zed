@@ -732,6 +732,10 @@ impl EditAgent {
             stop: Vec::new(),
             temperature: None,
             thinking_allowed: true,
+            // Bypass the rate limiter for nested requests (edit agent requests spawned
+            // from within a tool call) to avoid deadlocks when multiple subagents try
+            // to use edit_file simultaneously.
+            bypass_rate_limit: true,
         };
 
         Ok(self.model.stream_completion_text(request, cx).await?.stream)
