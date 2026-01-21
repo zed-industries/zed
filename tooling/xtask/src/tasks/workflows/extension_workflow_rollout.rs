@@ -2,6 +2,7 @@ use gh_workflow::{
     Event, Expression, Job, Level, Run, Step, Strategy, Use, Workflow, WorkflowDispatch,
 };
 use indoc::formatdoc;
+use indoc::indoc;
 use serde_json::json;
 
 use crate::tasks::workflows::{
@@ -141,7 +142,6 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
             if [ -n "$REMOVED_FILES" ]; then
                 for file in $REMOVED_FILES; do
                     if [ -f "$file" ]; then
-                        echo "  Removing: $file"
                         rm -f "$file"
                     fi
                 done
@@ -149,7 +149,6 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
 
             cd - > /dev/null
 
-            # Copy current workflow files
             if [ "${{{{ matrix.repo }}}}" = "workflows" ]; then
                 cp zed/extensions/workflows/*.yml extension/.github/workflows/
             else
@@ -256,8 +255,8 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
 }
 
 fn create_rollout_tag(rollout_job: &NamedJob) -> NamedJob {
-    fn checkout_zed_repo() -> Step<Use> {
-        steps::checkout_repo()
+    fn checkout_zed_repo(token: &StepOutput) -> Step<Use> {
+        steps::checkout_repo_with_token(token)
             .name("checkout_zed_repo")
             .add_with(("fetch-depth", "0"))
     }
@@ -275,11 +274,29 @@ fn create_rollout_tag(rollout_job: &NamedJob) -> NamedJob {
         "#})
     }
 
+    fn configure_git() -> Step<Run> {
+        named::bash(indoc! {r#"
+            git config user.name "zed-zippy[bot]"
+            git config user.email "234243425+zed-zippy[bot]@users.noreply.github.com"
+        "#})
+    }
+
+    let (authenticate, token) = generate_token(
+        vars::ZED_ZIPPY_APP_ID,
+        vars::ZED_ZIPPY_APP_PRIVATE_KEY,
+        Some(
+            RepositoryTarget::current()
+                .permissions([("permission-contents".to_owned(), Level::Write)]),
+        ),
+    );
+
     let job = Job::default()
         .needs([rollout_job.name.clone()])
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(1u32)
-        .add_step(checkout_zed_repo())
+        .add_step(authenticate)
+        .add_step(checkout_zed_repo(&token))
+        .add_step(configure_git())
         .add_step(update_rollout_tag());
 
     named::job(job)
