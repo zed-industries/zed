@@ -410,7 +410,7 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
         let http_client = reqwest_client::ReqwestClient::user_agent("agent tests").unwrap();
         cx.set_http_client(Arc::new(http_client));
         let client = client::Client::production(cx);
-        language_model::init(client.clone(), cx);
+        language_model::init(client, cx);
 
         #[cfg(test)]
         project::agent_server_store::AllAgentServersSettings::override_global(

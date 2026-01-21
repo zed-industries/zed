@@ -2,9 +2,8 @@ mod platforms;
 mod system_window_tabs;
 
 use gpui::{
-    div, px, AnyElement, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, StatefulInteractiveElement, Styled, Window,
-    WindowControlArea,
+    AnyElement, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement, MouseButton,
+    ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, WindowControlArea, div, px,
 };
 use smallvec::SmallVec;
 use std::mem;

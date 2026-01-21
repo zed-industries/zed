@@ -16,7 +16,7 @@ const GOOGLE_AI_API_KEY_VAR_NAME: &str = "GOOGLE_AI_API_KEY";
 fn api_key_for_gemini_cli(cx: &mut App) -> Task<Result<String>> {
     let env_var = EnvVar::new(GEMINI_API_KEY_VAR_NAME.into())
         .or(EnvVar::new(GOOGLE_AI_API_KEY_VAR_NAME.into()));
-    if let Some(key) = env_var.value.clone() {
+    if let Some(key) = env_var.value {
         return Task::ready(Ok(key));
     }
     let credentials_provider = <dyn CredentialsProvider>::global(cx);
