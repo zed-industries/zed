@@ -227,7 +227,9 @@ impl ToolCall {
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Self> {
-        let title = if let Some((first_line, _)) = tool_call.title.split_once("\n") {
+        let title = if tool_call.kind == acp::ToolKind::Execute {
+            tool_call.title
+        } else if let Some((first_line, _)) = tool_call.title.split_once("\n") {
             first_line.to_owned() + "…"
         } else {
             tool_call.title
@@ -298,8 +300,10 @@ impl ToolCall {
 
         if let Some(title) = title {
             self.label.update(cx, |label, cx| {
-                if let Some((first_line, _)) = title.split_once("\n") {
-                    label.replace(first_line.to_owned() + "…", cx)
+                if self.kind == acp::ToolKind::Execute {
+                    label.replace(title, cx);
+                } else if let Some((first_line, _)) = title.split_once("\n") {
+                    label.replace(first_line.to_owned() + "…", cx);
                 } else {
                     label.replace(title, cx);
                 }
@@ -391,7 +395,7 @@ impl ToolCall {
                 .unwrap_or(false)
     }
 
-    fn to_markdown(&self, cx: &App) -> String {
+    pub fn to_markdown(&self, cx: &App) -> String {
         let mut markdown = format!(
             "**Tool Call: {}**\nStatus: {}\n\n",
             self.label.read(cx).source(),
@@ -473,7 +477,7 @@ pub enum ToolCallStatus {
     Pending,
     /// The tool call is waiting for confirmation from the user.
     WaitingForConfirmation {
-        options: Vec<acp::PermissionOption>,
+        options: PermissionOptions,
         respond_tx: oneshot::Sender<acp::PermissionOptionId>,
     },
     /// The tool call is currently running.
@@ -900,6 +904,7 @@ impl PlanEntry {
 pub struct TokenUsage {
     pub max_tokens: u64,
     pub used_tokens: u64,
+    pub input_tokens: u64,
     pub output_tokens: u64,
 }
 
@@ -1518,7 +1523,12 @@ impl AcpThread {
                     .push(ToolCallContent::Terminal(update.terminal));
             }
             ToolCallUpdate::UpdateSubagentThread(update) => {
-                call.content.clear();
+                debug_assert!(
+                    !call.content.iter().any(|c| {
+                        matches!(c, ToolCallContent::SubagentThread(existing) if existing == &update.thread)
+                    }),
+                    "Duplicate SubagentThread update for the same AcpThread entity"
+                );
                 call.content
                     .push(ToolCallContent::SubagentThread(update.thread));
             }
@@ -1707,7 +1717,7 @@ impl AcpThread {
     pub fn request_tool_call_authorization(
         &mut self,
         tool_call: acp::ToolCallUpdate,
-        options: Vec<acp::PermissionOption>,
+        options: PermissionOptions,
         respect_always_allow_setting: bool,
         cx: &mut Context<Self>,
     ) -> Result<BoxFuture<'static, acp::RequestPermissionOutcome>> {
@@ -1716,13 +1726,7 @@ impl AcpThread {
         if respect_always_allow_setting && AgentSettings::get_global(cx).always_allow_tool_actions {
             // Don't use AllowAlways, because then if you were to turn off always_allow_tool_actions,
             // some tools would (incorrectly) continue to auto-accept.
-            if let Some(allow_once_option) = options.iter().find_map(|option| {
-                if matches!(option.kind, acp::PermissionOptionKind::AllowOnce) {
-                    Some(option.option_id.clone())
-                } else {
-                    None
-                }
-            }) {
+            if let Some(allow_once_option) = options.allow_once_option_id() {
                 self.upsert_tool_call_inner(tool_call, ToolCallStatus::Pending, cx)?;
                 return Ok(async {
                     acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(

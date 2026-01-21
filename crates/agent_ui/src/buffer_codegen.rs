@@ -538,13 +538,13 @@ impl CodegenAlternative {
                 thread_id: None,
                 prompt_id: None,
                 intent: Some(CompletionIntent::InlineAssist),
-                mode: None,
                 tools,
                 tool_choice,
                 stop: Vec::new(),
                 temperature,
                 messages,
                 thinking_allowed: false,
+                bypass_rate_limit: false,
             }
         }))
     }
@@ -617,13 +617,13 @@ impl CodegenAlternative {
                 thread_id: None,
                 prompt_id: None,
                 intent: Some(CompletionIntent::InlineAssist),
-                mode: None,
                 tools: Vec::new(),
                 tool_choice: None,
                 stop: Vec::new(),
                 temperature,
                 messages: vec![request_message],
                 thinking_allowed: false,
+                bypass_rate_limit: false,
             }
         }))
     }

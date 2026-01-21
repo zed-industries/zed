@@ -28,20 +28,17 @@ pub struct AuthenticatedUser {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlanInfo {
-    pub plan: cloud_llm_client::PlanV1,
-    #[serde(default)]
-    pub plan_v2: Option<cloud_llm_client::PlanV2>,
+    pub plan_v2: cloud_llm_client::PlanV2,
     pub subscription_period: Option<SubscriptionPeriod>,
     pub usage: cloud_llm_client::CurrentUsage,
     pub trial_started_at: Option<Timestamp>,
-    pub is_usage_based_billing_enabled: bool,
     pub is_account_too_young: bool,
     pub has_overdue_invoices: bool,
 }
 
 impl PlanInfo {
     pub fn plan(&self) -> Plan {
-        self.plan_v2.map(Plan::V2).unwrap_or(Plan::V1(self.plan))
+        Plan::V2(self.plan_v2)
     }
 }
 

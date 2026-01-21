@@ -25,14 +25,14 @@ use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::{Editor, MultiBuffer};
 use extension_host::ExtensionStore;
-use feature_flags::{FeatureFlagAppExt, PanicFeatureFlag};
+use feature_flags::{FeatureFlagAppExt as _, PanicFeatureFlag};
 use fs::Fs;
 use futures::FutureExt as _;
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::commit_view::CommitViewToolbar;
 use git_ui::git_panel::GitPanel;
-use git_ui::project_diff::ProjectDiffToolbar;
+use git_ui::project_diff::{BranchDiffToolbar, ProjectDiffToolbar};
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
     Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
@@ -80,7 +80,7 @@ use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeRegistry, ThemeSett
 use ui::{PopoverMenuHandle, prelude::*};
 use util::markdown::MarkdownString;
 use util::rel_path::RelPath;
-use util::{ResultExt, asset_str};
+use util::{ResultExt, asset_str, maybe};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{
@@ -922,7 +922,7 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .ui_font_size
-                            .insert(theme::clamp_font_size(ui_font_size).into());
+                            .insert(f32::from(theme::clamp_font_size(ui_font_size)).into());
                     });
                 } else {
                     theme::adjust_ui_font_size(cx, |size| size + px(1.0));
@@ -938,7 +938,7 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .ui_font_size
-                            .insert(theme::clamp_font_size(ui_font_size).into());
+                            .insert(f32::from(theme::clamp_font_size(ui_font_size)).into());
                     });
                 } else {
                     theme::adjust_ui_font_size(cx, |size| size - px(1.0));
@@ -967,7 +967,7 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .buffer_font_size
-                            .insert(theme::clamp_font_size(buffer_font_size).into());
+                            .insert(f32::from(theme::clamp_font_size(buffer_font_size)).into());
                     });
                 } else {
                     theme::adjust_buffer_font_size(cx, |size| size + px(1.0));
@@ -984,7 +984,7 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .buffer_font_size
-                            .insert(theme::clamp_font_size(buffer_font_size).into());
+                            .insert(f32::from(theme::clamp_font_size(buffer_font_size)).into());
                     });
                 } else {
                     theme::adjust_buffer_font_size(cx, |size| size - px(1.0));
@@ -1233,6 +1233,8 @@ fn initialize_pane(
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
+            let branch_diff_toolbar = cx.new(BranchDiffToolbar::new);
+            toolbar.add_item(branch_diff_toolbar, window, cx);
             let commit_view_toolbar = cx.new(|_| CommitViewToolbar::new());
             toolbar.add_item(commit_view_toolbar, window, cx);
             let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
@@ -1358,98 +1360,112 @@ fn quit(_: &Quit, cx: &mut App) {
 
 fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
     const MAX_LINES: usize = 1000;
-    workspace
-        .with_local_workspace(window, cx, move |workspace, window, cx| {
-            let app_state = workspace.app_state();
-            let languages = app_state.languages.clone();
-            let fs = app_state.fs.clone();
-            cx.spawn_in(window, async move |workspace, cx| {
-                let (old_log, new_log, log_language) = futures::join!(
-                    fs.load(paths::old_log_file()),
-                    fs.load(paths::log_file()),
-                    languages.language_for_name("log")
-                );
-                let log = match (old_log, new_log) {
-                    (Err(_), Err(_)) => None,
-                    (old_log, new_log) => {
-                        let mut lines = VecDeque::with_capacity(MAX_LINES);
-                        for line in old_log
-                            .iter()
-                            .flat_map(|log| log.lines())
-                            .chain(new_log.iter().flat_map(|log| log.lines()))
-                        {
-                            if lines.len() == MAX_LINES {
-                                lines.pop_front();
-                            }
-                            lines.push_back(line);
+    let app_state = workspace.app_state();
+    let languages = app_state.languages.clone();
+    let fs = app_state.fs.clone();
+    cx.spawn_in(window, async move |workspace, cx| {
+        let log = {
+            let result = futures::join!(
+                fs.load(&paths::old_log_file()),
+                fs.load(&paths::log_file()),
+                languages.language_for_name("log")
+            );
+            match result {
+                (Err(_), Err(e), _) => Err(e),
+                (old_log, new_log, lang) => {
+                    let mut lines = VecDeque::with_capacity(MAX_LINES);
+                    for line in old_log
+                        .iter()
+                        .flat_map(|log| log.lines())
+                        .chain(new_log.iter().flat_map(|log| log.lines()))
+                    {
+                        if lines.len() == MAX_LINES {
+                            lines.pop_front();
                         }
-                        Some(
-                            lines
-                                .into_iter()
-                                .flat_map(|line| [line, "\n"])
-                                .collect::<String>(),
-                        )
+                        lines.push_back(line);
                     }
-                };
-                let log_language = log_language.ok();
+                    Ok((
+                        lines
+                            .into_iter()
+                            .flat_map(|line| [line, "\n"])
+                            .collect::<String>(),
+                        lang.ok(),
+                    ))
+                }
+            }
+        };
+
+        let (log, log_language) = match log {
+            Ok((log, log_language)) => (log, log_language),
+            Err(e) => {
+                struct OpenLogError;
 
                 workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        let Some(log) = log else {
-                            struct OpenLogError;
-
-                            workspace.show_notification(
-                                NotificationId::unique::<OpenLogError>(),
-                                cx,
-                                |cx| {
-                                    cx.new(|cx| {
-                                        MessageNotification::new(
-                                            format!(
-                                                "Unable to access/open log file at path {:?}",
-                                                paths::log_file().as_path()
-                                            ),
-                                            cx,
-                                        )
-                                    })
-                                },
-                            );
-                            return;
-                        };
-                        let project = workspace.project().clone();
-                        let buffer = project.update(cx, |project, cx| {
-                            project.create_local_buffer(&log, log_language, false, cx)
-                        });
-
-                        let buffer = cx
-                            .new(|cx| MultiBuffer::singleton(buffer, cx).with_title("Log".into()));
-                        let editor = cx.new(|cx| {
-                            let mut editor =
-                                Editor::for_multibuffer(buffer, Some(project), window, cx);
-                            editor.set_read_only(true);
-                            editor.set_breadcrumb_header(format!(
-                                "Last {} lines in {}",
-                                MAX_LINES,
-                                paths::log_file().display()
-                            ));
-                            editor
-                        });
-
-                        editor.update(cx, |editor, cx| {
-                            let last_multi_buffer_offset = editor.buffer().read(cx).len(cx);
-                            editor.change_selections(Default::default(), window, cx, |s| {
-                                s.select_ranges(Some(
-                                    last_multi_buffer_offset..last_multi_buffer_offset,
-                                ));
-                            })
-                        });
-
-                        workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                    .update(cx, |workspace, cx| {
+                        workspace.show_notification(
+                            NotificationId::unique::<OpenLogError>(),
+                            cx,
+                            |cx| {
+                                cx.new(|cx| {
+                                    MessageNotification::new(
+                                        format!(
+                                            "Unable to access/open log file at path \
+                                                    {}: {e:#}",
+                                            paths::log_file().display()
+                                        ),
+                                        cx,
+                                    )
+                                })
+                            },
+                        );
                     })
-                    .log_err();
-            })
-            .detach();
+                    .ok();
+                return;
+            }
+        };
+        maybe!(async move {
+            let project = workspace
+                .read_with(cx, |workspace, _| workspace.project().clone())
+                .ok()?;
+            let buffer = project
+                .update(cx, |project, cx| {
+                    project.create_buffer(log_language, false, cx)
+                })
+                .await
+                .ok()?;
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_capability(Capability::ReadOnly, cx);
+                buffer.set_text(log, cx);
+            });
+
+            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title("Log".into()));
+
+            let editor = cx
+                .new_window_entity(|window, cx| {
+                    let mut editor = Editor::for_multibuffer(buffer, Some(project), window, cx);
+                    editor.set_read_only(true);
+                    editor.set_breadcrumb_header(format!(
+                        "Last {} lines in {}",
+                        MAX_LINES,
+                        paths::log_file().display()
+                    ));
+                    let last_multi_buffer_offset = editor.buffer().read(cx).len(cx);
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        s.select_ranges(Some(last_multi_buffer_offset..last_multi_buffer_offset));
+                    });
+                    editor
+                })
+                .ok()?;
+
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                })
+                .ok()
         })
-        .detach();
+        .await;
+    })
+    .detach();
 }
 
 fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, cx: &mut App) {
@@ -1526,7 +1542,9 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
 
 pub fn handle_settings_file_changes(
     mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
+    user_settings_watcher: gpui::Task<()>,
     mut global_settings_file_rx: mpsc::UnboundedReceiver<String>,
+    global_settings_watcher: gpui::Task<()>,
     cx: &mut App,
 ) {
     MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
@@ -1548,6 +1566,8 @@ pub fn handle_settings_file_changes(
 
     // Watch for changes in both files
     cx.spawn(async move |cx| {
+        let _user_settings_watcher = user_settings_watcher;
+        let _global_settings_watcher = global_settings_watcher;
         let mut settings_streams = futures::stream::select(
             global_settings_file_rx.map(Either::Left),
             user_settings_file_rx.map(Either::Right),
@@ -1585,6 +1605,7 @@ pub fn handle_settings_file_changes(
 
 pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
+    user_keymap_watcher: gpui::Task<()>,
     cx: &mut App,
 ) {
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
@@ -1643,6 +1664,7 @@ pub fn handle_keymap_file_changes(
     let notification_id = NotificationId::unique::<KeymapParseErrorNotification>();
 
     cx.spawn(async move |cx| {
+        let _user_keymap_watcher = user_keymap_watcher;
         let mut user_keymap_content = String::new();
         let mut migrating_in_memory = false;
         loop {
@@ -1997,33 +2019,39 @@ fn open_bundled_file(
     cx.spawn_in(window, async move |workspace, cx| {
         let language = language.await.log_err();
         workspace
-            .update_in(cx, |workspace, window, cx| {
-                workspace.with_local_workspace(window, cx, |workspace, window, cx| {
-                    let project = workspace.project();
-                    let buffer = project.update(cx, move |project, cx| {
-                        let buffer =
-                            project.create_local_buffer(text.as_ref(), language, false, cx);
-                        buffer.update(cx, |buffer, cx| {
-                            buffer.set_capability(Capability::ReadOnly, cx);
-                        });
-                        buffer
+            .update_in(cx, move |workspace, window, cx| {
+                let project = workspace.project().clone();
+                let buffer = project.update(cx, move |project, cx| {
+                    project.create_buffer(language, false, cx)
+                });
+                cx.spawn_in(window, async move |workspace, cx| {
+                    let buffer = buffer.await?;
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.set_text(text.into_owned(), cx);
+                        buffer.set_capability(Capability::ReadOnly, cx);
                     });
                     let buffer =
                         cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.into()));
-                    workspace.add_item_to_active_pane(
-                        Box::new(cx.new(|cx| {
-                            let mut editor =
-                                Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
-                            editor.set_read_only(true);
-                            editor.set_should_serialize(false, cx);
-                            editor.set_breadcrumb_header(title.into());
-                            editor
-                        })),
-                        None,
-                        true,
-                        window,
-                        cx,
-                    );
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        workspace.add_item_to_active_pane(
+                            Box::new(cx.new(|cx| {
+                                let mut editor = Editor::for_multibuffer(
+                                    buffer,
+                                    Some(project.clone()),
+                                    window,
+                                    cx,
+                                );
+                                editor.set_read_only(true);
+                                editor.set_should_serialize(false, cx);
+                                editor.set_breadcrumb_header(title.into());
+                                editor
+                            })),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        )
+                    })
                 })
             })?
             .await
@@ -2040,8 +2068,15 @@ fn open_settings_file(
     cx.spawn_in(window, async move |workspace, cx| {
         let (worktree_creation_task, settings_open_task) = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.with_local_workspace(window, cx, move |workspace, window, cx| {
-                    let worktree_creation_task = workspace.project().update(cx, |project, cx| {
+                workspace.with_local_or_wsl_workspace(window, cx, move |workspace, window, cx| {
+                    let project = workspace.project().clone();
+
+                    let worktree_creation_task = cx.spawn_in(window, async move |_, cx| {
+                        let config_dir = project
+                            .update(cx, |project, cx| {
+                                project.try_windows_path_to_wsl(paths::config_dir().as_path(), cx)
+                            })
+                            .await?;
                         // Set up a dedicated worktree for settings, since
                         // otherwise we're dropping and re-starting LSP servers
                         // for each file inside on every settings file
@@ -2051,7 +2086,11 @@ fn open_settings_file(
                         // drag and drop from OS) still have their worktrees
                         // released on file close, causing LSP servers'
                         // restarts.
-                        project.find_or_create_worktree(paths::config_dir().as_path(), false, cx)
+                        project
+                            .update(cx, |project, cx| {
+                                project.find_or_create_worktree(&config_dir, false, cx)
+                            })
+                            .await
                     });
                     let settings_open_task =
                         create_and_open_local_file(abs_path, window, cx, default_content);
@@ -4476,23 +4515,29 @@ mod tests {
             .unwrap();
         executor.run_until_parked();
         cx.update(|cx| {
-            let settings_rx = watch_config_file(
+            let (settings_rx, settings_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/settings.json"),
             );
-            let keymap_rx = watch_config_file(
+            let (keymap_rx, keymap_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/keymap.json"),
             );
-            let global_settings_rx = watch_config_file(
+            let (global_settings_rx, global_settings_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/global_settings.json"),
             );
-            handle_settings_file_changes(settings_rx, global_settings_rx, cx);
-            handle_keymap_file_changes(keymap_rx, cx);
+            handle_settings_file_changes(
+                settings_rx,
+                settings_watcher,
+                global_settings_rx,
+                global_settings_watcher,
+                cx,
+            );
+            handle_keymap_file_changes(keymap_rx, keymap_watcher, cx);
         });
         workspace
             .update(cx, |workspace, _, cx| {
@@ -4593,24 +4638,30 @@ mod tests {
             .unwrap();
 
         cx.update(|cx| {
-            let settings_rx = watch_config_file(
+            let (settings_rx, settings_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/settings.json"),
             );
-            let keymap_rx = watch_config_file(
+            let (keymap_rx, keymap_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/keymap.json"),
             );
 
-            let global_settings_rx = watch_config_file(
+            let (global_settings_rx, global_settings_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/global_settings.json"),
             );
-            handle_settings_file_changes(settings_rx, global_settings_rx, cx);
-            handle_keymap_file_changes(keymap_rx, cx);
+            handle_settings_file_changes(
+                settings_rx,
+                settings_watcher,
+                global_settings_rx,
+                global_settings_watcher,
+                cx,
+            );
+            handle_keymap_file_changes(keymap_rx, keymap_watcher, cx);
         });
 
         cx.background_executor.run_until_parked();
@@ -4935,6 +4986,7 @@ mod tests {
             web_search::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
+            project::AgentRegistryStore::init_global(cx);
             agent_ui::init(
                 app_state.fs.clone(),
                 app_state.client.clone(),

@@ -368,12 +368,16 @@ impl LanguageModel for OpenRouterLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let bypass_rate_limit = request.bypass_rate_limit;
         let openrouter_request = into_open_router(request, &self.model, self.max_output_tokens());
         let request = self.stream_completion(openrouter_request, cx);
-        let future = self.request_limiter.stream(async move {
-            let response = request.await?;
-            Ok(OpenRouterEventMapper::new().map_stream(response))
-        });
+        let future = self.request_limiter.stream_with_bypass(
+            async move {
+                let response = request.await?;
+                Ok(OpenRouterEventMapper::new().map_stream(response))
+            },
+            bypass_rate_limit,
+        );
         async move { Ok(future.await?.boxed()) }.boxed()
     }
 }

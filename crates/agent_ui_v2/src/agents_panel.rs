@@ -151,7 +151,9 @@ impl AgentsPanel {
             };
 
             cx.update(|cx| {
-                if let Some(session_list) = connection.session_list(cx) {
+                if connection.supports_load_session(cx)
+                    && let Some(session_list) = connection.session_list(cx)
+                {
                     history_handle.update(cx, |history, cx| {
                         history.set_session_list(Some(session_list), cx);
                     });
