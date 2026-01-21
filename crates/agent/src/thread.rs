@@ -1,9 +1,9 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SubagentTool, SystemPromptTemplate, Template, Templates,
-    TerminalTool, ThinkingTool, ToolPermissionDecision, WebSearchTool,
+    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSearchStore, ProjectSnapshot,
+    ReadFileTool, RestoreFileFromDiskTool, SaveFileTool, SubagentTool, SystemPromptTemplate,
+    Template, Templates, TerminalTool, ThinkingTool, ToolPermissionDecision, WebSearchTool,
     decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
@@ -761,6 +761,7 @@ pub struct Thread {
     subagent_context: Option<SubagentContext>,
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
+    project_searches: Entity<ProjectSearchStore>,
 }
 
 impl Thread {
@@ -813,6 +814,7 @@ impl Thread {
             summarization_model: None,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
+            project_searches: cx.new(|_| ProjectSearchStore::new(project.clone())),
             project,
             action_log,
             file_read_times: HashMap::default(),
@@ -874,6 +876,7 @@ impl Thread {
             summarization_model: None,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
+            project_searches: cx.new(|_| ProjectSearchStore::new(project.clone())),
             project,
             action_log,
             file_read_times: HashMap::default(),
@@ -1069,6 +1072,7 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
+            project_searches: cx.new(|_| ProjectSearchStore::new(project.clone())),
             project,
             action_log,
             updated_at: db_thread.updated_at,
@@ -1196,7 +1200,7 @@ impl Thread {
         ));
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
         self.add_tool(FindPathTool::new(self.project.clone()));
-        self.add_tool(GrepTool::new(self.project.clone()));
+        self.add_tool(GrepTool::new(self.project_searches.clone()));
         self.add_tool(ListDirectoryTool::new(self.project.clone()));
         self.add_tool(MovePathTool::new(self.project.clone()));
         self.add_tool(NowTool);

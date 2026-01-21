@@ -429,7 +429,7 @@ fn eval_disable_cursor_blinking() {
                         GrepToolInput {
                             regex: "blink".into(),
                             include_pattern: None,
-                            offset: 0,
+                            existing_search_token: None,
                             case_sensitive: false,
                         },
                     )],
@@ -536,7 +536,7 @@ fn eval_from_pixels_constructor() {
                         GrepToolInput {
                             regex: "mod\\s+tests".into(),
                             include_pattern: Some("font-kit/src/canvas.rs".into()),
-                            offset: 0,
+                            existing_search_token: None,
                             case_sensitive: false,
                         },
                     )],
@@ -550,7 +550,7 @@ fn eval_from_pixels_constructor() {
                         GrepToolInput {
                             regex: "mod\\s+tests".into(),
                             include_pattern: Some("font-kit/src/**/*.rs".into()),
-                            offset: 0,
+                            existing_search_token: None,
                             case_sensitive: false,
                         },
                     )],
@@ -564,7 +564,7 @@ fn eval_from_pixels_constructor() {
                         GrepToolInput {
                             regex: "#\\[test\\]".into(),
                             include_pattern: Some("font-kit/src/**/*.rs".into()),
-                            offset: 0,
+                            existing_search_token: None,
                             case_sensitive: false,
                         },
                     )],
