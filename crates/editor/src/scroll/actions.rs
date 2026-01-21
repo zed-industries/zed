@@ -100,9 +100,7 @@ impl Editor {
             .then(|| display_snapshot.buffer_header_height())
             .unwrap_or(0);
         let new_screen_top = new_screen_top.saturating_sub(scroll_margin_rows + header_offset);
-        let display_row = DisplayRow(new_screen_top);
-
-        self.set_scroll_top_row(display_row, window, cx);
+        self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
     }
 
     pub fn scroll_cursor_center(
@@ -121,9 +119,7 @@ impl Editor {
             .row()
             .0;
         let new_screen_top = new_screen_top.saturating_sub(visible_rows / 2);
-        let display_row = DisplayRow(new_screen_top);
-
-        self.set_scroll_top_row(display_row, window, cx);
+        self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
     }
 
     pub fn scroll_cursor_bottom(
@@ -144,8 +140,6 @@ impl Editor {
             .0;
         let new_screen_top =
             new_screen_top.saturating_sub(visible_rows.saturating_sub(scroll_margin_rows));
-        let display_row = DisplayRow(new_screen_top);
-
-        self.set_scroll_top_row(display_row, window, cx);
+        self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
     }
 }
