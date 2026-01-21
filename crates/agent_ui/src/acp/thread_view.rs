@@ -4357,7 +4357,7 @@ impl AcpThreadView {
                     }))
                     .child(
                         div().absolute().top_1().right_1().child(
-                            CopyButton::new(command_source.to_string())
+                            CopyButton::new("copy-command", command_source.to_string())
                                 .tooltip_label("Copy Command")
                                 .visible_on_hover(command_group),
                         ),
@@ -7794,7 +7794,7 @@ impl AcpThreadView {
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
         let message = message.into();
 
-        CopyButton::new(message).tooltip_label("Copy Error Message")
+        CopyButton::new("copy-error-message", message).tooltip_label("Copy Error Message")
     }
 
     fn dismiss_error_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
