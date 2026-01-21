@@ -4,6 +4,8 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+
+use smol::lock::OnceCell;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use std::{
     ffi::OsString,
@@ -150,6 +152,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
+    pub(crate) keyring: Arc<OnceCell<Result<Arc<oo7::Keyring>>>>,
 }
 
 impl LinuxCommon {
@@ -176,6 +179,7 @@ impl LinuxCommon {
             callbacks,
             signal,
             menus: Vec::new(),
+            keyring: Arc::new(OnceCell::new()),
         };
 
         (common, main_receiver)
@@ -551,8 +555,10 @@ impl<P: LinuxClient + 'static> Platform for P {
         let url = url.to_string();
         let username = username.to_string();
         let password = password.to_vec();
+        let keyring = self.with_common(|common| common.keyring.clone());
+
         self.background_executor().spawn(async move {
-            let keyring = oo7::Keyring::new().await?;
+            let keyring = get_keyring(&keyring).await?;
             let attrs = vec![("url", &url), ("username", &username)];
 
             match keyring
@@ -574,9 +580,12 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
+        let keyring = self.with_common(|common| common.keyring.clone());
+
         self.background_executor().spawn(async move {
-            let keyring = oo7::Keyring::new().await?;
+            let keyring = get_keyring(&keyring).await?;
             let items = keyring.search_items(&vec![("url", &url)]).await?;
+
             for item in items.into_iter() {
                 if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
                     if item.is_locked().await? {
@@ -601,8 +610,10 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         let url = url.to_string();
+        let keyring = self.with_common(|common| common.keyring.clone());
+
         self.background_executor().spawn(async move {
-            let keyring = oo7::Keyring::new().await?;
+            let keyring = get_keyring(&keyring).await?;
             let items = keyring.search_items(&vec![("url", &url)]).await?;
 
             for item in items.into_iter() {
@@ -643,6 +654,22 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn add_recent_document(&self, _path: &Path) {}
+}
+
+async fn get_keyring(
+    keyring: &Arc<OnceCell<Result<Arc<oo7::Keyring>>>>,
+) -> Result<Arc<oo7::Keyring>> {
+    keyring
+        .get_or_init(|| async {
+            oo7::Keyring::new()
+                .await
+                .map(Arc::new)
+                .context("failed to initialize keyring")
+        })
+        .await
+        .as_ref()
+        .cloned()
+        .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
