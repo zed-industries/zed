@@ -1,5 +1,5 @@
 use collections::{HashMap, HashSet};
-use editor::{Anchor as MultiBufferAnchor, Editor, EditorEvent};
+use editor::{Anchor as MultiBufferAnchor, Editor, EditorEvent, actions::{OpenExcerpts, OpenExcerptsSplit}};
 use file_icons::FileIcons;
 use futures::StreamExt;
 use gpui::{
@@ -128,6 +128,12 @@ fn create_line_match_data(
     let preview_len = preview_content_len(&preview_text);
     let line_label: SharedString = (line + 1).to_string().into();
 
+    let first_match_point_range = info.match_ranges.first().map(|range| {
+        let start = range.start.to_point(snapshot);
+        let end = range.end.to_point(snapshot);
+        start..end
+    });
+
     let mut match_positions = Vec::new();
     let preview_str: &str = preview_text.as_ref();
     for range in &info.match_ranges {
@@ -161,6 +167,7 @@ fn create_line_match_data(
         match_positions: Arc::new(match_positions),
         trim_start: info.trim_start,
         syntax_highlights: None,
+        first_match_point_range,
     }
 }
 
@@ -244,7 +251,9 @@ struct LineMatchData {
     match_positions: Arc<Vec<std::ops::Range<usize>>>,
     trim_start: usize,
     syntax_highlights: Option<Arc<Vec<(std::ops::Range<usize>, HighlightId)>>>,
+    first_match_point_range: Option<std::ops::Range<text::Point>>,
 }
+
 
 enum QuickSearchHighlights {}
 
@@ -505,6 +514,8 @@ impl Render for QuickSearchModal {
             .relative()
             .h(modal_height)
             .w(modal_width)
+            .on_action(cx.listener(Self::open_excerpts))
+            .on_action(cx.listener(Self::open_excerpts_split))
             .child(
                 v_flex()
                     .elevation_3(cx)
@@ -513,9 +524,9 @@ impl Render for QuickSearchModal {
                     .border_1()
                     .border_color(border_color)
                     .child(content),
-            )
-    }
-}
+                    )
+            }
+        }
 
 impl QuickSearchModal {
     fn register(
@@ -594,6 +605,88 @@ impl QuickSearchModal {
     ) {
         Self::toggle_search_option(workspace, SearchOptions::INCLUDE_IGNORED, window, cx);
     }
+
+    fn open_excerpts(
+        &mut self,
+        _: &OpenExcerpts,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_preview_file_impl(false, window, cx);
+    }
+
+    fn open_excerpts_split(
+        &mut self,
+        _: &OpenExcerptsSplit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_preview_file_impl(true, window, cx);
+    }
+
+    fn open_preview_file_impl(
+        &mut self,
+        split: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editor) = &self.preview_editor else {
+            return;
+        };
+
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let (buffer, cursor_point) = editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).as_singleton()?;
+            let display_snapshot = editor.display_snapshot(cx);
+            let cursor = editor.selections.newest::<text::Point>(&display_snapshot).head();
+            Some((buffer, cursor))
+        }).unzip();
+
+        let Some(buffer) = buffer else {
+            return;
+        };
+
+        let Some(cursor_point) = cursor_point else {
+            return;
+        };
+
+        let Some(file) = buffer.read(cx).file().cloned() else {
+            return;
+        };
+
+        let project_path = ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            let open_task = if split {
+                workspace.split_path_preview(project_path, false, None, window, cx)
+            } else {
+                workspace.open_path(project_path, None, true, window, cx)
+            };
+
+            cx.spawn_in(window, async move |_, cx| {
+                if let Some(item) = open_task.await.log_err() {
+                    if let Some(editor) = item.downcast::<Editor>() {
+                        editor
+                            .update_in(cx, |editor, window, cx| {
+                                editor.go_to_singleton_buffer_point(cursor_point, window, cx);
+                            })
+                            .log_err();
+                    }
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        });
+
+        cx.emit(DismissEvent);
+    }
+
 
     fn new(
         workspace: WeakEntity<Workspace>,
@@ -2018,6 +2111,7 @@ impl PickerDelegate for QuickSearchDelegate {
         };
 
         let project_path = data.project_path.clone();
+        let first_match_point_range = data.first_match_point_range.clone();
         let line = data.line;
 
         if let Some(workspace) = self.workspace.upgrade() {
@@ -2032,8 +2126,12 @@ impl PickerDelegate for QuickSearchDelegate {
                         if let Some(editor) = item.downcast::<Editor>() {
                             editor
                                 .update_in(cx, |editor, window, cx| {
-                                    let point = text::Point::new(line, 0);
-                                    editor.go_to_singleton_buffer_point(point, window, cx);
+                                    if let Some(range) = first_match_point_range {
+                                        editor.go_to_singleton_buffer_range(range, window, cx);
+                                    } else {
+                                        let point = text::Point::new(line, 0);
+                                        editor.go_to_singleton_buffer_point(point, window, cx);
+                                    }
                                 })
                                 .log_err();
                         }
@@ -2343,6 +2441,7 @@ mod tests {
             match_positions: Arc::new(Vec::new()),
             trim_start: 0,
             syntax_highlights: None,
+            first_match_point_range: None,
         })
     }
 
