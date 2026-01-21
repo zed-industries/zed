@@ -5349,6 +5349,7 @@ dependencies = [
  "terminal_view",
  "toml 0.8.23",
  "util",
+ "util_macros",
  "wasmtime",
  "watch",
  "workspace",
