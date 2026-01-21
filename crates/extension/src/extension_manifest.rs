@@ -53,6 +53,8 @@ impl SchemaVersion {
     }
 }
 
+// TODO: We should change this to just always be a Vec<PathBuf> once we bump the
+// extension.toml schema version to 2
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ExtensionSnippets {
