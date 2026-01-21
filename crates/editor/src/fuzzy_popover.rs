@@ -6,7 +6,7 @@ use crate::{
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, App, Context, Entity, Focusable, InteractiveElement, ListSizingBehavior,
-    MouseDownEvent, ParentElement, Pixels, ScrollStrategy, Size, Styled, Subscription,
+    MouseDownEvent, ParentElement, Pixels, ScrollStrategy, Size, Styled, Subscription, Task,
     UniformListScrollHandle, WeakEntity, Window, div, px, uniform_list,
 };
 use language::Buffer;
@@ -14,7 +14,7 @@ use multi_buffer::Anchor;
 use settings::Settings;
 use std::ops::Range;
 use std::rc::Rc;
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use task::TaskContext;
 use theme::ThemeSettings;
 use ui::{Popover, prelude::*, utils::WithRemSize};
@@ -31,6 +31,9 @@ pub struct FuzzyPopover<T: Clone> {
     pub selected_item: usize,
     pub scroll_handle: UniformListScrollHandle,
     last_query: String,
+    filter_task: Task<()>,
+    cancel_filter: Arc<AtomicBool>,
+    parent_editor: WeakEntity<Editor>,
     get_label: Rc<dyn Fn(&T) -> String>,
     render_item: Rc<dyn Fn(&T, Vec<usize>, bool, &Context<Editor>) -> AnyElement>,
     on_confirm: Rc<dyn Fn(&T, usize, &mut Editor, &mut Window, &mut Context<Editor>)>,
@@ -77,6 +80,9 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
             selected_item: 0,
             scroll_handle,
             last_query: String::new(),
+            filter_task: Task::ready(()),
+            cancel_filter: Arc::new(AtomicBool::new(false)),
+            parent_editor: _parent_editor,
             get_label: Rc::new(get_label),
             render_item: Rc::new(render_item),
             on_confirm: Rc::new(on_confirm),
@@ -84,7 +90,13 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
         }
     }
 
-    fn update_filtered_items(&mut self, cx: &App) {
+    fn set_filter_results(&mut self, filtered: Vec<T>, matches: Vec<StringMatch>) {
+        self.filtered_items = Some(filtered);
+        self.filter_matches = Some(matches);
+        self.selected_item = 0;
+    }
+
+    fn update_filtered_items(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
         let query = self.search_editor.read(cx).text(cx);
 
         if query == self.last_query {
@@ -95,40 +107,65 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
         if query.is_empty() {
             self.filtered_items = None;
             self.filter_matches = None;
-        } else {
-            let candidates: Vec<_> = self
-                .items
+            self.selected_item = 0;
+            return;
+        }
+
+        self.cancel_filter.store(true, Ordering::Relaxed);
+        self.cancel_filter = Arc::new(AtomicBool::new(false));
+
+        let get_label = self.get_label.clone();
+        let items = self.items.clone();
+        let cancellation_flag = self.cancel_filter.clone();
+        let background = cx.background_executor().clone();
+        let parent_editor = self.parent_editor.clone();
+
+        self.filter_task = cx.spawn_in(window, async move |_editor, cx| {
+            let candidates: Vec<_> = items
                 .iter()
                 .enumerate()
                 .map(|(i, item)| {
-                    let label = (self.get_label)(item);
+                    let label = get_label(item);
                     StringMatchCandidate::new(i, label.as_str())
                 })
                 .collect();
 
-            let cancellation_flag = Arc::new(AtomicBool::new(false));
-            let background = cx.background_executor().clone();
+            let case_sensitive = query.chars().any(|c| c.is_uppercase());
             let matches_task = fuzzy::match_strings(
                 &candidates,
                 &query,
-                query.chars().any(|c| c.is_uppercase()),
+                case_sensitive,
                 false,
                 100,
                 &cancellation_flag,
                 background,
             );
 
-            let matches = smol::block_on(matches_task);
-            let mut filtered = Vec::new();
-            for mat in &matches {
-                filtered.push(self.items[mat.candidate_id].clone());
-            }
+            let matches = matches_task.await;
 
-            self.filtered_items = Some(filtered);
-            self.filter_matches = Some(matches);
-        }
+            parent_editor
+                .update(cx, |editor, cx| {
+                    let mut context_menu = editor.context_menu.borrow_mut();
+                    let Some(menu) = context_menu.as_mut() else {
+                        return;
+                    };
 
-        self.selected_item = 0;
+                    let crate::code_context_menus::CodeContextMenu::CodeActions(popover) = menu else {
+                        return;
+                    };
+
+                    let mut filtered = Vec::new();
+                    for mat in &matches {
+                        filtered.push(popover.items[mat.candidate_id].clone());
+                    }
+
+                    popover.set_filter_results(filtered, matches);
+                    drop(context_menu);
+
+                    cx.notify();
+                })
+                .ok();
+        });
     }
 
     pub fn visible_len(&self) -> usize {
@@ -231,10 +268,10 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
     pub fn render(
         &mut self,
         max_height_in_lines: u32,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> AnyElement {
-        self.update_filtered_items(cx);
+        self.update_filtered_items(window, cx);
 
         let selected_item = self.selected_item;
         let items_to_render = if let Some(filtered) = &self.filtered_items {
@@ -370,10 +407,41 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
 
     pub fn render_aside(
         &mut self,
-        _max_size: Size<Pixels>,
-        _window: &mut Window,
+        max_size: Size<Pixels>,
+        window: &mut Window,
         _cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
-        None
+        let item = self.get_item(self.selected_item)?;
+        let label = (self.get_label)(&item);
+
+        let text_system = window.text_system();
+        let mut line_wrapper = text_system.line_wrapper(
+            window.text_style().font(),
+            window.text_style().font_size.to_pixels(window.rem_size()),
+        );
+        let is_truncated = line_wrapper.should_truncate_line(
+            &label,
+            px(540.0), // CODE_ACTION_MENU_MAX_WIDTH
+            "…",
+            gpui::TruncateFrom::End,
+        );
+
+        if is_truncated.is_none() {
+            return None;
+        }
+
+        Some(
+            Popover::new()
+                .child(
+                    div()
+                        .child(label)
+                        .id("fuzzy_popover_extended")
+                        .px(px(8.0)) // MENU_ASIDE_X_PADDING / 2
+                        .max_w(max_size.width)
+                        .max_h(max_size.height)
+                        .occlude(),
+                )
+                .into_any_element(),
+        )
     }
 }
