@@ -12787,6 +12787,7 @@ dependencies = [
  "telemetry",
  "tempfile",
  "theme",
+ "title_bar",
  "ui",
  "util",
  "workspace",
