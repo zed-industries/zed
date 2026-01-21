@@ -74,6 +74,11 @@ impl Project {
         }
         let settings = TerminalSettings::get(settings_location, cx).clone();
         let detect_venv = settings.detect_venv.as_option().is_some();
+        let conda_manager = settings
+            .detect_venv
+            .as_option()
+            .map(|venv| venv.conda_manager)
+            .unwrap_or(settings::CondaManager::Auto);
 
         let (completion_tx, completion_rx) = bounded(1);
 
@@ -130,7 +135,9 @@ impl Project {
                         .ok();
                     let lister = language?.toolchain_lister()?;
                     return Some(
-                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx)),
+                        lister
+                            .activation_script(&toolchain, shell_kind, conda_manager)
+                            .await,
                     );
                 }
                 None
@@ -325,6 +332,11 @@ impl Project {
         }
         let settings = TerminalSettings::get(settings_location, cx).clone();
         let detect_venv = settings.detect_venv.as_option().is_some();
+        let conda_manager = settings
+            .detect_venv
+            .as_option()
+            .map(|venv| venv.conda_manager)
+            .unwrap_or(settings::CondaManager::Auto);
         let local_path = if is_via_remote { None } else { path.clone() };
 
         let project_path_contexts = self
@@ -379,7 +391,9 @@ impl Project {
                         .ok();
                     let lister = language?.toolchain_lister()?;
                     return Some(
-                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx)),
+                        lister
+                            .activation_script(&toolchain, shell_kind, conda_manager)
+                            .await,
                     );
                 }
                 None

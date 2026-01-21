@@ -23,12 +23,12 @@ use project::lsp_store::language_server_settings;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use settings::Settings;
+
 use smol::lock::OnceCell;
 use std::cmp::{Ordering, Reverse};
 use std::env::consts;
 use std::process::Stdio;
-use terminal::terminal_settings::TerminalSettings;
+
 use util::command::new_smol_command;
 use util::fs::{make_file_executable, remove_matching};
 use util::paths::PathStyle;
@@ -1324,7 +1324,12 @@ impl ToolchainLister for PythonToolchainProvider {
             .context("Could not convert a venv into a toolchain")
     }
 
-    fn activation_script(&self, toolchain: &Toolchain, shell: ShellKind, cx: &App) -> Vec<String> {
+    async fn activation_script(
+        &self,
+        toolchain: &Toolchain,
+        shell: ShellKind,
+        conda_manager: settings::CondaManager,
+    ) -> Vec<String> {
         let Ok(toolchain) =
             serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone())
         else {
@@ -1337,21 +1342,21 @@ impl ToolchainLister for PythonToolchainProvider {
 
         match toolchain.environment.kind {
             Some(PythonEnvironmentKind::Conda) => {
-                let settings = TerminalSettings::get_global(cx);
-                let conda_manager = settings
-                    .detect_venv
-                    .as_option()
-                    .map(|venv| venv.conda_manager)
-                    .unwrap_or(settings::CondaManager::Auto);
+                // Only generate activation script if conda manager executable exists
+                let Some(manager_info) = &toolchain.environment.manager else {
+                    return vec![];
+                };
+                if smol::fs::metadata(&manager_info.executable).await.is_err() {
+                    return vec![];
+                }
+
                 let manager = match conda_manager {
                     settings::CondaManager::Conda => "conda",
                     settings::CondaManager::Mamba => "mamba",
                     settings::CondaManager::Micromamba => "micromamba",
-                    settings::CondaManager::Auto => toolchain
-                        .environment
-                        .manager
-                        .as_ref()
-                        .and_then(|m| m.executable.file_name())
+                    settings::CondaManager::Auto => manager_info
+                        .executable
+                        .file_name()
                         .and_then(|name| name.to_str())
                         .filter(|name| matches!(*name, "conda" | "mamba" | "micromamba"))
                         .unwrap_or("conda"),
