@@ -2,7 +2,7 @@ use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
 use agent_client_protocol as acp;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
-use gpui::{AppContext, Entity, TestAppContext};
+use gpui::{Entity, TestAppContext};
 use indoc::indoc;
 #[cfg(test)]
 use project::agent_server_store::BuiltinAgentServerSettings;
