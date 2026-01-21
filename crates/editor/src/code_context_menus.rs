@@ -1547,7 +1547,6 @@ pub fn create_code_actions_popover(
         CodeActionSource::QuickActionBar => ContextMenuOrigin::QuickActionBar,
     });
 
-    let is_quick_action_bar = matches!(origin, Some(ContextMenuOrigin::QuickActionBar));
     let parent_editor = cx.weak_entity();
 
     FuzzyPopover::new(
@@ -1570,15 +1569,7 @@ pub fn create_code_actions_popover(
                         .min_w(CODE_ACTION_MENU_MIN_WIDTH)
                         .max_w(CODE_ACTION_MENU_MAX_WIDTH)
                         .overflow_hidden()
-                        .child(
-                            HighlightedLabel::new(label, match_positions)
-                                .size(if is_quick_action_bar {
-                                    LabelSize::Default
-                                } else {
-                                    LabelSize::Small
-                                })
-                                .truncate(),
-                        ),
+                        .child(HighlightedLabel::new(label, match_positions).truncate()),
                 )
                 .into_any_element()
         },
