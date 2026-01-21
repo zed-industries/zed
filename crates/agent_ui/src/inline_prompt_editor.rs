@@ -7,7 +7,6 @@ use editor::display_map::{CreaseId, EditorMargins};
 use editor::{AnchorRangeExt as _, MultiBufferOffset, ToOffset as _};
 use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
-    actions::{MoveDown, MoveUp},
 };
 use fs::Fs;
 use gpui::{
@@ -30,7 +29,10 @@ use ui::{IconButtonShape, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use uuid::Uuid;
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
-use zed_actions::agent::ToggleModelSelector;
+use zed_actions::{
+    agent::ToggleModelSelector,
+    editor::{MoveDown, MoveUp},
+};
 
 use crate::agent_model_selector::AgentModelSelector;
 use crate::buffer_codegen::{BufferCodegen, CodegenAlternative};

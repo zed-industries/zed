@@ -7241,6 +7241,7 @@ dependencies = [
  "time_format",
  "tracing",
  "ui",
+ "ui_input",
  "unindent",
  "util",
  "watch",
@@ -12128,7 +12129,9 @@ dependencies = [
  "serde_json",
  "theme",
  "ui",
+ "ui_input",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -14048,6 +14051,7 @@ dependencies = [
  "settings",
  "theme",
  "ui",
+ "ui_input",
  "util",
  "workspace",
  "zed_actions",

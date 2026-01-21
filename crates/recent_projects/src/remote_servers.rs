@@ -228,7 +228,7 @@ impl ProjectPicker {
             let picker = Picker::uniform_list(delegate, window, cx)
                 .width(rems(34.))
                 .modal(false);
-            picker.set_query(home_dir.to_string(), window, cx);
+            picker.set_query(&home_dir.to_string(), window, cx);
             picker
         });
 

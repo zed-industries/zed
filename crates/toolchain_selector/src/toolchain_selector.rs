@@ -226,11 +226,7 @@ impl AddToolchainState {
                                 Self::create_path_browser_delegate(this.project.clone(), cx);
                             picker.update(cx, |picker, cx| {
                                 *picker = Picker::uniform_list(delegate, window, cx);
-                                picker.set_query(
-                                    Arc::from(path.to_string_lossy().as_ref()),
-                                    window,
-                                    cx,
-                                );
+                                picker.set_query(path.to_string_lossy().as_ref(), window, cx);
                             });
                             *input_state = Self::wait_for_path(rx, window, cx);
                             this.focus_handle(cx).focus(window, cx);

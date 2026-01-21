@@ -211,6 +211,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::{CollapseDirection, SearchEvent},
 };
+use zed_actions::editor::{MoveDown, MoveUp};
 
 use crate::{
     code_context_menus::CompletionsMenuSource,
@@ -27605,6 +27606,34 @@ impl ui_input::ErasedEditor for ErasedEditorImpl {
 
     fn as_any(&self) -> &dyn Any {
         &self.0
+    }
+
+    fn move_selection_to_end(&self, window: &mut Window, cx: &mut App) {
+        self.0.update(cx, |editor, cx| {
+            let editor_offset = editor.buffer().read(cx).len(cx);
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::Next),
+                window,
+                cx,
+                |s| s.select_ranges(Some(editor_offset..editor_offset)),
+            );
+        });
+    }
+
+    fn subscribe(
+        &self,
+        mut callback: Box<dyn FnMut(ui_input::ErasedEditorEvent, &mut Window, &mut App) + 'static>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Subscription {
+        window.subscribe(&self.0, cx, move |_, event: &EditorEvent, window, cx| {
+            let event = match event {
+                EditorEvent::BufferEdited => ui_input::ErasedEditorEvent::BufferEdited,
+                EditorEvent::Blurred => ui_input::ErasedEditorEvent::Blurred,
+                _ => return,
+            };
+            (callback)(event, window, cx);
+        })
     }
 }
 impl<T> Default for InvalidationStack<T> {

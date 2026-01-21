@@ -5,7 +5,7 @@ use std::{
     str::FromStr,
 };
 
-use editor::{Editor, actions::MoveDown, actions::MoveUp};
+use editor::Editor;
 use gpui::{
     ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers, TextAlign,
     TextStyleRefinement, WeakEntity,
@@ -15,6 +15,7 @@ use settings::{
     CenteredPaddingSettings, CodeFade, DelayMs, FontSize, InactiveOpacity, MinimumContrast,
 };
 use ui::prelude::*;
+use zed_actions::editor::{MoveDown, MoveUp};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NumberFieldMode {

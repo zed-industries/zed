@@ -182,6 +182,19 @@ pub struct ResetAllZoom {
     pub persist: bool,
 }
 
+pub mod editor {
+    use gpui::actions;
+    actions!(
+        editor,
+        [
+            /// Moves cursor up.
+            MoveUp,
+            /// Moves cursor down.
+            MoveDown,
+        ]
+    );
+}
+
 pub mod dev {
     use gpui::actions;
 
