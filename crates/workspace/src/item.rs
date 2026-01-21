@@ -213,6 +213,12 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         self.tab_tooltip_text(cx).map(TabTooltipContent::Text)
     }
 
+    /// Returns whether this item has auxiliary UI elements (like popovers or context menus) that are currently focused.
+    /// This is used to prevent the pane from hiding tab bar buttons when focus moves to such UI elements.
+    fn has_auxiliary_focus(&self, _window: &mut Window, _cx: &App) -> bool {
+        false
+    }
+
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
 
     fn deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
@@ -450,6 +456,7 @@ pub trait ItemHandle: 'static + Send {
     fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon>;
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString>;
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent>;
+    fn has_auxiliary_focus(&self, window: &mut Window, cx: &App) -> bool;
     fn telemetry_event_text(&self, cx: &App) -> Option<&'static str>;
     fn dragged_tab_content(
         &self,
@@ -598,6 +605,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         self.read(cx).tab_tooltip_text(cx)
+    }
+
+    fn has_auxiliary_focus(&self, window: &mut Window, cx: &App) -> bool {
+        self.read(cx).has_auxiliary_focus(window, cx)
     }
 
     fn dragged_tab_content(
