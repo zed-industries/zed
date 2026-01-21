@@ -2,7 +2,7 @@ use crate::{
     example::Example,
     headless::EpAppState,
     load_project::run_load_project,
-    progress::{InfoStyle, Progress, Step, StepProgress},
+    progress::{ExampleProgress, InfoStyle, Step, StepProgress},
 };
 use anyhow::Context as _;
 use collections::HashSet;
@@ -17,6 +17,7 @@ use std::time::Duration;
 pub async fn run_context_retrieval(
     example: &mut Example,
     app_state: Arc<EpAppState>,
+    example_progress: &ExampleProgress,
     mut cx: AsyncApp,
 ) -> anyhow::Result<()> {
     if example
@@ -27,11 +28,9 @@ pub async fn run_context_retrieval(
         return Ok(());
     }
 
-    run_load_project(example, app_state.clone(), cx.clone()).await?;
+    run_load_project(example, app_state.clone(), example_progress, cx.clone()).await?;
 
-    let step_progress: Arc<StepProgress> = Progress::global()
-        .start(Step::Context, &example.spec.name)
-        .into();
+    let step_progress: Arc<StepProgress> = example_progress.start(Step::Context).into();
 
     let state = example.state.as_ref().unwrap();
     let project = state.project.clone();
@@ -96,10 +95,13 @@ async fn wait_for_language_servers_to_start(
 
     step_progress.set_substatus(format!("waiting for {} LSPs", language_server_ids.len()));
 
-    let timeout = cx
-        .background_executor()
-        .timer(Duration::from_secs(60 * 5))
-        .shared();
+    let timeout_duration = if starting_language_server_ids.is_empty() {
+        Duration::from_secs(30)
+    } else {
+        Duration::from_secs(60 * 5)
+    };
+
+    let timeout = cx.background_executor().timer(timeout_duration).shared();
 
     let (mut tx, mut rx) = mpsc::channel(language_server_ids.len());
     let added_subscription = cx.subscribe(project, {
@@ -121,7 +123,7 @@ async fn wait_for_language_servers_to_start(
                 }
             },
             _ = timeout.clone().fuse() => {
-                return Err(anyhow::anyhow!("LSP wait timed out after 5 minutes"));
+                return Err(anyhow::anyhow!("LSP wait timed out after {} minutes", timeout_duration.as_secs() / 60));
             }
         }
     }
@@ -190,7 +192,7 @@ async fn wait_for_language_servers_to_start(
                 }
             },
             _ = timeout.clone().fuse() => {
-                return Err(anyhow::anyhow!("LSP wait timed out after 5 minutes"));
+                return Err(anyhow::anyhow!("LSP wait timed out after {} minutes", timeout_duration.as_secs() / 60));
             }
         }
     }

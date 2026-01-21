@@ -72,7 +72,7 @@ pub enum ThreadHistoryEvent {
 impl EventEmitter<ThreadHistoryEvent> for AcpThreadHistory {}
 
 impl AcpThreadHistory {
-    pub(crate) fn new(
+    pub fn new(
         session_list: Option<Rc<dyn AgentSessionList>>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -155,7 +155,7 @@ impl AcpThreadHistory {
         });
     }
 
-    pub(crate) fn set_session_list(
+    pub fn set_session_list(
         &mut self,
         session_list: Option<Rc<dyn AgentSessionList>>,
         cx: &mut Context<Self>,
@@ -246,7 +246,15 @@ impl AcpThreadHistory {
         self.sessions.is_empty()
     }
 
-    pub(crate) fn session_for_id(&self, session_id: &acp::SessionId) -> Option<AgentSessionInfo> {
+    pub fn has_session_list(&self) -> bool {
+        self.session_list.is_some()
+    }
+
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.refresh_sessions(true, cx);
+    }
+
+    pub fn session_for_id(&self, session_id: &acp::SessionId) -> Option<AgentSessionInfo> {
         self.sessions
             .iter()
             .find(|entry| &entry.session_id == session_id)
@@ -255,6 +263,29 @@ impl AcpThreadHistory {
 
     pub(crate) fn sessions(&self) -> &[AgentSessionInfo] {
         &self.sessions
+    }
+
+    pub(crate) fn get_recent_sessions(&self, limit: usize) -> Vec<AgentSessionInfo> {
+        self.sessions.iter().take(limit).cloned().collect()
+    }
+
+    pub fn supports_delete(&self) -> bool {
+        self.session_list
+            .as_ref()
+            .map(|sl| sl.supports_delete())
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn delete_session(
+        &self,
+        session_id: &acp::SessionId,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<()>> {
+        if let Some(session_list) = self.session_list.as_ref() {
+            session_list.delete_session(session_id, cx)
+        } else {
+            Task::ready(Ok(()))
+        }
     }
 
     fn add_list_separators(
@@ -439,14 +470,21 @@ impl AcpThreadHistory {
         let Some(session_list) = self.session_list.as_ref() else {
             return;
         };
+        if !session_list.supports_delete() {
+            return;
+        }
         let task = session_list.delete_session(&entry.session_id, cx);
         task.detach_and_log_err(cx);
     }
 
     fn remove_history(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(session_list) = self.session_list.as_ref() {
-            session_list.delete_sessions(cx).detach_and_log_err(cx);
+        let Some(session_list) = self.session_list.as_ref() else {
+            return;
+        };
+        if !session_list.supports_delete() {
+            return;
         }
+        session_list.delete_sessions(cx).detach_and_log_err(cx);
         self.confirming_delete_history = false;
         cx.notify();
     }
@@ -569,7 +607,7 @@ impl AcpThreadHistory {
 
                         cx.notify();
                     }))
-                    .end_slot::<IconButton>(if hovered {
+                    .end_slot::<IconButton>(if hovered && self.supports_delete() {
                         Some(
                             IconButton::new("delete", IconName::Trash)
                                 .shape(IconButtonShape::Square)
@@ -666,7 +704,7 @@ impl Render for AcpThreadHistory {
                     .vertical_scrollbar_for(&self.scroll_handle, window, cx)
                 }
             })
-            .when(!has_no_history, |this| {
+            .when(!has_no_history && self.supports_delete(), |this| {
                 this.child(
                     h_flex()
                         .p_2()
@@ -737,6 +775,7 @@ pub struct AcpHistoryEntryElement {
     thread_view: WeakEntity<AcpThreadView>,
     selected: bool,
     hovered: bool,
+    supports_delete: bool,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
 }
 
@@ -747,8 +786,14 @@ impl AcpHistoryEntryElement {
             thread_view,
             selected: false,
             hovered: false,
+            supports_delete: false,
             on_hover: Box::new(|_, _, _| {}),
         }
+    }
+
+    pub fn supports_delete(mut self, supports_delete: bool) -> Self {
+        self.supports_delete = supports_delete;
+        self
     }
 
     pub fn hovered(mut self, hovered: bool) -> Self {
@@ -802,7 +847,7 @@ impl RenderOnce for AcpHistoryEntryElement {
                     ),
             )
             .on_hover(self.on_hover)
-            .end_slot::<IconButton>(if self.hovered || self.selected {
+            .end_slot::<IconButton>(if (self.hovered || self.selected) && self.supports_delete {
                 Some(
                     IconButton::new("delete", IconName::Trash)
                         .shape(IconButtonShape::Square)

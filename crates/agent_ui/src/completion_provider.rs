@@ -1,13 +1,11 @@
-use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use acp_thread::{AgentSessionInfo, AgentSessionList, AgentSessionListRequest, MentionUri};
-use agent::ThreadStore;
+use crate::acp::AcpThreadHistory;
+use acp_thread::{AgentSessionInfo, MentionUri};
 use anyhow::Result;
 use editor::{
     CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
@@ -19,7 +17,7 @@ use lsp::CompletionContext;
 use ordered_float::OrderedFloat;
 use project::lsp_store::{CompletionDocumentation, SymbolLocation};
 use project::{
-    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse,
+    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, DiagnosticSummary,
     PathMatchCandidateSet, Project, ProjectPath, Symbol, WorktreeId,
 };
 use prompt_store::{PromptStore, UserPromptId};
@@ -57,6 +55,7 @@ pub(crate) enum PromptContextType {
     Fetch,
     Thread,
     Rules,
+    Diagnostics,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +93,7 @@ impl TryFrom<&str> for PromptContextType {
             "fetch" => Ok(Self::Fetch),
             "thread" => Ok(Self::Thread),
             "rule" => Ok(Self::Rules),
+            "diagnostics" => Ok(Self::Diagnostics),
             _ => Err(format!("Invalid context picker mode: {}", value)),
         }
     }
@@ -107,6 +107,7 @@ impl PromptContextType {
             Self::Fetch => "fetch",
             Self::Thread => "thread",
             Self::Rules => "rule",
+            Self::Diagnostics => "diagnostics",
         }
     }
 
@@ -117,6 +118,7 @@ impl PromptContextType {
             Self::Fetch => "Fetch",
             Self::Thread => "Threads",
             Self::Rules => "Rules",
+            Self::Diagnostics => "Diagnostics",
         }
     }
 
@@ -127,6 +129,7 @@ impl PromptContextType {
             Self::Fetch => IconName::ToolWeb,
             Self::Thread => IconName::Thread,
             Self::Rules => IconName::Reader,
+            Self::Diagnostics => IconName::Warning,
         }
     }
 }
@@ -196,8 +199,7 @@ pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     source: Arc<T>,
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
-    thread_store: Option<Entity<ThreadStore>>,
-    session_list: Rc<RefCell<Option<Rc<dyn AgentSessionList>>>>,
+    history: WeakEntity<AcpThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
 }
@@ -207,8 +209,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: T,
         editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
-        thread_store: Option<Entity<ThreadStore>>,
-        session_list: Rc<RefCell<Option<Rc<dyn AgentSessionList>>>>,
+        history: WeakEntity<AcpThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -217,8 +218,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             editor,
             mention_set,
             workspace,
-            thread_store,
-            session_list,
+            history,
             prompt_store,
         }
     }
@@ -588,6 +588,103 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         })
     }
 
+    fn completion_for_diagnostics(
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Vec<Completion> {
+        let summary = workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .diagnostic_summary(false, cx);
+        if summary.error_count == 0 && summary.warning_count == 0 {
+            return Vec::new();
+        }
+        let icon_path = MentionUri::Diagnostics {
+            include_errors: true,
+            include_warnings: false,
+        }
+        .icon_path(cx);
+
+        let mut completions = Vec::new();
+
+        let cases = [
+            (summary.error_count > 0, true, false),
+            (summary.warning_count > 0, false, true),
+            (
+                summary.error_count > 0 && summary.warning_count > 0,
+                true,
+                true,
+            ),
+        ];
+
+        for (condition, include_errors, include_warnings) in cases {
+            if condition {
+                completions.push(Self::build_diagnostics_completion(
+                    diagnostics_submenu_label(summary, include_errors, include_warnings),
+                    source_range.clone(),
+                    source.clone(),
+                    editor.clone(),
+                    mention_set.clone(),
+                    workspace.clone(),
+                    icon_path.clone(),
+                    include_errors,
+                    include_warnings,
+                    summary,
+                ));
+            }
+        }
+
+        completions
+    }
+
+    fn build_diagnostics_completion(
+        menu_label: String,
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        icon_path: SharedString,
+        include_errors: bool,
+        include_warnings: bool,
+        summary: DiagnosticSummary,
+    ) -> Completion {
+        let uri = MentionUri::Diagnostics {
+            include_errors,
+            include_warnings,
+        };
+        let crease_text = diagnostics_crease_label(summary, include_errors, include_warnings);
+        let display_text = format!("@{}", crease_text);
+        let new_text = format!("[{}]({}) ", display_text, uri.to_uri());
+        let new_text_len = new_text.len();
+        Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label: CodeLabel::plain(menu_label, None),
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
+            insert_text_mode: None,
+            confirm: Some(confirm_completion_callback(
+                crease_text,
+                source_range.start,
+                new_text_len - 1,
+                uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
+            )),
+        }
+    }
+
     fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<AvailableCommand>> {
         let commands = self.source.available_commands(cx);
         if commands.is_empty() {
@@ -653,25 +750,12 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             }
 
             Some(PromptContextType::Thread) => {
-                if let Some(session_list) = self.session_list.borrow().clone() {
-                    let search_sessions_task =
-                        search_sessions(query, cancellation_flag, session_list, cx);
+                if let Some(history) = self.history.upgrade() {
+                    let sessions = history.read(cx).sessions().to_vec();
+                    let search_task =
+                        filter_sessions_by_query(query, cancellation_flag, sessions, cx);
                     cx.spawn(async move |_cx| {
-                        search_sessions_task
-                            .await
-                            .into_iter()
-                            .map(Match::Thread)
-                            .collect()
-                    })
-                } else if let Some(thread_store) = self.thread_store.as_ref() {
-                    let search_threads_task =
-                        search_threads(query, cancellation_flag, thread_store, cx);
-                    cx.background_spawn(async move {
-                        search_threads_task
-                            .await
-                            .into_iter()
-                            .map(Match::Thread)
-                            .collect()
+                        search_task.await.into_iter().map(Match::Thread).collect()
                     })
                 } else {
                     Task::ready(Vec::new())
@@ -701,6 +785,8 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     Task::ready(Vec::new())
                 }
             }
+
+            Some(PromptContextType::Diagnostics) => Task::ready(Vec::new()),
 
             None if query.is_empty() => {
                 let recent_task = self.recent_context_picker_entries(&workspace, cx);
@@ -835,19 +921,12 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             return Task::ready(recent);
         }
 
-        if let Some(session_list) = self.session_list.borrow().clone() {
-            let task = session_list.list_sessions(AgentSessionListRequest::default(), cx);
-            return cx.spawn(async move |_cx| {
-                let sessions = match task.await {
-                    Ok(response) => response.sessions,
-                    Err(error) => {
-                        log::error!("Failed to load recent sessions: {error:#}");
-                        return recent;
-                    }
-                };
-
-                const RECENT_COUNT: usize = 2;
-                let threads = sessions
+        if let Some(history) = self.history.upgrade() {
+            const RECENT_COUNT: usize = 2;
+            recent.extend(
+                history
+                    .read(cx)
+                    .sessions()
                     .into_iter()
                     .filter(|session| {
                         let uri = MentionUri::Thread {
@@ -857,33 +936,11 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                         !mentions.contains(&uri)
                     })
                     .take(RECENT_COUNT)
-                    .collect::<Vec<_>>();
-
-                recent.extend(threads.into_iter().map(Match::RecentThread));
-                recent
-            });
-        }
-
-        let Some(thread_store) = self.thread_store.as_ref() else {
+                    .cloned()
+                    .map(Match::RecentThread),
+            );
             return Task::ready(recent);
-        };
-
-        const RECENT_COUNT: usize = 2;
-        let threads = thread_store
-            .read(cx)
-            .entries()
-            .map(thread_metadata_to_session_info)
-            .filter(|thread| {
-                let uri = MentionUri::Thread {
-                    id: thread.session_id.clone(),
-                    name: session_title(thread).to_string(),
-                };
-                !mentions.contains(&uri)
-            })
-            .take(RECENT_COUNT)
-            .collect::<Vec<_>>();
-
-        recent.extend(threads.into_iter().map(Match::RecentThread));
+        }
 
         Task::ready(recent)
     }
@@ -924,6 +981,20 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
         if self.source.supports_context(PromptContextType::Fetch, cx) {
             entries.push(PromptContextEntry::Mode(PromptContextType::Fetch));
+        }
+
+        if self
+            .source
+            .supports_context(PromptContextType::Diagnostics, cx)
+        {
+            let summary = workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .diagnostic_summary(false, cx);
+            if summary.error_count > 0 || summary.warning_count > 0 {
+                entries.push(PromptContextEntry::Mode(PromptContextType::Diagnostics));
+            }
         }
 
         entries
@@ -1029,6 +1100,28 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                 })
             }
             PromptCompletion::Mention(MentionCompletion { mode, argument, .. }) => {
+                if let Some(PromptContextType::Diagnostics) = mode {
+                    if argument.is_some() {
+                        return Task::ready(Ok(Vec::new()));
+                    }
+
+                    let completions = Self::completion_for_diagnostics(
+                        source_range.clone(),
+                        source.clone(),
+                        editor.clone(),
+                        mention_set.clone(),
+                        workspace.clone(),
+                        cx,
+                    );
+                    if !completions.is_empty() {
+                        return Task::ready(Ok(vec![CompletionResponse {
+                            completions,
+                            display_options: CompletionDisplayOptions::default(),
+                            is_incomplete: false,
+                        }]));
+                    }
+                }
+
                 let query = argument.unwrap_or_default();
                 let search_task =
                     self.search_mentions(mode, query, Arc::<AtomicBool>::default(), cx);
@@ -1098,7 +1191,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         cx,
                                     )
                                 }
-
                                 Match::Symbol(SymbolMatch { symbol, .. }) => {
                                     Self::completion_for_symbol(
                                         symbol,
@@ -1111,7 +1203,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         cx,
                                     )
                                 }
-
                                 Match::Thread(thread) => Some(Self::completion_for_thread(
                                     thread,
                                     source_range.clone(),
@@ -1122,7 +1213,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     workspace.clone(),
                                     cx,
                                 )),
-
                                 Match::RecentThread(thread) => Some(Self::completion_for_thread(
                                     thread,
                                     source_range.clone(),
@@ -1133,7 +1223,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     workspace.clone(),
                                     cx,
                                 )),
-
                                 Match::Rules(user_rules) => Some(Self::completion_for_rules(
                                     user_rules,
                                     source_range.clone(),
@@ -1143,7 +1232,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     workspace.clone(),
                                     cx,
                                 )),
-
                                 Match::Fetch(url) => Self::completion_for_fetch(
                                     source_range.clone(),
                                     url,
@@ -1153,7 +1241,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     workspace.clone(),
                                     cx,
                                 ),
-
                                 Match::Entry(EntryMatch { entry, .. }) => {
                                     Self::completion_for_entry(
                                         entry,
@@ -1427,6 +1514,87 @@ impl MentionCompletion {
     }
 }
 
+fn diagnostics_label(
+    summary: DiagnosticSummary,
+    include_errors: bool,
+    include_warnings: bool,
+) -> String {
+    let mut parts = Vec::new();
+
+    if include_errors && summary.error_count > 0 {
+        parts.push(format!(
+            "{} {}",
+            summary.error_count,
+            pluralize("error", summary.error_count)
+        ));
+    }
+
+    if include_warnings && summary.warning_count > 0 {
+        parts.push(format!(
+            "{} {}",
+            summary.warning_count,
+            pluralize("warning", summary.warning_count)
+        ));
+    }
+
+    if parts.is_empty() {
+        return "Diagnostics".into();
+    }
+
+    let body = if parts.len() == 2 {
+        format!("{} and {}", parts[0], parts[1])
+    } else {
+        parts
+            .pop()
+            .expect("at least one part present after non-empty check")
+    };
+
+    format!("Diagnostics: {body}")
+}
+
+fn diagnostics_submenu_label(
+    summary: DiagnosticSummary,
+    include_errors: bool,
+    include_warnings: bool,
+) -> String {
+    match (include_errors, include_warnings) {
+        (true, true) => format!(
+            "{} {} & {} {}",
+            summary.error_count,
+            pluralize("error", summary.error_count),
+            summary.warning_count,
+            pluralize("warning", summary.warning_count)
+        ),
+        (true, _) => format!(
+            "{} {}",
+            summary.error_count,
+            pluralize("error", summary.error_count)
+        ),
+        (_, true) => format!(
+            "{} {}",
+            summary.warning_count,
+            pluralize("warning", summary.warning_count)
+        ),
+        _ => "Diagnostics".into(),
+    }
+}
+
+fn diagnostics_crease_label(
+    summary: DiagnosticSummary,
+    include_errors: bool,
+    include_warnings: bool,
+) -> SharedString {
+    diagnostics_label(summary, include_errors, include_warnings).into()
+}
+
+fn pluralize(noun: &str, count: usize) -> String {
+    if count == 1 {
+        noun.to_string()
+    } else {
+        format!("{noun}s")
+    }
+}
+
 pub(crate) fn search_files(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
@@ -1608,46 +1776,17 @@ pub(crate) fn search_symbols(
     })
 }
 
-pub(crate) fn search_threads(
+fn filter_sessions_by_query(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
-    thread_store: &Entity<ThreadStore>,
+    sessions: Vec<AgentSessionInfo>,
     cx: &mut App,
 ) -> Task<Vec<AgentSessionInfo>> {
-    let sessions = thread_store
-        .read(cx)
-        .entries()
-        .map(thread_metadata_to_session_info)
-        .collect::<Vec<_>>();
     if query.is_empty() {
         return Task::ready(sessions);
     }
-
     let executor = cx.background_executor().clone();
     cx.background_spawn(async move {
-        filter_sessions(query, cancellation_flag, sessions, executor).await
-    })
-}
-
-pub(crate) fn search_sessions(
-    query: String,
-    cancellation_flag: Arc<AtomicBool>,
-    session_list: Rc<dyn AgentSessionList>,
-    cx: &mut App,
-) -> Task<Vec<AgentSessionInfo>> {
-    let task = session_list.list_sessions(AgentSessionListRequest::default(), cx);
-    let executor = cx.background_executor().clone();
-    cx.spawn(async move |_cx| {
-        let sessions = match task.await {
-            Ok(response) => response.sessions,
-            Err(error) => {
-                log::error!("Failed to list sessions: {error:#}");
-                return Vec::new();
-            }
-        };
-        if query.is_empty() {
-            return sessions;
-        }
         filter_sessions(query, cancellation_flag, sessions, executor).await
     })
 }
@@ -1679,16 +1818,6 @@ async fn filter_sessions(
         .into_iter()
         .map(|mat| sessions[mat.candidate_id].clone())
         .collect()
-}
-
-fn thread_metadata_to_session_info(entry: agent::DbThreadMetadata) -> AgentSessionInfo {
-    AgentSessionInfo {
-        session_id: entry.id,
-        cwd: None,
-        title: Some(entry.title),
-        updated_at: Some(entry.updated_at),
-        meta: None,
-    }
 }
 
 pub(crate) fn search_rules(
@@ -1815,9 +1944,7 @@ fn selection_ranges(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use acp_thread::AgentSessionListResponse;
     use gpui::TestAppContext;
-    use std::{any::Any, rc::Rc};
 
     #[test]
     fn test_prompt_completion_parse() {
@@ -1921,6 +2048,11 @@ mod tests {
     #[test]
     fn test_mention_completion_parse() {
         let supported_modes = vec![PromptContextType::File, PromptContextType::Symbol];
+        let supported_modes_with_diagnostics = vec![
+            PromptContextType::File,
+            PromptContextType::Symbol,
+            PromptContextType::Diagnostics,
+        ];
 
         assert_eq!(
             MentionCompletion::try_parse("Lorem Ipsum", 0, &supported_modes),
@@ -2033,6 +2165,19 @@ mod tests {
             })
         );
 
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "Lorem @diagnostics",
+                0,
+                &supported_modes_with_diagnostics
+            ),
+            Some(MentionCompletion {
+                source_range: 6..18,
+                mode: Some(PromptContextType::Diagnostics),
+                argument: None,
+            })
+        );
+
         // Disallowed non-file mentions
         assert_eq!(
             MentionCompletion::try_parse("Lorem @symbol main", 0, &[PromptContextType::File]),
@@ -2059,41 +2204,20 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_search_sessions_filters_results(cx: &mut TestAppContext) {
-        #[derive(Clone)]
-        struct StubSessionList {
-            sessions: Vec<AgentSessionInfo>,
-        }
-
-        impl AgentSessionList for StubSessionList {
-            fn list_sessions(
-                &self,
-                _request: AgentSessionListRequest,
-                _cx: &mut App,
-            ) -> Task<anyhow::Result<AgentSessionListResponse>> {
-                Task::ready(Ok(AgentSessionListResponse::new(self.sessions.clone())))
-            }
-
-            fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-                self
-            }
-        }
-
+    async fn test_filter_sessions_by_query(cx: &mut TestAppContext) {
         let mut alpha = AgentSessionInfo::new("session-alpha");
         alpha.title = Some("Alpha Session".into());
         let mut beta = AgentSessionInfo::new("session-beta");
         beta.title = Some("Beta Session".into());
 
-        let session_list: Rc<dyn AgentSessionList> = Rc::new(StubSessionList {
-            sessions: vec![alpha.clone(), beta],
-        });
+        let sessions = vec![alpha.clone(), beta];
 
         let task = {
             let mut app = cx.app.borrow_mut();
-            search_sessions(
+            filter_sessions_by_query(
                 "Alpha".into(),
                 Arc::new(AtomicBool::default()),
-                session_list,
+                sessions,
                 &mut app,
             )
         };
