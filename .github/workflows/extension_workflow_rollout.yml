@@ -174,7 +174,7 @@ jobs:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
         permission-contents: write
-    - name: checkout_zed_repo
+    - name: steps::checkout_repo_with_token
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false

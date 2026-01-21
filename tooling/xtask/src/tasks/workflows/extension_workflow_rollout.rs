@@ -256,9 +256,7 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
 
 fn create_rollout_tag(rollout_job: &NamedJob) -> NamedJob {
     fn checkout_zed_repo(token: &StepOutput) -> Step<Use> {
-        steps::checkout_repo_with_token(token)
-            .name("checkout_zed_repo")
-            .add_with(("fetch-depth", "0"))
+        steps::checkout_repo_with_token(token).add_with(("fetch-depth", "0"))
     }
 
     fn update_rollout_tag() -> Step<Run> {
