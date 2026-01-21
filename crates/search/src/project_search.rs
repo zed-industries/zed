@@ -16,7 +16,7 @@ use editor::{
     actions::{Backtab, FoldAll, SelectAll, Tab, UnfoldAll},
     items::active_match_index,
     multibuffer_context_lines,
-    scroll::Autoscroll,
+    scroll::{Autoscroll, ScrollBehavior},
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
@@ -1479,7 +1479,13 @@ impl ProjectSearchView {
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges(range_to_select)
                     });
-                    editor.scroll(Point::default(), Some(Axis::Vertical), window, cx);
+                    editor.scroll(
+                        Point::default(),
+                        Some(Axis::Vertical),
+                        ScrollBehavior::Instant,
+                        window,
+                        cx,
+                    );
                 }
             });
             if is_new_search && self.query_editor.focus_handle(cx).is_focused(window) {
@@ -4297,6 +4303,7 @@ pub mod tests {
                     results_editor.scroll(
                         Point::new(0., f64::MAX),
                         Some(Axis::Vertical),
+                        ScrollBehavior::Instant,
                         window,
                         cx,
                     );
