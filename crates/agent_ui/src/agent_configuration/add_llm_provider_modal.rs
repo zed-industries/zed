@@ -31,9 +31,7 @@ fn single_line_input(
             .tab_stop(true);
 
         if let Some(text) = text {
-            input
-                .editor()
-                .update(cx, |editor, cx| editor.set_text(text, window, cx));
+            input.set_text(text, window, cx);
         }
         input
     })
@@ -721,9 +719,7 @@ mod tests {
         cx.update(|window, cx| {
             let model_input = ModelInput::new(0, window, cx);
             model_input.name.update(cx, |input, cx| {
-                input.editor().update(cx, |editor, cx| {
-                    editor.set_text("somemodel", window, cx);
-                });
+                input.set_text("somemodel", window, cx);
             });
             assert_eq!(
                 model_input.capabilities.supports_tools,
@@ -762,9 +758,7 @@ mod tests {
         cx.update(|window, cx| {
             let mut model_input = ModelInput::new(0, window, cx);
             model_input.name.update(cx, |input, cx| {
-                input.editor().update(cx, |editor, cx| {
-                    editor.set_text("somemodel", window, cx);
-                });
+                input.set_text("somemodel", window, cx);
             });
 
             model_input.capabilities.supports_tools = ToggleState::Unselected;
@@ -789,9 +783,7 @@ mod tests {
         cx.update(|window, cx| {
             let mut model_input = ModelInput::new(0, window, cx);
             model_input.name.update(cx, |input, cx| {
-                input.editor().update(cx, |editor, cx| {
-                    editor.set_text("somemodel", window, cx);
-                });
+                input.set_text("somemodel", window, cx);
             });
 
             model_input.capabilities.supports_tools = ToggleState::Selected;
@@ -837,9 +829,7 @@ mod tests {
     ) -> Option<SharedString> {
         fn set_text(input: &Entity<InputField>, text: &str, window: &mut Window, cx: &mut App) {
             input.update(cx, |input, cx| {
-                input.editor().update(cx, |editor, cx| {
-                    editor.set_text(text, window, cx);
-                });
+                input.set_text(text, window, cx);
             });
         }
 

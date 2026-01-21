@@ -28,7 +28,7 @@ pub struct InputField {
     /// Exposes the underlying [`Entity<Editor>`] to allow for customizing the editor beyond the provided API.
     ///
     /// This likely will only be public in the short term, ideally the API will be expanded to cover necessary use cases.
-    pub editor: Entity<Editor>,
+    editor: Entity<Editor>,
     /// An optional icon that is displayed at the start of the text field.
     ///
     /// For example, a magnifying glass icon in a search field.

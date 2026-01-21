@@ -2301,9 +2301,7 @@ impl KeybindingEditorModal {
                 .context()
                 .and_then(KeybindContextString::local)
             {
-                input.editor().update(cx, |editor, cx| {
-                    editor.set_text(context.clone(), window, cx);
-                });
+                input.set_text(context.clone(), window, cx);
             }
 
             let editor_entity = input.editor().clone();
@@ -2417,7 +2415,7 @@ impl KeybindingEditorModal {
             return;
         };
 
-        let action_name_str = action_editor.read(cx).editor.read(cx).text(cx);
+        let action_name_str = action_editor.read(cx).text(cx);
         let current_action = self.action_name_to_static.get(&action_name_str).copied();
 
         if current_action == self.selected_action_name {
@@ -2498,7 +2496,7 @@ impl KeybindingEditorModal {
 
     fn get_selected_action_name(&self, cx: &App) -> anyhow::Result<&'static str> {
         if let Some(selector) = self.action_editor.as_ref() {
-            let action_name_str = selector.read(cx).editor.read(cx).text(cx);
+            let action_name_str = selector.read(cx).text(cx);
 
             if action_name_str.is_empty() {
                 anyhow::bail!("Action name is required");
@@ -2544,7 +2542,7 @@ impl KeybindingEditorModal {
     fn validate_context(&self, cx: &App) -> anyhow::Result<Option<String>> {
         let new_context = self
             .context_editor
-            .read_with(cx, |input, cx| input.editor().read(cx).text(cx));
+            .read_with(cx, |input, cx| input.text(cx));
         let Some(context) = new_context.is_empty().not().then_some(new_context) else {
             return Ok(None);
         };
