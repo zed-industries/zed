@@ -1364,7 +1364,7 @@ impl EditorElement {
             indicator.is_active && indicator.display_row == valid_point.row()
         });
 
-        let breakpoint_indicator = if gutter_hovered && !is_on_diff_review_button_row && split_side.is_none() {
+        let breakpoint_indicator = if gutter_hovered && !is_on_diff_review_button_row && split_side != Some(SplitSide::Left) {
             let buffer_anchor = position_map
                 .snapshot
                 .display_point_to_anchor(valid_point, Bias::Left);
@@ -3090,8 +3090,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
-        // Don't show breakpoints in split diff view
-        if self.split_side.is_some() {
+        if self.split_side == Some(SplitSide::Left) {
             return Vec::new();
         }
 
@@ -3195,8 +3194,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
-        // Don't show run indicators in split diff view
-        if self.split_side.is_some() {
+        if self.split_side == Some(SplitSide::Left) {
             return Vec::new();
         }
 
@@ -9603,7 +9601,7 @@ impl Element for EditorElement {
 
                     // When jumping from one side of a side-by-side diff to the
                     // other, we autoscroll autoscroll to keep the target range in view.
-                    // 
+                    //
                     // If our scroll companion has a pending autoscroll request, process it
                     // first so that both editors render with synchronized scroll positions.
                     // This is important for split diff views where one editor may prepaint
