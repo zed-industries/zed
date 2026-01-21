@@ -47,9 +47,7 @@ impl Focusable for InputField {
 }
 
 impl InputField {
-    pub fn new(window: &mut Window, cx: &mut App, placeholder: &str) -> Self {
-        let placeholder_text = placeholder.into();
-
+    pub fn new(window: &mut Window, cx: &mut App, placeholder_text: &str) -> Self {
         let editor_factory = crate::ERASED_EDITOR_FACTORY
             .get()
             .expect("ErasedEditorFactory to be initialized");
