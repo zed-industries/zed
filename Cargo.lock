@@ -6220,6 +6220,7 @@ dependencies = [
  "gpui",
  "language",
  "menu",
+ "open_path_prompt",
  "picker",
  "pretty_assertions",
  "project",
@@ -9095,11 +9096,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "editor",
- "file_finder",
  "file_icons",
  "fuzzy",
  "gpui",
  "language",
+ "open_path_prompt",
  "picker",
  "project",
  "settings",
@@ -11106,6 +11107,24 @@ dependencies = [
  "settings",
  "strum 0.27.2",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "open_path_prompt"
+version = "0.1.0"
+dependencies = [
+ "file_icons",
+ "futures 0.3.31",
+ "fuzzy",
+ "gpui",
+ "picker",
+ "project",
+ "schemars",
+ "serde",
+ "settings",
+ "ui",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -13376,7 +13395,6 @@ dependencies = [
  "editor",
  "extension",
  "extension_host",
- "file_finder",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -13388,6 +13406,7 @@ dependencies = [
  "markdown",
  "menu",
  "node_runtime",
+ "open_path_prompt",
  "ordered-float 2.10.1",
  "paths",
  "picker",
@@ -15378,11 +15397,11 @@ dependencies = [
 name = "snippets_ui"
 version = "0.1.0"
 dependencies = [
- "file_finder",
  "file_icons",
  "fuzzy",
  "gpui",
  "language",
+ "open_path_prompt",
  "paths",
  "picker",
  "settings",
@@ -17315,12 +17334,12 @@ dependencies = [
  "anyhow",
  "convert_case 0.8.0",
  "editor",
- "file_finder",
  "futures 0.3.31",
  "fuzzy",
  "gpui",
  "language",
  "menu",
+ "open_path_prompt",
  "picker",
  "project",
  "ui",

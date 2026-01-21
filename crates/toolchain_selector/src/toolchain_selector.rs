@@ -4,7 +4,6 @@ pub use active_toolchain::ActiveToolchain;
 use anyhow::Context as _;
 use convert_case::Casing as _;
 use editor::Editor;
-use file_finder::OpenPathDelegate;
 use futures::channel::oneshot;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
@@ -13,6 +12,7 @@ use gpui::{
     actions, pulsating_between,
 };
 use language::{Language, LanguageName, Toolchain, ToolchainScope};
+use open_path_prompt::OpenPathDelegate;
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryLister, Project, ProjectPath, Toolchains, WorktreeId};
 use std::{
@@ -82,7 +82,7 @@ enum PathInputState {
 
 enum AddState {
     Path {
-        picker: Entity<Picker<file_finder::OpenPathDelegate>>,
+        picker: Entity<Picker<open_path_prompt::OpenPathDelegate>>,
         error: Option<Arc<str>>,
         input_state: PathInputState,
         _subscription: Subscription,

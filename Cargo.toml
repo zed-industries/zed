@@ -124,6 +124,7 @@ members = [
     "crates/ollama",
     "crates/onboarding",
     "crates/open_ai",
+    "crates/open_path_prompt",
     "crates/open_router",
     "crates/outline",
     "crates/outline_panel",
@@ -362,6 +363,7 @@ notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
 onboarding = { path = "crates/onboarding" }
 open_ai = { path = "crates/open_ai" }
+open_path_prompt = { path = "crates/open_path_prompt" }
 open_router = { path = "crates/open_router", features = ["schemars"] }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }

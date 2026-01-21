@@ -370,7 +370,7 @@ fn build_open_path_prompt(
                     .width(rems(34.))
                     .modal(false);
                 let query = lister.default_query(cx);
-                picker.set_query(query, window, cx);
+                picker.set_query(&query, window, cx);
                 picker
             })
         }),

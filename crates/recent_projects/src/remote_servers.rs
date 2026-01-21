@@ -7,7 +7,6 @@ use crate::{
 };
 use dev_container::start_dev_container;
 use editor::Editor;
-use file_finder::OpenPathDelegate;
 use futures::{FutureExt, channel::oneshot, future::Shared, select};
 use gpui::{
     AnyElement, App, ClickEvent, ClipboardItem, Context, DismissEvent, Entity, EventEmitter,
@@ -16,6 +15,7 @@ use gpui::{
 };
 use language::Point;
 use log::info;
+use open_path_prompt::OpenPathDelegate;
 use paths::{global_ssh_config_file, user_ssh_config_file};
 use picker::Picker;
 use project::{Fs, Project};
@@ -222,7 +222,7 @@ impl ProjectPicker {
     ) -> Entity<Self> {
         let (tx, rx) = oneshot::channel();
         let lister = project::DirectoryLister::Project(project.clone());
-        let delegate = file_finder::OpenPathDelegate::new(tx, lister, false, cx);
+        let delegate = open_path_prompt::OpenPathDelegate::new(tx, lister, false, cx);
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
