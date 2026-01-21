@@ -92,8 +92,8 @@ async fn test_current_state(cx: &mut TestAppContext) {
         assert_matches!(prediction, BufferEditPrediction::Local { .. });
     });
 
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.reject_current_prediction(EditPredictionRejectReason::Discarded, &project);
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.reject_current_prediction(EditPredictionRejectReason::Discarded, &project, cx);
     });
 
     // Prediction for diagnostic in another file

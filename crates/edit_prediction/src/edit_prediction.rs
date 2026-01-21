@@ -64,6 +64,7 @@ pub mod sweep_ai;
 pub mod udiff;
 
 mod capture_example;
+mod local_logging;
 mod zed_edit_prediction_delegate;
 pub mod zeta1;
 pub mod zeta2;
@@ -73,6 +74,7 @@ mod edit_prediction_tests;
 
 use crate::capture_example::should_sample_edit_prediction_example_capture;
 use crate::license_detection::LicenseDetectionWatcher;
+use crate::local_logging::{LoggedPredictionProvider, PredictionOutcome};
 use crate::mercury::Mercury;
 use crate::onboarding_modal::ZedPredictModal;
 pub use crate::prediction::EditPrediction;
@@ -1183,6 +1185,8 @@ impl EditPredictionStore {
             return;
         };
 
+        let events = project_state.events(cx);
+
         for pending_prediction in mem::take(&mut project_state.pending_predictions) {
             project_state.cancel_pending_prediction(pending_prediction, cx);
         }
@@ -1192,7 +1196,26 @@ impl EditPredictionStore {
                 sweep_ai::edit_prediction_accepted(self, current_prediction, cx)
             }
             EditPredictionModel::Mercury => {}
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
+            EditPredictionModel::Zeta1 => {
+                self.log_prediction_if_eligible(
+                    project,
+                    &current_prediction.prediction,
+                    PredictionOutcome::Accepted,
+                    events,
+                    LoggedPredictionProvider::Zeta1,
+                    cx,
+                );
+                zeta2::edit_prediction_accepted(self, current_prediction, cx)
+            }
+            EditPredictionModel::Zeta2 { version } => {
+                self.log_prediction_if_eligible(
+                    project,
+                    &current_prediction.prediction,
+                    PredictionOutcome::Accepted,
+                    events,
+                    LoggedPredictionProvider::Zeta2(version),
+                    cx,
+                );
                 zeta2::edit_prediction_accepted(self, current_prediction, cx)
             }
         }
@@ -1261,10 +1284,35 @@ impl EditPredictionStore {
         &mut self,
         reason: EditPredictionRejectReason,
         project: &Entity<Project>,
+        cx: &App,
     ) {
         if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
+            let events = project_state.events(cx);
             project_state.pending_predictions.clear();
             if let Some(prediction) = project_state.current_prediction.take() {
+                match self.edit_prediction_model {
+                    EditPredictionModel::Zeta1 => {
+                        self.log_prediction_if_eligible(
+                            project,
+                            &prediction.prediction,
+                            PredictionOutcome::Rejected,
+                            events,
+                            LoggedPredictionProvider::Zeta1,
+                            cx,
+                        );
+                    }
+                    EditPredictionModel::Zeta2 { version } => {
+                        self.log_prediction_if_eligible(
+                            project,
+                            &prediction.prediction,
+                            PredictionOutcome::Rejected,
+                            events,
+                            LoggedPredictionProvider::Zeta2(version),
+                            cx,
+                        );
+                    }
+                    EditPredictionModel::Sweep | EditPredictionModel::Mercury => {}
+                }
                 self.reject_prediction(prediction.prediction.id, reason, prediction.was_shown);
             }
         };
@@ -1586,6 +1634,7 @@ impl EditPredictionStore {
                                     this.reject_current_prediction(
                                         EditPredictionRejectReason::Replaced,
                                         &project,
+                                        cx,
                                     );
 
                                     Some(new_prediction)
@@ -2144,6 +2193,31 @@ impl EditPredictionStore {
                 }
             )
         })
+    }
+
+    fn log_prediction_if_eligible(
+        &self,
+        project: &Entity<Project>,
+        prediction: &EditPrediction,
+        outcome: PredictionOutcome,
+        events: Vec<StoredEvent>,
+        provider: LoggedPredictionProvider,
+        cx: &App,
+    ) {
+        let Some(file) = prediction.snapshot.file() else {
+            return;
+        };
+
+        if !self.can_collect_file(project, file, cx) {
+            return;
+        }
+
+        let event_refs: Vec<_> = events.iter().map(|e| e.event.clone()).collect();
+        if !self.can_collect_events(&event_refs, cx) {
+            return;
+        }
+
+        local_logging::log_prediction_outcome(project, prediction, outcome, events, provider, cx);
     }
 
     fn load_data_collection_choice() -> DataCollectionChoice {

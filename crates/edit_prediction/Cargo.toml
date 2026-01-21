@@ -40,6 +40,7 @@ log.workspace = true
 lsp.workspace = true
 menu.workspace = true
 open_ai.workspace = true
+paths.workspace = true
 postage.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
