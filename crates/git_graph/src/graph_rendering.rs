@@ -48,7 +48,7 @@ pub fn render_graph(graph: &GitGraph, cx: &mut Context<GitGraph>) -> impl IntoEl
         .last_item_size
         .map(|size| size.item.height)
         .unwrap_or(px(600.0));
-    let loaded_commit_count = graph.graph.commits.len();
+    let loaded_commit_count = graph.graph_data.commits.len();
 
     let content_height = row_height * loaded_commit_count;
     let max_scroll = (content_height - viewport_height).max(px(0.));
@@ -59,16 +59,16 @@ pub fn render_graph(graph: &GitGraph, cx: &mut Context<GitGraph>) -> impl IntoEl
     let horizontal_scroll_offset = graph.horizontal_scroll_offset;
 
     let left_padding = px(12.0);
-    let max_lanes = graph.graph.max_lanes.max(1);
+    let max_lanes = graph.graph_data.max_lanes.max(1);
     let graph_width = LANE_WIDTH * max_lanes as f32 + left_padding * 2.0;
     let last_visible_row = first_visible_row + (viewport_height / row_height).ceil() as usize + 1;
 
     let viewport_range = first_visible_row.min(loaded_commit_count.saturating_sub(1))
         ..(last_visible_row).min(loaded_commit_count);
     // todo! Figure out how we can avoid over allocating this data
-    let rows = graph.graph.commits[viewport_range.clone()].to_vec();
+    let rows = graph.graph_data.commits[viewport_range.clone()].to_vec();
     let commit_lines: Vec<_> = graph
-        .graph
+        .graph_data
         .lines
         .iter()
         .filter(|line| {

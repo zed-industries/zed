@@ -58,7 +58,7 @@ pub fn init(cx: &mut App) {
 
 pub struct GitGraph {
     focus_handle: FocusHandle,
-    graph: crate::graph::GitGraph,
+    graph_data: crate::graph::GraphData,
     project: Entity<Project>,
     loading: bool,
     error: Option<SharedString>,
@@ -84,7 +84,7 @@ impl GitGraph {
 
         let git_store = project.read(cx).git_store().clone();
         let accent_colors = cx.theme().accents();
-        let mut graph = crate::graph::GitGraph::new(accent_colors_count(accent_colors));
+        let mut graph = crate::graph::GraphData::new(accent_colors_count(accent_colors));
         let log_source = LogSource::default();
         let log_order = LogOrder::default();
 
@@ -92,11 +92,11 @@ impl GitGraph {
             GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::BranchChanged, true) => {
                 // todo! only call load data from render, we should set a bool here
                 // todo! We should check that the repo actually has a change that would affect the graph
-                this.graph.clear();
+                this.graph_data.clear();
                 cx.notify();
             }
             GitStoreEvent::ActiveRepositoryChanged(repo_id) => {
-                this.graph.clear();
+                this.graph_data.clear();
                 this._subscriptions.clear();
                 cx.notify();
 
@@ -132,7 +132,7 @@ impl GitGraph {
         GitGraph {
             focus_handle,
             project,
-            graph,
+            graph_data: graph,
             loading: true,
             error: None,
             _load_task: None,
@@ -158,7 +158,7 @@ impl GitGraph {
     ) {
         match event {
             RepositoryEvent::GitGraphCountUpdated(_, commit_count) => {
-                let old_count = self.graph.commits.len();
+                let old_count = self.graph_data.commits.len();
 
                 repository.update(cx, |repository, cx| {
                     let commits = repository.graph_data(
@@ -167,10 +167,10 @@ impl GitGraph {
                         old_count..*commit_count,
                         cx,
                     );
-                    self.graph.add_commits(commits);
+                    self.graph_data.add_commits(commits);
                 });
 
-                self.graph.max_commit_count = AllCommitCount::Loaded(*commit_count);
+                self.graph_data.max_commit_count = AllCommitCount::Loaded(*commit_count);
             }
             _ => {}
         }
@@ -214,8 +214,9 @@ impl GitGraph {
         if let Some(repository) = repository.as_ref() {
             const FETCH_RANGE: usize = 100;
             repository.update(cx, |repository, cx| {
-                self.graph.commits[range.start.saturating_sub(FETCH_RANGE)
-                    ..(range.end + FETCH_RANGE).min(self.graph.commits.len().saturating_sub(1))]
+                self.graph_data.commits[range.start.saturating_sub(FETCH_RANGE)
+                    ..(range.end + FETCH_RANGE)
+                        .min(self.graph_data.commits.len().saturating_sub(1))]
                     .iter()
                     .for_each(|commit| {
                         repository.fetch_commit_data(commit.data.sha, cx);
@@ -226,7 +227,7 @@ impl GitGraph {
         range
             .map(|idx| {
                 let Some((commit, repository)) =
-                    self.graph.commits.get(idx).zip(repository.as_ref())
+                    self.graph_data.commits.get(idx).zip(repository.as_ref())
                 else {
                     return vec![
                         div().h(row_height).into_any_element(),
@@ -319,7 +320,7 @@ impl GitGraph {
         self.selected_entry_idx = Some(idx);
         self.selected_commit_diff = None;
 
-        let Some(commit) = self.graph.commits.get(idx) else {
+        let Some(commit) = self.graph_data.commits.get(idx) else {
             return;
         };
 
@@ -372,7 +373,7 @@ impl GitGraph {
             return div().into_any_element();
         };
 
-        let Some(commit_entry) = self.graph.commits.get(selected_idx) else {
+        let Some(commit_entry) = self.graph_data.commits.get(selected_idx) else {
             return div().into_any_element();
         };
 
@@ -688,9 +689,9 @@ impl GitGraph {
 
         let viewport_height = table_state.scroll_handle.viewport().size.height;
 
-        let commit_count = match self.graph.max_commit_count {
+        let commit_count = match self.graph_data.max_commit_count {
             AllCommitCount::Loaded(count) => count,
-            AllCommitCount::NotLoaded => self.graph.commits.len(),
+            AllCommitCount::NotLoaded => self.graph_data.commits.len(),
         };
         let content_height = self.row_height * commit_count;
         let max_vertical_scroll = (viewport_height - content_height).min(px(0.));
@@ -700,7 +701,7 @@ impl GitGraph {
 
         let left_padding = px(12.0);
         let lane_width = px(16.0);
-        let max_lanes = self.graph.max_lanes.max(1);
+        let max_lanes = self.graph_data.max_lanes.max(1);
         let graph_content_width = lane_width * max_lanes as f32 + left_padding * 2.0;
         let max_horizontal_scroll = (graph_content_width - self.graph_viewport_width).max(px(0.));
 
@@ -759,7 +760,7 @@ impl Render for GitGraph {
                 )
         });
 
-        let commit_count = match self.graph.max_commit_count {
+        let commit_count = match self.graph_data.max_commit_count {
             AllCommitCount::Loaded(count) => count,
             AllCommitCount::NotLoaded => {
                 self.project.update(cx, |project, cx| {
@@ -776,11 +777,11 @@ impl Render for GitGraph {
                     }
                 });
 
-                self.graph.commits.len()
+                self.graph_data.commits.len()
             }
         };
 
-        let content = if self.loading && self.graph.commits.is_empty() && false {
+        let content = if self.loading && self.graph_data.commits.is_empty() && false {
             let message = if self.loading {
                 "Loading commits..."
             } else {

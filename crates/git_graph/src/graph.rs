@@ -198,7 +198,7 @@ struct CommitLineKey {
     parent: Oid,
 }
 
-pub struct GitGraph {
+pub struct GraphData {
     lane_states: SmallVec<[LaneState; 8]>,
     lane_colors: HashMap<ActiveLaneIdx, BranchColor>,
     parent_to_lane: HashMap<Oid, SmallVec<[(usize, Option<usize>); 1]>>,
@@ -212,9 +212,9 @@ pub struct GitGraph {
     active_commit_lines_by_parent: HashMap<Oid, SmallVec<[usize; 1]>>,
 }
 
-impl GitGraph {
+impl GraphData {
     pub fn new(accent_colors_count: usize) -> Self {
-        GitGraph {
+        GraphData {
             lane_states: SmallVec::default(),
             lane_colors: HashMap::default(),
             parent_to_lane: HashMap::default(),
