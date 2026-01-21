@@ -959,6 +959,8 @@ async fn install_release_windows(downloaded_installer: PathBuf) -> Result<Option
     Ok(Some(helper_path))
 }
 
+// Allow direct filesystem access for checking update flag file during app quit
+#[allow(clippy::disallowed_methods)]
 pub async fn finalize_auto_update_on_quit() {
     let Some(installer_path) = std::env::current_exe()
         .ok()

@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)]
+
 pub mod arc_cow;
 pub mod archive;
 pub mod command;

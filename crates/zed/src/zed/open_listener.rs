@@ -313,6 +313,9 @@ fn connect_to_cli(
     Ok((async_request_rx, response_tx))
 }
 
+// Allow direct filesystem access for checking file paths and canonicalizing diff paths.
+// This handles CLI open requests where paths come from external sources.
+#[allow(clippy::disallowed_methods)]
 pub async fn open_paths_with_positions(
     path_positions: &[PathWithPosition],
     diff_paths: &[[String; 2]],

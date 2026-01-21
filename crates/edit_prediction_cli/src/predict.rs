@@ -1,3 +1,7 @@
+// edit_prediction_cli is a CLI tool for testing/evaluation that operates outside
+// the normal application runtime and doesn't use the Fs abstraction.
+#![allow(clippy::disallowed_methods)]
+
 use crate::{
     FormatPromptArgs, PredictArgs, PredictionProvider,
     anthropic_client::AnthropicClient,

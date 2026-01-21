@@ -1,3 +1,7 @@
+// The languages crate doesn't have access to the Fs abstraction.
+// These checks are for LSP binary existence during language server setup.
+#![allow(clippy::disallowed_methods)]
+
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;

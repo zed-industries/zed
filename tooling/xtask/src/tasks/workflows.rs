@@ -1,3 +1,7 @@
+// xtask is developer tooling that runs outside the main application
+// and doesn't have access to the Fs abstraction.
+#![allow(clippy::disallowed_methods)]
+
 use anyhow::{Context, Result};
 use clap::Parser;
 use gh_workflow::Workflow;

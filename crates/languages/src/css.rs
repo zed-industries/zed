@@ -1,3 +1,6 @@
+// LSP adapter - binary existence checks don't have access to Fs abstraction
+#![allow(clippy::disallowed_methods)]
+
 use anyhow::Result;
 use async_trait::async_trait;
 use gpui::AsyncApp;

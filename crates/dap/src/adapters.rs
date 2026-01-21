@@ -281,11 +281,11 @@ pub async fn download_adapter_from_github(
     let version_path = adapter_path.join(format!("{}_{}", adapter_name, github_version.tag_name));
     let fs = delegate.fs();
 
-    if version_path.exists() {
+    if fs.is_dir(&version_path).await {
         return Ok(version_path);
     }
 
-    if !adapter_path.exists() {
+    if !fs.is_dir(&adapter_path).await {
         fs.create_dir(adapter_path.as_path())
             .await
             .context("Failed creating adapter path")?;

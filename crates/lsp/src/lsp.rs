@@ -325,6 +325,9 @@ impl LanguageServer {
         workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
+        // Allow direct filesystem access here - this runs synchronously when spawning
+        // an LSP server and doesn't have access to the async Fs abstraction.
+        #[allow(clippy::disallowed_methods)]
         let working_dir = if root_path.is_dir() {
             root_path
         } else {

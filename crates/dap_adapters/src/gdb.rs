@@ -194,9 +194,10 @@ impl DebugAdapter for GdbDebugAdapter {
             path
         } else {
             // Original logic: use user_installed_path or search in system path
-            let user_setting_path = user_installed_path
-                .filter(|p| p.exists())
-                .and_then(|p| p.to_str().map(|s| s.to_string()));
+            let user_setting_path = match &user_installed_path {
+                Some(p) if delegate.fs().is_file(p).await => p.to_str().map(|s| s.to_string()),
+                _ => None,
+            };
 
             let gdb_path_result = delegate
                 .which(OsStr::new("gdb"))

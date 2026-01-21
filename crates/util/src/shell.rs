@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)]
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt, path::Path, sync::LazyLock};

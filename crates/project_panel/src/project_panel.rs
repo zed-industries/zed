@@ -3828,6 +3828,9 @@ impl ProjectPanel {
         });
     }
 
+    // Allow direct filesystem access for checking if dropped external path is a file.
+    // This is a synchronous UI event handler that can't easily use the async Fs abstraction.
+    #[allow(clippy::disallowed_methods)]
     fn drop_external_files(
         &mut self,
         paths: &[PathBuf],

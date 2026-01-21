@@ -16,6 +16,16 @@ disallowed-methods = [
     { path = "serde_json::from_reader", reason = "Parsing from a buffer is much slower than first reading the buffer into a Vec/String, see https://github.com/serde-rs/json/issues/160#issuecomment-253446892. Use `serde_json::from_slice` instead." },
     { path = "serde_json_lenient::from_reader", reason = "Parsing from a buffer is much slower than first reading the buffer into a Vec/String, see https://github.com/serde-rs/json/issues/160#issuecomment-253446892, Use `serde_json_lenient::from_slice` instead." },
     { path = "cocoa::foundation::NSString::alloc", reason = "NSString must be autoreleased to avoid memory leaks. Use `ns_string()` helper instead." },
+    { path = "std::path::Path::exists", reason = "Use the `Fs` abstraction instead to enable testing with FakeFs" },
+    { path = "std::path::Path::try_exists", reason = "Use the `Fs` abstraction instead to enable testing with FakeFs" },
+    { path = "std::path::Path::is_file", reason = "Use `Fs::is_file` instead to enable testing with FakeFs" },
+    { path = "std::path::Path::is_dir", reason = "Use `Fs::is_dir` instead to enable testing with FakeFs" },
+    { path = "std::path::Path::is_symlink", reason = "Use `Fs::metadata` instead to enable testing with FakeFs" },
+    { path = "std::path::Path::metadata", reason = "Use `Fs::metadata` instead to enable testing with FakeFs" },
+    { path = "std::path::Path::symlink_metadata", reason = "Use `Fs::metadata` instead to enable testing with FakeFs" },
+    { path = "std::path::Path::canonicalize", reason = "Use `Fs::canonicalize` instead to enable testing with FakeFs" },
+    { path = "std::path::Path::read_link", reason = "Use `Fs::read_link` instead to enable testing with FakeFs" },
+    { path = "std::path::Path::read_dir", reason = "Use `Fs::read_dir` instead to enable testing with FakeFs" },
 ]
 disallowed-types = [
     # { path = "std::collections::HashMap", replacement = "collections::HashMap" },

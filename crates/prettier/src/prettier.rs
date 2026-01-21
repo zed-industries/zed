@@ -281,6 +281,8 @@ impl Prettier {
         }))
     }
 
+    // TODO: Refactor to use Fs abstraction (requires API changes to pass Fs to start())
+    #[allow(clippy::disallowed_methods)]
     #[cfg(not(any(test, feature = "test-support")))]
     pub async fn start(
         server_id: LanguageServerId,
@@ -339,6 +341,8 @@ impl Prettier {
         }))
     }
 
+    // TODO: Refactor to use Fs abstraction
+    #[allow(clippy::disallowed_methods)]
     pub async fn format(
         &self,
         buffer: &Entity<Buffer>,

@@ -1577,6 +1577,9 @@ impl WorkspaceDb {
 
     // Returns the recent locations which are still valid on disk and deletes ones which no longer
     // exist.
+    // Allow direct filesystem access for filtering stale workspaces during session restoration.
+    // These are synchronous checks that would require significant refactoring to use the Fs abstraction.
+    #[allow(clippy::disallowed_methods)]
     pub async fn recent_workspaces_on_disk(
         &self,
     ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
@@ -1638,6 +1641,8 @@ impl WorkspaceDb {
     // session was closed (i.e. when Zed was quit).
     // If `last_session_window_order` is provided, the returned locations are ordered
     // according to that.
+    // Allow direct filesystem access for filtering stale workspaces during session restoration.
+    #[allow(clippy::disallowed_methods)]
     pub fn last_session_workspace_locations(
         &self,
         last_session_id: &str,

@@ -278,6 +278,9 @@ pub enum Link {
 }
 
 impl Link {
+    // Allow direct filesystem access for checking if linked paths exist.
+    // This is a synchronous function used during markdown parsing.
+    #[allow(clippy::disallowed_methods)]
     pub fn identify(file_location_directory: Option<PathBuf>, text: String) -> Option<Link> {
         if text.starts_with("http") {
             return Some(Link::Web { url: text });

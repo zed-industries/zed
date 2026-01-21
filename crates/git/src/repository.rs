@@ -366,7 +366,11 @@ impl GitExcludeOverride {
     pub async fn restore_original(&mut self) -> Result<()> {
         if let Some(ref original) = self.original_excludes {
             smol::fs::write(&self.git_exclude_path, original).await?;
-        } else if self.git_exclude_path.exists() {
+        // The git crate doesn't have access to the Fs abstraction
+        } else if {
+            #[allow(clippy::disallowed_methods)]
+            self.git_exclude_path.exists()
+        } {
             smol::fs::remove_file(&self.git_exclude_path).await?;
         }
 
@@ -2384,6 +2388,8 @@ impl GitRepository for RealGitRepository {
                 .any(|line| line.trim().starts_with("hook "))
             {
                 let hook_abs_path = repository.lock().path().join("hooks").join(hook.as_str());
+                // The git crate doesn't have access to the Fs abstraction
+                #[allow(clippy::disallowed_methods)]
                 if hook_abs_path.is_file() {
                     let output = new_smol_command(&hook_abs_path)
                         .envs(env.iter())

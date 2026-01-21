@@ -1,3 +1,7 @@
+// TODO: Refactor to thread Fs through ExtensionBuilder. Currently this would require
+// significant API changes since ExtensionBuilder doesn't hold an Fs instance.
+#![allow(clippy::disallowed_methods)]
+
 use crate::{
     ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, build_debug_adapter_schema_path,
     parse_wasm_extension_version,

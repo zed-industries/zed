@@ -38,13 +38,13 @@ async fn main() -> Result<()> {
     let engine = wasmtime::Engine::default();
     let mut wasm_store = WasmStore::new(&engine)?;
 
-    let extension_path = args
-        .source_dir
-        .canonicalize()
+    let extension_path = fs
+        .canonicalize(&args.source_dir)
+        .await
         .context("failed to canonicalize source_dir")?;
-    let scratch_dir = args
-        .scratch_dir
-        .canonicalize()
+    let scratch_dir = fs
+        .canonicalize(&args.scratch_dir)
+        .await
         .context("failed to canonicalize scratch_dir")?;
     let output_dir = if args.output_dir.is_relative() {
         env::current_dir()?.join(&args.output_dir)

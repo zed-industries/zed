@@ -1,3 +1,6 @@
+// CLI tool that operates outside the normal application runtime - doesn't use Fs abstraction
+#![allow(clippy::disallowed_methods)]
+
 use crate::{
     anthropic_client::PlainLlmClient,
     git::{ensure_repo_cloned, run_git},

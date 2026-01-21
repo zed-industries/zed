@@ -1,3 +1,6 @@
+// CLI tool for edit prediction evaluation - operates outside the normal Fs abstraction
+#![allow(clippy::disallowed_methods)]
+
 use crate::{
     example::{Example, ExamplePromptInputs, ExampleState},
     git,

@@ -1,5 +1,7 @@
 //! Paths to locations used by Zed.
 
+#![allow(clippy::disallowed_methods)]
+
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, OnceLock};

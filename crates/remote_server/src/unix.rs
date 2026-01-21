@@ -801,6 +801,9 @@ pub enum SpawnServerError {
     Timeout,
 }
 
+// Allow direct filesystem access for low-level socket file operations during server IPC setup.
+// These are synchronous operations that need to happen quickly during server spawning.
+#[allow(clippy::disallowed_methods)]
 async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     log::info!("spawning server process",);
     if paths.stdin_socket.exists() {
@@ -908,6 +911,7 @@ async fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     }
 }
 
+#[allow(clippy::disallowed_methods)]
 fn write_pid_file(path: &Path, pid: u32) -> Result<()> {
     if path.exists() {
         std::fs::remove_file(path)?;

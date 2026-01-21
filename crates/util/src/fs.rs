@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)]
+
 use crate::ResultExt;
 use anyhow::{Result, bail};
 use async_fs as fs;

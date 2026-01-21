@@ -1,3 +1,7 @@
+// LSP adapter - direct filesystem checks needed for binary existence validation.
+// The languages crate doesn't have access to the Fs abstraction.
+#![allow(clippy::disallowed_methods)]
+
 use anyhow::Result;
 use async_trait::async_trait;
 use collections::HashMap;

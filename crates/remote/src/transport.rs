@@ -188,6 +188,8 @@ async fn build_remote_server_from_source(
 
     if let Ok(path) = std::env::var("ZED_COPY_REMOTE_SERVER") {
         let path = std::path::PathBuf::from(path);
+        // This runs during remote server setup before the Fs abstraction is available
+        #[allow(clippy::disallowed_methods)]
         if path.exists() {
             return Ok(Some(path));
         } else {

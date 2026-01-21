@@ -1,3 +1,7 @@
+// xtask is developer tooling that runs outside the main application
+// and doesn't have access to the Fs abstraction.
+#![allow(clippy::disallowed_methods)]
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};

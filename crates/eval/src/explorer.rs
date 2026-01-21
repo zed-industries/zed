@@ -1,3 +1,7 @@
+// eval is an evaluation/testing CLI tool that operates outside the normal
+// application runtime and doesn't use the Fs abstraction.
+#![allow(clippy::disallowed_methods)]
+
 use anyhow::{Context as _, Result};
 use clap::Parser;
 use serde_json::{Value, json};

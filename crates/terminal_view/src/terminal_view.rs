@@ -1588,6 +1588,8 @@ impl SearchableItem for TerminalView {
 
 /// Gets the working directory for the given workspace, respecting the user's settings.
 /// Falls back to home directory when no project directory is available.
+// Allow direct filesystem access for checking if user-specified working directory exists.
+#[allow(clippy::disallowed_methods)]
 pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
     let directory = match &TerminalSettings::get_global(cx).working_directory {
         WorkingDirectory::CurrentProjectDirectory => workspace

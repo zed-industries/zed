@@ -1,3 +1,7 @@
+// eval is an evaluation/testing CLI tool that operates outside the normal
+// application runtime and doesn't use the Fs abstraction.
+#![allow(clippy::disallowed_methods)]
+
 use agent::ContextServerRegistry;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow, bail};

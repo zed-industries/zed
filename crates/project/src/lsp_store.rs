@@ -14310,7 +14310,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>> {
         let dir = self.language_registry.language_server_download_dir(name)?;
 
-        if !dir.exists() {
+        if !self.fs.is_dir(&dir).await {
             smol::fs::create_dir_all(&dir)
                 .await
                 .context("failed to create container directory")

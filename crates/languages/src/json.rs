@@ -1,3 +1,7 @@
+// The languages crate doesn't have access to the Fs abstraction.
+// These are LSP binary existence checks that run during language server setup.
+#![allow(clippy::disallowed_methods)]
+
 use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;

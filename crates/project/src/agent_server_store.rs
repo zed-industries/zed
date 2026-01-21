@@ -520,6 +520,7 @@ impl AgentServerStore {
 
 /// Safely resolves an extension icon path, ensuring it stays within the extension directory.
 /// Returns `None` if the path would escape the extension directory (path traversal attack).
+#[allow(clippy::disallowed_methods)] // Synchronous path validation for security - canonicalize needed to prevent path traversal
 fn resolve_extension_icon_path(
     extensions_dir: &Path,
     extension_id: &str,

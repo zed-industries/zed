@@ -1,3 +1,7 @@
+// edit_prediction_cli is a standalone CLI tool that operates outside the normal application
+// runtime and doesn't have access to the Fs abstraction.
+#![allow(clippy::disallowed_methods)]
+
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use futures::lock::{Mutex, OwnedMutexGuard};

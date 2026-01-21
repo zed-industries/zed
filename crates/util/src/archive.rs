@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)]
+
 use std::path::Path;
 
 use anyhow::{Context as _, Result};
