@@ -1716,7 +1716,7 @@ mod test {
         )
         .await;
 
-        let project = project::Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let project = project::Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let workspace =
             cx.add_window(|window, cx| workspace::Workspace::test_new(project.clone(), window, cx));
 

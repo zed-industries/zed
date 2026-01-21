@@ -2554,7 +2554,7 @@ async fn test_project_search_opens_in_normal_mode(cx: &mut gpui::TestAppContext)
     )
     .await;
 
-    let project = project::Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = project::Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
     let workspace =
         cx.add_window(|window, cx| workspace::Workspace::test_new(project.clone(), window, cx));
 
