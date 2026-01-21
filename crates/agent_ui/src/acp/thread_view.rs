@@ -3547,21 +3547,25 @@ impl AcpThreadView {
             ToolCallStatus::Pending | ToolCallStatus::InProgress
         );
 
-        v_flex().ml_5().mr_5().my_1p5().gap_1().children(
-            subagent_threads
-                .into_iter()
-                .enumerate()
-                .map(|(context_ix, thread)| {
-                    self.render_subagent_card(
-                        entry_ix,
-                        context_ix,
-                        &thread,
-                        tool_call_in_progress,
-                        window,
-                        cx,
-                    )
-                }),
-        )
+        v_flex()
+            .mx_5()
+            .my_1p5()
+            .gap_3()
+            .children(
+                subagent_threads
+                    .into_iter()
+                    .enumerate()
+                    .map(|(context_ix, thread)| {
+                        self.render_subagent_card(
+                            entry_ix,
+                            context_ix,
+                            &thread,
+                            tool_call_in_progress,
+                            window,
+                            cx,
+                        )
+                    }),
+            )
     }
 
     fn render_subagent_card(
