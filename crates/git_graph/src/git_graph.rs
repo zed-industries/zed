@@ -1310,6 +1310,7 @@ mod persistence {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::{Context, Result, bail};
     use collections::{HashMap, HashSet};
     use fs::FakeFs;
     use git::Oid;
@@ -1323,7 +1324,6 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
 
-    // todo! check if the settings store is actually needed for this
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -1446,23 +1446,25 @@ mod tests {
     fn verify_commit_order(
         graph: &crate::graph::GraphData,
         commits: &[Arc<InitialGraphCommitData>],
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         if graph.commits.len() != commits.len() {
-            return Err(format!(
+            bail!(
                 "Commit count mismatch: graph has {} commits, expected {}",
                 graph.commits.len(),
                 commits.len()
-            ));
+            );
         }
 
         for (idx, (graph_commit, expected_commit)) in
             graph.commits.iter().zip(commits.iter()).enumerate()
         {
             if graph_commit.data.sha != expected_commit.sha {
-                return Err(format!(
+                bail!(
                     "Commit order mismatch at index {}: graph has {:?}, expected {:?}",
-                    idx, graph_commit.data.sha, expected_commit.sha
-                ));
+                    idx,
+                    graph_commit.data.sha,
+                    expected_commit.sha
+                );
             }
         }
 
@@ -1472,38 +1474,38 @@ mod tests {
     fn verify_line_endpoints(
         graph: &crate::graph::GraphData,
         oid_to_row: &HashMap<Oid, usize>,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         for line in &graph.lines {
-            let child_row = *oid_to_row.get(&line.child).ok_or_else(|| {
-                format!("Line references non-existent child commit {:?}", line.child)
-            })?;
+            let child_row = *oid_to_row
+                .get(&line.child)
+                .context("Line references non-existent child commit")?;
 
-            let parent_row = *oid_to_row.get(&line.parent).ok_or_else(|| {
-                format!(
-                    "Line references non-existent parent commit {:?}",
-                    line.parent
-                )
-            })?;
+            let parent_row = *oid_to_row
+                .get(&line.parent)
+                .context("Line references non-existent parent commit")?;
 
             if child_row >= parent_row {
-                return Err(format!(
-                    "Line from {:?} to {:?}: child_row ({}) must be < parent_row ({})",
-                    line.child, line.parent, child_row, parent_row
-                ));
+                bail!(
+                    "child_row ({}) must be < parent_row ({})",
+                    child_row,
+                    parent_row
+                );
             }
 
             if line.full_interval.start != child_row {
-                return Err(format!(
-                    "Line from {:?} to {:?}: full_interval.start ({}) != child_row ({})",
-                    line.child, line.parent, line.full_interval.start, child_row
-                ));
+                bail!(
+                    "full_interval.start ({}) != child_row ({})",
+                    line.full_interval.start,
+                    child_row
+                );
             }
 
             if line.full_interval.end != parent_row {
-                return Err(format!(
-                    "Line from {:?} to {:?}: full_interval.end ({}) != parent_row ({})",
-                    line.child, line.parent, line.full_interval.end, parent_row
-                ));
+                bail!(
+                    "full_interval.end ({}) != parent_row ({})",
+                    line.full_interval.end,
+                    parent_row
+                );
             }
 
             if let Some(last_segment) = line.segments.last() {
@@ -1513,10 +1515,11 @@ mod tests {
                 };
 
                 if segment_end_row != line.full_interval.end {
-                    return Err(format!(
-                        "Line from {:?} to {:?}: last segment ends at row {} but full_interval.end is {}",
-                        line.child, line.parent, segment_end_row, line.full_interval.end
-                    ));
+                    bail!(
+                        "last segment ends at row {} but full_interval.end is {}",
+                        segment_end_row,
+                        line.full_interval.end
+                    );
                 }
             }
         }
@@ -1527,25 +1530,23 @@ mod tests {
     fn verify_column_correctness(
         graph: &crate::graph::GraphData,
         oid_to_row: &HashMap<Oid, usize>,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         for line in &graph.lines {
-            let child_row = *oid_to_row.get(&line.child).ok_or_else(|| {
-                format!("Line references non-existent child commit {:?}", line.child)
-            })?;
+            let child_row = *oid_to_row
+                .get(&line.child)
+                .context("Line references non-existent child commit")?;
 
-            let parent_row = *oid_to_row.get(&line.parent).ok_or_else(|| {
-                format!(
-                    "Line references non-existent parent commit {:?}",
-                    line.parent
-                )
-            })?;
+            let parent_row = *oid_to_row
+                .get(&line.parent)
+                .context("Line references non-existent parent commit")?;
 
             let child_lane = graph.commits[child_row].lane;
             if line.child_column != child_lane {
-                return Err(format!(
-                    "Line from {:?} to {:?}: child_column ({}) != child's lane ({})",
-                    line.child, line.parent, line.child_column, child_lane
-                ));
+                bail!(
+                    "child_column ({}) != child's lane ({})",
+                    line.child_column,
+                    child_lane
+                );
             }
 
             let mut current_column = line.child_column;
@@ -1557,23 +1558,21 @@ mod tests {
 
             let parent_lane = graph.commits[parent_row].lane;
             if current_column != parent_lane {
-                return Err(format!(
-                    "Line from {:?} to {:?}: ending column ({}) != parent's lane ({})",
-                    line.child, line.parent, current_column, parent_lane
-                ));
+                bail!(
+                    "ending column ({}) != parent's lane ({})",
+                    current_column,
+                    parent_lane
+                );
             }
         }
 
         Ok(())
     }
 
-    fn verify_segment_continuity(graph: &crate::graph::GraphData) -> Result<(), String> {
+    fn verify_segment_continuity(graph: &crate::graph::GraphData) -> Result<()> {
         for line in &graph.lines {
             if line.segments.is_empty() {
-                return Err(format!(
-                    "Line from {:?} to {:?} has no segments",
-                    line.child, line.parent
-                ));
+                bail!("Line has no segments");
             }
 
             let mut current_row = line.full_interval.start;
@@ -1585,10 +1584,12 @@ mod tests {
                 };
 
                 if segment_end_row < current_row {
-                    return Err(format!(
-                        "Line from {:?} to {:?}: segment {} ends at row {} which is before current row {}",
-                        line.child, line.parent, idx, segment_end_row, current_row
-                    ));
+                    bail!(
+                        "segment {} ends at row {} which is before current row {}",
+                        idx,
+                        segment_end_row,
+                        current_row
+                    );
                 }
 
                 current_row = segment_end_row;
@@ -1599,36 +1600,39 @@ mod tests {
             let num_segments = line.segments.len();
 
             if num_segments > 2 {
-                return Err(format!(
-                    "Line from {:?} to {:?}: has {} segments, but lines should have at most 2 segments (Merge curve + Straight, or Straight + Checkout curve)",
-                    line.child, line.parent, num_segments
-                ));
+                bail!(
+                    "has {} segments, but lines should have at most 2 segments",
+                    num_segments
+                );
             }
 
             if num_segments == 1 {
                 match &line.segments[0] {
                     crate::graph::CommitLineSegment::Straight { to_row } => {
                         if *to_row != parent_row {
-                            return Err(format!(
-                                "Line from {:?} to {:?}: single Straight segment ends at {} but should end at parent_row {}",
-                                line.child, line.parent, to_row, parent_row
-                            ));
+                            bail!(
+                                "single Straight segment ends at {} but should end at parent_row {}",
+                                to_row,
+                                parent_row
+                            );
                         }
                     }
                     crate::graph::CommitLineSegment::Curve {
                         on_row, curve_kind, ..
                     } => {
                         if *on_row != parent_row {
-                            return Err(format!(
-                                "Line from {:?} to {:?}: single Curve segment is on row {} but should be on parent_row {}",
-                                line.child, line.parent, on_row, parent_row
-                            ));
+                            bail!(
+                                "single Curve segment is on row {} but should be on parent_row {}",
+                                on_row,
+                                parent_row
+                            );
                         }
                         if child_row + 1 != parent_row {
-                            return Err(format!(
-                                "Line from {:?} to {:?}: single Curve segment only valid when child_row ({}) + 1 == parent_row ({})",
-                                line.child, line.parent, child_row, parent_row
-                            ));
+                            bail!(
+                                "single Curve segment only valid when child_row ({}) + 1 == parent_row ({})",
+                                child_row,
+                                parent_row
+                            );
                         }
                         match curve_kind {
                             crate::graph::CurveKind::Merge | crate::graph::CurveKind::Checkout => {}
@@ -1646,19 +1650,18 @@ mod tests {
                         crate::graph::CommitLineSegment::Straight { to_row },
                     ) => {
                         if *merge_row != child_row + 1 {
-                            return Err(format!(
-                                "Line from {:?} to {:?}: Merge curve should be on row {} (child_row + 1) but is on {}",
-                                line.child,
-                                line.parent,
+                            bail!(
+                                "Merge curve should be on row {} (child_row + 1) but is on {}",
                                 child_row + 1,
                                 merge_row
-                            ));
+                            );
                         }
                         if *to_row != parent_row {
-                            return Err(format!(
-                                "Line from {:?} to {:?}: Straight after Merge should end at {} but ends at {}",
-                                line.child, line.parent, parent_row, to_row
-                            ));
+                            bail!(
+                                "Straight after Merge should end at {} but ends at {}",
+                                parent_row,
+                                to_row
+                            );
                         }
                     }
                     (
@@ -1672,27 +1675,27 @@ mod tests {
                         },
                     ) => {
                         if *checkout_row != parent_row {
-                            return Err(format!(
-                                "Line from {:?} to {:?}: Checkout curve should be on row {} but is on {}",
-                                line.child, line.parent, parent_row, checkout_row
-                            ));
+                            bail!(
+                                "Checkout curve should be on row {} but is on {}",
+                                parent_row,
+                                checkout_row
+                            );
                         }
                         if *straight_end != parent_row - 1 && *straight_end != parent_row {
-                            return Err(format!(
-                                "Line from {:?} to {:?}: Straight before Checkout should end at {} or {} but ends at {}",
-                                line.child,
-                                line.parent,
+                            bail!(
+                                "Straight before Checkout should end at {} or {} but ends at {}",
                                 parent_row - 1,
                                 parent_row,
                                 straight_end
-                            ));
+                            );
                         }
                     }
                     (seg1, seg2) => {
-                        return Err(format!(
-                            "Line from {:?} to {:?}: invalid segment combination: {:?} followed by {:?}. Expected (Merge + Straight) or (Straight + Checkout)",
-                            line.child, line.parent, seg1, seg2
-                        ));
+                        bail!(
+                            "invalid segment combination: {:?} followed by {:?}. Expected (Merge + Straight) or (Straight + Checkout)",
+                            seg1,
+                            seg2
+                        );
                     }
                 }
             }
@@ -1701,7 +1704,7 @@ mod tests {
         Ok(())
     }
 
-    fn verify_line_overlaps(graph: &crate::graph::GraphData) -> Result<(), String> {
+    fn verify_line_overlaps(graph: &crate::graph::GraphData) -> Result<()> {
         for line in &graph.lines {
             let child_row = line.full_interval.start;
 
@@ -1715,16 +1718,14 @@ mod tests {
                             if row < graph.commits.len() {
                                 let commit_at_row = &graph.commits[row];
                                 if commit_at_row.lane == current_column {
-                                    return Err(format!(
-                                        "Line from {:?} to {:?}: straight segment from row {} to {} in column {} passes through commit {:?} at row {}",
-                                        line.child,
-                                        line.parent,
+                                    bail!(
+                                        "straight segment from row {} to {} in column {} passes through commit {:?} at row {}",
                                         current_row,
                                         to_row,
                                         current_column,
                                         commit_at_row.data.sha,
                                         row
-                                    ));
+                                    );
                                 }
                             }
                         }
@@ -1743,7 +1744,7 @@ mod tests {
         Ok(())
     }
 
-    fn verify_coverage(graph: &crate::graph::GraphData) -> Result<(), String> {
+    fn verify_coverage(graph: &crate::graph::GraphData) -> Result<()> {
         let mut expected_edges: HashSet<(Oid, Oid)> = HashSet::default();
         for entry in &graph.commits {
             for parent in &entry.data.parents {
@@ -1756,25 +1757,27 @@ mod tests {
             let edge = (line.child, line.parent);
 
             if found_edges.contains(&edge) {
-                return Err(format!(
+                bail!(
                     "Duplicate line found for edge {:?} -> {:?}",
-                    line.child, line.parent
-                ));
+                    line.child,
+                    line.parent
+                );
             }
 
             found_edges.insert(edge);
 
             if !expected_edges.contains(&edge) {
-                return Err(format!(
+                bail!(
                     "Orphan line found: {:?} -> {:?} is not in the commit graph",
-                    line.child, line.parent
-                ));
+                    line.child,
+                    line.parent
+                );
             }
         }
 
         for (child, parent) in &expected_edges {
             if !found_edges.contains(&(*child, *parent)) {
-                return Err(format!("Missing line for edge {:?} -> {:?}", child, parent));
+                bail!("Missing line for edge {:?} -> {:?}", child, parent);
             }
         }
 
@@ -1784,14 +1787,14 @@ mod tests {
     fn verify_all_invariants(
         graph: &crate::graph::GraphData,
         commits: &[Arc<InitialGraphCommitData>],
-    ) -> Result<(), String> {
-        verify_commit_order(graph, commits)?;
+    ) -> Result<()> {
+        verify_commit_order(graph, commits).context("commit order")?;
         let oid_to_row = build_oid_to_row_map(graph);
-        verify_line_endpoints(graph, &oid_to_row)?;
-        verify_column_correctness(graph, &oid_to_row)?;
-        verify_segment_continuity(graph)?;
-        verify_coverage(graph)?;
-        verify_line_overlaps(graph)?;
+        verify_line_endpoints(graph, &oid_to_row).context("line endpoints")?;
+        verify_column_correctness(graph, &oid_to_row).context("column correctness")?;
+        verify_segment_continuity(graph).context("segment continuity")?;
+        verify_coverage(graph).context("coverage")?;
+        verify_line_overlaps(graph).context("line overlaps")?;
         Ok(())
     }
 
@@ -1895,7 +1898,7 @@ mod tests {
 
             if let Err(error) = verify_all_invariants(&graph_data, &commits) {
                 panic!(
-                    "Graph invariant violation (seed={}, adversarial={}, num_commits={}):\n{}",
+                    "Graph invariant violation (seed={}, adversarial={}, num_commits={}):\n{:#}",
                     seed, adversarial, num_commits, error
                 );
             }
@@ -1963,7 +1966,7 @@ mod tests {
 
         if let Err(error) = verify_all_invariants(&graph_data, &commits) {
             panic!(
-                "Graph invariant violation (adversarial={}, num_commits={}):\n{}",
+                "Graph invariant violation (adversarial={}, num_commits={}):\n{:#}",
                 adversarial, num_commits, error
             );
         }
