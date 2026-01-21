@@ -1288,6 +1288,23 @@ impl Thread {
         }
     }
 
+    pub fn update_queued_message(
+        &mut self,
+        index: usize,
+        content: Vec<acp::ContentBlock>,
+        tracked_buffers: Vec<Entity<Buffer>>,
+    ) -> bool {
+        if index < self.queued_messages.len() {
+            self.queued_messages[index] = QueuedMessage {
+                content,
+                tracked_buffers,
+            };
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn clear_queued_messages(&mut self) {
         self.queued_messages.clear();
     }

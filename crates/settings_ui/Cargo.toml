@@ -20,14 +20,16 @@ anyhow.workspace = true
 bm25 = "2.3.2"
 copilot_ui.workspace = true
 edit_prediction.workspace = true
-language_models.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
+futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 heck.workspace = true
 itertools.workspace = true
+language_models.workspace = true
+language.workspace = true
 log.workspace = true
 menu.workspace = true
 paths.workspace = true
@@ -51,12 +53,18 @@ zed_actions.workspace = true
 [dev-dependencies]
 assets.workspace = true
 client.workspace = true
+fs = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language.workspace = true
 node_runtime.workspace = true
 paths.workspace = true
 pretty_assertions.workspace = true
+project = { workspace = true, features = ["test-support"] }
+recent_projects = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
 session.workspace = true
-settings.workspace = true
+settings = { workspace = true, features = ["test-support"] }
+title_bar = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

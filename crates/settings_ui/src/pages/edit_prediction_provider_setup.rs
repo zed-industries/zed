@@ -210,7 +210,7 @@ fn render_api_key_provider(
                     SettingsInputField::new()
                         .tab_index(0)
                         .with_placeholder("xxxxxxxxxxxxxxxxxxxx")
-                        .on_confirm(move |api_key, cx| {
+                        .on_confirm(move |api_key, _window, cx| {
                             write_key(api_key.filter(|key| !key.is_empty()), cx);
                         }),
                 ),
