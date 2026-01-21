@@ -6,8 +6,8 @@ use crate::{
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, App, Context, Entity, Focusable, InteractiveElement, ListSizingBehavior,
-    ParentElement, Pixels, ScrollStrategy, Size, Styled, Subscription, UniformListScrollHandle,
-    WeakEntity, Window, div, px, uniform_list,
+    MouseDownEvent, ParentElement, Pixels, ScrollStrategy, Size, Styled, Subscription,
+    UniformListScrollHandle, WeakEntity, Window, div, px, uniform_list,
 };
 use language::Buffer;
 use multi_buffer::Anchor;
@@ -308,6 +308,11 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
                     .overflow_hidden()
                     .child(
                         v_flex()
+                            .on_mouse_down_out(cx.listener(
+                                |editor, _: &MouseDownEvent, window, cx| {
+                                    editor.hide_context_menu(window, cx);
+                                },
+                            ))
                             .on_action(cx.listener(|editor, _: &menu::Cancel, window, cx| {
                                 editor.hide_context_menu(window, cx);
                             }))
