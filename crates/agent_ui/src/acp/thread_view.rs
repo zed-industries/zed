@@ -1935,7 +1935,7 @@ impl AcpThreadView {
             session_id = session_id,
             kind = error_kind,
             acp_error_code = acp_error_code,
-            message = Some(message),
+            message = message,
         );
     }
 
