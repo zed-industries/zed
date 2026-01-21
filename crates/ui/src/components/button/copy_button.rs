@@ -116,16 +116,14 @@ impl RenderOnce for CopyButton {
                     cx.write_to_clipboard(ClipboardItem::new_string(message.to_string()));
                 }
 
-                let state = state.clone();
-                window
-                    .spawn(cx, async move |cx| {
-                        cx.background_executor().timer(COPIED_STATE_DURATION).await;
-                        cx.update(|_window, cx| {
-                            cx.notify(state.entity_id());
-                        })
-                        .ok();
+                let state_id = state.entity_id();
+                cx.spawn(async move |cx| {
+                    cx.background_executor().timer(COPIED_STATE_DURATION).await;
+                    cx.update(|cx| {
+                        cx.notify(state_id);
                     })
-                    .detach();
+                })
+                .detach();
             });
 
         if let Some(visible_on_hover) = visible_on_hover {
