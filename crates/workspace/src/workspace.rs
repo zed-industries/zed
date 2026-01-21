@@ -6385,20 +6385,40 @@ impl Workspace {
         )
     }
 
-    fn render_left_dock_with_secondary(
+    fn collab_panel_dock_position(&self, cx: &App) -> Option<DockPosition> {
+        for dock in self.all_docks() {
+            let dock_ref = dock.read(cx);
+            if dock_ref.panel_index_for_persistent_name("CollabPanel", cx).is_some() {
+                return Some(dock_ref.position());
+            }
+        }
+        None
+    }
+
+    fn render_dock_with_collab_secondary(
         &self,
+        position: DockPosition,
+        dock: &Entity<Dock>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Div> {
-        if self.zoomed_position == Some(DockPosition::Left) {
+        if self.zoomed_position == Some(position) {
             return None;
         }
 
-        let leader_border = self.left_dock.read(cx).active_panel().and_then(|panel| {
+        let leader_border = dock.read(cx).active_panel().and_then(|panel| {
             let pane = panel.pane(cx)?;
             let follower_states = &self.follower_states;
             leader_border_for_pane(follower_states, &pane, window, cx)
         });
+
+        let has_collab_panel = self.collab_panel_dock_position(cx) == Some(position);
+
+        let border_side: fn(Div) -> Div = match position {
+            DockPosition::Left => |d: Div| d.border_r_1(),
+            DockPosition::Right => |d: Div| d.border_l_1(),
+            DockPosition::Bottom => |d: Div| d.border_t_1(),
+        };
 
         Some(
             div()
@@ -6413,17 +6433,19 @@ impl Workspace {
                         .flex_col()
                         .flex_1()
                         .overflow_hidden()
-                        .child(self.left_dock.clone())
+                        .child(dock.clone())
                         .children(leader_border),
                 )
-                .child(
-                    div()
-                        .flex_none()
-                        .w_full()
-                        .border_t_1()
-                        .border_r_1()
-                        .border_color(cx.theme().colors().border)
-                        .bg(cx.theme().colors().panel_background)
+                .when(has_collab_panel, |this| {
+                    this.child(
+                        border_side(
+                            div()
+                                .flex_none()
+                                .w_full()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border)
+                                .bg(cx.theme().colors().panel_background)
+                        )
                         .child(
                             CollabOverlay::new()
                                 .header(CollabOverlayHeader::new("Admin Dashboard v2").is_open(true))
@@ -6439,7 +6461,8 @@ impl Workspace {
                                     .is_open(true),
                                 ),
                         ),
-                ),
+                    )
+                }),
         )
     }
 
@@ -7161,7 +7184,9 @@ impl Render for Workspace {
                                                     .flex_row()
                                                     .flex_1()
                                                     .overflow_hidden()
-                                                    .children(self.render_left_dock_with_secondary(
+                                                    .children(self.render_dock_with_collab_secondary(
+                                                        DockPosition::Left,
+                                                        &self.left_dock,
                                                         window,
                                                         cx,
                                                     ))
@@ -7224,7 +7249,7 @@ impl Render for Workspace {
                                                             })
                                                         })
                                                     })
-                                                    .children(self.render_dock(
+                                                    .children(self.render_dock_with_collab_secondary(
                                                         DockPosition::Right,
                                                         &self.right_dock,
                                                         window,
@@ -7253,7 +7278,7 @@ impl Render for Workspace {
                                                             .flex()
                                                             .flex_row()
                                                             .flex_1()
-                                                            .children(self.render_left_dock_with_secondary(window, cx))
+                                                            .children(self.render_dock_with_collab_secondary(DockPosition::Left, &self.left_dock, window, cx))
                                                             .when(cx.has_flag::<AgentV2FeatureFlag>(), |this| {
                                                                 this.when_some(self.utility_pane(UtilityPaneSlot::Left), |this, pane| {
                                                                     this.when(pane.expanded(cx), |this| {
@@ -7304,7 +7329,7 @@ impl Render for Workspace {
                                                             .children(self.render_dock(DockPosition::Bottom, &self.bottom_dock, window, cx))
                                                     ),
                                             )
-                                            .children(self.render_dock(
+                                            .children(self.render_dock_with_collab_secondary(
                                                 DockPosition::Right,
                                                 &self.right_dock,
                                                 window,
@@ -7315,7 +7340,9 @@ impl Render for Workspace {
                                             .flex()
                                             .flex_row()
                                             .h_full()
-                                            .children(self.render_left_dock_with_secondary(
+                                            .children(self.render_dock_with_collab_secondary(
+                                                DockPosition::Left,
+                                                &self.left_dock,
                                                 window,
                                                 cx,
                                             ))
@@ -7375,7 +7402,7 @@ impl Render for Workspace {
                                                                     })
                                                                 })
                                                             })
-                                                            .children(self.render_dock(DockPosition::Right, &self.right_dock, window, cx))
+                                                            .children(self.render_dock_with_collab_secondary(DockPosition::Right, &self.right_dock, window, cx))
                                                     )
                                                     .child(
                                                         div()
@@ -7388,7 +7415,9 @@ impl Render for Workspace {
                                             .flex()
                                             .flex_row()
                                             .h_full()
-                                            .children(self.render_left_dock_with_secondary(
+                                            .children(self.render_dock_with_collab_secondary(
+                                                DockPosition::Left,
+                                                &self.left_dock,
                                                 window,
                                                 cx,
                                             ))
@@ -7445,7 +7474,7 @@ impl Render for Workspace {
                                                     })
                                                 })
                                             })
-                                            .children(self.render_dock(
+                                            .children(self.render_dock_with_collab_secondary(
                                                 DockPosition::Right,
                                                 &self.right_dock,
                                                 window,
