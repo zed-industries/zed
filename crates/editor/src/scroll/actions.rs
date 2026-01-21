@@ -42,6 +42,7 @@ impl Editor {
             ScrollBehavior::RequestAnimation if smooth_scroll.enabled => {
                 self.scroll_manager
                     .start_animation(current_position, scroll_position);
+                cx.notify();
             }
             _ => {
                 self.set_scroll_position(scroll_position, window, cx);
