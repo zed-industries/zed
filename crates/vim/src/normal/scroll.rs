@@ -111,22 +111,11 @@ fn scroll_editor(
 ) {
     let should_move_cursor = editor.newest_selection_on_screen(cx).is_eq();
 
-    // Capture old scroll position before scrolling - use animation target if animating,
-    // otherwise use the current scroll position
-    let (old_top_row, old_top_column) = editor
-        .scroll_manager
-        .scroll_animation()
-        .map(|a| {
-            (
-                DisplayRow(a.target_position.y as u32),
-                a.target_position.x as u32,
-            )
-        })
-        .unwrap_or_else(|| {
-            let snapshot = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
-            let position = editor.scroll_manager.anchor().scroll_position(&snapshot);
-            (DisplayRow(position.y as u32), position.x as u32)
-        });
+    // Capture old scroll position before scrolling
+    let snapshot = editor.snapshot(window, cx);
+    let scroll_position = snapshot.scroll_target_or_position();
+    let old_top_row = DisplayRow(scroll_position.y as u32);
+    let old_top_column = scroll_position.x as u32;
 
     if editor.scroll_hover(amount, window, cx) {
         return;
@@ -157,21 +146,11 @@ fn scroll_editor(
         return;
     };
 
-    let target_scroll_position = editor
-        .scroll_manager
-        .scroll_animation()
-        .map(|a| a.target_position)
-        .unwrap_or_else(|| {
-            editor.display_map.update(cx, |map, cx| {
-                editor
-                    .scroll_manager
-                    .anchor()
-                    .scroll_position(&map.snapshot(cx))
-            })
-        });
-
-    let top_row = DisplayRow(target_scroll_position.y as u32);
-    let top_column = target_scroll_position.x as u32;
+    // Calculate top row after scrolling
+    let snapshot = editor.snapshot(window, cx);
+    let scroll_position = snapshot.scroll_target_or_position();
+    let top_row = DisplayRow(scroll_position.y as u32);
+    let top_column = scroll_position.x as u32;
     let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
 
     editor.change_selections(
