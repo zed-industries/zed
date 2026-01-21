@@ -291,17 +291,18 @@ fn init_test(cx: &mut TestAppContext) {
   - [x] Find repo state by path
   - [x] Update graph_commits field
 
-- [ ] **Step 5: Create test module in git_graph.rs**
-  - [ ] Add `#[cfg(test)] mod tests`
-  - [ ] Add necessary test imports
-  - [ ] Add `init_test` function
+- [x] **Step 5: Create test module in git_graph.rs**
+  - [x] Add `#[cfg(test)] mod tests`
+  - [x] Add necessary test imports
+  - [x] Add `init_test` function
+  - [x] Add `generate_random_oid` helper
 
-- [ ] **Step 6: Implement random DAG generator**
-  - [ ] `generate_random_oid(rng)` helper
-  - [ ] `generate_random_commit_dag(rng, adversarial)` main function
-  - [ ] Ensure valid parent relationships (parents come after children in list)
-  - [ ] Support linear, branching, merging, and octopus merge patterns
-  - [ ] 80% realistic / 20% adversarial distribution
+- [x] **Step 6: Implement random DAG generator**
+  - [x] `generate_random_oid(rng)` helper (using `Oid::random`)
+  - [x] `generate_random_commit_dag(rng, adversarial)` main function
+  - [x] Ensure valid parent relationships (parents come after children in list)
+  - [x] Support linear, branching, merging, and octopus merge patterns
+  - [x] 80% realistic / 20% adversarial distribution
 
 - [ ] **Step 7: Implement verification functions**
   - [ ] `verify_line_endpoints` - check full_interval matches commit rows
