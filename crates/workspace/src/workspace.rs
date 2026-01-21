@@ -120,7 +120,7 @@ use task::{DebugScenario, SpawnInTerminal, TaskContext};
 use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
-use ui::{Window, prelude::*};
+use ui::{CollabOverlay, CollabOverlayControls, CollabOverlayHeader, ParticipantItem, Window, prelude::*};
 use util::{
     ResultExt, TryFutureExt,
     paths::{PathStyle, SanitizedPath},
@@ -6385,6 +6385,64 @@ impl Workspace {
         )
     }
 
+    fn render_left_dock_with_secondary(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Div> {
+        if self.zoomed_position == Some(DockPosition::Left) {
+            return None;
+        }
+
+        let leader_border = self.left_dock.read(cx).active_panel().and_then(|panel| {
+            let pane = panel.pane(cx)?;
+            let follower_states = &self.follower_states;
+            leader_border_for_pane(follower_states, &pane, window, cx)
+        });
+
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .h_full()
+                .overflow_hidden()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .overflow_hidden()
+                        .child(self.left_dock.clone())
+                        .children(leader_border),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .w_full()
+                        .border_t_1()
+                        .border_r_1()
+                        .border_color(cx.theme().colors().border)
+                        .bg(cx.theme().colors().panel_background)
+                        .child(
+                            CollabOverlay::new()
+                                .header(CollabOverlayHeader::new("Admin Dashboard v2").is_open(true))
+                                .children(vec![
+                                    ParticipantItem::new("Alice").into_any_element(),
+                                    ParticipantItem::new("Bob").into_any_element(),
+                                    ParticipantItem::new("Charlie").into_any_element(),
+                                ])
+                                .controls(
+                                    CollabOverlayControls::new(
+                                        "https://avatars.githubusercontent.com/u/67129314?v=4",
+                                    )
+                                    .is_open(true),
+                                ),
+                        ),
+                ),
+        )
+    }
+
     pub fn for_window(window: &mut Window, _: &mut App) -> Option<Entity<Workspace>> {
         window.root().flatten()
     }
@@ -7103,9 +7161,7 @@ impl Render for Workspace {
                                                     .flex_row()
                                                     .flex_1()
                                                     .overflow_hidden()
-                                                    .children(self.render_dock(
-                                                        DockPosition::Left,
-                                                        &self.left_dock,
+                                                    .children(self.render_left_dock_with_secondary(
                                                         window,
                                                         cx,
                                                     ))
@@ -7197,7 +7253,7 @@ impl Render for Workspace {
                                                             .flex()
                                                             .flex_row()
                                                             .flex_1()
-                                                            .children(self.render_dock(DockPosition::Left, &self.left_dock, window, cx))
+                                                            .children(self.render_left_dock_with_secondary(window, cx))
                                                             .when(cx.has_flag::<AgentV2FeatureFlag>(), |this| {
                                                                 this.when_some(self.utility_pane(UtilityPaneSlot::Left), |this, pane| {
                                                                     this.when(pane.expanded(cx), |this| {
@@ -7259,9 +7315,7 @@ impl Render for Workspace {
                                             .flex()
                                             .flex_row()
                                             .h_full()
-                                            .children(self.render_dock(
-                                                DockPosition::Left,
-                                                &self.left_dock,
+                                            .children(self.render_left_dock_with_secondary(
                                                 window,
                                                 cx,
                                             ))
@@ -7334,9 +7388,7 @@ impl Render for Workspace {
                                             .flex()
                                             .flex_row()
                                             .h_full()
-                                            .children(self.render_dock(
-                                                DockPosition::Left,
-                                                &self.left_dock,
+                                            .children(self.render_left_dock_with_secondary(
                                                 window,
                                                 cx,
                                             ))
