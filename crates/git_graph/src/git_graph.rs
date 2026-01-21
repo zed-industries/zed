@@ -1683,15 +1683,111 @@ mod tests {
         Ok(())
     }
 
+    fn verify_merge_line_optimality(
+        graph: &crate::graph::GraphData,
+        oid_to_row: &HashMap<Oid, usize>,
+    ) -> Result<()> {
+        for line in &graph.lines {
+            let first_segment = line.segments.first();
+            let is_merge_line = matches!(
+                first_segment,
+                Some(crate::graph::CommitLineSegment::Curve {
+                    curve_kind: crate::graph::CurveKind::Merge,
+                    ..
+                })
+            );
+
+            if !is_merge_line {
+                continue;
+            }
+
+            let child_row = *oid_to_row
+                .get(&line.child)
+                .context("Line references non-existent child commit")?;
+
+            let parent_row = *oid_to_row
+                .get(&line.parent)
+                .context("Line references non-existent parent commit")?;
+
+            let parent_lane = graph.commits[parent_row].lane;
+
+            let Some(crate::graph::CommitLineSegment::Curve { to_column, .. }) = first_segment
+            else {
+                continue;
+            };
+
+            let curves_directly_to_parent = *to_column == parent_lane;
+
+            if !curves_directly_to_parent {
+                continue;
+            }
+
+            let curve_row = child_row + 1;
+            let has_commits_in_path = graph.commits[curve_row..parent_row]
+                .iter()
+                .any(|c| c.lane == parent_lane);
+
+            if has_commits_in_path {
+                bail!(
+                    "Merge line from {:?} to {:?} curves directly to parent lane {} but there are commits in that lane between rows {} and {}",
+                    line.child,
+                    line.parent,
+                    parent_lane,
+                    curve_row,
+                    parent_row
+                );
+            }
+
+            let curve_ends_at_parent = curve_row == parent_row;
+
+            if curve_ends_at_parent {
+                if line.segments.len() != 1 {
+                    bail!(
+                        "Merge line from {:?} to {:?} curves directly to parent (curve_row == parent_row), but has {} segments instead of 1 [MergeCurve]",
+                        line.child,
+                        line.parent,
+                        line.segments.len()
+                    );
+                }
+            } else {
+                if line.segments.len() != 2 {
+                    bail!(
+                        "Merge line from {:?} to {:?} curves directly to parent lane without overlap, but has {} segments instead of 2 [MergeCurve, Straight]",
+                        line.child,
+                        line.parent,
+                        line.segments.len()
+                    );
+                }
+
+                let is_straight_segment = matches!(
+                    line.segments.get(1),
+                    Some(crate::graph::CommitLineSegment::Straight { .. })
+                );
+
+                if !is_straight_segment {
+                    bail!(
+                        "Merge line from {:?} to {:?} curves directly to parent lane without overlap, but second segment is not a Straight segment",
+                        line.child,
+                        line.parent
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn verify_all_invariants(
         graph: &crate::graph::GraphData,
         commits: &[Arc<InitialGraphCommitData>],
     ) -> Result<()> {
-        verify_commit_order(graph, commits).context("commit order")?;
         let oid_to_row = build_oid_to_row_map(graph);
+
+        verify_commit_order(graph, commits).context("commit order")?;
         verify_line_endpoints(graph, &oid_to_row).context("line endpoints")?;
         verify_column_correctness(graph, &oid_to_row).context("column correctness")?;
         verify_segment_continuity(graph).context("segment continuity")?;
+        verify_merge_line_optimality(graph, &oid_to_row).context("merge line optimality")?;
         verify_coverage(graph).context("coverage")?;
         verify_line_overlaps(graph).context("line overlaps")?;
         Ok(())
