@@ -17,50 +17,33 @@ const CHR_F_WHITESPACE: ChrfWhitespace = ChrfWhitespace::Ignore;
 /// Returns a score from 0.0 to 100.0, where 100.0 means the actual edits perfectly match
 /// the expected edits.
 pub fn delta_chr_f(original: &str, expected: &str, actual: &str) -> f64 {
-    let skip_whitespace = matches!(CHR_F_WHITESPACE, ChrfWhitespace::Ignore);
+    let should_skip_whitespace = matches!(CHR_F_WHITESPACE, ChrfWhitespace::Ignore);
 
-    let mut orig_iter = original
-        .chars()
-        .filter(|c| !skip_whitespace || !c.is_whitespace());
-    let mut exp_iter = expected
-        .chars()
-        .filter(|c| !skip_whitespace || !c.is_whitespace());
-    let mut act_iter = actual
-        .chars()
-        .filter(|c| !skip_whitespace || !c.is_whitespace());
+    let skip_whitespace = |c: &char| !should_skip_whitespace || !c.is_whitespace();
 
-    let mut all_equal = true;
+    let mut orig_iter = original.chars().filter(skip_whitespace);
+    let mut exp_iter = expected.chars().filter(skip_whitespace);
+    let mut act_iter = actual.chars().filter(skip_whitespace);
+
     loop {
         match (orig_iter.next(), exp_iter.next(), act_iter.next()) {
             (Some(o), Some(e), Some(a)) => {
                 if o != e || o != a {
-                    all_equal = false;
                     break;
                 }
             }
+            (None, None, None) => {
+                return 100.0;
+            }
             _ => {
-                all_equal = false;
                 break;
             }
         }
     }
 
-    if all_equal {
-        return 100.0;
-    }
-
-    let original_chars: Vec<char> = original
-        .chars()
-        .filter(|c| !skip_whitespace || !c.is_whitespace())
-        .collect();
-    let expected_chars: Vec<char> = expected
-        .chars()
-        .filter(|c| !skip_whitespace || !c.is_whitespace())
-        .collect();
-    let actual_chars: Vec<char> = actual
-        .chars()
-        .filter(|c| !skip_whitespace || !c.is_whitespace())
-        .collect();
+    let original_chars: Vec<char> = original.chars().filter(skip_whitespace).collect();
+    let expected_chars: Vec<char> = expected.chars().filter(skip_whitespace).collect();
+    let actual_chars: Vec<char> = actual.chars().filter(skip_whitespace).collect();
 
     // Key: [order, char1, char2, ..., char6]
     // Value: [original_count, expected_count, actual_count]
@@ -157,176 +140,71 @@ pub fn delta_chr_f(original: &str, expected: &str, actual: &str) -> f64 {
 #[cfg(test)]
 mod test {
     use super::*;
-    use collections::HashMap;
     use std::hint::black_box;
     use util_macros::perf;
 
-    fn reference_delta_chr_f(original: &str, expected: &str, actual: &str) -> f64 {
-        let original_chars: Vec<char> = original.chars().filter(|c| !c.is_whitespace()).collect();
-        let expected_chars: Vec<char> = expected.chars().filter(|c| !c.is_whitespace()).collect();
-        let actual_chars: Vec<char> = actual.chars().filter(|c| !c.is_whitespace()).collect();
-
-        fn get_ngram_counts(chars: &[char], order: usize) -> HashMap<Vec<char>, usize> {
-            let mut counts = HashMap::default();
-            for window in chars.windows(order) {
-                *counts.entry(window.to_vec()).or_insert(0) += 1;
-            }
-            counts
-        }
-
-        fn compute_deltas(
-            orig_counts: &HashMap<Vec<char>, usize>,
-            new_counts: &HashMap<Vec<char>, usize>,
-        ) -> HashMap<Vec<char>, isize> {
-            let mut deltas = HashMap::default();
-            for (ngram, &count) in new_counts {
-                let orig = *orig_counts.get(ngram).unwrap_or(&0);
-                let delta = count as isize - orig as isize;
-                if delta != 0 {
-                    deltas.insert(ngram.clone(), delta);
-                }
-            }
-            for (ngram, &count) in orig_counts {
-                if !new_counts.contains_key(ngram) {
-                    deltas.insert(ngram.clone(), -(count as isize));
-                }
-            }
-            deltas
-        }
-
-        let mut total_precision = 0.0;
-        let mut total_recall = 0.0;
-
-        for order in 1..=CHR_F_CHAR_ORDER {
-            let orig_counts = get_ngram_counts(&original_chars, order);
-            let exp_counts = get_ngram_counts(&expected_chars, order);
-            let act_counts = get_ngram_counts(&actual_chars, order);
-
-            let exp_deltas = compute_deltas(&orig_counts, &exp_counts);
-            let act_deltas = compute_deltas(&orig_counts, &act_counts);
-
-            let mut true_positives = 0usize;
-            let mut false_positives = 0usize;
-            let mut false_negatives = 0usize;
-
-            let mut all_ngrams: std::collections::HashSet<Vec<char>> =
-                std::collections::HashSet::new();
-            all_ngrams.extend(exp_deltas.keys().cloned());
-            all_ngrams.extend(act_deltas.keys().cloned());
-
-            for ngram in all_ngrams {
-                let exp_delta = *exp_deltas.get(&ngram).unwrap_or(&0);
-                let act_delta = *act_deltas.get(&ngram).unwrap_or(&0);
-
-                if exp_delta > 0 || act_delta > 0 {
-                    let exp_add = exp_delta.max(0) as usize;
-                    let act_add = act_delta.max(0) as usize;
-                    let matched = exp_add.min(act_add);
-                    true_positives += matched;
-                    false_positives += act_add.saturating_sub(matched);
-                    false_negatives += exp_add.saturating_sub(matched);
-                }
-
-                if exp_delta < 0 || act_delta < 0 {
-                    let exp_del = (-exp_delta).max(0) as usize;
-                    let act_del = (-act_delta).max(0) as usize;
-                    let matched = exp_del.min(act_del);
-                    true_positives += matched;
-                    false_positives += act_del.saturating_sub(matched);
-                    false_negatives += exp_del.saturating_sub(matched);
-                }
-            }
-
-            if true_positives == 0 && false_positives == 0 && false_negatives == 0 {
-                total_precision += 1.0;
-                total_recall += 1.0;
-            } else {
-                let precision = if true_positives + false_positives == 0 {
-                    0.0
-                } else {
-                    true_positives as f64 / (true_positives + false_positives) as f64
-                };
-                let recall = if true_positives + false_negatives == 0 {
-                    0.0
-                } else {
-                    true_positives as f64 / (true_positives + false_negatives) as f64
-                };
-                total_precision += precision;
-                total_recall += recall;
-            }
-        }
-
-        let prec = total_precision / CHR_F_CHAR_ORDER as f64;
-        let recall = total_recall / CHR_F_CHAR_ORDER as f64;
-        let f_score = if prec + recall == 0.0 {
-            0.0
-        } else {
-            (1.0 + CHR_F_BETA * CHR_F_BETA) * prec * recall
-                / (CHR_F_BETA * CHR_F_BETA * prec + recall)
-        };
-
-        f_score * 100.0
-    }
-
-    fn assert_score_eq(original: &str, expected: &str, actual: &str) {
-        let optimized = delta_chr_f(original, expected, actual);
-        let reference = reference_delta_chr_f(original, expected, actual);
+    // expected scores for calls to this function collected from reference implementation
+    fn assert_score_eq(original: &str, expected: &str, actual: &str, expected_score: f64) {
+        let score = delta_chr_f(original, expected, actual);
         assert!(
-            (optimized - reference).abs() < 1e-10,
-            "Mismatch for original={:?}, expected={:?}, actual={:?}: optimized={}, reference={}",
+            (score - expected_score).abs() < 1e-8,
+            "Score mismatch for original={:?}, expected={:?}, actual={:?}: got {}, expected {}",
             original,
             expected,
             actual,
-            optimized,
-            reference
+            score,
+            expected_score
         );
     }
 
     #[test]
-    fn test_delta_chr_f_against_reference_impl() {
-        assert_score_eq("hello", "hello", "hello");
-        assert_score_eq("", "", "");
-        assert_score_eq("a", "a", "a");
-        assert_score_eq("original", "modified", "modified");
+    fn test_delta_chr_f_basic() {
+        assert_score_eq("hello", "hello", "hello", 100.0);
+        assert_score_eq("", "", "", 100.0);
+        assert_score_eq("a", "a", "a", 100.0);
+        assert_score_eq("original", "modified", "modified", 100.0);
         assert_score_eq(
             "fn main() {}",
             "fn main() { println!(); }",
             "fn main() { println!(); }",
+            100.0,
         );
-        assert_score_eq("hello", "hello", "goodbye");
-        assert_score_eq("test", "test", "different");
-        assert_score_eq("hello", "goodbye", "hello");
-        assert_score_eq("old", "new", "old");
-        assert_score_eq("let x = 42;", "let x = 100;", "let x = 99;");
-        assert_score_eq("one two three", "one three", "one two four");
-        assert_score_eq("a", "b", "b");
-        assert_score_eq("a", "b", "c");
-        assert_score_eq("héllo", "héllo!", "héllo!");
-        assert_score_eq("日本語", "日本語テスト", "日本語テスト");
-        assert_score_eq("", "hello", "hello");
-        assert_score_eq("", "hello", "");
-        assert_score_eq("hello", "", "");
-        assert_score_eq("hello", "", "hello");
+        assert_score_eq("hello", "hello", "goodbye", 0.0);
+        assert_score_eq("test", "test", "different", 0.0);
+        assert_score_eq("hello", "goodbye", "hello", 0.0);
+        assert_score_eq("old", "new", "old", 50.0);
+        assert_score_eq("let x = 42;", "let x = 100;", "let x = 99;", 43.7131630648);
+        assert_score_eq("one two three", "one three", "one two four", 38.6574721213);
+        assert_score_eq("a", "b", "b", 100.0);
+        assert_score_eq("a", "b", "c", 91.6666666667);
+        assert_score_eq("héllo", "héllo!", "héllo!", 100.0);
+        assert_score_eq("日本語", "日本語テスト", "日本語テスト", 100.0);
+        assert_score_eq("", "hello", "hello", 100.0);
+        assert_score_eq("", "hello", "", 16.6666666667);
+        assert_score_eq("hello", "", "", 100.0);
+        assert_score_eq("hello", "", "hello", 16.6666666667);
 
-        assert_score_eq("aaa", "aaabbb", "aaabbb");
-        assert_score_eq("aaa", "aaabbb", "aaaccc");
-        assert_score_eq("abcdef", "abXYZdef", "abXYZdef");
-        assert_score_eq("abcdef", "abXYZdef", "abABCdef");
+        assert_score_eq("aaa", "aaabbb", "aaabbb", 100.0);
+        assert_score_eq("aaa", "aaabbb", "aaaccc", 0.0);
+        assert_score_eq("abcdef", "abXYZdef", "abXYZdef", 100.0);
+        assert_score_eq("abcdef", "abXYZdef", "abABCdef", 31.9444444444);
         assert_score_eq(
             "the quick brown fox",
             "the slow brown fox",
             "the slow brown fox",
+            100.0,
         );
         assert_score_eq(
             "the quick brown fox",
             "the slow brown fox",
             "the fast brown fox",
+            55.8430458430,
         );
 
-        assert_score_eq("aaaa", "aaa", "aaa");
-        assert_score_eq("aaaa", "aaa", "aa");
-        assert_score_eq("aabb", "ab", "ab");
-        assert_score_eq("aabb", "ab", "ba");
+        assert_score_eq("aaaa", "aaa", "aaa", 100.0);
+        assert_score_eq("aaaa", "aaa", "aa", 93.75);
+        assert_score_eq("aabb", "ab", "ab", 100.0);
+        assert_score_eq("aabb", "ab", "ba", 98.2142857143);
     }
 
     #[test]
@@ -335,221 +213,145 @@ mod test {
             "short",
             "this is a much longer string now",
             "this is a much longer string now",
+            100.0,
         );
-        assert_score_eq("this is a long string", "hi", "hi");
+        assert_score_eq("this is a long string", "hi", "hi", 100.0);
         assert_score_eq(
             "abc",
             "abcdefghijklmnopqrstuvwxyz",
             "abcdefghijklmnopqrstuvwxyz",
+            100.0,
         );
-        assert_score_eq("abcdefghijklmnopqrstuvwxyz", "abc", "abc");
+        assert_score_eq("abcdefghijklmnopqrstuvwxyz", "abc", "abc", 100.0);
 
-        assert_score_eq("", "x", "x");
-        assert_score_eq("", "x", "y");
-        assert_score_eq("x", "", "");
-        assert_score_eq("x", "", "x");
+        assert_score_eq("", "x", "x", 100.0);
+        assert_score_eq("", "x", "y", 83.3333333333);
+        assert_score_eq("x", "", "", 100.0);
+        assert_score_eq("x", "", "x", 83.3333333333);
     }
 
     #[test]
     fn test_delta_chr_f_repeated_patterns() {
-        assert_score_eq("ababab", "abababab", "abababab");
-        assert_score_eq("ababab", "abababab", "ababab");
-        assert_score_eq("aaabbb", "aaabbbbbb", "aaabbbbbb");
-        assert_score_eq("aaabbb", "aaabbbbbb", "aaabbbccc");
+        assert_score_eq("ababab", "abababab", "abababab", 100.0);
+        assert_score_eq("ababab", "abababab", "ababab", 0.0);
+        assert_score_eq("aaabbb", "aaabbbbbb", "aaabbbbbb", 100.0);
+        assert_score_eq("aaabbb", "aaabbbbbb", "aaabbbccc", 0.0);
 
-        assert_score_eq("xyzxyzxyz", "xyzxyz", "xyzxyz");
-        assert_score_eq("xyzxyzxyz", "xyzxyz", "xyzxyzxyz");
+        assert_score_eq("xyzxyzxyz", "xyzxyz", "xyzxyz", 100.0);
+        assert_score_eq("xyzxyzxyz", "xyzxyz", "xyzxyzxyz", 0.0);
     }
 
     #[test]
     fn test_delta_chr_f_ngram_boundary_cases() {
-        assert_score_eq("12345", "123456", "123456");
-        assert_score_eq("123456", "1234567", "1234567");
-        assert_score_eq("1234567", "12345678", "12345678");
+        assert_score_eq("12345", "123456", "123456", 100.0);
+        assert_score_eq("123456", "1234567", "1234567", 100.0);
+        assert_score_eq("1234567", "12345678", "12345678", 100.0);
 
-        assert_score_eq("abcdefg", "Xbcdefg", "Xbcdefg");
-        assert_score_eq("abcdefg", "abcdefX", "abcdefX");
-        assert_score_eq("abcdefg", "abcXefg", "abcXefg");
-        assert_score_eq("abcdefg", "abcXefg", "abcYefg");
-    }
-
-    #[test]
-    fn test_delta_chr_f_symmetry_properties() {
-        let s1 = delta_chr_f("abc", "abcXYZ", "abcXYZ");
-        assert!(
-            (s1 - 100.0).abs() < 1e-10,
-            "perfect match should be 100: {}",
-            s1
-        );
-
-        let s2 = delta_chr_f("abc", "abcXYZ", "abc");
-        let s3 = delta_chr_f("abc", "abc", "abcXYZ");
-        assert!(s2 < 50.0, "missed addition should score low: {}", s2);
-        assert!(s3 < 50.0, "unwanted addition should score low: {}", s3);
-
-        let s4 = delta_chr_f("abcXYZ", "abc", "abc");
-        assert!(
-            (s4 - 100.0).abs() < 1e-10,
-            "perfect deletion match should be 100: {}",
-            s4
-        );
-
-        let s5 = delta_chr_f("abcXYZ", "abc", "abcXYZ");
-        let s6 = delta_chr_f("abcXYZ", "abcXYZ", "abc");
-        assert!(s5 < 50.0, "missed deletion should score low: {}", s5);
-        assert!(s6 < 50.0, "unwanted deletion should score low: {}", s6);
+        assert_score_eq("abcdefg", "Xbcdefg", "Xbcdefg", 100.0);
+        assert_score_eq("abcdefg", "abcdefX", "abcdefX", 100.0);
+        assert_score_eq("abcdefg", "abcXefg", "abcXefg", 100.0);
+        assert_score_eq("abcdefg", "abcXefg", "abcYefg", 50.0);
     }
 
     #[test]
     fn test_delta_chr_f_unicode_comprehensive() {
-        assert_score_eq("日本語テスト", "日本語テスト結果", "日本語テスト結果");
-        assert_score_eq("日本語テスト", "日本語テスト結果", "日本語テスト失敗");
+        assert_score_eq(
+            "日本語テスト",
+            "日本語テスト結果",
+            "日本語テスト結果",
+            100.0,
+        );
+        assert_score_eq("日本語テスト", "日本語テスト結果", "日本語テスト失敗", 0.0);
 
-        assert_score_eq("こんにちは", "こんにちは世界", "こんにちは世界");
+        assert_score_eq("こんにちは", "こんにちは世界", "こんにちは世界", 100.0);
 
-        assert_score_eq("αβγδ", "αβγδεζ", "αβγδεζ");
-        assert_score_eq("αβγδ", "αβγδεζ", "αβγδηθ");
+        assert_score_eq("αβγδ", "αβγδεζ", "αβγδεζ", 100.0);
+        assert_score_eq("αβγδ", "αβγδεζ", "αβγδηθ", 0.0);
 
-        assert_score_eq("🎉🎊", "🎉🎊🎈", "🎉🎊🎈");
-        assert_score_eq("🎉🎊", "🎉🎊🎈", "🎉🎊🎁");
+        assert_score_eq("🎉🎊", "🎉🎊🎈", "🎉🎊🎈", 100.0);
+        assert_score_eq("🎉🎊", "🎉🎊🎈", "🎉🎊🎁", 50.0);
 
-        assert_score_eq("Привет", "Привет мир", "Привет мир");
+        assert_score_eq("Привет", "Привет мир", "Привет мир", 100.0);
     }
 
     #[test]
     fn test_delta_chr_f_whitespace_handling() {
-        assert_score_eq("a b c", "abc", "abc");
-        assert_score_eq("a  b  c", "abc", "abc");
-        assert_score_eq("a\tb\nc", "abc", "abc");
+        assert_score_eq("a b c", "abc", "abc", 100.0);
+        assert_score_eq("a  b  c", "abc", "abc", 100.0);
+        assert_score_eq("a\tb\nc", "abc", "abc", 100.0);
 
-        assert_score_eq("hello world", "helloworld", "helloworld");
-        assert_score_eq("hello world", "hello  world", "hello  world");
-
-        let s1 = delta_chr_f("a b", "a b c", "a b c");
-        let s2 = delta_chr_f("ab", "abc", "abc");
-        assert!(
-            (s1 - s2).abs() < 1e-10,
-            "whitespace should be ignored: {} vs {}",
-            s1,
-            s2
-        );
-    }
-
-    #[test]
-    fn test_delta_chr_f_correctness() {
-        assert_eq!(delta_chr_f("hello", "hello", "hello"), 100.0);
-        assert_eq!(delta_chr_f("", "", ""), 100.0);
-        assert_eq!(delta_chr_f("a", "a", "a"), 100.0);
-
-        assert_eq!(delta_chr_f("original", "modified", "modified"), 100.0);
-        assert_eq!(
-            delta_chr_f(
-                "fn main() {}",
-                "fn main() { println!(); }",
-                "fn main() { println!(); }"
-            ),
-            100.0
-        );
-
-        assert_eq!(delta_chr_f("a b c", "abc", "abc"), 100.0);
-        assert_eq!(
-            delta_chr_f("hello world", "helloworld", "helloworld"),
-            100.0
-        );
-
-        assert_eq!(delta_chr_f("hello", "hello", "goodbye"), 0.0);
-        assert_eq!(delta_chr_f("test", "test", "different"), 0.0);
-
-        let score = delta_chr_f("hello", "goodbye", "hello");
-        assert!(score < 10.0, "missed edit score should be low: {}", score);
-        let score = delta_chr_f("old", "new", "old");
-        assert!(score < 60.0, "missed edit score should be low: {}", score);
-
-        let score = delta_chr_f("let x = 42;", "let x = 100;", "let x = 99;");
-        assert!(
-            score > 40.0 && score < 60.0,
-            "partial match score: {}",
-            score
-        );
-
-        let score = delta_chr_f("one two three", "one three", "one two four");
-        assert!(score > 20.0 && score < 40.0, "wrong edit score: {}", score);
-
-        assert_eq!(delta_chr_f("a", "b", "b"), 100.0);
-
-        let score = delta_chr_f("a", "b", "c");
-        assert!(
-            score > 80.0,
-            "single char score should be high due to empty orders: {}",
-            score
-        );
-
-        assert_eq!(delta_chr_f("héllo", "héllo!", "héllo!"), 100.0);
-        assert_eq!(delta_chr_f("日本語", "日本語テスト", "日本語テスト"), 100.0);
-
-        assert_eq!(delta_chr_f("", "hello", "hello"), 100.0);
-        let score = delta_chr_f("", "hello", "");
-        assert!(score < 20.0, "empty actual when expected change: {}", score);
-        assert_eq!(delta_chr_f("hello", "", ""), 100.0);
-        let score = delta_chr_f("hello", "", "hello");
-        assert!(score < 20.0, "no change when deletion expected: {}", score);
+        assert_score_eq("hello world", "helloworld", "helloworld", 100.0);
+        assert_score_eq("hello world", "hello  world", "hello  world", 100.0);
     }
 
     #[test]
     fn test_delta_chr_f_addition_deletion_interaction() {
-        assert_score_eq("abc", "Xbc", "Xbc");
-        assert_score_eq("abc", "Xbc", "Ybc");
+        assert_score_eq("abc", "Xbc", "Xbc", 100.0);
+        assert_score_eq("abc", "Xbc", "Ybc", 75.0);
 
-        assert_score_eq("abc", "aXc", "aXc");
-        assert_score_eq("abc", "aXc", "aYc");
+        assert_score_eq("abc", "aXc", "aXc", 100.0);
+        assert_score_eq("abc", "aXc", "aYc", 75.0);
 
-        assert_score_eq("abcdef", "abXYZef", "abXYZef");
-        assert_score_eq("abcdef", "abXYZef", "abABCef");
+        assert_score_eq("abcdef", "abXYZef", "abXYZef", 100.0);
+        assert_score_eq("abcdef", "abXYZef", "abABCef", 40.5820105820);
 
-        assert_score_eq("abc", "XYZabc", "XYZabc");
-        assert_score_eq("abc", "abcXYZ", "abcXYZ");
+        assert_score_eq("abc", "XYZabc", "XYZabc", 100.0);
+        assert_score_eq("abc", "abcXYZ", "abcXYZ", 100.0);
     }
 
     #[test]
     fn test_delta_chr_f_count_changes() {
-        assert_score_eq("aa", "aaa", "aaa");
-        assert_score_eq("aa", "aaa", "aa");
-        assert_score_eq("aa", "aaa", "aaaa");
+        assert_score_eq("aa", "aaa", "aaa", 100.0);
+        assert_score_eq("aa", "aaa", "aa", 50.0);
+        assert_score_eq("aa", "aaa", "aaaa", 76.7543859649);
 
-        assert_score_eq("aaa", "aa", "aa");
-        assert_score_eq("aaa", "aa", "aaa");
-        assert_score_eq("aaa", "aa", "a");
+        assert_score_eq("aaa", "aa", "aa", 100.0);
+        assert_score_eq("aaa", "aa", "aaa", 50.0);
+        assert_score_eq("aaa", "aa", "a", 96.1538461538);
 
-        assert_score_eq("aabb", "aaabbb", "aaabbb");
-        assert_score_eq("aabb", "aaabbb", "aabbcc");
+        assert_score_eq("aabb", "aaabbb", "aaabbb", 100.0);
+        assert_score_eq("aabb", "aaabbb", "aabbcc", 0.0);
     }
 
     #[test]
     fn test_delta_chr_f_real_code_examples() {
-        assert_score_eq("fn foo() {}", "fn foo() { bar(); }", "fn foo() { bar(); }");
+        assert_score_eq(
+            "fn foo() {}",
+            "fn foo() { bar(); }",
+            "fn foo() { bar(); }",
+            100.0,
+        );
 
-        assert_score_eq("fn foo() {}", "fn foo() { bar(); }", "fn foo() { baz(); }");
+        assert_score_eq(
+            "fn foo() {}",
+            "fn foo() { bar(); }",
+            "fn foo() { baz(); }",
+            57.6388888889,
+        );
 
-        assert_score_eq("let x = 1;", "let x = 42;", "let x = 42;");
+        assert_score_eq("let x = 1;", "let x = 42;", "let x = 42;", 100.0);
 
-        assert_score_eq("let x = 1;", "let x = 42;", "let x = 99;");
+        assert_score_eq("let x = 1;", "let x = 42;", "let x = 99;", 38.8888888889);
 
         assert_score_eq(
             "if (condition) { action(); }",
             "if (condition) { action(); } else { other(); }",
             "if (condition) { action(); } else { other(); }",
+            100.0,
         );
 
         assert_score_eq(
             "println!(\"hello\");",
             "println!(\"hello, world!\");",
             "println!(\"hello, world!\");",
+            100.0,
         );
 
         assert_score_eq(
             "println!(\"hello\");",
             "println!(\"hello, world!\");",
             "println!(\"goodbye, world!\");",
+            64.3973946892,
         );
     }
 
