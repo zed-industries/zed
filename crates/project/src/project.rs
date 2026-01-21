@@ -2148,8 +2148,9 @@ impl Project {
         {
             let path = path.to_path_buf();
             cx.spawn(async move |_, cx| {
-                let windows_path = wsl_path_to_windows_path(&wsl_options, &path).await?;
-                cx.update(|cx| cx.reveal_path(&windows_path))
+                wsl_path_to_windows_path(&wsl_options, &path)
+                    .await
+                    .map(|windows_path| cx.update(|cx| cx.reveal_path(&windows_path)))
             })
             .detach_and_log_err(cx);
             return;
