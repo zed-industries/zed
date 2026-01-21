@@ -74,7 +74,11 @@ impl PromptCompletionProviderDelegate for Entity<MessageEditor> {
             if self.read(cx).thread_store.is_some() {
                 supported.push(PromptContextType::Thread);
             }
-            supported.extend(&[PromptContextType::Fetch, PromptContextType::Rules]);
+            supported.extend(&[
+                PromptContextType::Diagnostics,
+                PromptContextType::Fetch,
+                PromptContextType::Rules,
+            ]);
         }
         supported
     }

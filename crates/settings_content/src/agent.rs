@@ -502,6 +502,41 @@ pub enum CustomAgentServerSettings {
         #[serde(default)]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
+    Registry {
+        /// The default mode to use for this agent.
+        ///
+        /// Note: Not only all agents support modes.
+        ///
+        /// Default: None
+        default_mode: Option<String>,
+        /// The default model to use for this agent.
+        ///
+        /// This should be the model ID as reported by the agent.
+        ///
+        /// Default: None
+        default_model: Option<String>,
+        /// The favorite models for this agent.
+        ///
+        /// These are the model IDs as reported by the agent.
+        ///
+        /// Default: []
+        #[serde(default)]
+        favorite_models: Vec<String>,
+        /// Default values for session config options.
+        ///
+        /// This is a map from config option ID to value ID.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        default_config_options: HashMap<String, String>,
+        /// Favorited values for session config options.
+        ///
+        /// This is a map from config option ID to a list of favorited value IDs.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        favorite_config_option_values: HashMap<String, Vec<String>>,
+    },
 }
 
 #[with_fallible_options]

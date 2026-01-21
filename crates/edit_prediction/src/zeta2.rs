@@ -14,14 +14,14 @@ use release_channel::AppVersion;
 use std::env;
 use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::format_zeta_prompt;
-use zeta_prompt::{CURSOR_MARKER, ZetaVersion};
+use zeta_prompt::{CURSOR_MARKER, ZetaVersion, v0120_git_merge_markers};
 
 pub const MAX_CONTEXT_TOKENS: usize = 350;
 
 pub fn max_editable_tokens(version: ZetaVersion) -> usize {
     match version {
         ZetaVersion::V0112MiddleAtEnd | ZetaVersion::V0113Ordered => 150,
-        ZetaVersion::V0114180EditableRegion => 180,
+        ZetaVersion::V0114180EditableRegion | ZetaVersion::V0120GitMergeMarkers => 180,
     }
 }
 
@@ -145,6 +145,14 @@ pub fn request_prediction_with_zeta2(
             if output_text.contains(CURSOR_MARKER) {
                 log::trace!("Stripping out {CURSOR_MARKER} from response");
                 output_text = output_text.replace(CURSOR_MARKER, "");
+            }
+
+            if zeta_version == ZetaVersion::V0120GitMergeMarkers {
+                if let Some(stripped) =
+                    output_text.strip_suffix(v0120_git_merge_markers::END_MARKER)
+                {
+                    output_text = stripped.to_string();
+                }
             }
 
             let mut old_text = snapshot
