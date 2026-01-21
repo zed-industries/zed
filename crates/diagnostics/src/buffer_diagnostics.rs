@@ -15,7 +15,7 @@ use gpui::{
     InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
     Task, WeakEntity, Window, actions, div,
 };
-use language::{Buffer, DiagnosticEntry, DiagnosticEntryRef, Point};
+use language::{Buffer, Capability, DiagnosticEntry, DiagnosticEntryRef, Point};
 use project::{
     DiagnosticSummary, Event, Project, ProjectItem, ProjectPath,
     project_settings::{DiagnosticSeverity, ProjectSettings},
@@ -29,8 +29,8 @@ use std::{
 use text::{Anchor, BufferSnapshot, OffsetRangeExt};
 use ui::{Button, ButtonStyle, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
 use workspace::{
-    ItemHandle, ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{BreadcrumbText, Item, ItemEvent, TabContentParams},
+    ItemHandle, ItemNavHistory, Workspace,
+    item::{Item, ItemEvent, TabContentParams},
 };
 
 actions!(
@@ -175,7 +175,7 @@ impl BufferDiagnosticsEditor {
                     // `BufferDiagnosticsEditor` instance.
                     EditorEvent::Focused => {
                         if buffer_diagnostics_editor.multibuffer.read(cx).is_empty() {
-                            window.focus(&buffer_diagnostics_editor.focus_handle);
+                            window.focus(&buffer_diagnostics_editor.focus_handle, cx);
                         }
                     }
                     EditorEvent::Blurred => {
@@ -517,7 +517,7 @@ impl BufferDiagnosticsEditor {
                                 .editor
                                 .read(cx)
                                 .focus_handle(cx)
-                                .focus(window);
+                                .focus(window, cx);
                         }
                     }
                 }
@@ -617,7 +617,7 @@ impl BufferDiagnosticsEditor {
         // not empty, focus on the editor instead, which will allow the user to
         // start interacting and editing the buffer's contents.
         if self.focus_handle.is_focused(window) && !self.multibuffer.read(cx).is_empty() {
-            self.editor.focus_handle(cx).focus(window)
+            self.editor.focus_handle(cx).focus(window, cx)
         }
     }
 
@@ -701,14 +701,6 @@ impl Item for BufferDiagnosticsEditor {
         });
     }
 
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
-    }
-
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor.breadcrumbs(theme, cx)
-    }
-
     fn can_save(&self, _cx: &App) -> bool {
         true
     }
@@ -759,9 +751,13 @@ impl Item for BufferDiagnosticsEditor {
         self.multibuffer.read(cx).is_dirty(cx)
     }
 
+    fn capability(&self, cx: &App) -> Capability {
+        self.multibuffer.read(cx).capability()
+    }
+
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {

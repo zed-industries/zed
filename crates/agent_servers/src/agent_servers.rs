@@ -10,7 +10,7 @@ pub mod e2e_tests;
 pub use claude::*;
 use client::ProxySettings;
 pub use codex::*;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 pub use custom::*;
 use fs::Fs;
 pub use gemini::*;
@@ -56,10 +56,19 @@ impl AgentServerDelegate {
 pub trait AgentServer: Send {
     fn logo(&self) -> ui::IconName;
     fn name(&self) -> SharedString;
-    fn telemetry_id(&self) -> &'static str;
-    fn default_mode(&self, _cx: &mut App) -> Option<agent_client_protocol::SessionModeId> {
+    fn connect(
+        &self,
+        root_dir: Option<&Path>,
+        delegate: AgentServerDelegate,
+        cx: &mut App,
+    ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>>;
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
+
+    fn default_mode(&self, _cx: &App) -> Option<agent_client_protocol::SessionModeId> {
         None
     }
+
     fn set_default_mode(
         &self,
         _mode_id: Option<agent_client_protocol::SessionModeId>,
@@ -68,7 +77,7 @@ pub trait AgentServer: Send {
     ) {
     }
 
-    fn default_model(&self, _cx: &mut App) -> Option<agent_client_protocol::ModelId> {
+    fn default_model(&self, _cx: &App) -> Option<agent_client_protocol::ModelId> {
         None
     }
 
@@ -80,14 +89,49 @@ pub trait AgentServer: Send {
     ) {
     }
 
-    fn connect(
-        &self,
-        root_dir: Option<&Path>,
-        delegate: AgentServerDelegate,
-        cx: &mut App,
-    ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>>;
+    fn favorite_model_ids(&self, _cx: &mut App) -> HashSet<agent_client_protocol::ModelId> {
+        HashSet::default()
+    }
 
-    fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
+    fn default_config_option(&self, _config_id: &str, _cx: &App) -> Option<String> {
+        None
+    }
+
+    fn set_default_config_option(
+        &self,
+        _config_id: &str,
+        _value_id: Option<&str>,
+        _fs: Arc<dyn Fs>,
+        _cx: &mut App,
+    ) {
+    }
+
+    fn favorite_config_option_value_ids(
+        &self,
+        _config_id: &agent_client_protocol::SessionConfigId,
+        _cx: &mut App,
+    ) -> HashSet<agent_client_protocol::SessionConfigValueId> {
+        HashSet::default()
+    }
+
+    fn toggle_favorite_config_option_value(
+        &self,
+        _config_id: agent_client_protocol::SessionConfigId,
+        _value_id: agent_client_protocol::SessionConfigValueId,
+        _should_be_favorite: bool,
+        _fs: Arc<dyn Fs>,
+        _cx: &App,
+    ) {
+    }
+
+    fn toggle_favorite_model(
+        &self,
+        _model_id: agent_client_protocol::ModelId,
+        _should_be_favorite: bool,
+        _fs: Arc<dyn Fs>,
+        _cx: &App,
+    ) {
+    }
 }
 
 impl dyn AgentServer {

@@ -1,13 +1,14 @@
 use super::*;
+use crate::assemble_excerpts::assemble_excerpt_ranges;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::TestAppContext;
 use indoc::indoc;
-use language::{Language, LanguageConfig, LanguageMatcher, Point, ToPoint as _, tree_sitter_rust};
+use language::{Point, ToPoint as _, rust_lang};
 use lsp::FakeLanguageServer;
 use project::{FakeFs, LocationLink, Project};
 use serde_json::json;
 use settings::SettingsStore;
-use std::{fmt::Write as _, sync::Arc};
+use std::fmt::Write as _;
 use util::{path, test::marked_text_ranges};
 
 #[gpui::test]
@@ -42,13 +43,13 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
     });
 
     cx.executor().advance_clock(DEBOUNCE_DURATION);
-    related_excerpt_store.update(cx, |store, _| {
-        let excerpts = store.related_files();
+    related_excerpt_store.update(cx, |store, cx| {
+        let excerpts = store.related_files(cx);
         assert_related_files(
             &excerpts,
             &[
                 (
-                    "src/company.rs",
+                    "root/src/company.rs",
                     &[indoc! {"
                         pub struct Company {
                             owner: Arc<Person>,
@@ -56,7 +57,7 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
                         }"}],
                 ),
                 (
-                    "src/main.rs",
+                    "root/src/main.rs",
                     &[
                         indoc! {"
                         pub struct Session {
@@ -71,7 +72,66 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
                     ],
                 ),
                 (
-                    "src/person.rs",
+                    "root/src/person.rs",
+                    &[
+                        indoc! {"
+                        impl Person {
+                            pub fn get_first_name(&self) -> &str {
+                                &self.first_name
+                            }"},
+                        "}",
+                    ],
+                ),
+            ],
+        );
+    });
+
+    let company_buffer = related_excerpt_store.update(cx, |store, cx| {
+        store
+            .related_files_with_buffers(cx)
+            .into_iter()
+            .find(|(file, _)| file.path.to_str() == Some("root/src/company.rs"))
+            .map(|(_, buffer)| buffer)
+            .expect("company.rs buffer not found")
+    });
+
+    company_buffer.update(cx, |buffer, cx| {
+        let text = buffer.text();
+        let insert_pos = text.find("address: Address,").unwrap() + "address: Address,".len();
+        buffer.edit([(insert_pos..insert_pos, "\n    name: String,")], None, cx);
+    });
+
+    related_excerpt_store.update(cx, |store, cx| {
+        let excerpts = store.related_files(cx);
+        assert_related_files(
+            &excerpts,
+            &[
+                (
+                    "root/src/company.rs",
+                    &[indoc! {"
+                        pub struct Company {
+                            owner: Arc<Person>,
+                            address: Address,
+                            name: String,
+                        }"}],
+                ),
+                (
+                    "root/src/main.rs",
+                    &[
+                        indoc! {"
+                        pub struct Session {
+                            company: Arc<Company>,
+                        }
+
+                        impl Session {
+                            pub fn set_company(&mut self, company: Arc<Company>) {"},
+                        indoc! {"
+                            }
+                        }"},
+                    ],
+                ),
+                (
+                    "root/src/person.rs",
                     &[
                         indoc! {"
                         impl Person {
@@ -222,7 +282,18 @@ fn test_assemble_excerpts(cx: &mut TestAppContext) {
                 .map(|range| range.to_point(&buffer))
                 .collect();
 
-            let excerpts = assemble_excerpts(&buffer.snapshot(), ranges);
+            let row_ranges = assemble_excerpt_ranges(&buffer.snapshot(), ranges);
+            let excerpts: Vec<RelatedExcerpt> = row_ranges
+                .into_iter()
+                .map(|row_range| {
+                    let start = Point::new(row_range.start, 0);
+                    let end = Point::new(row_range.end, buffer.line_len(row_range.end));
+                    RelatedExcerpt {
+                        row_range,
+                        text: buffer.text_for_range(start..end).collect::<String>().into(),
+                    }
+                })
+                .collect();
 
             let output = format_excerpts(buffer, &excerpts);
             assert_eq!(output, expected_output);
@@ -446,7 +517,7 @@ fn assert_related_files(actual_files: &[RelatedFile], expected_files: &[(&str, &
                 .iter()
                 .map(|excerpt| excerpt.text.to_string())
                 .collect::<Vec<_>>();
-            (file.path.path.as_unix_str(), excerpts)
+            (file.path.to_str().unwrap(), excerpts)
         })
         .collect::<Vec<_>>();
     let expected_excerpts = expected_files
@@ -492,10 +563,10 @@ fn format_excerpts(buffer: &Buffer, excerpts: &[RelatedExcerpt]) -> String {
         if excerpt.text.is_empty() {
             continue;
         }
-        if current_row < excerpt.point_range.start.row {
+        if current_row < excerpt.row_range.start {
             writeln!(&mut output, "…").unwrap();
         }
-        current_row = excerpt.point_range.start.row;
+        current_row = excerpt.row_range.start;
 
         for line in excerpt.text.to_string().lines() {
             output.push_str(line);
@@ -507,24 +578,4 @@ fn format_excerpts(buffer: &Buffer, excerpts: &[RelatedExcerpt]) -> String {
         writeln!(&mut output, "…").unwrap();
     }
     output
-}
-
-pub(crate) fn rust_lang() -> Arc<Language> {
-    Arc::new(
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    first_line_pattern: None,
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_highlights_query(include_str!("../../languages/src/rust/highlights.scm"))
-        .unwrap()
-        .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
-        .unwrap(),
-    )
 }

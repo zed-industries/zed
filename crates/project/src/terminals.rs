@@ -14,7 +14,8 @@ use std::{
 };
 use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
 use terminal::{
-    TaskState, TaskStatus, Terminal, TerminalBuilder, terminal_settings::TerminalSettings,
+    TaskState, TaskStatus, Terminal, TerminalBuilder, insert_zed_terminal_env,
+    terminal_settings::TerminalSettings,
 };
 use util::{command::new_std_command, get_default_system_shell, maybe, rel_path::RelPath};
 
@@ -111,7 +112,7 @@ impl Project {
             );
         let toolchains = project_path_contexts
             .filter(|_| detect_venv)
-            .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx))
+            .map(|p| self.active_toolchain(p, LanguageName::new_static("Python"), cx))
             .collect::<Vec<_>>();
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
@@ -128,9 +129,9 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister()?;
-                    return cx
-                        .update(|cx| lister.activation_script(&toolchain, shell_kind, cx))
-                        .ok();
+                    return Some(
+                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx)),
+                    );
                 }
                 None
             })
@@ -281,8 +282,37 @@ impl Project {
         cwd: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
+        self.create_terminal_shell_internal(cwd, false, cx)
+    }
+
+    /// Creates a local terminal even if the project is remote.
+    /// In remote projects: opens in Zed's launch directory (bypasses SSH).
+    /// In local projects: opens in the project directory (same as regular terminals).
+    pub fn create_local_terminal(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Terminal>>> {
+        let working_directory = if self.remote_client.is_some() {
+            // Remote project: don't use remote paths, let shell use Zed's cwd
+            None
+        } else {
+            // Local project: use project directory like normal terminals
+            self.active_project_directory(cx).map(|p| p.to_path_buf())
+        };
+        self.create_terminal_shell_internal(working_directory, true, cx)
+    }
+
+    /// Internal method for creating terminal shells.
+    /// If force_local is true, creates a local terminal even if the project has a remote client.
+    /// This allows "breaking out" to a local shell in remote projects.
+    fn create_terminal_shell_internal(
+        &mut self,
+        cwd: Option<PathBuf>,
+        force_local: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Terminal>>> {
         let path = cwd.map(|p| Arc::from(&*p));
-        let is_via_remote = self.remote_client.is_some();
+        let is_via_remote = !force_local && self.remote_client.is_some();
 
         let mut settings_location = None;
         if let Some(path) = path.as_ref()
@@ -311,9 +341,13 @@ impl Project {
             );
         let toolchains = project_path_contexts
             .filter(|_| detect_venv)
-            .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx))
+            .map(|p| self.active_toolchain(p, LanguageName::new_static("Python"), cx))
             .collect::<Vec<_>>();
-        let remote_client = self.remote_client.clone();
+        let remote_client = if force_local {
+            None
+        } else {
+            self.remote_client.clone()
+        };
         let shell = match &remote_client {
             Some(remote_client) => remote_client
                 .read(cx)
@@ -344,9 +378,9 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister()?;
-                    return cx
-                        .update(|cx| lister.activation_script(&toolchain, shell_kind, cx))
-                        .ok();
+                    return Some(
+                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx)),
+                    );
                 }
                 None
             })
@@ -568,8 +602,7 @@ fn create_remote_shell(
     remote_client: Entity<RemoteClient>,
     cx: &mut App,
 ) -> Result<(Shell, HashMap<String, String>)> {
-    // Set default terminfo that does not break the highlighting via ssh.
-    env.insert("TERM".to_string(), "xterm-256color".to_string());
+    insert_zed_terminal_env(&mut env, &release_channel::AppVersion::global(cx));
 
     let (program, args) = match spawn_command {
         Some((program, args)) => (Some(program.clone()), args),

@@ -735,6 +735,7 @@ mod tests {
             true,
             fs.clone(),
             Default::default(),
+            true,
             &mut cx.to_async(),
         )
         .await
@@ -758,6 +759,7 @@ mod tests {
             true,
             fs.clone(),
             Default::default(),
+            true,
             &mut cx.to_async(),
         )
         .await
@@ -816,6 +818,7 @@ mod tests {
             true,
             fs.clone(),
             Default::default(),
+            true,
             &mut cx.to_async(),
         )
         .await

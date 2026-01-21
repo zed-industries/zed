@@ -1,7 +1,7 @@
 use crate::wasm_host::wit::since_v0_6_0::{
     dap::{
-        AttachRequest, BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, LaunchRequest,
-        StartDebuggingRequestArguments, TcpArguments, TcpArgumentsTemplate,
+        BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, StartDebuggingRequestArguments,
+        TcpArguments, TcpArgumentsTemplate,
     },
     slash_command::SlashCommandOutputSection,
 };
@@ -736,6 +736,7 @@ impl nodejs::Host for WasmState {
             .node_runtime
             .npm_package_latest_version(&package_name)
             .await
+            .map(|v| v.to_string())
             .to_wasmtime_result()
     }
 
@@ -747,6 +748,7 @@ impl nodejs::Host for WasmState {
             .node_runtime
             .npm_package_installed_version(&self.work_dir(), &package_name)
             .await
+            .map(|option| option.map(|version| version.to_string()))
             .to_wasmtime_result()
     }
 
@@ -975,6 +977,7 @@ impl ExtensionImports for WasmState {
                             project::project_settings::ContextServerSettings::Stdio {
                                 enabled: _,
                                 command,
+                                ..
                             } => Ok(serde_json::to_string(&settings::ContextServerSettings {
                                 command: Some(settings::CommandSettings {
                                     path: command.path.to_str().map(|path| path.to_string()),
@@ -986,6 +989,7 @@ impl ExtensionImports for WasmState {
                             project::project_settings::ContextServerSettings::Extension {
                                 enabled: _,
                                 settings,
+                                ..
                             } => Ok(serde_json::to_string(&settings::ContextServerSettings {
                                 command: None,
                                 settings: Some(settings),
@@ -1002,7 +1006,7 @@ impl ExtensionImports for WasmState {
             }
             .boxed_local()
         })
-        .await?
+        .await
         .to_wasmtime_result()
     }
 

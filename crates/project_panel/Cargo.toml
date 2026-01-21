@@ -26,6 +26,7 @@ file_icons.workspace = true
 git_ui.workspace = true
 git.workspace = true
 gpui.workspace = true
+itertools.workspace = true
 menu.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
@@ -45,6 +46,7 @@ workspace.workspace = true
 language.workspace = true
 zed_actions.workspace = true
 telemetry.workspace = true
+notifications.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

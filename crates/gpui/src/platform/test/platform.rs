@@ -32,6 +32,8 @@ pub(crate) struct TestPlatform {
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     current_primary_item: Mutex<Option<ClipboardItem>>,
+    #[cfg(target_os = "macos")]
+    current_find_pasteboard_item: Mutex<Option<ClipboardItem>>,
     pub(crate) prompts: RefCell<TestPrompts>,
     screen_capture_sources: RefCell<Vec<TestScreenCaptureSource>>,
     pub opened_url: RefCell<Option<String>>,
@@ -117,6 +119,8 @@ impl TestPlatform {
             current_clipboard_item: Mutex::new(None),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             current_primary_item: Mutex::new(None),
+            #[cfg(target_os = "macos")]
+            current_find_pasteboard_item: Mutex::new(None),
             weak: weak.clone(),
             opened_url: Default::default(),
             #[cfg(target_os = "windows")]
@@ -135,7 +139,6 @@ impl TestPlatform {
             .new_path
             .pop_front()
             .expect("no pending new path prompt");
-        self.background_executor().set_waiting_hint(None);
         tx.send(Ok(select_path(&path))).ok();
     }
 
@@ -147,7 +150,6 @@ impl TestPlatform {
             .multiple_choice
             .pop_front()
             .expect("no pending multiple choice prompt");
-        self.background_executor().set_waiting_hint(None);
         let Some(ix) = prompt.answers.iter().position(|a| a == response) else {
             panic!(
                 "PROMPT: {}\n{:?}\n{:?}\nCannot respond with {}",
@@ -182,8 +184,6 @@ impl TestPlatform {
     ) -> oneshot::Receiver<usize> {
         let (tx, rx) = oneshot::channel();
         let answers: Vec<String> = answers.iter().map(|s| s.label().to_string()).collect();
-        self.background_executor()
-            .set_waiting_hint(Some(format!("PROMPT: {:?} {:?}", msg, detail)));
         self.prompts
             .borrow_mut()
             .multiple_choice
@@ -348,8 +348,6 @@ impl Platform for TestPlatform {
         _suggested_name: Option<&str>,
     ) -> oneshot::Receiver<Result<Option<std::path::PathBuf>>> {
         let (tx, rx) = oneshot::channel();
-        self.background_executor()
-            .set_waiting_hint(Some(format!("PROMPT FOR PATH: {:?}", directory)));
         self.prompts
             .borrow_mut()
             .new_path
@@ -398,9 +396,8 @@ impl Platform for TestPlatform {
         false
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    fn write_to_primary(&self, item: ClipboardItem) {
-        *self.current_primary_item.lock() = Some(item);
+    fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+        self.current_clipboard_item.lock().clone()
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
@@ -412,8 +409,19 @@ impl Platform for TestPlatform {
         self.current_primary_item.lock().clone()
     }
 
-    fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        self.current_clipboard_item.lock().clone()
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn write_to_primary(&self, item: ClipboardItem) {
+        *self.current_primary_item.lock() = Some(item);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn read_from_find_pasteboard(&self) -> Option<ClipboardItem> {
+        self.current_find_pasteboard_item.lock().clone()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn write_to_find_pasteboard(&self, item: ClipboardItem) {
+        *self.current_find_pasteboard_item.lock() = Some(item);
     }
 
     fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {

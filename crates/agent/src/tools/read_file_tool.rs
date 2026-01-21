@@ -1,6 +1,7 @@
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, ToolCallUpdateFields};
 use anyhow::{Context as _, Result, anyhow};
+use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task, WeakEntity};
 use indoc::formatdoc;
 use language::Point;
@@ -20,6 +21,8 @@ use crate::{AgentTool, Thread, ToolCallEventStream, outline};
 /// - For large files, this tool returns a file outline with symbol names and line numbers instead of the full content.
 ///   This outline IS a successful response - use the line numbers to read specific sections with start_line/end_line.
 ///   Do NOT retry reading the same file without line numbers if you receive an outline.
+/// - This tool supports reading image files. Supported formats: PNG, JPEG, WebP, GIF, BMP, TIFF.
+///   Image files are returned as visual content that you can analyze directly.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
     /// The relative path of the file to read.
@@ -60,6 +63,14 @@ impl ReadFileTool {
             thread,
             project,
             action_log,
+        }
+    }
+
+    pub fn with_thread(&self, new_thread: WeakEntity<Thread>) -> Self {
+        Self {
+            thread: new_thread,
+            project: self.project.clone(),
+            action_log: self.action_log.clone(),
         }
     }
 }
@@ -152,12 +163,11 @@ impl AgentTool for ReadFileTool {
         }
 
         let file_path = input.path.clone();
-        let mut location = acp::ToolCallLocation::new(&abs_path);
-        if let Some(line) = input.start_line {
-            location = location.line(line.saturating_sub(1));
-        }
 
-        event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![location]));
+        event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![
+                acp::ToolCallLocation::new(&abs_path)
+                    .line(input.start_line.map(|line| line.saturating_sub(1))),
+            ]));
 
         if image_store::is_image_file(&self.project, &project_path, cx) {
             return cx.spawn(async move |cx| {
@@ -166,16 +176,22 @@ impl AgentTool for ReadFileTool {
                         self.project.update(cx, |project, cx| {
                             project.open_image(project_path.clone(), cx)
                         })
-                    })?
+                    })
                     .await?;
 
                 let image =
-                    image_entity.read_with(cx, |image_item, _| Arc::clone(&image_item.image))?;
+                    image_entity.read_with(cx, |image_item, _| Arc::clone(&image_item.image));
 
                 let language_model_image = cx
-                    .update(|cx| LanguageModelImage::from_image(image, cx))?
+                    .update(|cx| LanguageModelImage::from_image(image, cx))
                     .await
                     .context("processing image")?;
+
+                event_stream.update_fields(ToolCallUpdateFields::new().content(vec![
+                    acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Image(
+                        acp::ImageContent::new(language_model_image.source.clone(), "image/png"),
+                    ))),
+                ]));
 
                 Ok(language_model_image.into())
             });
@@ -185,26 +201,31 @@ impl AgentTool for ReadFileTool {
         let action_log = self.action_log.clone();
 
         cx.spawn(async move |cx| {
-            let buffer = cx
-                .update(|cx| {
-                    project.update(cx, |project, cx| {
-                        project.open_buffer(project_path.clone(), cx)
-                    })
-                })?
-                .await?;
+            let open_buffer_task = cx.update(|cx| {
+                project.update(cx, |project, cx| {
+                    project.open_buffer(project_path.clone(), cx)
+                })
+            });
+
+            let buffer = futures::select! {
+                result = open_buffer_task.fuse() => result?,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("File read cancelled by user");
+                }
+            };
             if buffer.read_with(cx, |buffer, _| {
                 buffer
                     .file()
                     .as_ref()
                     .is_none_or(|file| !file.disk_state().exists())
-            })? {
+            }) {
                 anyhow::bail!("{file_path} not found");
             }
 
             // Record the file read time and mtime
             if let Some(mtime) = buffer.read_with(cx, |buffer, _| {
                 buffer.file().and_then(|file| file.disk_state().mtime())
-            })? {
+            }) {
                 self.thread
                     .update(cx, |thread, _| {
                         thread.file_read_times.insert(abs_path.to_path_buf(), mtime);
@@ -232,11 +253,11 @@ impl AgentTool for ReadFileTool {
                     let start = buffer.anchor_before(Point::new(start_row, 0));
                     let end = buffer.anchor_before(Point::new(end_row, 0));
                     buffer.text_for_range(start..end).collect::<String>()
-                })?;
+                });
 
                 action_log.update(cx, |log, cx| {
                     log.buffer_read(buffer.clone(), cx);
-                })?;
+                });
 
                 Ok(result.into())
             } else {
@@ -250,7 +271,7 @@ impl AgentTool for ReadFileTool {
 
                 action_log.update(cx, |log, cx| {
                     log.buffer_read(buffer.clone(), cx);
-                })?;
+                });
 
                 if buffer_content.is_outline {
                     Ok(formatdoc! {"
@@ -290,10 +311,17 @@ impl AgentTool for ReadFileTool {
                         acp::ToolCallContent::Content(acp::Content::new(markdown)),
                     ]));
                 }
-            })?;
+            });
 
             result
         })
+    }
+
+    fn rebind_thread(
+        &self,
+        new_thread: WeakEntity<Thread>,
+    ) -> Option<std::sync::Arc<dyn crate::AnyAgentTool>> {
+        Some(self.with_thread(new_thread).erase())
     }
 }
 
@@ -302,7 +330,6 @@ mod test {
     use super::*;
     use crate::{ContextServerRegistry, Templates, Thread};
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
-    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
     use language_model::fake_provider::FakeLanguageModel;
     use project::{FakeFs, Project};
     use prompt_store::ProjectContext;
@@ -406,7 +433,7 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        language_registry.add(Arc::new(rust_lang()));
+        language_registry.add(language::rust_lang());
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
@@ -594,49 +621,6 @@ mod test {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
-    }
-
-    fn rust_lang() -> Language {
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_outline_query(
-            r#"
-            (line_comment) @annotation
-
-            (struct_item
-                "struct" @context
-                name: (_) @name) @item
-            (enum_item
-                "enum" @context
-                name: (_) @name) @item
-            (enum_variant
-                name: (_) @name) @item
-            (field_declaration
-                name: (_) @name) @item
-            (impl_item
-                "impl" @context
-                trait: (_)? @name
-                "for"? @context
-                type: (_) @name
-                body: (_ "{" (_)* "}")) @item
-            (function_item
-                "fn" @context
-                name: (_) @name) @item
-            (mod_item
-                "mod" @context
-                name: (_) @name) @item
-            "#,
-        )
-        .unwrap()
     }
 
     #[gpui::test]

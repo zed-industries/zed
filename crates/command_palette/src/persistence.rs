@@ -99,6 +99,13 @@ impl CommandPaletteDB {
         }
     }
 
+    #[cfg(test)]
+    query! {
+        pub(crate) async fn clear_all() -> Result<()> {
+            DELETE FROM command_invocations
+        }
+    }
+
     query! {
         pub fn get_command_usage(command: &str) -> Result<Option<SerializedCommandUsage>> {
             SELECT command_name, COUNT(1), MAX(last_invoked)
@@ -121,6 +128,16 @@ impl CommandPaletteDB {
             FROM command_invocations
             GROUP BY command_name
             ORDER BY COUNT(1) DESC
+        }
+    }
+
+    query! {
+        pub fn list_recent_queries() -> Result<Vec<String>> {
+            SELECT user_query
+            FROM command_invocations
+            WHERE user_query != ""
+            GROUP BY user_query
+            ORDER BY MAX(last_invoked) ASC
         }
     }
 }

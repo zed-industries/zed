@@ -1,29 +1,40 @@
 name: "Close Stale Issues"
 on:
   schedule:
-    - cron: "0 8 31 DEC *"
+    - cron: "0 2 * * 5"
   workflow_dispatch:
+    inputs:
+      debug-only:
+        description: "Run in dry-run mode (no changes made)"
+        type: boolean
+        default: false
+      operations-per-run:
+        description: "Max number of issues to process (default: 1000)"
+        type: number
+        default: 1000
 
 jobs:
   stale:
     if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9
+      - uses: actions/stale@997185467fa4f803885201cee163a9f38240193d # v10
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           stale-issue-message: >
-            Hi there! 👋
-
-            We're working to clean up our issue tracker by closing older bugs that might not be relevant anymore. If you are able to reproduce this issue in the latest version of Zed, please let us know by commenting on this issue, and it will be kept open. If you can't reproduce it, feel free to close the issue yourself. Otherwise, it will close automatically in 14 days.
+            Hi there!
+            Zed development moves fast and a significant number of bugs become outdated.
+            If you can reproduce this bug on the latest stable Zed, please let us know by leaving a comment with the Zed version.
+            If the bug doesn't appear for you anymore, feel free to close the issue yourself; otherwise, the bot will close it in a couple of weeks.
 
             Thanks for your help!
-          close-issue-message: "This issue was closed due to inactivity. If you're still experiencing this problem, please open a new issue with a link to this issue."
+          close-issue-message: "This issue was closed due to inactivity. If you're still experiencing this problem, please leave a comment with your Zed version so that we can reopen the issue."
           days-before-stale: 60
           days-before-close: 14
           only-issue-types: "Bug,Crash"
-          operations-per-run: 1000
+          operations-per-run: ${{ inputs.operations-per-run || 1000 }}
           ascending: true
           enable-statistics: true
+          debug-only: ${{ inputs.debug-only }}
           stale-issue-label: "stale"
           exempt-issue-labels: "never stale"

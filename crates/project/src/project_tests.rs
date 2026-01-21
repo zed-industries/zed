@@ -9,8 +9,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use buffer_diff::{
-    BufferDiffEvent, CALCULATE_DIFF_TASK, DiffHunkSecondaryStatus, DiffHunkStatus,
-    DiffHunkStatusKind, assert_hunks,
+    BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind, assert_hunks,
 };
 use fs::FakeFs;
 use futures::{StreamExt, future};
@@ -28,7 +27,7 @@ use language::{
     ManifestName, ManifestProvider, ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainList,
     ToolchainLister,
     language_settings::{LanguageSettingsContent, language_settings},
-    tree_sitter_rust, tree_sitter_typescript,
+    markdown_lang, rust_lang, tree_sitter_typescript,
 };
 use lsp::{
     DiagnosticSeverity, DocumentChanges, FileOperationFilter, NumberOrString, TextDocumentEdit,
@@ -211,8 +210,8 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
                 .languages()
                 .load_language_for_file_path(file.path.as_std_path());
             let file_language = cx
-                .background_executor()
-                .block(file_language)
+                .foreground_executor()
+                .block_on(file_language)
                 .expect("Failed to get file language");
             let file = file as _;
             language_settings(Some(file_language.name()), Some(&file), cx).into_owned()
@@ -242,6 +241,579 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 
         // README.md should not be affected by .editorconfig's globe "*.rs"
         assert_eq!(Some(settings_readme.tab_size), NonZeroU32::new(8));
+    });
+}
+
+#[gpui::test]
+async fn test_external_editorconfig_support(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/grandparent"),
+        json!({
+            ".editorconfig": "[*]\nindent_size = 4\n",
+            "parent": {
+                ".editorconfig": "[*.rs]\nindent_size = 2\n",
+                "worktree": {
+                    ".editorconfig": "[*.md]\nindent_size = 3\n",
+                    "main.rs": "fn main() {}",
+                    "README.md": "# README",
+                    "other.txt": "other content",
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/grandparent/parent/worktree").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    language_registry.add(markdown_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let tree = worktree.read(cx);
+        let settings_for = |path: &str| {
+            let file_entry = tree.entry_for_path(rel_path(path)).unwrap().clone();
+            let file = File::for_entry(file_entry, worktree.clone());
+            let file_language = project
+                .read(cx)
+                .languages()
+                .load_language_for_file_path(file.path.as_std_path());
+            let file_language = cx
+                .foreground_executor()
+                .block_on(file_language)
+                .expect("Failed to get file language");
+            let file = file as _;
+            language_settings(Some(file_language.name()), Some(&file), cx).into_owned()
+        };
+
+        let settings_rs = settings_for("main.rs");
+        let settings_md = settings_for("README.md");
+        let settings_txt = settings_for("other.txt");
+
+        // main.rs gets indent_size = 2 from parent's external .editorconfig
+        assert_eq!(Some(settings_rs.tab_size), NonZeroU32::new(2));
+
+        // README.md gets indent_size = 3 from internal worktree .editorconfig
+        assert_eq!(Some(settings_md.tab_size), NonZeroU32::new(3));
+
+        // other.txt gets indent_size = 4 from grandparent's external .editorconfig
+        assert_eq!(Some(settings_txt.tab_size), NonZeroU32::new(4));
+    });
+}
+
+#[gpui::test]
+async fn test_external_editorconfig_root_stops_traversal(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            ".editorconfig": "[*]\nindent_size = 99\n",
+            "worktree": {
+                ".editorconfig": "root = true\n[*]\nindent_size = 2\n",
+                "file.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/parent/worktree").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let tree = worktree.read(cx);
+        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
+        let file = File::for_entry(file_entry, worktree.clone());
+        let file_language = project
+            .read(cx)
+            .languages()
+            .load_language_for_file_path(file.path.as_std_path());
+        let file_language = cx
+            .foreground_executor()
+            .block_on(file_language)
+            .expect("Failed to get file language");
+        let file = file as _;
+        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+
+        // file.rs gets indent_size = 2 from worktree's root config, NOT 99 from parent
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(2));
+    });
+}
+
+#[gpui::test]
+async fn test_external_editorconfig_root_in_parent_stops_traversal(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/grandparent"),
+        json!({
+            ".editorconfig": "[*]\nindent_size = 99\n",
+            "parent": {
+                ".editorconfig": "root = true\n[*]\nindent_size = 4\n",
+                "worktree": {
+                    "file.rs": "fn main() {}",
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/grandparent/parent/worktree").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let tree = worktree.read(cx);
+        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
+        let file = File::for_entry(file_entry, worktree.clone());
+        let file_language = project
+            .read(cx)
+            .languages()
+            .load_language_for_file_path(file.path.as_std_path());
+        let file_language = cx
+            .foreground_executor()
+            .block_on(file_language)
+            .expect("Failed to get file language");
+        let file = file as _;
+        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+
+        // file.rs gets indent_size = 4 from parent's root config, NOT 99 from grandparent
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(4));
+    });
+}
+
+#[gpui::test]
+async fn test_external_editorconfig_shared_across_worktrees(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            ".editorconfig": "root = true\n[*]\nindent_size = 5\n",
+            "worktree_a": {
+                "file.rs": "fn a() {}",
+                ".editorconfig": "[*]\ninsert_final_newline = true\n",
+            },
+            "worktree_b": {
+                "file.rs": "fn b() {}",
+                ".editorconfig": "[*]\ninsert_final_newline = false\n",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs,
+        [
+            path!("/parent/worktree_a").as_ref(),
+            path!("/parent/worktree_b").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let worktrees: Vec<_> = project.read(cx).worktrees(cx).collect();
+        assert_eq!(worktrees.len(), 2);
+
+        for worktree in worktrees {
+            let tree = worktree.read(cx);
+            let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
+            let file = File::for_entry(file_entry, worktree.clone());
+            let file_language = project
+                .read(cx)
+                .languages()
+                .load_language_for_file_path(file.path.as_std_path());
+            let file_language = cx
+                .foreground_executor()
+                .block_on(file_language)
+                .expect("Failed to get file language");
+            let file = file as _;
+            let settings =
+                language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+
+            // Both worktrees should get indent_size = 5 from shared parent .editorconfig
+            assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_external_editorconfig_not_loaded_without_internal_config(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            ".editorconfig": "[*]\nindent_size = 99\n",
+            "worktree": {
+                "file.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/parent/worktree").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let tree = worktree.read(cx);
+        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
+        let file = File::for_entry(file_entry, worktree.clone());
+        let file_language = project
+            .read(cx)
+            .languages()
+            .load_language_for_file_path(file.path.as_std_path());
+        let file_language = cx
+            .foreground_executor()
+            .block_on(file_language)
+            .expect("Failed to get file language");
+        let file = file as _;
+        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+
+        // file.rs should have default tab_size = 4, NOT 99 from parent's external .editorconfig
+        // because without an internal .editorconfig, external configs are not loaded
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(4));
+    });
+}
+
+#[gpui::test]
+async fn test_external_editorconfig_modification_triggers_refresh(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            ".editorconfig": "[*]\nindent_size = 4\n",
+            "worktree": {
+                ".editorconfig": "[*]\n",
+                "file.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/parent/worktree").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let tree = worktree.read(cx);
+        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
+        let file = File::for_entry(file_entry, worktree.clone());
+        let file_language = project
+            .read(cx)
+            .languages()
+            .load_language_for_file_path(file.path.as_std_path());
+        let file_language = cx
+            .foreground_executor()
+            .block_on(file_language)
+            .expect("Failed to get file language");
+        let file = file as _;
+        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+
+        // Test initial settings: tab_size = 4 from parent's external .editorconfig
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(4));
+    });
+
+    fs.atomic_write(
+        PathBuf::from(path!("/parent/.editorconfig")),
+        "[*]\nindent_size = 8\n".to_owned(),
+    )
+    .await
+    .unwrap();
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let tree = worktree.read(cx);
+        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
+        let file = File::for_entry(file_entry, worktree.clone());
+        let file_language = project
+            .read(cx)
+            .languages()
+            .load_language_for_file_path(file.path.as_std_path());
+        let file_language = cx
+            .foreground_executor()
+            .block_on(file_language)
+            .expect("Failed to get file language");
+        let file = file as _;
+        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+
+        // Test settings updated: tab_size = 8
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(8));
+    });
+}
+
+#[gpui::test]
+async fn test_adding_worktree_discovers_external_editorconfigs(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            ".editorconfig": "root = true\n[*]\nindent_size = 7\n",
+            "existing_worktree": {
+                ".editorconfig": "[*]\n",
+                "file.rs": "fn a() {}",
+            },
+            "new_worktree": {
+                ".editorconfig": "[*]\n",
+                "file.rs": "fn b() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/parent/existing_worktree").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let worktree = project.read(cx).worktrees(cx).next().unwrap();
+        let tree = worktree.read(cx);
+        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
+        let file = File::for_entry(file_entry, worktree.clone());
+        let file_language = project
+            .read(cx)
+            .languages()
+            .load_language_for_file_path(file.path.as_std_path());
+        let file_language = cx
+            .foreground_executor()
+            .block_on(file_language)
+            .expect("Failed to get file language");
+        let file = file as _;
+        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+
+        // Test existing worktree has tab_size = 7
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(7));
+    });
+
+    let (new_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/parent/new_worktree"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let tree = new_worktree.read(cx);
+        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
+        let file = File::for_entry(file_entry, new_worktree.clone());
+        let file_language = project
+            .read(cx)
+            .languages()
+            .load_language_for_file_path(file.path.as_std_path());
+        let file_language = cx
+            .foreground_executor()
+            .block_on(file_language)
+            .expect("Failed to get file language");
+        let file = file as _;
+        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+
+        // Verify new worktree also has tab_size = 7 from shared parent editorconfig
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(7));
+    });
+}
+
+#[gpui::test]
+async fn test_removing_worktree_cleans_up_external_editorconfig(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            ".editorconfig": "[*]\nindent_size = 6\n",
+            "worktree": {
+                ".editorconfig": "[*]\n",
+                "file.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/parent/worktree").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let store = cx.global::<SettingsStore>();
+        let (worktree_ids, external_paths, watcher_paths) =
+            store.editorconfig_store.read(cx).test_state();
+
+        // Test external config is loaded
+        assert!(worktree_ids.contains(&worktree_id));
+        assert!(!external_paths.is_empty());
+        assert!(!watcher_paths.is_empty());
+    });
+
+    project.update(cx, |project, cx| {
+        project.remove_worktree(worktree_id, cx);
+    });
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let store = cx.global::<SettingsStore>();
+        let (worktree_ids, external_paths, watcher_paths) =
+            store.editorconfig_store.read(cx).test_state();
+
+        // Test worktree state, external configs, and watchers all removed
+        assert!(!worktree_ids.contains(&worktree_id));
+        assert!(external_paths.is_empty());
+        assert!(watcher_paths.is_empty());
+    });
+}
+
+#[gpui::test]
+async fn test_shared_external_editorconfig_cleanup_with_multiple_worktrees(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/parent"),
+        json!({
+            ".editorconfig": "root = true\n[*]\nindent_size = 5\n",
+            "worktree_a": {
+                ".editorconfig": "[*]\n",
+                "file.rs": "fn a() {}",
+            },
+            "worktree_b": {
+                ".editorconfig": "[*]\n",
+                "file.rs": "fn b() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs,
+        [
+            path!("/parent/worktree_a").as_ref(),
+            path!("/parent/worktree_b").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    cx.executor().run_until_parked();
+
+    let (worktree_a_id, worktree_b, worktree_b_id) = cx.update(|cx| {
+        let worktrees: Vec<_> = project.read(cx).worktrees(cx).collect();
+        assert_eq!(worktrees.len(), 2);
+
+        let worktree_a = &worktrees[0];
+        let worktree_b = &worktrees[1];
+        let worktree_a_id = worktree_a.read(cx).id();
+        let worktree_b_id = worktree_b.read(cx).id();
+        (worktree_a_id, worktree_b.clone(), worktree_b_id)
+    });
+
+    cx.update(|cx| {
+        let store = cx.global::<SettingsStore>();
+        let (worktree_ids, external_paths, _) = store.editorconfig_store.read(cx).test_state();
+
+        // Test both worktrees have settings and share external config
+        assert!(worktree_ids.contains(&worktree_a_id));
+        assert!(worktree_ids.contains(&worktree_b_id));
+        assert_eq!(external_paths.len(), 1); // single shared external config
+    });
+
+    project.update(cx, |project, cx| {
+        project.remove_worktree(worktree_a_id, cx);
+    });
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let store = cx.global::<SettingsStore>();
+        let (worktree_ids, external_paths, watcher_paths) =
+            store.editorconfig_store.read(cx).test_state();
+
+        // Test worktree_a is gone but external config remains for worktree_b
+        assert!(!worktree_ids.contains(&worktree_a_id));
+        assert!(worktree_ids.contains(&worktree_b_id));
+        // External config should still exist because worktree_b uses it
+        assert_eq!(external_paths.len(), 1);
+        assert_eq!(watcher_paths.len(), 1);
+    });
+
+    cx.update(|cx| {
+        let tree = worktree_b.read(cx);
+        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
+        let file = File::for_entry(file_entry, worktree_b.clone());
+        let file_language = project
+            .read(cx)
+            .languages()
+            .load_language_for_file_path(file.path.as_std_path());
+        let file_language = cx
+            .foreground_executor()
+            .block_on(file_language)
+            .expect("Failed to get file language");
+        let file = file as _;
+        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+
+        // Test worktree_b still has correct settings
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
     });
 }
 
@@ -691,7 +1263,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     let servers = project.update(cx, |project, cx| {
         project.lsp_store.update(cx, |this, cx| {
             first_buffer.update(cx, |buffer, cx| {
-                this.language_servers_for_local_buffer(buffer, cx)
+                this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             })
@@ -720,7 +1292,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     let servers = project.update(cx, |project, cx| {
         project.lsp_store.update(cx, |this, cx| {
             second_project_buffer.update(cx, |buffer, cx| {
-                this.language_servers_for_local_buffer(buffer, cx)
+                this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             })
@@ -746,7 +1318,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
                     worktree_id,
                     path: rel_path("project-b/source_file.py").into(),
                 },
-                LanguageName::new("Python"),
+                LanguageName::new_static("Python"),
                 cx,
             )
         })
@@ -762,7 +1334,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
                     worktree_id,
                     path: rel_path("project-b/source_file.py").into(),
                 },
-                LanguageName::new("Python"),
+                LanguageName::new_static("Python"),
                 cx,
             )
         })
@@ -791,7 +1363,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     let servers = project.update(cx, |project, cx| {
         project.lsp_store.update(cx, |this, cx| {
             second_project_buffer.update(cx, |buffer, cx| {
-                this.language_servers_for_local_buffer(buffer, cx)
+                this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             })
@@ -1462,6 +2034,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     let prev_read_dir_count = fs.read_dir_call_count();
 
     let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
     let server_id = lsp_store.read_with(cx, |lsp_store, _| {
         let (id, _) = lsp_store.language_server_statuses().next().unwrap();
         id
@@ -2077,6 +2650,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
     // Simulate diagnostics starting to update.
     let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
     fake_server.start_progress(progress_token).await;
 
     // Restart the server before the diagnostics finish updating.
@@ -2087,6 +2661,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
 
     // Simulate the newly started server sending more diagnostics.
     let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
     assert_eq!(
         events.next().await.unwrap(),
         Event::LanguageServerRemoved(LanguageServerId(0))
@@ -2305,6 +2880,9 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
             },
         )
         .await;
+    // Ensure progress notification is fully processed before starting the next one
+    cx.executor().run_until_parked();
+
     fake_server
         .start_progress_with(
             progress_token,
@@ -2314,11 +2892,13 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
             },
         )
         .await;
+    // Ensure progress notification is fully processed before cancelling
     cx.executor().run_until_parked();
 
     project.update(cx, |project, cx| {
         project.cancel_language_server_work_for_buffers([buffer.clone()], cx)
     });
+    cx.executor().run_until_parked();
 
     let cancel_notification = fake_server
         .receive_notification::<lsp::notification::WorkDoneProgressCancel>()
@@ -3353,6 +3933,8 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
     fake_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(|params, _| async move {
         let params = params.text_document_position_params;
         assert_eq!(
@@ -3463,6 +4045,7 @@ async fn test_completions_with_text_edit(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
 
     // When text_edit exists, it takes precedence over insert_text and label
     let text = "let a = obj.fqn";
@@ -3546,6 +4129,7 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
     let text = "let a = obj.fqn";
 
     // Test 1: When text_edit is None but text_edit_text exists with default edit_range
@@ -3683,6 +4267,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
 
     // Test 1: When text_edit is None but insert_text exists (no edit_range in defaults)
     let text = "let a = b.fqn";
@@ -3789,6 +4374,7 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
 
     let text = "let a = b.fqn";
     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
@@ -3863,6 +4449,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
 
     // Language server returns code actions that contain commands, and not edits.
     let actions = project.update(cx, |project, cx| {
@@ -4138,7 +4725,7 @@ async fn test_save_file_spawns_language_server(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |this, cx| this.create_buffer(false, cx))
+        .update(cx, |this, cx| this.create_buffer(None, false, cx))
         .unwrap()
         .await;
     project.update(cx, |this, cx| {
@@ -4204,10 +4791,6 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
         .await
         .unwrap();
 
-    // Simulate buffer diffs being slow, so that they don't complete before
-    // the next file change occurs.
-    cx.executor().deprioritize(*language::BUFFER_DIFF_TASK);
-
     // Change the buffer's file on disk, and then wait for the file change
     // to be detected by the worktree, so that the buffer starts reloading.
     fs.save(
@@ -4258,10 +4841,6 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
         .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file1"), cx))
         .await
         .unwrap();
-
-    // Simulate buffer diffs being slow, so that they don't complete before
-    // the next file change occurs.
-    cx.executor().deprioritize(*language::BUFFER_DIFF_TASK);
 
     // Change the buffer's file on disk, and then wait for the file change
     // to be detected by the worktree, so that the buffer starts reloading.
@@ -5380,6 +5959,7 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
     let response = project.update(cx, |project, cx| {
         let worktree = project.worktrees(cx).next().unwrap();
         let entry = worktree
@@ -5491,6 +6071,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
 
     let response = project.update(cx, |project, cx| {
         project.prepare_rename(buffer.clone(), 7, cx)
@@ -7224,9 +7805,9 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_diff.hunks(&snapshot, cx),
+            unstaged_diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &unstaged_diff.base_text_string().unwrap(),
+            &unstaged_diff.base_text_string(cx).unwrap(),
             &[
                 (0..1, "", "// print goodbye\n", DiffHunkStatus::added_none()),
                 (
@@ -7252,9 +7833,11 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            unstaged_diff
+                .snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &unstaged_diff.base_text().text(),
+            &unstaged_diff.base_text(cx).text(),
             &[(
                 2..3,
                 "",
@@ -7334,16 +7917,17 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    diff_1.read_with(cx, |diff, _| {
-        assert_eq!(diff.base_text().language().cloned(), Some(language))
+    diff_1.read_with(cx, |diff, cx| {
+        assert_eq!(diff.base_text(cx).language().cloned(), Some(language))
     });
     cx.run_until_parked();
     diff_1.update(cx, |diff, cx| {
         let snapshot = buffer_1.read(cx).snapshot();
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..1,
@@ -7382,9 +7966,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_1.update(cx, |diff, cx| {
         let snapshot = buffer_1.read(cx).snapshot();
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &diff.base_text().text(),
+            &diff.base_text(cx).text(),
             &[(
                 2..3,
                 "",
@@ -7411,9 +7996,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_2.update(cx, |diff, cx| {
         let snapshot = buffer_2.read(cx).snapshot();
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(
                 0..0,
                 "// the-deleted-contents\n",
@@ -7432,9 +8018,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_2.update(cx, |diff, cx| {
         let snapshot = buffer_2.read(cx).snapshot();
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(
                 0..0,
                 "// the-deleted-contents\n",
@@ -7503,9 +8090,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     // The hunks are initially unstaged.
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7534,14 +8121,15 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         let range =
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_before(Point::new(2, 0));
         let hunks = diff
-            .hunks_intersecting_range(range, &snapshot, cx)
+            .snapshot(cx)
+            .hunks_intersecting_range(range, &snapshot)
             .collect::<Vec<_>>();
         diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
 
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7573,6 +8161,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
+        base_text_changed_range: _,
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -7585,9 +8174,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7615,6 +8204,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
+        base_text_changed_range: _,
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -7634,14 +8224,15 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         let range =
             snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_before(Point::new(4, 0));
         let hunks = diff
-            .hunks_intersecting_range(range, &snapshot, cx)
+            .snapshot(cx)
+            .hunks_intersecting_range(range, &snapshot)
             .collect::<Vec<_>>();
         diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
 
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7671,6 +8262,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
+        base_text_changed_range: _,
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -7683,9 +8275,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7712,6 +8304,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
+        base_text_changed_range: _,
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -7725,7 +8318,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
 
     // Stage two hunks with separate operations.
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
+        let hunks = diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>();
         diff.stage_or_unstage_hunks(true, &hunks[0..1], &snapshot, true, cx);
         diff.stage_or_unstage_hunks(true, &hunks[2..3], &snapshot, true, cx);
     });
@@ -7733,9 +8326,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     // Both staged hunks appear as pending.
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7763,9 +8356,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (0..0, "zero\n", "", DiffHunkStatus::deleted(NoSecondaryHunk)),
                 (
@@ -7847,9 +8440,9 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     // The hunks are initially unstaged.
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7878,12 +8471,12 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
 
     // Stage the first hunk.
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.hunks(&snapshot, cx).next().unwrap();
+        let hunk = diff.snapshot(cx).hunks(&snapshot).next().unwrap();
         diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7910,12 +8503,12 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     // Stage the second hunk *before* receiving the FS event for the first hunk.
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.hunks(&snapshot, cx).nth(1).unwrap();
+        let hunk = diff.snapshot(cx).hunks(&snapshot).nth(1).unwrap();
         diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7945,7 +8538,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
 
     // Stage the third hunk before receiving the second FS event.
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.hunks(&snapshot, cx).nth(2).unwrap();
+        let hunk = diff.snapshot(cx).hunks(&snapshot).nth(2).unwrap();
         diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
     });
 
@@ -7957,9 +8550,9 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (0..0, "zero\n", "", DiffHunkStatus::deleted(NoSecondaryHunk)),
                 (
@@ -7982,17 +8575,12 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
 #[gpui::test(iterations = 25)]
 async fn test_staging_random_hunks(
     mut rng: StdRng,
-    executor: BackgroundExecutor,
+    _executor: BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
 ) {
     let operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(20);
-
-    // Try to induce races between diff recalculation and index writes.
-    if rng.random_bool(0.5) {
-        executor.deprioritize(*CALCULATE_DIFF_TASK);
-    }
 
     use DiffHunkSecondaryStatus::*;
     init_test(cx);
@@ -8043,8 +8631,9 @@ async fn test_staging_random_hunks(
         .await
         .unwrap();
 
-    let mut hunks =
-        uncommitted_diff.update(cx, |diff, cx| diff.hunks(&snapshot, cx).collect::<Vec<_>>());
+    let mut hunks = uncommitted_diff.update(cx, |diff, cx| {
+        diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>()
+    });
     assert_eq!(hunks.len(), 6);
 
     for _i in 0..operations {
@@ -8095,7 +8684,8 @@ async fn test_staging_random_hunks(
             .map(|hunk| (hunk.range.start.row, hunk.secondary_status))
             .collect::<Vec<_>>();
         let actual_hunks = diff
-            .hunks(&snapshot, cx)
+            .snapshot(cx)
+            .hunks(&snapshot)
             .map(|hunk| (hunk.range.start.row, hunk.secondary_status))
             .collect::<Vec<_>>();
         assert_eq!(actual_hunks, expected_hunks);
@@ -8160,9 +8750,9 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     uncommitted_diff.update(cx, |uncommitted_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            uncommitted_diff.hunks(&snapshot, cx),
+            uncommitted_diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &uncommitted_diff.base_text_string().unwrap(),
+            &uncommitted_diff.base_text_string(cx).unwrap(),
             &[(
                 1..2,
                 "    println!(\"hello from HEAD\");\n",
@@ -8225,7 +8815,7 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
         .unwrap();
 
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
+        let hunks = diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>();
         diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
     });
 
@@ -10342,8 +10932,8 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
 
     cx.run_until_parked();
 
-    unstaged_diff.update(cx, |unstaged_diff, _cx| {
-        let base_text = unstaged_diff.base_text_string().unwrap();
+    unstaged_diff.update(cx, |unstaged_diff, cx| {
+        let base_text = unstaged_diff.base_text_string(cx).unwrap();
         assert_eq!(base_text, file_1_staged, "Should start with file_1 staged");
     });
 
@@ -10367,13 +10957,13 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
     // the `BufferChangedFilePath` event being handled.
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
-        let base_text = unstaged_diff.base_text_string().unwrap();
+        let base_text = unstaged_diff.base_text_string(cx).unwrap();
         assert_eq!(
             base_text, file_2_staged,
             "Diff bases should be automatically updated to file_2 staged content"
         );
 
-        let hunks: Vec<_> = unstaged_diff.hunks(&snapshot, cx).collect();
+        let hunks: Vec<_> = unstaged_diff.snapshot(cx).hunks(&snapshot).collect();
         assert!(!hunks.is_empty(), "Should have diff hunks for file_2");
     });
 
@@ -10386,8 +10976,8 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
 
     cx.run_until_parked();
 
-    uncommitted_diff.update(cx, |uncommitted_diff, _cx| {
-        let base_text = uncommitted_diff.base_text_string().unwrap();
+    uncommitted_diff.update(cx, |uncommitted_diff, cx| {
+        let base_text = uncommitted_diff.base_text_string(cx).unwrap();
         assert_eq!(
             base_text, file_2_committed,
             "Uncommitted diff should compare against file_2 committed content"
@@ -10402,7 +10992,7 @@ async fn search(
 ) -> Result<HashMap<String, Vec<Range<usize>>>> {
     let search_rx = project.update(cx, |project, cx| project.search(query, cx));
     let mut results = HashMap::default();
-    while let Ok(search_result) = search_rx.recv().await {
+    while let Ok(search_result) = search_rx.rx.recv().await {
         match search_result {
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
@@ -10465,20 +11055,6 @@ fn js_lang() -> Arc<Language> {
             ..Default::default()
         },
         None,
-    ))
-}
-
-fn rust_lang() -> Arc<Language> {
-    Arc::new(Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::LANGUAGE.into()),
     ))
 }
 
@@ -10935,4 +11511,363 @@ async fn test_git_worktree_remove(cx: &mut gpui::TestAppContext) {
             .map(|r| r.read(cx).work_directory_abs_path.clone())
     });
     assert!(active_repo_path.is_none());
+}
+
+#[gpui::test]
+async fn test_optimistic_hunks_in_staged_files(cx: &mut gpui::TestAppContext) {
+    use DiffHunkSecondaryStatus::*;
+    init_test(cx);
+
+    let committed_contents = r#"
+        one
+        two
+        three
+    "#
+    .unindent();
+    let file_contents = r#"
+        one
+        TWO
+        three
+    "#
+    .unindent();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".git": {},
+            "file.txt": file_contents.clone()
+        }),
+    )
+    .await;
+
+    fs.set_head_and_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("file.txt", committed_contents.clone())],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    // The hunk is initially unstaged.
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(HasSecondaryHunk),
+            )],
+        );
+    });
+
+    // Get the repository handle.
+    let repo = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    // Stage the file.
+    let stage_task = repo.update(cx, |repo, cx| {
+        repo.stage_entries(vec![repo_path("file.txt")], cx)
+    });
+
+    // Run a few ticks to let the job start and mark hunks as pending,
+    // but don't run_until_parked which would complete the entire operation.
+    for _ in 0..10 {
+        cx.executor().tick();
+        let [hunk]: [_; 1] = uncommitted_diff
+            .read_with(cx, |diff, cx| {
+                diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>()
+            })
+            .try_into()
+            .unwrap();
+        match hunk.secondary_status {
+            HasSecondaryHunk => {}
+            SecondaryHunkRemovalPending => break,
+            NoSecondaryHunk => panic!("hunk was not optimistically staged"),
+            _ => panic!("unexpected hunk state"),
+        }
+    }
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(SecondaryHunkRemovalPending),
+            )],
+        );
+    });
+
+    // Let the staging complete.
+    stage_task.await.unwrap();
+    cx.run_until_parked();
+
+    // The hunk is now fully staged.
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(NoSecondaryHunk),
+            )],
+        );
+    });
+
+    // Simulate a commit by updating HEAD to match the current file contents.
+    // The FakeGitRepository's commit method is a no-op, so we need to manually
+    // update HEAD to simulate the commit completing.
+    fs.set_head_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("file.txt", file_contents.clone())],
+        "newhead",
+    );
+    cx.run_until_parked();
+
+    // After committing, there are no more hunks.
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[] as &[(Range<u32>, &str, &str, DiffHunkStatus)],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_read_only_files_setting(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    // Configure read_only_files setting
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.read_only_files = Some(vec![
+                    "**/generated/**".to_string(),
+                    "**/*.gen.rs".to_string(),
+                ]);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "main.rs": "fn main() {}",
+                "types.gen.rs": "// Generated file",
+            },
+            "generated": {
+                "schema.rs": "// Auto-generated schema",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    // Open a regular file - should be read-write
+    let regular_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    regular_buffer.read_with(cx, |buffer, _| {
+        assert!(!buffer.read_only(), "Regular file should not be read-only");
+    });
+
+    // Open a file matching *.gen.rs pattern - should be read-only
+    let gen_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/src/types.gen.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    gen_buffer.read_with(cx, |buffer, _| {
+        assert!(
+            buffer.read_only(),
+            "File matching *.gen.rs pattern should be read-only"
+        );
+    });
+
+    // Open a file in generated directory - should be read-only
+    let generated_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/generated/schema.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    generated_buffer.read_with(cx, |buffer, _| {
+        assert!(
+            buffer.read_only(),
+            "File in generated directory should be read-only"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_read_only_files_empty_setting(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    // Explicitly set read_only_files to empty (default behavior)
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.read_only_files = Some(vec![]);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+            "generated": {
+                "schema.rs": "// Auto-generated schema",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    // All files should be read-write when read_only_files is empty
+    let main_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    main_buffer.read_with(cx, |buffer, _| {
+        assert!(
+            !buffer.read_only(),
+            "Files should not be read-only when read_only_files is empty"
+        );
+    });
+
+    let generated_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/generated/schema.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    generated_buffer.read_with(cx, |buffer, _| {
+        assert!(
+            !buffer.read_only(),
+            "Generated files should not be read-only when read_only_files is empty"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_read_only_files_with_lock_files(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    // Configure to make lock files read-only
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.read_only_files = Some(vec![
+                    "**/*.lock".to_string(),
+                    "**/package-lock.json".to_string(),
+                ]);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "Cargo.lock": "# Lock file",
+            "Cargo.toml": "[package]",
+            "package-lock.json": "{}",
+            "package.json": "{}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    // Cargo.lock should be read-only
+    let cargo_lock = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/Cargo.lock"), cx)
+        })
+        .await
+        .unwrap();
+
+    cargo_lock.read_with(cx, |buffer, _| {
+        assert!(buffer.read_only(), "Cargo.lock should be read-only");
+    });
+
+    // Cargo.toml should be read-write
+    let cargo_toml = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/Cargo.toml"), cx)
+        })
+        .await
+        .unwrap();
+
+    cargo_toml.read_with(cx, |buffer, _| {
+        assert!(!buffer.read_only(), "Cargo.toml should not be read-only");
+    });
+
+    // package-lock.json should be read-only
+    let package_lock = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/package-lock.json"), cx)
+        })
+        .await
+        .unwrap();
+
+    package_lock.read_with(cx, |buffer, _| {
+        assert!(buffer.read_only(), "package-lock.json should be read-only");
+    });
+
+    // package.json should be read-write
+    let package_json = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/package.json"), cx)
+        })
+        .await
+        .unwrap();
+
+    package_json.read_with(cx, |buffer, _| {
+        assert!(!buffer.read_only(), "package.json should not be read-only");
+    });
 }

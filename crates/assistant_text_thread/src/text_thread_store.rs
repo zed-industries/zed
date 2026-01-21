@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use assistant_slash_command::{SlashCommandId, SlashCommandWorkingSet};
-use client::{Client, TypedEnvelope, proto, telemetry::Telemetry};
+use client::{Client, TypedEnvelope, proto};
 use clock::ReplicaId;
 use collections::HashMap;
 use context_server::ContextServerId;
@@ -12,6 +12,7 @@ use fs::{Fs, RemoveOptions};
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
+use itertools::Itertools;
 use language::LanguageRegistry;
 use paths::text_threads_dir;
 use project::{
@@ -48,7 +49,6 @@ pub struct TextThreadStore {
     fs: Arc<dyn Fs>,
     languages: Arc<LanguageRegistry>,
     slash_commands: Arc<SlashCommandWorkingSet>,
-    telemetry: Arc<Telemetry>,
     _watch_updates: Task<Option<()>>,
     client: Arc<Client>,
     project: WeakEntity<Project>,
@@ -88,7 +88,6 @@ impl TextThreadStore {
     ) -> Task<Result<Entity<Self>>> {
         let fs = project.read(cx).fs().clone();
         let languages = project.read(cx).languages().clone();
-        let telemetry = project.read(cx).client().telemetry().clone();
         cx.spawn(async move |cx| {
             const CONTEXT_WATCH_DURATION: Duration = Duration::from_millis(100);
             let (mut events, _) = fs.watch(text_threads_dir(), CONTEXT_WATCH_DURATION).await;
@@ -102,7 +101,6 @@ impl TextThreadStore {
                     fs,
                     languages,
                     slash_commands,
-                    telemetry,
                     _watch_updates: cx.spawn(async move |this, cx| {
                         async move {
                             while events.next().await.is_some() {
@@ -127,7 +125,7 @@ impl TextThreadStore {
                 this.register_context_server_handlers(cx);
                 this.reload(cx).detach_and_log_err(cx);
                 this
-            })?;
+            });
 
             Ok(this)
         })
@@ -143,7 +141,6 @@ impl TextThreadStore {
             fs: project.read(cx).fs().clone(),
             languages: project.read(cx).languages().clone(),
             slash_commands: Arc::default(),
-            telemetry: project.read(cx).client().telemetry().clone(),
             _watch_updates: Task::ready(None),
             client: project.read(cx).client(),
             project: project.downgrade(),
@@ -170,7 +167,8 @@ impl TextThreadStore {
                 })
                 .collect();
             cx.notify();
-        })
+        });
+        Ok(())
     }
 
     async fn handle_open_context(
@@ -200,7 +198,7 @@ impl TextThreadStore {
                     .read(cx)
                     .serialize_ops(&TextThreadVersion::default(), cx),
             )
-        })??;
+        })?;
         let operations = operations.await;
         Ok(proto::OpenContextResponse {
             context: Some(proto::Context { operations }),
@@ -228,7 +226,7 @@ impl TextThreadStore {
                     .read(cx)
                     .serialize_ops(&TextThreadVersion::default(), cx),
             ))
-        })??;
+        })?;
         let operations = operations.await;
         Ok(proto::CreateContextResponse {
             context_id: context_id.to_proto(),
@@ -249,7 +247,7 @@ impl TextThreadStore {
                 text_thread.update(cx, |text_thread, cx| text_thread.apply_ops([operation], cx));
             }
             Ok(())
-        })?
+        })
     }
 
     async fn handle_synchronize_contexts(
@@ -294,7 +292,7 @@ impl TextThreadStore {
             anyhow::Ok(proto::SynchronizeContextsResponse {
                 contexts: local_versions,
             })
-        })?
+        })
     }
 
     fn handle_project_shared(&mut self, cx: &mut Context<Self>) {
@@ -366,8 +364,15 @@ impl TextThreadStore {
         }
     }
 
-    pub fn unordered_text_threads(&self) -> impl Iterator<Item = &SavedTextThreadMetadata> {
-        self.text_threads_metadata.iter()
+    /// Returns saved threads ordered by `mtime` descending (newest first).
+    pub fn ordered_text_threads(&self) -> impl Iterator<Item = &SavedTextThreadMetadata> {
+        self.text_threads_metadata
+            .iter()
+            .sorted_by(|a, b| b.mtime.cmp(&a.mtime))
+    }
+
+    pub fn has_saved_text_threads(&self) -> bool {
+        !self.text_threads_metadata.is_empty()
     }
 
     pub fn host_text_threads(&self) -> impl Iterator<Item = &RemoteTextThreadMetadata> {
@@ -378,8 +383,6 @@ impl TextThreadStore {
         let context = cx.new(|cx| {
             TextThread::local(
                 self.languages.clone(),
-                Some(self.project.clone()),
-                Some(self.telemetry.clone()),
                 self.prompt_builder.clone(),
                 self.slash_commands.clone(),
                 cx,
@@ -401,8 +404,7 @@ impl TextThreadStore {
         let replica_id = project.replica_id();
         let capability = project.capability();
         let language_registry = self.languages.clone();
-        let project = self.project.clone();
-        let telemetry = self.telemetry.clone();
+
         let prompt_builder = self.prompt_builder.clone();
         let slash_commands = self.slash_commands.clone();
         let request = self.client.request(proto::CreateContext { project_id });
@@ -418,11 +420,9 @@ impl TextThreadStore {
                     language_registry,
                     prompt_builder,
                     slash_commands,
-                    Some(project),
-                    Some(telemetry),
                     cx,
                 )
-            })?;
+            });
             let operations = cx
                 .background_spawn(async move {
                     context_proto
@@ -432,7 +432,7 @@ impl TextThreadStore {
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;
-            text_thread.update(cx, |context, cx| context.apply_ops(operations, cx))?;
+            text_thread.update(cx, |context, cx| context.apply_ops(operations, cx));
             this.update(cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_text_thread_for_id(&context_id, cx) {
                     existing_context
@@ -456,8 +456,6 @@ impl TextThreadStore {
 
         let fs = self.fs.clone();
         let languages = self.languages.clone();
-        let project = self.project.clone();
-        let telemetry = self.telemetry.clone();
         let load = cx.background_spawn({
             let path = path.clone();
             async move {
@@ -477,11 +475,9 @@ impl TextThreadStore {
                     languages,
                     prompt_builder,
                     slash_commands,
-                    Some(project),
-                    Some(telemetry),
                     cx,
                 )
-            })?;
+            });
             this.update(cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_text_thread_for_path(&path, cx) {
                     existing_context
@@ -515,6 +511,36 @@ impl TextThreadStore {
                 });
                 this.text_threads_metadata
                     .retain(|text_thread| text_thread.path.as_ref() != path.as_ref());
+            })?;
+
+            Ok(())
+        })
+    }
+
+    pub fn delete_all_local(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let fs = self.fs.clone();
+        let paths = self
+            .text_threads_metadata
+            .iter()
+            .map(|metadata| metadata.path.clone())
+            .collect::<Vec<_>>();
+
+        cx.spawn(async move |this, cx| {
+            for path in paths {
+                fs.remove_file(
+                    &path,
+                    RemoveOptions {
+                        recursive: false,
+                        ignore_if_not_exists: true,
+                    },
+                )
+                .await?;
+            }
+
+            this.update(cx, |this, cx| {
+                this.text_threads.clear();
+                this.text_threads_metadata.clear();
+                cx.notify();
             })?;
 
             Ok(())
@@ -567,8 +593,6 @@ impl TextThreadStore {
         let replica_id = project.replica_id();
         let capability = project.capability();
         let language_registry = self.languages.clone();
-        let project = self.project.clone();
-        let telemetry = self.telemetry.clone();
         let request = self.client.request(proto::OpenContext {
             project_id,
             context_id: text_thread_id.to_proto(),
@@ -586,11 +610,9 @@ impl TextThreadStore {
                     language_registry,
                     prompt_builder,
                     slash_commands,
-                    Some(project),
-                    Some(telemetry),
                     cx,
                 )
-            })?;
+            });
             let operations = cx
                 .background_spawn(async move {
                     context_proto
@@ -600,7 +622,7 @@ impl TextThreadStore {
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;
-            text_thread.update(cx, |context, cx| context.apply_ops(operations, cx))?;
+            text_thread.update(cx, |context, cx| context.apply_ops(operations, cx));
             this.update(cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_text_thread_for_id(&text_thread_id, cx)
                 {
@@ -937,5 +959,131 @@ impl TextThreadStore {
             }
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use language_model::LanguageModelRegistry;
+    use project::Project;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    fn init_test(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            prompt_store::init(cx);
+            LanguageModelRegistry::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    #[gpui::test]
+    async fn ordered_text_threads_sort_by_mtime(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/root", json!({})).await;
+
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        let store = cx.new(|cx| TextThreadStore::fake(project, cx));
+
+        let now = chrono::Local::now();
+        let older = SavedTextThreadMetadata {
+            title: "older".into(),
+            path: Arc::from(PathBuf::from("/root/older.zed.json")),
+            mtime: now - chrono::TimeDelta::days(1),
+        };
+        let middle = SavedTextThreadMetadata {
+            title: "middle".into(),
+            path: Arc::from(PathBuf::from("/root/middle.zed.json")),
+            mtime: now - chrono::TimeDelta::hours(1),
+        };
+        let newer = SavedTextThreadMetadata {
+            title: "newer".into(),
+            path: Arc::from(PathBuf::from("/root/newer.zed.json")),
+            mtime: now,
+        };
+
+        store.update(cx, |store, _| {
+            store.text_threads_metadata = vec![middle, older, newer];
+        });
+
+        let ordered = store.read_with(cx, |store, _| {
+            store
+                .ordered_text_threads()
+                .map(|entry| entry.title.to_string())
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(ordered, vec!["newer", "middle", "older"]);
+    }
+
+    #[gpui::test]
+    async fn has_saved_text_threads_reflects_metadata(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/root", json!({})).await;
+
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        let store = cx.new(|cx| TextThreadStore::fake(project, cx));
+
+        assert!(!store.read_with(cx, |store, _| store.has_saved_text_threads()));
+
+        store.update(cx, |store, _| {
+            store.text_threads_metadata = vec![SavedTextThreadMetadata {
+                title: "thread".into(),
+                path: Arc::from(PathBuf::from("/root/thread.zed.json")),
+                mtime: chrono::Local::now(),
+            }];
+        });
+
+        assert!(store.read_with(cx, |store, _| store.has_saved_text_threads()));
+    }
+
+    #[gpui::test]
+    async fn delete_all_local_clears_metadata_and_files(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/root", json!({})).await;
+
+        let thread_a = PathBuf::from("/root/thread-a.zed.json");
+        let thread_b = PathBuf::from("/root/thread-b.zed.json");
+        fs.touch_path(&thread_a).await;
+        fs.touch_path(&thread_b).await;
+
+        let project = Project::test(fs.clone(), [Path::new("/root")], cx).await;
+        let store = cx.new(|cx| TextThreadStore::fake(project, cx));
+
+        let now = chrono::Local::now();
+        store.update(cx, |store, cx| {
+            store.create(cx);
+            store.text_threads_metadata = vec![
+                SavedTextThreadMetadata {
+                    title: "thread-a".into(),
+                    path: Arc::from(thread_a.clone()),
+                    mtime: now,
+                },
+                SavedTextThreadMetadata {
+                    title: "thread-b".into(),
+                    path: Arc::from(thread_b.clone()),
+                    mtime: now - chrono::TimeDelta::seconds(1),
+                },
+            ];
+        });
+
+        let task = store.update(cx, |store, cx| store.delete_all_local(cx));
+        task.await.unwrap();
+
+        assert!(!store.read_with(cx, |store, _| store.has_saved_text_threads()));
+        assert_eq!(store.read_with(cx, |store, _| store.text_threads.len()), 0);
+        assert!(fs.metadata(&thread_a).await.unwrap().is_none());
+        assert!(fs.metadata(&thread_b).await.unwrap().is_none());
     }
 }

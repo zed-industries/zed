@@ -1,13 +1,13 @@
 use super::*;
-use crate::zeta1::MAX_EVENT_TOKENS;
+use crate::{compute_diff_between_snapshots, udiff::apply_diff_to_string, zeta1::MAX_EVENT_TOKENS};
 use client::{UserStore, test::FakeServer};
 use clock::{FakeSystemClock, ReplicaId};
 use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, PredictEditsBody, PredictEditsResponse,
     RejectEditPredictionsBody,
+    predict_edits_v3::{PredictEditsV3Request, PredictEditsV3Response},
 };
-use edit_prediction_context::Line;
 use futures::{
     AsyncReadExt, StreamExt,
     channel::{mpsc, oneshot},
@@ -17,9 +17,8 @@ use gpui::{
     http_client::{FakeHttpClient, Response},
 };
 use indoc::indoc;
-use language::{Point, ToOffset as _};
+use language::Point;
 use lsp::LanguageServerId;
-use open_ai::Usage;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_matches};
 use project::{FakeFs, Project};
@@ -28,6 +27,7 @@ use settings::SettingsStore;
 use std::{path::Path, sync::Arc, time::Duration};
 use util::{path, rel_path::rel_path};
 use uuid::Uuid;
+use zeta_prompt::ZetaPromptInput;
 
 use crate::{BufferEditPrediction, EditPredictionId, EditPredictionStore, REJECT_REQUEST_DEBOUNCE};
 
@@ -45,10 +45,6 @@ async fn test_current_state(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
 
-    ep_store.update(cx, |ep_store, cx| {
-        ep_store.register_project(&project, cx);
-    });
-
     let buffer1 = project
         .update(cx, |project, cx| {
             let path = project.find_project_path(path!("/root/1.txt"), cx).unwrap();
@@ -60,30 +56,38 @@ async fn test_current_state(cx: &mut TestAppContext) {
     let snapshot1 = buffer1.read_with(cx, |buffer, _cx| buffer.snapshot());
     let position = snapshot1.anchor_before(language::Point::new(1, 3));
 
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_project(&project, cx);
+        ep_store.register_buffer(&buffer1, &project, cx);
+    });
+
     // Prediction for current file
 
     ep_store.update(cx, |ep_store, cx| {
         ep_store.refresh_prediction_from_buffer(project.clone(), buffer1.clone(), position, cx)
     });
-    let (_request, respond_tx) = requests.predict.next().await.unwrap();
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
 
     respond_tx
-        .send(model_response(indoc! {r"
-            --- a/root/1.txt
-            +++ b/root/1.txt
-            @@ ... @@
-             Hello!
-            -How
-            +How are you?
-             Bye
-        "}))
+        .send(model_response(
+            &request,
+            indoc! {r"
+                --- a/root/1.txt
+                +++ b/root/1.txt
+                @@ ... @@
+                 Hello!
+                -How
+                +How are you?
+                 Bye
+            "},
+        ))
         .unwrap();
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         let prediction = ep_store
-            .current_prediction_for_buffer(&buffer1, &project, cx)
+            .prediction_at(&buffer1, None, &project, cx)
             .unwrap();
         assert_matches!(prediction, BufferEditPrediction::Local { .. });
     });
@@ -120,22 +124,26 @@ async fn test_current_state(cx: &mut TestAppContext) {
         });
     });
 
-    let (_request, respond_tx) = requests.predict.next().await.unwrap();
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
     respond_tx
-        .send(model_response(indoc! {r#"
-            --- a/root/2.txt
-            +++ b/root/2.txt
-             Hola!
-            -Como
-            +Como estas?
-             Adios
-        "#}))
+        .send(model_response(
+            &request,
+            indoc! {r#"
+                --- a/root/2.txt
+                +++ b/root/2.txt
+                @@ ... @@
+                 Hola!
+                -Como
+                +Como estas?
+                 Adios
+            "#},
+        ))
         .unwrap();
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         let prediction = ep_store
-            .current_prediction_for_buffer(&buffer1, &project, cx)
+            .prediction_at(&buffer1, None, &project, cx)
             .unwrap();
         assert_matches!(
             prediction,
@@ -151,9 +159,9 @@ async fn test_current_state(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         let prediction = ep_store
-            .current_prediction_for_buffer(&buffer2, &project, cx)
+            .prediction_at(&buffer2, None, &project, cx)
             .unwrap();
         assert_matches!(prediction, BufferEditPrediction::Local { .. });
     });
@@ -186,7 +194,7 @@ async fn test_simple_request(cx: &mut TestAppContext) {
         ep_store.request_prediction(&project, &buffer, position, Default::default(), cx)
     });
 
-    let (_, respond_tx) = requests.predict.next().await.unwrap();
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
 
     // TODO Put back when we have a structured request again
     // assert_eq!(
@@ -202,15 +210,18 @@ async fn test_simple_request(cx: &mut TestAppContext) {
     // );
 
     respond_tx
-        .send(model_response(indoc! { r"
-            --- a/root/foo.md
-            +++ b/root/foo.md
-            @@ ... @@
-             Hello!
-            -How
-            +How are you?
-             Bye
-        "}))
+        .send(model_response(
+            &request,
+            indoc! { r"
+                --- a/root/foo.md
+                +++ b/root/foo.md
+                @@ ... @@
+                 Hello!
+                -How
+                +How are you?
+                 Bye
+            "},
+        ))
         .unwrap();
 
     let prediction = prediction_task.await.unwrap().unwrap().prediction.unwrap();
@@ -276,25 +287,309 @@ async fn test_request_events(cx: &mut TestAppContext) {
     );
 
     respond_tx
-        .send(model_response(indoc! {r#"
-            --- a/root/foo.md
-            +++ b/root/foo.md
-            @@ ... @@
-             Hello!
-            -How
-            +How are you?
-             Bye
-        "#}))
+        .send(model_response(
+            &request,
+            indoc! {r#"
+                --- a/root/foo.md
+                +++ b/root/foo.md
+                @@ ... @@
+                 Hello!
+                -How
+                +How are you?
+                 Bye
+        "#},
+        ))
         .unwrap();
 
     let prediction = prediction_task.await.unwrap().unwrap().prediction.unwrap();
 
     assert_eq!(prediction.edits.len(), 1);
-    assert_eq!(
-        prediction.edits[0].0.to_point(&snapshot).start,
-        language::Point::new(1, 3)
-    );
     assert_eq!(prediction.edits[0].1.as_ref(), " are you?");
+}
+
+#[gpui::test]
+async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md": "Hello!\n\nBye\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    // First burst: insert "How"
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(7..7, "How")], None, cx);
+    });
+
+    // Simulate a pause longer than the grouping threshold (e.g. 500ms).
+    cx.executor().advance_clock(LAST_CHANGE_GROUPING_TIME * 2);
+    cx.run_until_parked();
+
+    // Second burst: append " are you?" immediately after "How" on the same line.
+    //
+    // Keeping both bursts on the same line ensures the existing line-span coalescing logic
+    // groups them into a single `LastEvent`, allowing the pause-split getter to return two diffs.
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(10..10, " are you?")], None, cx);
+    });
+
+    // A second edit shortly after the first post-pause edit ensures the last edit timestamp is
+    // advanced after the pause boundary is recorded, making pause-splitting deterministic.
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(19..19, "!")], None, cx);
+    });
+
+    // Without time-based splitting, there is one event.
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(events.len(), 1);
+    let zeta_prompt::Event::BufferChange { diff, .. } = events[0].event.as_ref();
+    assert_eq!(
+        diff.as_str(),
+        indoc! {"
+            @@ -1,3 +1,3 @@
+             Hello!
+            -
+            +How are you?!
+             Bye
+        "}
+    );
+
+    // With time-based splitting, there are two distinct events.
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project_with_pause_split_last_event(&project, cx)
+    });
+    assert_eq!(events.len(), 2);
+    let zeta_prompt::Event::BufferChange { diff, .. } = events[0].event.as_ref();
+    assert_eq!(
+        diff.as_str(),
+        indoc! {"
+            @@ -1,3 +1,3 @@
+             Hello!
+            -
+            +How
+             Bye
+        "}
+    );
+
+    let zeta_prompt::Event::BufferChange { diff, .. } = events[1].event.as_ref();
+    assert_eq!(
+        diff.as_str(),
+        indoc! {"
+            @@ -1,3 +1,3 @@
+             Hello!
+            -How
+            +How are you?!
+             Bye
+        "}
+    );
+}
+
+#[gpui::test]
+async fn test_event_grouping_line_span_coalescing(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    // Create a file with 30 lines to test line-based coalescing
+    let content = (1..=30)
+        .map(|i| format!("Line {}\n", i))
+        .collect::<String>();
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md": content
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    // First edit: multi-line edit spanning rows 10-12 (replacing lines 11-13)
+    buffer.update(cx, |buffer, cx| {
+        let start = Point::new(10, 0).to_offset(buffer);
+        let end = Point::new(13, 0).to_offset(buffer);
+        buffer.edit(vec![(start..end, "Middle A\nMiddle B\n")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events(&events),
+        indoc! {"
+            @@ -8,9 +8,8 @@
+             Line 8
+             Line 9
+             Line 10
+            -Line 11
+            -Line 12
+            -Line 13
+            +Middle A
+            +Middle B
+             Line 14
+             Line 15
+             Line 16
+        "},
+        "After first edit"
+    );
+
+    // Second edit: insert ABOVE the first edit's range (row 5, within 8 lines of row 10)
+    // This tests that coalescing considers the START of the existing range
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(5, 0).to_offset(buffer);
+        buffer.edit(vec![(offset..offset, "Above\n")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events(&events),
+        indoc! {"
+            @@ -3,14 +3,14 @@
+             Line 3
+             Line 4
+             Line 5
+            +Above
+             Line 6
+             Line 7
+             Line 8
+             Line 9
+             Line 10
+            -Line 11
+            -Line 12
+            -Line 13
+            +Middle A
+            +Middle B
+             Line 14
+             Line 15
+             Line 16
+        "},
+        "After inserting above (should coalesce)"
+    );
+
+    // Third edit: insert BELOW the first edit's range (row 14 in current buffer, within 8 lines of row 12)
+    // This tests that coalescing considers the END of the existing range
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(14, 0).to_offset(buffer);
+        buffer.edit(vec![(offset..offset, "Below\n")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events(&events),
+        indoc! {"
+            @@ -3,15 +3,16 @@
+             Line 3
+             Line 4
+             Line 5
+            +Above
+             Line 6
+             Line 7
+             Line 8
+             Line 9
+             Line 10
+            -Line 11
+            -Line 12
+            -Line 13
+            +Middle A
+            +Middle B
+             Line 14
+            +Below
+             Line 15
+             Line 16
+             Line 17
+        "},
+        "After inserting below (should coalesce)"
+    );
+
+    // Fourth edit: insert FAR BELOW (row 25, beyond 8 lines from the current range end ~row 15)
+    // This should NOT coalesce - creates a new event
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(25, 0).to_offset(buffer);
+        buffer.edit(vec![(offset..offset, "Far below\n")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events(&events),
+        indoc! {"
+            @@ -3,15 +3,16 @@
+             Line 3
+             Line 4
+             Line 5
+            +Above
+             Line 6
+             Line 7
+             Line 8
+             Line 9
+             Line 10
+            -Line 11
+            -Line 12
+            -Line 13
+            +Middle A
+            +Middle B
+             Line 14
+            +Below
+             Line 15
+             Line 16
+             Line 17
+
+            ---
+            @@ -23,6 +23,7 @@
+             Line 22
+             Line 23
+             Line 24
+            +Far below
+             Line 25
+             Line 26
+             Line 27
+        "},
+        "After inserting far below (should NOT coalesce)"
+    );
+}
+
+fn render_events(events: &[StoredEvent]) -> String {
+    events
+        .iter()
+        .map(|e| {
+            let zeta_prompt::Event::BufferChange { diff, .. } = e.event.as_ref();
+            diff.as_str()
+        })
+        .collect::<Vec<_>>()
+        .join("\n---\n")
 }
 
 #[gpui::test]
@@ -324,27 +619,17 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
         ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
-    const NO_OP_DIFF: &str = indoc! { r"
-        --- a/root/foo.md
-        +++ b/root/foo.md
-        @@ ... @@
-         Hello!
-        -How
-        +How
-         Bye
-    "};
-
-    let (_, respond_tx) = requests.predict.next().await.unwrap();
-    let response = model_response(NO_OP_DIFF);
-    let id = response.id.clone();
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    let response = model_response(&request, "");
+    let id = response.request_id.clone();
     respond_tx.send(response).unwrap();
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         assert!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .is_none()
         );
     });
@@ -389,22 +674,22 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
         ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
-    let (_, respond_tx) = requests.predict.next().await.unwrap();
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
 
     buffer.update(cx, |buffer, cx| {
         buffer.set_text("Hello!\nHow are you?\nBye", cx);
     });
 
-    let response = model_response(SIMPLE_DIFF);
-    let id = response.id.clone();
+    let response = model_response(&request, SIMPLE_DIFF);
+    let id = response.request_id.clone();
     respond_tx.send(response).unwrap();
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         assert!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .is_none()
         );
     });
@@ -459,17 +744,17 @@ async fn test_replace_current(cx: &mut TestAppContext) {
         ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
-    let (_, respond_tx) = requests.predict.next().await.unwrap();
-    let first_response = model_response(SIMPLE_DIFF);
-    let first_id = first_response.id.clone();
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    let first_response = model_response(&request, SIMPLE_DIFF);
+    let first_id = first_response.request_id.clone();
     respond_tx.send(first_response).unwrap();
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -482,18 +767,18 @@ async fn test_replace_current(cx: &mut TestAppContext) {
         ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
-    let (_, respond_tx) = requests.predict.next().await.unwrap();
-    let second_response = model_response(SIMPLE_DIFF);
-    let second_id = second_response.id.clone();
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    let second_response = model_response(&request, SIMPLE_DIFF);
+    let second_id = second_response.request_id.clone();
     respond_tx.send(second_response).unwrap();
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // second replaces first
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -541,17 +826,17 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
         ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
-    let (_, respond_tx) = requests.predict.next().await.unwrap();
-    let first_response = model_response(SIMPLE_DIFF);
-    let first_id = first_response.id.clone();
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    let first_response = model_response(&request, SIMPLE_DIFF);
+    let first_id = first_response.request_id.clone();
     respond_tx.send(first_response).unwrap();
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -564,27 +849,30 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
         ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
-    let (_, respond_tx) = requests.predict.next().await.unwrap();
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
     // worse than current prediction
-    let second_response = model_response(indoc! { r"
-        --- a/root/foo.md
-        +++ b/root/foo.md
-        @@ ... @@
-         Hello!
-        -How
-        +How are
-         Bye
-    "});
-    let second_id = second_response.id.clone();
+    let second_response = model_response(
+        &request,
+        indoc! { r"
+            --- a/root/foo.md
+            +++ b/root/foo.md
+            @@ ... @@
+             Hello!
+            -How
+            +How are
+             Bye
+        "},
+    );
+    let second_id = second_response.request_id.clone();
     respond_tx.send(second_response).unwrap();
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // first is preferred over second
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -633,29 +921,29 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
         ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
-    let (_, respond_first) = requests.predict.next().await.unwrap();
+    let (request1, respond_first) = requests.predict.next().await.unwrap();
 
     ep_store.update(cx, |ep_store, cx| {
         ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
-    let (_, respond_second) = requests.predict.next().await.unwrap();
+    let (request, respond_second) = requests.predict.next().await.unwrap();
 
     // wait for throttle
     cx.run_until_parked();
 
     // second responds first
-    let second_response = model_response(SIMPLE_DIFF);
-    let second_id = second_response.id.clone();
+    let second_response = model_response(&request, SIMPLE_DIFF);
+    let second_id = second_response.request_id.clone();
     respond_second.send(second_response).unwrap();
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // current prediction is second
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -663,17 +951,17 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
         );
     });
 
-    let first_response = model_response(SIMPLE_DIFF);
-    let first_id = first_response.id.clone();
+    let first_response = model_response(&request1, SIMPLE_DIFF);
+    let first_id = first_response.request_id.clone();
     respond_first.send(first_response).unwrap();
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // current prediction is still second, since first was cancelled
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -724,13 +1012,13 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
         ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
-    let (_, respond_first) = requests.predict.next().await.unwrap();
+    let (request1, respond_first) = requests.predict.next().await.unwrap();
 
     ep_store.update(cx, |ep_store, cx| {
         ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
-    let (_, respond_second) = requests.predict.next().await.unwrap();
+    let (request2, respond_second) = requests.predict.next().await.unwrap();
 
     // wait for throttle, so requests are sent
     cx.run_until_parked();
@@ -754,19 +1042,19 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
     // wait for throttle
     cx.run_until_parked();
 
-    let (_, respond_third) = requests.predict.next().await.unwrap();
+    let (request3, respond_third) = requests.predict.next().await.unwrap();
 
-    let first_response = model_response(SIMPLE_DIFF);
-    let first_id = first_response.id.clone();
+    let first_response = model_response(&request1, SIMPLE_DIFF);
+    let first_id = first_response.request_id.clone();
     respond_first.send(first_response).unwrap();
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // current prediction is first
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -774,17 +1062,17 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
         );
     });
 
-    let cancelled_response = model_response(SIMPLE_DIFF);
-    let cancelled_id = cancelled_response.id.clone();
+    let cancelled_response = model_response(&request2, SIMPLE_DIFF);
+    let cancelled_id = cancelled_response.request_id.clone();
     respond_second.send(cancelled_response).unwrap();
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // current prediction is still first, since second was cancelled
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -792,17 +1080,17 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
         );
     });
 
-    let third_response = model_response(SIMPLE_DIFF);
-    let third_response_id = third_response.id.clone();
+    let third_response = model_response(&request3, SIMPLE_DIFF);
+    let third_response_id = third_response.request_id.clone();
     respond_third.send(third_response).unwrap();
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // third completes and replaces first
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -1036,45 +1324,27 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
 //     );
 // }
 
-fn model_response(text: &str) -> open_ai::Response {
-    open_ai::Response {
-        id: Uuid::new_v4().to_string(),
-        object: "response".into(),
-        created: 0,
-        model: "model".into(),
-        choices: vec![open_ai::Choice {
-            index: 0,
-            message: open_ai::RequestMessage::Assistant {
-                content: Some(open_ai::MessageContent::Plain(text.to_string())),
-                tool_calls: vec![],
-            },
-            finish_reason: None,
-        }],
-        usage: Usage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        },
+// Generate a model response that would apply the given diff to the active file.
+fn model_response(request: &PredictEditsV3Request, diff_to_apply: &str) -> PredictEditsV3Response {
+    let excerpt =
+        request.input.cursor_excerpt[request.input.editable_range_in_excerpt.clone()].to_string();
+    let new_excerpt = apply_diff_to_string(diff_to_apply, &excerpt).unwrap();
+
+    PredictEditsV3Response {
+        request_id: Uuid::new_v4().to_string(),
+        output: new_excerpt,
     }
 }
 
-fn prompt_from_request(request: &open_ai::Request) -> &str {
-    assert_eq!(request.messages.len(), 1);
-    let open_ai::RequestMessage::User {
-        content: open_ai::MessageContent::Plain(content),
-        ..
-    } = &request.messages[0]
-    else {
-        panic!(
-            "Request does not have single user message of type Plain. {:#?}",
-            request
-        );
-    };
-    content
+fn prompt_from_request(request: &PredictEditsV3Request) -> String {
+    zeta_prompt::format_zeta_prompt(&request.input, request.prompt_version)
 }
 
 struct RequestChannels {
-    predict: mpsc::UnboundedReceiver<(open_ai::Request, oneshot::Sender<open_ai::Response>)>,
+    predict: mpsc::UnboundedReceiver<(
+        PredictEditsV3Request,
+        oneshot::Sender<PredictEditsV3Response>,
+    )>,
     reject: mpsc::UnboundedReceiver<(RejectEditPredictionsBody, oneshot::Sender<()>)>,
 }
 
@@ -1101,7 +1371,7 @@ fn init_test_with_fake_client(
                             "token": "test"
                         }))
                         .unwrap(),
-                        "/predict_edits/raw" => {
+                        "/predict_edits/v3" => {
                             let mut buf = Vec::new();
                             body.read_to_end(&mut buf).await.ok();
                             let req = serde_json::from_slice(&buf).unwrap();
@@ -1160,20 +1430,19 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         .read(|cx| buffer.read(cx).preview_edits(edits.clone(), cx))
         .await;
 
-    let completion = EditPrediction {
+    let prediction = EditPrediction {
         edits,
         edit_preview,
         buffer: buffer.clone(),
         snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
         id: EditPredictionId("the-id".into()),
-        inputs: EditPredictionInputs {
+        inputs: ZetaPromptInput {
             events: Default::default(),
-            included_files: Default::default(),
-            cursor_point: cloud_llm_client::predict_edits_v3::Point {
-                line: Line(0),
-                column: 0,
-            },
+            related_files: Default::default(),
             cursor_path: Path::new("").into(),
+            cursor_excerpt: "".into(),
+            editable_range_in_excerpt: 0..0,
+            cursor_offset_in_excerpt: 0,
         },
         buffer_snapshotted_at: Instant::now(),
         response_received_at: Instant::now(),
@@ -1182,7 +1451,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
     cx.update(|cx| {
         assert_eq!(
             from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                 &buffer,
                 cx
             ),
@@ -1192,7 +1461,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "")], None, cx));
         assert_eq!(
             from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                 &buffer,
                 cx
             ),
@@ -1202,7 +1471,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         buffer.update(cx, |buffer, cx| buffer.undo(cx));
         assert_eq!(
             from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                 &buffer,
                 cx
             ),
@@ -1212,7 +1481,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "R")], None, cx));
         assert_eq!(
             from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                 &buffer,
                 cx
             ),
@@ -1222,7 +1491,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "E")], None, cx));
         assert_eq!(
             from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                 &buffer,
                 cx
             ),
@@ -1232,7 +1501,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "M")], None, cx));
         assert_eq!(
             from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                 &buffer,
                 cx
             ),
@@ -1242,7 +1511,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "")], None, cx));
         assert_eq!(
             from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                 &buffer,
                 cx
             ),
@@ -1252,7 +1521,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         buffer.update(cx, |buffer, cx| buffer.edit([(8..10, "")], None, cx));
         assert_eq!(
             from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                 &buffer,
                 cx
             ),
@@ -1260,7 +1529,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         );
 
         buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, cx));
-        assert_eq!(completion.interpolate(&buffer.read(cx).snapshot()), None);
+        assert_eq!(prediction.interpolate(&buffer.read(cx).snapshot()), None);
     })
 }
 
@@ -1340,6 +1609,71 @@ async fn test_edit_prediction_end_of_buffer(cx: &mut TestAppContext) {
         apply_edit_prediction(buffer_content, completion_response, cx).await,
         "lorem\nipsum"
     );
+}
+
+#[gpui::test]
+async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppContext) {
+    // Test that zeta2's newline normalization logic doesn't insert spurious newlines.
+    // When the buffer ends without a trailing newline, but the model returns output
+    // with a trailing newline, zeta2 should normalize both sides before diffing
+    // so no spurious newline is inserted.
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    // Single line buffer with no trailing newline
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.txt": "hello"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("root/foo.txt"), cx)
+                .unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(0, 5));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    });
+
+    let (_request, respond_tx) = requests.predict.next().await.unwrap();
+
+    // Model returns output WITH a trailing newline, even though the buffer doesn't have one.
+    // Zeta2 should normalize both sides before diffing, so no spurious newline is inserted.
+    let response = PredictEditsV3Response {
+        request_id: Uuid::new_v4().to_string(),
+        output: "hello world\n".to_string(),
+    };
+    respond_tx.send(response).unwrap();
+
+    cx.run_until_parked();
+
+    // The prediction should insert " world" without adding a newline
+    ep_store.update(cx, |ep_store, cx| {
+        let prediction = ep_store
+            .prediction_at(&buffer, None, &project, cx)
+            .expect("should have prediction");
+        let edits: Vec<_> = prediction
+            .edits
+            .iter()
+            .map(|(range, text)| {
+                let snapshot = buffer.read(cx).snapshot();
+                (range.to_offset(&snapshot), text.clone())
+            })
+            .collect();
+        assert_eq!(edits, vec![(5..5, " world".into())]);
+    });
 }
 
 #[gpui::test]
@@ -1798,6 +2132,242 @@ fn from_completion_edits(
             )
         })
         .collect()
+}
+
+#[gpui::test]
+async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            "main.rs": "fn main() {\n    \n}\n"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    let http_client = FakeHttpClient::create(|_req| async move {
+        Ok(gpui::http_client::Response::builder()
+            .status(401)
+            .body("Unauthorized".into())
+            .unwrap())
+    });
+
+    let client =
+        cx.update(|cx| client::Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
+    cx.update(|cx| {
+        language_model::RefreshLlmTokenListener::register(client.clone(), cx);
+    });
+
+    let ep_store = cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(), cx));
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("/project/main.rs"), cx)
+                .unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 4)));
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx)
+    });
+    cx.background_executor.run_until_parked();
+
+    let completion_task = ep_store.update(cx, |ep_store, cx| {
+        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
+        ep_store.request_prediction(&project, &buffer, cursor, Default::default(), cx)
+    });
+
+    let result = completion_task.await;
+    assert!(
+        result.is_err(),
+        "Without authentication and without custom URL, prediction should fail"
+    );
+}
+
+#[gpui::test]
+async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            "main.rs": "fn main() {\n    \n}\n"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    let predict_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let predict_called_clone = predict_called.clone();
+
+    let http_client = FakeHttpClient::create({
+        move |req| {
+            let uri = req.uri().path().to_string();
+            let predict_called = predict_called_clone.clone();
+            async move {
+                if uri.contains("predict") {
+                    predict_called.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok(gpui::http_client::Response::builder()
+                        .body(
+                            serde_json::to_string(&open_ai::Response {
+                                id: "test-123".to_string(),
+                                object: "chat.completion".to_string(),
+                                created: 0,
+                                model: "test".to_string(),
+                                usage: open_ai::Usage {
+                                    prompt_tokens: 0,
+                                    completion_tokens: 0,
+                                    total_tokens: 0,
+                                },
+                                choices: vec![open_ai::Choice {
+                                    index: 0,
+                                    message: open_ai::RequestMessage::Assistant {
+                                        content: Some(open_ai::MessageContent::Plain(
+                                            indoc! {"
+                                                ```main.rs
+                                                <|start_of_file|>
+                                                <|editable_region_start|>
+                                                fn main() {
+                                                    println!(\"Hello, world!\");
+                                                }
+                                                <|editable_region_end|>
+                                                ```
+                                            "}
+                                            .to_string(),
+                                        )),
+                                        tool_calls: vec![],
+                                    },
+                                    finish_reason: Some("stop".to_string()),
+                                }],
+                            })
+                            .unwrap()
+                            .into(),
+                        )
+                        .unwrap())
+                } else {
+                    Ok(gpui::http_client::Response::builder()
+                        .status(401)
+                        .body("Unauthorized".into())
+                        .unwrap())
+                }
+            }
+        }
+    });
+
+    let client =
+        cx.update(|cx| client::Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
+    cx.update(|cx| {
+        language_model::RefreshLlmTokenListener::register(client.clone(), cx);
+    });
+
+    let ep_store = cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(), cx));
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("/project/main.rs"), cx)
+                .unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 4)));
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx)
+    });
+    cx.background_executor.run_until_parked();
+
+    let completion_task = ep_store.update(cx, |ep_store, cx| {
+        ep_store.set_custom_predict_edits_url(Url::parse("http://test/predict").unwrap());
+        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
+        ep_store.request_prediction(&project, &buffer, cursor, Default::default(), cx)
+    });
+
+    let _ = completion_task.await;
+
+    assert!(
+        predict_called.load(std::sync::atomic::Ordering::SeqCst),
+        "With custom URL, predict endpoint should be called even without authentication"
+    );
+}
+
+#[gpui::test]
+fn test_compute_diff_between_snapshots(cx: &mut TestAppContext) {
+    let buffer = cx.new(|cx| {
+        Buffer::local(
+            indoc! {"
+                zero
+                one
+                two
+                three
+                four
+                five
+                six
+                seven
+                eight
+                nine
+                ten
+                eleven
+                twelve
+                thirteen
+                fourteen
+                fifteen
+                sixteen
+                seventeen
+                eighteen
+                nineteen
+                twenty
+                twenty-one
+                twenty-two
+                twenty-three
+                twenty-four
+            "},
+            cx,
+        )
+    });
+
+    let old_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+
+    buffer.update(cx, |buffer, cx| {
+        let point = Point::new(12, 0);
+        buffer.edit([(point..point, "SECOND INSERTION\n")], None, cx);
+        let point = Point::new(8, 0);
+        buffer.edit([(point..point, "FIRST INSERTION\n")], None, cx);
+    });
+
+    let new_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+
+    let diff = compute_diff_between_snapshots(&old_snapshot, &new_snapshot).unwrap();
+
+    assert_eq!(
+        diff,
+        indoc! {"
+            @@ -6,10 +6,12 @@
+             five
+             six
+             seven
+            +FIRST INSERTION
+             eight
+             nine
+             ten
+             eleven
+            +SECOND INSERTION
+             twelve
+             thirteen
+             fourteen
+            "}
+    );
 }
 
 #[ctor::ctor]

@@ -81,7 +81,7 @@ pub fn python_env_kernel_specifications(
     worktree_id: WorktreeId,
     cx: &mut App,
 ) -> impl Future<Output = Result<Vec<KernelSpecification>>> + use<> {
-    let python_language = LanguageName::new("Python");
+    let python_language = LanguageName::new_static("Python");
     let toolchains = project.read(cx).available_toolchains(
         ProjectPath {
             worktree_id,

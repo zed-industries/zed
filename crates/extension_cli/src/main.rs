@@ -71,6 +71,7 @@ async fn main() -> Result<()> {
             &extension_path,
             &mut manifest,
             CompileExtensionOptions { release: true },
+            fs.clone(),
         )
         .await
         .context("failed to compile extension")?;

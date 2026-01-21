@@ -1,0 +1,2 @@
+mod edit_prediction_provider_setup;
+pub(crate) use edit_prediction_provider_setup::render_edit_prediction_setup_page;
