@@ -4921,7 +4921,7 @@ impl EditorElement {
 
             while end_rows
                 .last()
-                .is_some_and(|&last_end| last_end < sticky_row)
+                .is_some_and(|&last_end| last_end <= sticky_row)
             {
                 end_rows.pop();
             }

@@ -1,6 +1,7 @@
 mod anthropic_client;
 mod distill;
 mod example;
+mod filter_languages;
 mod format_prompt;
 mod git;
 mod headless;
@@ -22,7 +23,7 @@ use collections::HashSet;
 use edit_prediction::EditPredictionStore;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
-use gpui::{AppContext as _, Application, BackgroundExecutor};
+use gpui::{AppContext as _, Application, BackgroundExecutor, Task};
 use zeta_prompt::ZetaVersion;
 
 use reqwest_client::ReqwestClient;
@@ -36,6 +37,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use crate::distill::run_distill;
 use crate::example::{Example, group_examples_by_repo, read_example_files};
+use crate::filter_languages::{FilterLanguagesArgs, run_filter_languages};
 use crate::format_prompt::run_format_prompt;
 use crate::load_project::run_load_project;
 use crate::paths::{FAILED_EXAMPLES_DIR, RUN_DIR};
@@ -56,6 +58,8 @@ struct EpArgs {
     max_parallelism: usize,
     #[clap(long, global = true)]
     limit: Option<usize>,
+    #[clap(long, global = true)]
+    offset: Option<usize>,
     /// Filter examples by name
     #[clap(long, global = true)]
     name: Option<String>,
@@ -87,6 +91,8 @@ pub enum FailedHandling {
     Keep,
     /// Exclude failed examples from the main output
     Skip,
+    /// Skip writing files
+    SkipNoFiles,
 }
 
 const INPUTS_HELP: &str = r#"
@@ -149,6 +155,8 @@ enum Command {
     SplitCommit(SplitCommitArgs),
     /// Split a JSONL dataset into multiple files (stratified by repository_url if present)
     Split(SplitArgs),
+    /// Filter a JSONL dataset by programming language (based on cursor_path extension)
+    FilterLanguages(FilterLanguagesArgs),
 }
 
 impl Display for Command {
@@ -180,6 +188,7 @@ impl Display for Command {
             Command::Clean => write!(f, "clean"),
             Command::SplitCommit(_) => write!(f, "split-commit"),
             Command::Split(_) => write!(f, "split"),
+            Command::FilterLanguages(_) => write!(f, "filter-languages"),
         }
     }
 }
@@ -366,18 +375,20 @@ async fn load_examples(
         examples.retain(|example| example.spec.repository_url.contains(repo_filter));
     }
 
-    if let Some(limit) = args.limit {
-        if examples.len() > limit {
-            examples.truncate(limit);
-        }
-    }
-
     // Skip resume logic for --in-place since input and output are the same file,
     // which would incorrectly treat all input examples as already processed.
     if !args.in_place {
         if let Some(path) = output_path {
             resume_from_output(path, &mut examples);
         }
+    }
+
+    if let Some(offset) = args.offset {
+        examples.splice(0..offset, []);
+    }
+
+    if let Some(limit) = args.limit {
+        examples.truncate(limit);
     }
 
     Progress::global().set_total_examples(examples.len());
@@ -500,6 +511,15 @@ fn main() {
             }
             return;
         }
+        Command::FilterLanguages(filter_args) => {
+            if let Err(error) =
+                run_filter_languages(filter_args, &args.inputs, args.output.as_ref())
+            {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
         _ => {}
     }
 
@@ -529,14 +549,37 @@ fn main() {
 
                 let failfast_on_single_example = examples.len() == 1;
 
+                // For --in-place, write to a temp file and rename at the end to avoid data loss on interruption
+                let in_place_temp_path = if args.in_place {
+                    output.as_ref().map(|path| {
+                        let mut temp_path = path.clone();
+                        temp_path.set_extension("jsonl.tmp");
+                        temp_path
+                    })
+                } else {
+                    None
+                };
+
                 let output_sender: Option<mpsc::UnboundedSender<String>> =
                     if args.output.is_some() || !matches!(command, Command::Eval(_)) {
-                        output.as_ref().map(|path| {
-                            let file = OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open(path)
-                                .expect("Failed to open output file");
+                        let write_path = in_place_temp_path.as_ref().or(output.as_ref());
+                        write_path.map(|path| {
+                            let file = if args.in_place {
+                                // For --in-place, write to temp file (truncate if exists)
+                                OpenOptions::new()
+                                    .create(true)
+                                    .write(true)
+                                    .truncate(true)
+                                    .open(path)
+                                    .expect("Failed to open temp output file")
+                            } else {
+                                // For regular output, append to support resuming
+                                OpenOptions::new()
+                                    .create(true)
+                                    .append(true)
+                                    .open(path)
+                                    .expect("Failed to open output file")
+                            };
                             let mut writer = BufWriter::new(file);
                             let (sender, mut receiver) = mpsc::unbounded::<String>();
                             cx.background_spawn(async move {
@@ -628,7 +671,8 @@ fn main() {
                                         Command::Clean
                                         | Command::Synthesize(_)
                                         | Command::SplitCommit(_)
-                                        | Command::Split(_) => {
+                                        | Command::Split(_)
+                                        | Command::FilterLanguages(_) => {
                                             unreachable!()
                                         }
                                     }
@@ -668,23 +712,35 @@ fn main() {
                                 }
                             }
 
-                            if let Some(state) =
-                                repo_examples.first().and_then(|e| e.state.as_ref())
-                            {
+                            let repo_url = &repo_examples.first().unwrap().spec.repository_url;
+                            let project = repo_examples
+                                .iter()
+                                .find_map(|e| e.state.as_ref().map(|s| s.project.clone()))
+                                .or_else(|| app_state.project_cache.get(repo_url));
+
+                            if let Some(project) = project {
                                 let mut cx = cx.clone();
+
+                                let shutdown_task: Task<()> =
+                                    project.update(&mut cx, |project, cx| {
+                                        let lsp_store = project.lsp_store();
+                                        lsp_store.update(cx, |lsp_store, cx| {
+                                            lsp_store.shutdown_all_language_servers(cx)
+                                        })
+                                    });
+
+                                shutdown_task.await;
+
                                 if let Some(ep_store) =
                                     cx.update(|cx| EditPredictionStore::try_global(cx))
                                 {
-                                    let project = state.project.clone();
                                     ep_store.update(&mut cx, |store, _| {
                                         store.remove_project(&project);
                                     });
                                 }
                             }
 
-                            app_state
-                                .project_cache
-                                .remove(&repo_examples.first().unwrap().spec.repository_url);
+                            app_state.project_cache.remove(repo_url);
                             for example in &mut repo_examples {
                                 example.state.take();
                             }
@@ -711,6 +767,12 @@ fn main() {
                     _ => (),
                 };
 
+                // For --in-place, atomically rename temp file to original
+                if let (Some(temp_path), Some(final_path)) = (&in_place_temp_path, &output) {
+                    std::fs::rename(temp_path, final_path)
+                        .expect("Failed to rename temp file to final output");
+                }
+
                 anyhow::Ok(())
             }
             .await;
@@ -734,57 +796,71 @@ async fn handle_error(
     example: &Example,
 ) {
     Progress::global().increment_failed();
-    let example_name = example.spec.filename();
-    let failed_example_path = FAILED_EXAMPLES_DIR.join(format!("{}.json", example_name));
-    app_state
-        .fs
-        .write(
-            &failed_example_path,
-            &serde_json::to_vec_pretty(&example).unwrap(),
-        )
-        .await
-        .unwrap();
-    let err_path = FAILED_EXAMPLES_DIR.join(format!("{}_err.txt", example_name));
-    app_state
-        .fs
-        .write(&err_path, format!("{error:?}").as_bytes())
-        .await
-        .unwrap();
 
-    let failed_jsonl_path = RUN_DIR.join("failed.jsonl");
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&failed_jsonl_path)
-        .expect("Failed to open failed.jsonl");
-    writeln!(file, "{}", serde_json::to_string(example).unwrap())
-        .expect("Failed to write to failed.jsonl");
+    let msg;
+    if !matches!(args.failed, FailedHandling::SkipNoFiles) {
+        let example_name = example.spec.filename();
 
-    let cursor_path = example
-        .repo_name()
-        .unwrap()
-        .worktree_path()
-        .join(&example.spec.cursor_path);
+        let failed_example_path = FAILED_EXAMPLES_DIR.join(format!("{}.json", example_name));
+        app_state
+            .fs
+            .write(
+                &failed_example_path,
+                &serde_json::to_vec_pretty(&example).unwrap(),
+            )
+            .await
+            .unwrap();
+        let err_path = FAILED_EXAMPLES_DIR.join(format!("{}_err.txt", example_name));
+        app_state
+            .fs
+            .write(&err_path, format!("{error:?}").as_bytes())
+            .await
+            .unwrap();
 
-    let msg = format!(
-        indoc::indoc! {"
+        let failed_jsonl_path = RUN_DIR.join("failed.jsonl");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&failed_jsonl_path)
+            .expect("Failed to open failed.jsonl");
+        writeln!(file, "{}", serde_json::to_string(example).unwrap())
+            .expect("Failed to write to failed.jsonl");
+
+        let cursor_path = example
+            .repo_name()
+            .unwrap()
+            .worktree_path()
+            .join(&example.spec.cursor_path);
+        msg = format!(
+            indoc::indoc! {"
+                While processing \"{}\":
+
+                \x1b[31m{:?}\x1b[0m
+
+                Example:        \x1b[36m{}\x1b[0m
+                Error file:     \x1b[36m{}\x1b[0m
+                Cursor file:    \x1b[36m{}\x1b[0m
+                Re-run:         cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
+            "},
+            example.spec.name,
+            error,
+            failed_example_path.display(),
+            err_path.display(),
+            cursor_path.display(),
+            command,
+            failed_example_path.display(),
+        );
+    } else {
+        msg = format!(
+            indoc::indoc! {"
             While processing \"{}\":
 
-            \x1b[31m{:?}\x1b[0m
+                \x1b[31m{:?}\x1b[0m
+            "},
+            example.spec.name, error
+        );
+    }
 
-            Example:        \x1b[36m{}\x1b[0m
-            Error file:     \x1b[36m{}\x1b[0m
-            Cursor file:    \x1b[36m{}\x1b[0m
-            Re-run:         cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
-        "},
-        example.spec.name,
-        error,
-        failed_example_path.display(),
-        err_path.display(),
-        cursor_path.display(),
-        command,
-        failed_example_path.display(),
-    );
     if args.failfast || failfast_on_single_example {
         Progress::global().finalize();
         panic!("{}", msg);

@@ -2,16 +2,19 @@ mod components;
 mod page_data;
 mod pages;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use editor::{Editor, EditorEvent};
+use futures::{StreamExt, channel::mpsc};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
+    Action, App, AsyncApp, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
     Focusable, Global, KeyContext, ListState, ReadGlobal as _, ScrollHandle, Stateful,
-    Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
+    Subscription, Task, TitlebarOptions, UniformListScrollHandle, WeakEntity, Window, WindowBounds,
     WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, uniform_list,
 };
-use project::{Project, WorktreeId};
+
+use language::Buffer;
+use project::{Project, ProjectPath, Worktree, WorktreeId};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -158,7 +161,7 @@ trait AnySettingField {
         current_file: &SettingsUiFile,
         file_set_in: &settings::SettingsFile,
         cx: &App,
-    ) -> Option<Box<dyn Fn(&mut App)>>;
+    ) -> Option<Box<dyn Fn(&mut Window, &mut App)>>;
 
     fn json_path(&self) -> Option<&'static str>;
 }
@@ -188,7 +191,7 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
         current_file: &SettingsUiFile,
         file_set_in: &settings::SettingsFile,
         cx: &App,
-    ) -> Option<Box<dyn Fn(&mut App)>> {
+    ) -> Option<Box<dyn Fn(&mut Window, &mut App)>> {
         if file_set_in == &settings::SettingsFile::Default {
             return None;
         }
@@ -207,7 +210,7 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
         }
         let current_file = current_file.clone();
 
-        return Some(Box::new(move |cx| {
+        return Some(Box::new(move |window, cx| {
             let store = SettingsStore::global(cx);
             let default_value = (this.pick)(store.raw_default_settings());
             let is_set_somewhere_other_than_default = store
@@ -219,9 +222,15 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
             } else {
                 None
             };
-            update_settings_file(current_file.clone(), None, cx, move |settings, _| {
-                (this.write)(settings, value_to_set);
-            })
+            update_settings_file(
+                current_file.clone(),
+                None,
+                window,
+                cx,
+                move |settings, _| {
+                    (this.write)(settings, value_to_set);
+                },
+            )
             // todo(settings_ui): Don't log err
             .log_err();
         }));
@@ -375,6 +384,8 @@ struct SettingsFieldMetadata {
 
 pub fn init(cx: &mut App) {
     init_renderers(cx);
+    let queue = ProjectSettingsUpdateQueue::new(cx);
+    cx.set_global(queue);
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace
@@ -586,7 +597,6 @@ pub fn open_settings_editor(
     }
 
     // We have to defer this to get the workspace off the stack.
-
     let path = path.map(ToOwned::to_owned);
     cx.defer(move |cx| {
         let current_rem_size: f32 = theme::ThemeSettings::get_global(cx).ui_font_size(cx).into();
@@ -683,6 +693,8 @@ pub struct SettingsWindow {
     sub_page_stack: Vec<SubPage>,
     search_bar: Entity<Editor>,
     search_task: Option<Task<()>>,
+    /// Cached settings file buffers to avoid repeated disk I/O on each settings change
+    project_setting_file_buffers: HashMap<ProjectPath, Entity<Buffer>>,
     /// Index into navbar_entries
     navbar_entry: usize,
     navbar_entries: Vec<NavBarEntry>,
@@ -1120,8 +1132,8 @@ fn render_settings_item(
                                         .icon_size(IconSize::Small)
                                         .tooltip(Tooltip::text("Reset to Default"))
                                         .on_click({
-                                            move |_, _, cx| {
-                                                reset_to_default(cx);
+                                            move |_, window, cx| {
+                                                reset_to_default(window, cx);
                                             }
                                         }),
                                 )
@@ -1567,6 +1579,7 @@ impl SettingsWindow {
             files: vec![],
 
             current_file: current_file,
+            project_setting_file_buffers: HashMap::default(),
             pages: vec![],
             sub_page_stack: vec![],
             navbar_entries: vec![],
@@ -2075,14 +2088,9 @@ impl SettingsWindow {
             }
 
             if let Some(worktree_id) = settings_ui_file.worktree_id() {
-                let directory_name = all_projects(cx)
+                let directory_name = all_projects(self.original_window.as_ref(), cx)
                     .find_map(|project| project.read(cx).worktree_for_id(worktree_id, cx))
-                    .and_then(|worktree| worktree.read(cx).root_dir())
-                    .and_then(|root_dir| {
-                        root_dir
-                            .file_name()
-                            .map(|os_string| os_string.to_string_lossy().to_string())
-                    });
+                    .map(|worktree| worktree.read(cx).root_name());
 
                 let Some(directory_name) = directory_name else {
                     log::error!(
@@ -2092,7 +2100,8 @@ impl SettingsWindow {
                     continue;
                 };
 
-                self.worktree_root_dirs.insert(worktree_id, directory_name);
+                self.worktree_root_dirs
+                    .insert(worktree_id, directory_name.as_unix_str().to_string());
             }
 
             let focus_handle = prev_files
@@ -2108,7 +2117,7 @@ impl SettingsWindow {
 
         let mut missing_worktrees = Vec::new();
 
-        for worktree in all_projects(cx)
+        for worktree in all_projects(self.original_window.as_ref(), cx)
             .flat_map(|project| project.read(cx).visible_worktrees(cx))
             .filter(|tree| !self.worktree_root_dirs.contains_key(&tree.read(cx).id()))
         {
@@ -3575,7 +3584,10 @@ impl Render for SettingsWindow {
     }
 }
 
-fn all_projects(cx: &App) -> impl Iterator<Item = Entity<project::Project>> {
+fn all_projects(
+    window: Option<&WindowHandle<Workspace>>,
+    cx: &App,
+) -> impl Iterator<Item = Entity<project::Project>> {
     workspace::AppState::global(cx)
         .upgrade()
         .map(|app_state| {
@@ -3585,6 +3597,9 @@ fn all_projects(cx: &App) -> impl Iterator<Item = Entity<project::Project>> {
                 .workspaces()
                 .iter()
                 .filter_map(|workspace| Some(workspace.read(cx).ok()?.project().clone()))
+                .chain(
+                    window.and_then(|workspace| Some(workspace.read(cx).ok()?.project().clone())),
+                )
         })
         .into_iter()
         .flatten()
@@ -3593,6 +3608,7 @@ fn all_projects(cx: &App) -> impl Iterator<Item = Entity<project::Project>> {
 fn update_settings_file(
     file: SettingsUiFile,
     file_name: Option<&'static str>,
+    window: &mut Window,
     cx: &mut App,
     update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
 ) -> Result<()> {
@@ -3601,41 +3617,11 @@ fn update_settings_file(
     match file {
         SettingsUiFile::Project((worktree_id, rel_path)) => {
             let rel_path = rel_path.join(paths::local_settings_file_relative_path());
-            let Some((worktree, project)) = all_projects(cx).find_map(|project| {
-                project
-                    .read(cx)
-                    .worktree_for_id(worktree_id, cx)
-                    .zip(Some(project))
-            }) else {
-                anyhow::bail!("Could not find project with worktree id: {}", worktree_id);
+            let Some(settings_window) = window.root::<SettingsWindow>().flatten() else {
+                anyhow::bail!("No settings window found");
             };
 
-            project.update(cx, |project, cx| {
-                let task = if project.contains_local_settings_file(worktree_id, &rel_path, cx) {
-                    None
-                } else {
-                    Some(worktree.update(cx, |worktree, cx| {
-                        worktree.create_entry(rel_path.clone(), false, None, cx)
-                    }))
-                };
-
-                cx.spawn(async move |project, cx| {
-                    if let Some(task) = task
-                        && task.await.is_err()
-                    {
-                        return;
-                    };
-
-                    project
-                        .update(cx, |project, cx| {
-                            project.update_local_settings_file(worktree_id, rel_path, cx, update);
-                        })
-                        .ok();
-                })
-                .detach();
-            });
-
-            return Ok(());
+            update_project_setting_file(worktree_id, rel_path, update, settings_window, cx)
         }
         SettingsUiFile::User => {
             // todo(settings_ui) error?
@@ -3644,6 +3630,153 @@ fn update_settings_file(
         }
         SettingsUiFile::Server(_) => unimplemented!(),
     }
+}
+
+struct ProjectSettingsUpdateEntry {
+    worktree_id: WorktreeId,
+    rel_path: Arc<RelPath>,
+    settings_window: WeakEntity<SettingsWindow>,
+    project: WeakEntity<Project>,
+    worktree: WeakEntity<Worktree>,
+    update: Box<dyn FnOnce(&mut SettingsContent, &App)>,
+}
+
+struct ProjectSettingsUpdateQueue {
+    tx: mpsc::UnboundedSender<ProjectSettingsUpdateEntry>,
+    _task: Task<()>,
+}
+
+impl Global for ProjectSettingsUpdateQueue {}
+
+impl ProjectSettingsUpdateQueue {
+    fn new(cx: &mut App) -> Self {
+        let (tx, mut rx) = mpsc::unbounded();
+        let task = cx.spawn(async move |mut cx| {
+            while let Some(entry) = rx.next().await {
+                if let Err(err) = Self::process_entry(entry, &mut cx).await {
+                    log::error!("Failed to update project settings: {err:?}");
+                }
+            }
+        });
+        Self { tx, _task: task }
+    }
+
+    fn enqueue(cx: &mut App, entry: ProjectSettingsUpdateEntry) {
+        cx.update_global::<Self, _>(|queue, _cx| {
+            if let Err(err) = queue.tx.unbounded_send(entry) {
+                log::error!("Failed to enqueue project settings update: {err}");
+            }
+        });
+    }
+
+    async fn process_entry(entry: ProjectSettingsUpdateEntry, cx: &mut AsyncApp) -> Result<()> {
+        let ProjectSettingsUpdateEntry {
+            worktree_id,
+            rel_path,
+            settings_window,
+            project,
+            worktree,
+            update,
+        } = entry;
+
+        let project_path = ProjectPath {
+            worktree_id,
+            path: rel_path.clone(),
+        };
+
+        let needs_creation = worktree.read_with(cx, |worktree, _| {
+            worktree.entry_for_path(&rel_path).is_none()
+        })?;
+
+        if needs_creation {
+            worktree
+                .update(cx, |worktree, cx| {
+                    worktree.create_entry(rel_path.clone(), false, None, cx)
+                })?
+                .await?;
+        }
+
+        let buffer_store = project.read_with(cx, |project, _cx| project.buffer_store().clone())?;
+
+        let cached_buffer = settings_window
+            .read_with(cx, |settings_window, _| {
+                settings_window
+                    .project_setting_file_buffers
+                    .get(&project_path)
+                    .cloned()
+            })
+            .unwrap_or_default();
+
+        let buffer = if let Some(cached_buffer) = cached_buffer {
+            let needs_reload = cached_buffer.read_with(cx, |buffer, _| buffer.has_conflict());
+            if needs_reload {
+                cached_buffer
+                    .update(cx, |buffer, cx| buffer.reload(cx))
+                    .await
+                    .context("Failed to reload settings file")?;
+            }
+            cached_buffer
+        } else {
+            let buffer = buffer_store
+                .update(cx, |store, cx| store.open_buffer(project_path.clone(), cx))
+                .await
+                .context("Failed to open settings file")?;
+
+            let _ = settings_window.update(cx, |this, _cx| {
+                this.project_setting_file_buffers
+                    .insert(project_path, buffer.clone());
+            });
+
+            buffer
+        };
+
+        buffer.update(cx, |buffer, cx| {
+            let current_text = buffer.text();
+            let new_text = cx
+                .global::<SettingsStore>()
+                .new_text_for_update(current_text, |settings| update(settings, cx));
+            buffer.edit([(0..buffer.len(), new_text)], None, cx);
+        });
+
+        buffer_store
+            .update(cx, |store, cx| store.save_buffer(buffer, cx))
+            .await
+            .context("Failed to save settings file")?;
+
+        Ok(())
+    }
+}
+
+fn update_project_setting_file(
+    worktree_id: WorktreeId,
+    rel_path: Arc<RelPath>,
+    update: impl 'static + FnOnce(&mut SettingsContent, &App),
+    settings_window: Entity<SettingsWindow>,
+    cx: &mut App,
+) -> Result<()> {
+    let Some((worktree, project)) =
+        all_projects(settings_window.read(cx).original_window.as_ref(), cx).find_map(|project| {
+            project
+                .read(cx)
+                .worktree_for_id(worktree_id, cx)
+                .zip(Some(project))
+        })
+    else {
+        anyhow::bail!("Could not find project with worktree id: {}", worktree_id);
+    };
+
+    let entry = ProjectSettingsUpdateEntry {
+        worktree_id,
+        rel_path,
+        settings_window: settings_window.downgrade(),
+        project: project.downgrade(),
+        worktree: worktree.downgrade(),
+        update: Box::new(update),
+    };
+
+    ProjectSettingsUpdateQueue::enqueue(cx, entry);
+
+    Ok(())
 }
 
 fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
@@ -3667,10 +3800,16 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
             |editor, placeholder| editor.with_placeholder(placeholder),
         )
         .on_confirm({
-            move |new_text, cx| {
-                update_settings_file(file.clone(), field.json_path, cx, move |settings, _cx| {
-                    (field.write)(settings, new_text.map(Into::into));
-                })
+            move |new_text, window, cx| {
+                update_settings_file(
+                    file.clone(),
+                    field.json_path,
+                    window,
+                    cx,
+                    move |settings, _cx| {
+                        (field.write)(settings, new_text.map(Into::into));
+                    },
+                )
                 .log_err(); // todo(settings_ui) don't log err
             }
         })
@@ -3695,11 +3834,11 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
     Switch::new("toggle_button", toggle_state)
         .tab_index(0_isize)
         .on_click({
-            move |state, _window, cx| {
+            move |state, window, cx| {
                 telemetry::event!("Settings Change", setting = field.json_path, type = file.setting_type());
 
                 let state = *state == ui::ToggleState::Selected;
-                update_settings_file(file.clone(), field.json_path, cx, move |settings, _cx| {
+                update_settings_file(file.clone(), field.json_path, window, cx, move |settings, _cx| {
                     (field.write)(settings, Some(state.into()));
                 })
                 .log_err(); // todo(settings_ui) don't log err
@@ -3726,11 +3865,17 @@ fn render_number_field<T: NumberFieldType + Send + Sync>(
     NumberField::new(id, value, window, cx)
         .tab_index(0_isize)
         .on_change({
-            move |value, _window, cx| {
+            move |value, window, cx| {
                 let value = *value;
-                update_settings_file(file.clone(), field.json_path, cx, move |settings, _cx| {
-                    (field.write)(settings, Some(value));
-                })
+                update_settings_file(
+                    file.clone(),
+                    field.json_path,
+                    window,
+                    cx,
+                    move |settings, _cx| {
+                        (field.write)(settings, Some(value));
+                    },
+                )
                 .log_err(); // todo(settings_ui) don't log err
             }
         })
@@ -3756,11 +3901,17 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
         .mode(NumberFieldMode::Edit, cx)
         .tab_index(0_isize)
         .on_change({
-            move |value, _window, cx| {
+            move |value, window, cx| {
                 let value = *value;
-                update_settings_file(file.clone(), field.json_path, cx, move |settings, _cx| {
-                    (field.write)(settings, Some(value));
-                })
+                update_settings_file(
+                    file.clone(),
+                    field.json_path,
+                    window,
+                    cx,
+                    move |settings, _cx| {
+                        (field.write)(settings, Some(value));
+                    },
+                )
                 .log_err(); // todo(settings_ui) don't log err
             }
         })
@@ -3788,13 +3939,19 @@ where
     let current_value = current_value.copied().unwrap_or(variants()[0]);
 
     EnumVariantDropdown::new("dropdown", current_value, variants(), labels(), {
-        move |value, cx| {
+        move |value, window, cx| {
             if value == current_value {
                 return;
             }
-            update_settings_file(file.clone(), field.json_path, cx, move |settings, _cx| {
-                (field.write)(settings, Some(value));
-            })
+            update_settings_file(
+                file.clone(),
+                field.json_path,
+                window,
+                cx,
+                move |settings, _cx| {
+                    (field.write)(settings, Some(value));
+                },
+            )
             .log_err(); // todo(settings_ui) don't log err
         }
     })
@@ -3839,10 +3996,11 @@ fn render_font_picker(
             Some(cx.new(move |cx| {
                 font_picker(
                     current_value,
-                    move |font_name, cx| {
+                    move |font_name, window, cx| {
                         update_settings_file(
                             file.clone(),
                             field.json_path,
+                            window,
                             cx,
                             move |settings, _cx| {
                                 (field.write)(settings, Some(font_name.to_string().into()));
@@ -3888,10 +4046,11 @@ fn render_theme_picker(
                 let current_value = current_value.clone();
                 theme_picker(
                     current_value,
-                    move |theme_name, cx| {
+                    move |theme_name, window, cx| {
                         update_settings_file(
                             file.clone(),
                             field.json_path,
+                            window,
                             cx,
                             move |settings, _cx| {
                                 (field.write)(
@@ -3940,10 +4099,11 @@ fn render_icon_theme_picker(
                 let current_value = current_value.clone();
                 icon_theme_picker(
                     current_value,
-                    move |theme_name, cx| {
+                    move |theme_name, window, cx| {
                         update_settings_file(
                             file.clone(),
                             field.json_path,
+                            window,
                             cx,
                             move |settings, _cx| {
                                 (field.write)(
@@ -3976,6 +4136,51 @@ pub mod test {
     impl SettingsWindow {
         fn navbar_entry(&self) -> usize {
             self.navbar_entry
+        }
+
+        #[cfg(any(test, feature = "test-support"))]
+        pub fn test(window: &mut Window, cx: &mut Context<Self>) -> Self {
+            let search_bar = cx.new(|cx| Editor::single_line(window, cx));
+            let dummy_page = SettingsPage {
+                title: "Test",
+                items: Box::new([]),
+            };
+            Self {
+                title_bar: None,
+                original_window: None,
+                worktree_root_dirs: HashMap::default(),
+                files: Vec::default(),
+                current_file: SettingsUiFile::User,
+                project_setting_file_buffers: HashMap::default(),
+                pages: vec![dummy_page],
+                search_bar,
+                navbar_entry: 0,
+                navbar_entries: Vec::default(),
+                navbar_scroll_handle: UniformListScrollHandle::default(),
+                navbar_focus_subscriptions: Vec::default(),
+                filter_table: Vec::default(),
+                has_query: false,
+                content_handles: Vec::default(),
+                search_task: None,
+                sub_page_stack: Vec::default(),
+                focus_handle: cx.focus_handle(),
+                navbar_focus_handle: NonFocusableHandle::new(
+                    NAVBAR_CONTAINER_TAB_INDEX,
+                    false,
+                    window,
+                    cx,
+                ),
+                content_focus_handle: NonFocusableHandle::new(
+                    CONTENT_CONTAINER_TAB_INDEX,
+                    false,
+                    window,
+                    cx,
+                ),
+                files_focus_handle: cx.focus_handle(),
+                search_index: None,
+                list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
+                shown_errors: HashSet::default(),
+            }
         }
     }
 
@@ -4069,6 +4274,7 @@ pub mod test {
             worktree_root_dirs: HashMap::default(),
             files: Vec::default(),
             current_file: crate::SettingsUiFile::User,
+            project_setting_file_buffers: HashMap::default(),
             pages,
             search_bar: cx.new(|cx| Editor::single_line(window, cx)),
             navbar_entry: selected_idx.expect("Must have a selected navbar entry"),
@@ -4286,4 +4492,371 @@ pub mod test {
         > Appearance & Behavior
         "
     );
+}
+
+#[cfg(test)]
+mod project_settings_update_tests {
+    use super::*;
+    use fs::{FakeFs, Fs as _};
+    use gpui::TestAppContext;
+    use project::Project;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct TestSetup {
+        fs: Arc<FakeFs>,
+        project: Entity<Project>,
+        worktree_id: WorktreeId,
+        worktree: WeakEntity<Worktree>,
+        rel_path: Arc<RelPath>,
+        project_path: ProjectPath,
+    }
+
+    async fn init_test(cx: &mut TestAppContext, initial_settings: Option<&str>) -> TestSetup {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            menu::init();
+            let queue = ProjectSettingsUpdateQueue::new(cx);
+            cx.set_global(queue);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let tree = if let Some(settings_content) = initial_settings {
+            json!({
+                ".zed": {
+                    "settings.json": settings_content
+                },
+                "src": { "main.rs": "" }
+            })
+        } else {
+            json!({ "src": { "main.rs": "" } })
+        };
+        fs.insert_tree("/project", tree).await;
+
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+
+        let (worktree_id, worktree) = project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            (worktree.read(cx).id(), worktree.downgrade())
+        });
+
+        let rel_path: Arc<RelPath> = RelPath::unix(".zed/settings.json")
+            .expect("valid path")
+            .into_arc();
+        let project_path = ProjectPath {
+            worktree_id,
+            path: rel_path.clone(),
+        };
+
+        TestSetup {
+            fs,
+            project,
+            worktree_id,
+            worktree,
+            rel_path,
+            project_path,
+        }
+    }
+
+    #[gpui::test]
+    async fn test_creates_settings_file_if_missing(cx: &mut TestAppContext) {
+        let setup = init_test(cx, None).await;
+
+        let entry = ProjectSettingsUpdateEntry {
+            worktree_id: setup.worktree_id,
+            rel_path: setup.rel_path.clone(),
+            settings_window: WeakEntity::new_invalid(),
+            project: setup.project.downgrade(),
+            worktree: setup.worktree,
+            update: Box::new(|content, _cx| {
+                content.project.all_languages.defaults.tab_size = Some(NonZeroU32::new(4).unwrap());
+            }),
+        };
+
+        cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        cx.executor().run_until_parked();
+
+        let buffer_store = setup
+            .project
+            .read_with(cx, |project, _| project.buffer_store().clone());
+        let buffer = buffer_store
+            .update(cx, |store, cx| store.open_buffer(setup.project_path, cx))
+            .await
+            .expect("buffer should exist");
+
+        let text = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert!(
+            text.contains("\"tab_size\": 4"),
+            "Expected tab_size setting in: {}",
+            text
+        );
+    }
+
+    #[gpui::test]
+    async fn test_updates_existing_settings_file(cx: &mut TestAppContext) {
+        let setup = init_test(cx, Some(r#"{ "tab_size": 2 }"#)).await;
+
+        let entry = ProjectSettingsUpdateEntry {
+            worktree_id: setup.worktree_id,
+            rel_path: setup.rel_path.clone(),
+            settings_window: WeakEntity::new_invalid(),
+            project: setup.project.downgrade(),
+            worktree: setup.worktree,
+            update: Box::new(|content, _cx| {
+                content.project.all_languages.defaults.tab_size = Some(NonZeroU32::new(8).unwrap());
+            }),
+        };
+
+        cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        cx.executor().run_until_parked();
+
+        let buffer_store = setup
+            .project
+            .read_with(cx, |project, _| project.buffer_store().clone());
+        let buffer = buffer_store
+            .update(cx, |store, cx| store.open_buffer(setup.project_path, cx))
+            .await
+            .expect("buffer should exist");
+
+        let text = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert!(
+            text.contains("\"tab_size\": 8"),
+            "Expected updated tab_size in: {}",
+            text
+        );
+    }
+
+    #[gpui::test]
+    async fn test_updates_are_serialized(cx: &mut TestAppContext) {
+        let setup = init_test(cx, Some("{}")).await;
+
+        let update_order = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        for i in 1..=3 {
+            let update_order = update_order.clone();
+            let entry = ProjectSettingsUpdateEntry {
+                worktree_id: setup.worktree_id,
+                rel_path: setup.rel_path.clone(),
+                settings_window: WeakEntity::new_invalid(),
+                project: setup.project.downgrade(),
+                worktree: setup.worktree.clone(),
+                update: Box::new(move |content, _cx| {
+                    update_order.lock().unwrap().push(i);
+                    content.project.all_languages.defaults.tab_size =
+                        Some(NonZeroU32::new(i).unwrap());
+                }),
+            };
+            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        }
+
+        cx.executor().run_until_parked();
+
+        let order = update_order.lock().unwrap().clone();
+        assert_eq!(order, vec![1, 2, 3], "Updates should be processed in order");
+
+        let buffer_store = setup
+            .project
+            .read_with(cx, |project, _| project.buffer_store().clone());
+        let buffer = buffer_store
+            .update(cx, |store, cx| store.open_buffer(setup.project_path, cx))
+            .await
+            .expect("buffer should exist");
+
+        let text = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert!(
+            text.contains("\"tab_size\": 3"),
+            "Final tab_size should be 3: {}",
+            text
+        );
+    }
+
+    #[gpui::test]
+    async fn test_queue_continues_after_failure(cx: &mut TestAppContext) {
+        let setup = init_test(cx, Some("{}")).await;
+
+        let successful_updates = Arc::new(AtomicUsize::new(0));
+
+        {
+            let successful_updates = successful_updates.clone();
+            let entry = ProjectSettingsUpdateEntry {
+                worktree_id: setup.worktree_id,
+                rel_path: setup.rel_path.clone(),
+                settings_window: WeakEntity::new_invalid(),
+                project: setup.project.downgrade(),
+                worktree: setup.worktree.clone(),
+                update: Box::new(move |content, _cx| {
+                    successful_updates.fetch_add(1, Ordering::SeqCst);
+                    content.project.all_languages.defaults.tab_size =
+                        Some(NonZeroU32::new(2).unwrap());
+                }),
+            };
+            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        }
+
+        {
+            let entry = ProjectSettingsUpdateEntry {
+                worktree_id: setup.worktree_id,
+                rel_path: setup.rel_path.clone(),
+                settings_window: WeakEntity::new_invalid(),
+                project: WeakEntity::new_invalid(),
+                worktree: setup.worktree.clone(),
+                update: Box::new(|content, _cx| {
+                    content.project.all_languages.defaults.tab_size =
+                        Some(NonZeroU32::new(99).unwrap());
+                }),
+            };
+            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        }
+
+        {
+            let successful_updates = successful_updates.clone();
+            let entry = ProjectSettingsUpdateEntry {
+                worktree_id: setup.worktree_id,
+                rel_path: setup.rel_path.clone(),
+                settings_window: WeakEntity::new_invalid(),
+                project: setup.project.downgrade(),
+                worktree: setup.worktree.clone(),
+                update: Box::new(move |content, _cx| {
+                    successful_updates.fetch_add(1, Ordering::SeqCst);
+                    content.project.all_languages.defaults.tab_size =
+                        Some(NonZeroU32::new(4).unwrap());
+                }),
+            };
+            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        }
+
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            successful_updates.load(Ordering::SeqCst),
+            2,
+            "Two updates should have succeeded despite middle failure"
+        );
+
+        let buffer_store = setup
+            .project
+            .read_with(cx, |project, _| project.buffer_store().clone());
+        let buffer = buffer_store
+            .update(cx, |store, cx| store.open_buffer(setup.project_path, cx))
+            .await
+            .expect("buffer should exist");
+
+        let text = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert!(
+            text.contains("\"tab_size\": 4"),
+            "Final tab_size should be 4 (third update): {}",
+            text
+        );
+    }
+
+    #[gpui::test]
+    async fn test_handles_dropped_worktree(cx: &mut TestAppContext) {
+        let setup = init_test(cx, Some("{}")).await;
+
+        let entry = ProjectSettingsUpdateEntry {
+            worktree_id: setup.worktree_id,
+            rel_path: setup.rel_path.clone(),
+            settings_window: WeakEntity::new_invalid(),
+            project: setup.project.downgrade(),
+            worktree: WeakEntity::new_invalid(),
+            update: Box::new(|content, _cx| {
+                content.project.all_languages.defaults.tab_size =
+                    Some(NonZeroU32::new(99).unwrap());
+            }),
+        };
+
+        cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        cx.executor().run_until_parked();
+
+        let file_content = setup
+            .fs
+            .load("/project/.zed/settings.json".as_ref())
+            .await
+            .unwrap();
+        assert_eq!(
+            file_content, "{}",
+            "File should be unchanged when worktree is dropped"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_reloads_conflicted_buffer(cx: &mut TestAppContext) {
+        let setup = init_test(cx, Some(r#"{ "tab_size": 2 }"#)).await;
+
+        let buffer_store = setup
+            .project
+            .read_with(cx, |project, _| project.buffer_store().clone());
+        let buffer = buffer_store
+            .update(cx, |store, cx| {
+                store.open_buffer(setup.project_path.clone(), cx)
+            })
+            .await
+            .expect("buffer should exist");
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "// comment\n")], None, cx);
+        });
+
+        let has_unsaved_edits = buffer.read_with(cx, |buffer, _| buffer.has_unsaved_edits());
+        assert!(has_unsaved_edits, "Buffer should have unsaved edits");
+
+        setup
+            .fs
+            .save(
+                "/project/.zed/settings.json".as_ref(),
+                &r#"{ "tab_size": 99 }"#.into(),
+                Default::default(),
+            )
+            .await
+            .expect("save should succeed");
+
+        cx.executor().run_until_parked();
+
+        let has_conflict = buffer.read_with(cx, |buffer, _| buffer.has_conflict());
+        assert!(
+            has_conflict,
+            "Buffer should have conflict after external modification"
+        );
+
+        let (settings_window, _) = cx.add_window_view(|window, cx| {
+            let mut sw = SettingsWindow::test(window, cx);
+            sw.project_setting_file_buffers
+                .insert(setup.project_path.clone(), buffer.clone());
+            sw
+        });
+
+        let entry = ProjectSettingsUpdateEntry {
+            worktree_id: setup.worktree_id,
+            rel_path: setup.rel_path.clone(),
+            settings_window: settings_window.downgrade(),
+            project: setup.project.downgrade(),
+            worktree: setup.worktree.clone(),
+            update: Box::new(|content, _cx| {
+                content.project.all_languages.defaults.tab_size = Some(NonZeroU32::new(4).unwrap());
+            }),
+        };
+
+        cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        cx.executor().run_until_parked();
+
+        let text = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert!(
+            text.contains("\"tab_size\": 4"),
+            "Buffer should have the new tab_size after reload and update: {}",
+            text
+        );
+        assert!(
+            !text.contains("// comment"),
+            "Buffer should not contain the unsaved edit after reload: {}",
+            text
+        );
+        assert!(
+            !text.contains("99"),
+            "Buffer should not contain the external modification value: {}",
+            text
+        );
+    }
 }

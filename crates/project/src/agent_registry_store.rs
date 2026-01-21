@@ -15,15 +15,74 @@ const REGISTRY_URL: &str =
 const REGISTRY_REFRESH_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone, Debug)]
-pub struct RegistryAgent {
+pub struct RegistryAgentMetadata {
     pub id: SharedString,
     pub name: SharedString,
     pub description: SharedString,
     pub version: SharedString,
     pub repository: Option<SharedString>,
     pub icon_path: Option<SharedString>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RegistryBinaryAgent {
+    pub metadata: RegistryAgentMetadata,
     pub targets: HashMap<String, RegistryTargetConfig>,
     pub supports_current_platform: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct RegistryNpxAgent {
+    pub metadata: RegistryAgentMetadata,
+    pub package: SharedString,
+    pub args: Vec<String>,
+    pub env: HashMap<String, String>,
+}
+
+#[derive(Clone, Debug)]
+pub enum RegistryAgent {
+    Binary(RegistryBinaryAgent),
+    Npx(RegistryNpxAgent),
+}
+
+impl RegistryAgent {
+    pub fn metadata(&self) -> &RegistryAgentMetadata {
+        match self {
+            RegistryAgent::Binary(agent) => &agent.metadata,
+            RegistryAgent::Npx(agent) => &agent.metadata,
+        }
+    }
+
+    pub fn id(&self) -> &SharedString {
+        &self.metadata().id
+    }
+
+    pub fn name(&self) -> &SharedString {
+        &self.metadata().name
+    }
+
+    pub fn description(&self) -> &SharedString {
+        &self.metadata().description
+    }
+
+    pub fn version(&self) -> &SharedString {
+        &self.metadata().version
+    }
+
+    pub fn repository(&self) -> Option<&SharedString> {
+        self.metadata().repository.as_ref()
+    }
+
+    pub fn icon_path(&self) -> Option<&SharedString> {
+        self.metadata().icon_path.as_ref()
+    }
+
+    pub fn supports_current_platform(&self) -> bool {
+        match self {
+            RegistryAgent::Binary(agent) => agent.supports_current_platform,
+            RegistryAgent::Npx(_) => true,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -81,7 +140,7 @@ impl AgentRegistryStore {
     }
 
     pub fn agent(&self, id: &str) -> Option<&RegistryAgent> {
-        self.agents.iter().find(|agent| agent.id == id)
+        self.agents.iter().find(|agent| agent.id().as_ref() == id)
     }
 
     pub fn is_fetching(&self) -> bool {
@@ -247,32 +306,6 @@ async fn build_registry_agents(
 
     let mut agents = Vec::new();
     for entry in index.agents {
-        let Some(binary) = entry.distribution.binary.as_ref() else {
-            continue;
-        };
-
-        if binary.is_empty() {
-            continue;
-        }
-
-        let mut targets = HashMap::default();
-        for (platform, target) in binary.iter() {
-            targets.insert(
-                platform.clone(),
-                RegistryTargetConfig {
-                    archive: target.archive.clone(),
-                    cmd: target.cmd.clone(),
-                    args: target.args.clone(),
-                    sha256: None,
-                    env: target.env.clone(),
-                },
-            );
-        }
-
-        let supports_current_platform = current_platform
-            .as_ref()
-            .is_some_and(|platform| targets.contains_key(*platform));
-
         let icon_path = resolve_icon_path(
             &entry,
             &icons_dir,
@@ -282,16 +315,66 @@ async fn build_registry_agents(
         )
         .await?;
 
-        agents.push(RegistryAgent {
+        let metadata = RegistryAgentMetadata {
             id: entry.id.into(),
             name: entry.name.into(),
             description: entry.description.into(),
             version: entry.version.into(),
             repository: entry.repository.map(Into::into),
             icon_path,
-            targets,
-            supports_current_platform,
+        };
+
+        let binary_agent = entry.distribution.binary.as_ref().and_then(|binary| {
+            if binary.is_empty() {
+                return None;
+            }
+
+            let mut targets = HashMap::default();
+            for (platform, target) in binary.iter() {
+                targets.insert(
+                    platform.clone(),
+                    RegistryTargetConfig {
+                        archive: target.archive.clone(),
+                        cmd: target.cmd.clone(),
+                        args: target.args.clone(),
+                        sha256: None,
+                        env: target.env.clone(),
+                    },
+                );
+            }
+
+            let supports_current_platform = current_platform
+                .as_ref()
+                .is_some_and(|platform| targets.contains_key(*platform));
+
+            Some(RegistryBinaryAgent {
+                metadata: metadata.clone(),
+                targets,
+                supports_current_platform,
+            })
         });
+
+        let npx_agent = entry.distribution.npx.as_ref().map(|npx| RegistryNpxAgent {
+            metadata: metadata.clone(),
+            package: npx.package.clone().into(),
+            args: npx.args.clone(),
+            env: npx.env.clone(),
+        });
+
+        let agent = match (binary_agent, npx_agent) {
+            (Some(binary_agent), Some(npx_agent)) => {
+                if binary_agent.supports_current_platform {
+                    RegistryAgent::Binary(binary_agent)
+                } else {
+                    RegistryAgent::Npx(npx_agent)
+                }
+            }
+            (Some(binary_agent), None) => RegistryAgent::Binary(binary_agent),
+            (None, Some(npx_agent)) => RegistryAgent::Npx(npx_agent),
+            (None, None) => continue,
+        };
+
+        agents.push(agent);
     }
 
     Ok(agents)
@@ -447,12 +530,23 @@ struct RegistryEntry {
 struct RegistryDistribution {
     #[serde(default)]
     binary: Option<HashMap<String, RegistryBinaryTarget>>,
+    #[serde(default)]
+    npx: Option<RegistryNpxDistribution>,
 }
 
 #[derive(Deserialize)]
 struct RegistryBinaryTarget {
     archive: String,
     cmd: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    env: HashMap<String, String>,
+}
+
+#[derive(Deserialize)]
+struct RegistryNpxDistribution {
+    package: String,
     #[serde(default)]
     args: Vec<String>,
     #[serde(default)]

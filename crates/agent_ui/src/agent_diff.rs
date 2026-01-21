@@ -131,6 +131,15 @@ impl AgentDiffPane {
             .action_log()
             .read(cx)
             .changed_buffers(cx);
+
+        // Sort edited files alphabetically for consistency with Git diff view
+        let mut sorted_buffers: Vec<_> = changed_buffers.iter().collect();
+        sorted_buffers.sort_by(|(buffer_a, _), (buffer_b, _)| {
+            let path_a = buffer_a.read(cx).file().map(|f| f.path().clone());
+            let path_b = buffer_b.read(cx).file().map(|f| f.path().clone());
+            path_a.cmp(&path_b)
+        });
+
         let mut paths_to_delete = self
             .multibuffer
             .read(cx)
@@ -138,7 +147,7 @@ impl AgentDiffPane {
             .cloned()
             .collect::<HashSet<_>>();
 
-        for (buffer, diff_handle) in changed_buffers {
+        for (buffer, diff_handle) in sorted_buffers {
             if buffer.read(cx).file().is_none() {
                 continue;
             }
@@ -168,7 +177,7 @@ impl AgentDiffPane {
                         multibuffer_context_lines(cx),
                         cx,
                     );
-                    multibuffer.add_diff(diff_handle, cx);
+                    multibuffer.add_diff(diff_handle.clone(), cx);
                     (was_empty, is_excerpt_newly_added)
                 });
 

@@ -1451,7 +1451,7 @@ fn render_copy_code_block_button(
 ) -> impl IntoElement {
     let id = ElementId::named_usize("copy-markdown-code", id);
 
-    CopyButton::new(code.clone()).custom_on_click({
+    CopyButton::new(id.clone(), code.clone()).custom_on_click({
         let markdown = markdown;
         move |_window, cx| {
             let id = id.clone();

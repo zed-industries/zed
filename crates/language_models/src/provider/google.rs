@@ -370,16 +370,20 @@ impl LanguageModel for GoogleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let bypass_rate_limit = request.bypass_rate_limit;
         let request = into_google(
             request,
             self.model.request_id().to_string(),
             self.model.mode(),
         );
         let request = self.stream_completion(request, cx);
-        let future = self.request_limiter.stream(async move {
-            let response = request.await.map_err(LanguageModelCompletionError::from)?;
-            Ok(GoogleEventMapper::new().map_stream(response))
-        });
+        let future = self.request_limiter.stream_with_bypass(
+            async move {
+                let response = request.await.map_err(LanguageModelCompletionError::from)?;
+                Ok(GoogleEventMapper::new().map_stream(response))
+            },
+            bypass_rate_limit,
+        );
         async move { Ok(future.await?.boxed()) }.boxed()
     }
 }

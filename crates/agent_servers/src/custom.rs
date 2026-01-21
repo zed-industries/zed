@@ -91,6 +91,7 @@ impl AgentServer for CustomAgentServer {
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
+                    env: Default::default(),
                     favorite_models: Vec::new(),
                     default_config_options: Default::default(),
                     favorite_config_option_values: Default::default(),
@@ -139,6 +140,7 @@ impl AgentServer for CustomAgentServer {
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
+                    env: Default::default(),
                     favorite_models: Vec::new(),
                     default_config_options: Default::default(),
                     favorite_config_option_values: Default::default(),
@@ -179,6 +181,7 @@ impl AgentServer for CustomAgentServer {
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
+                    env: Default::default(),
                     favorite_models: Vec::new(),
                     default_config_options: Default::default(),
                     favorite_config_option_values: Default::default(),
@@ -231,6 +234,7 @@ impl AgentServer for CustomAgentServer {
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
+                    env: Default::default(),
                     favorite_models: Vec::new(),
                     default_config_options: Default::default(),
                     favorite_config_option_values: Default::default(),
@@ -292,6 +296,7 @@ impl AgentServer for CustomAgentServer {
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
+                    env: Default::default(),
                     favorite_models: Vec::new(),
                     default_config_options: Default::default(),
                     favorite_config_option_values: Default::default(),

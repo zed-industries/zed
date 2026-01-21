@@ -72,7 +72,7 @@ use debugger::{
     dap_store::{DapStore, DapStoreEvent},
     session::Session,
 };
-use encoding_rs;
+
 pub use environment::ProjectEnvironment;
 #[cfg(test)]
 use futures::future::join_all;
@@ -163,6 +163,21 @@ pub use lsp_store::{
 };
 pub use toolchain_store::{ToolchainStore, Toolchains};
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
+
+#[derive(Clone, Copy, Debug)]
+pub struct LocalProjectFlags {
+    pub init_worktree_trust: bool,
+    pub watch_global_configs: bool,
+}
+
+impl Default for LocalProjectFlags {
+    fn default() -> Self {
+        Self {
+            init_worktree_trust: true,
+            watch_global_configs: true,
+        }
+    }
+}
 
 pub trait ProjectItem: 'static {
     fn try_open(
@@ -1088,7 +1103,7 @@ impl Project {
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         env: Option<HashMap<String, String>>,
-        init_worktree_trust: bool,
+        flags: LocalProjectFlags,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
@@ -1097,7 +1112,7 @@ impl Project {
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
             let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
-            if init_worktree_trust {
+            if flags.init_worktree_trust {
                 trusted_worktrees::track_worktree_trust(
                     worktree_store.clone(),
                     None,
@@ -1185,6 +1200,7 @@ impl Project {
                     fs.clone(),
                     worktree_store.clone(),
                     task_store.clone(),
+                    flags.watch_global_configs,
                     cx,
                 )
             });
@@ -1899,7 +1915,10 @@ impl Project {
                 Arc::new(languages),
                 fs,
                 None,
-                false,
+                LocalProjectFlags {
+                    init_worktree_trust: false,
+                    ..Default::default()
+                },
                 cx,
             )
         });
@@ -1956,7 +1975,10 @@ impl Project {
                 Arc::new(languages),
                 fs,
                 None,
-                init_worktree_trust,
+                LocalProjectFlags {
+                    init_worktree_trust,
+                    ..Default::default()
+                },
                 cx,
             )
         });
@@ -5595,48 +5617,6 @@ impl Project {
             .map_or(false, |worktree| {
                 worktree.read(cx).entry_for_path(rel_path).is_some()
             })
-    }
-
-    pub fn update_local_settings_file(
-        &self,
-        worktree_id: WorktreeId,
-        rel_path: Arc<RelPath>,
-        cx: &mut App,
-        update: impl 'static + Send + FnOnce(&mut settings::SettingsContent, &App),
-    ) {
-        let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
-            // todo(settings_ui) error?
-            return;
-        };
-        cx.spawn(async move |cx| {
-            let file = worktree
-                .update(cx, |worktree, cx| worktree.load_file(&rel_path, cx))
-                .await
-                .context("Failed to load settings file")?;
-
-            let has_bom = file.has_bom;
-
-            let new_text = cx.read_global::<SettingsStore, _>(|store, cx| {
-                store.new_text_for_update(file.text, move |settings| update(settings, cx))
-            });
-            worktree
-                .update(cx, |worktree, cx| {
-                    let line_ending = text::LineEnding::detect(&new_text);
-                    worktree.write_file(
-                        rel_path.clone(),
-                        new_text.into(),
-                        line_ending,
-                        encoding_rs::UTF_8,
-                        has_bom,
-                        cx,
-                    )
-                })
-                .await
-                .context("Failed to write settings file")?;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
     }
 }
 
