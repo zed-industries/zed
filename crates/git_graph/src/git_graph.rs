@@ -1309,6 +1309,7 @@ mod persistence {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use collections::{HashMap, HashSet};
     use fs::FakeFs;
     use git::Oid;
     use git::repository::InitialGraphCommitData;
@@ -1430,5 +1431,220 @@ mod tests {
                 smallvec![oids[current_idx + 1]]
             }
         }
+    }
+
+    fn build_oid_to_row_map(graph: &crate::graph::GraphData) -> HashMap<Oid, usize> {
+        graph
+            .commits
+            .iter()
+            .enumerate()
+            .map(|(idx, entry)| (entry.data.sha, idx))
+            .collect()
+    }
+
+    fn verify_commit_order(
+        graph: &crate::graph::GraphData,
+        commits: &[Arc<InitialGraphCommitData>],
+    ) -> Result<(), String> {
+        if graph.commits.len() != commits.len() {
+            return Err(format!(
+                "Commit count mismatch: graph has {} commits, expected {}",
+                graph.commits.len(),
+                commits.len()
+            ));
+        }
+
+        for (idx, (graph_commit, expected_commit)) in
+            graph.commits.iter().zip(commits.iter()).enumerate()
+        {
+            if graph_commit.data.sha != expected_commit.sha {
+                return Err(format!(
+                    "Commit order mismatch at index {}: graph has {:?}, expected {:?}",
+                    idx, graph_commit.data.sha, expected_commit.sha
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_line_endpoints(
+        graph: &crate::graph::GraphData,
+        oid_to_row: &HashMap<Oid, usize>,
+    ) -> Result<(), String> {
+        for line in &graph.lines {
+            let child_row = *oid_to_row.get(&line.child).ok_or_else(|| {
+                format!("Line references non-existent child commit {:?}", line.child)
+            })?;
+
+            let parent_row = *oid_to_row.get(&line.parent).ok_or_else(|| {
+                format!(
+                    "Line references non-existent parent commit {:?}",
+                    line.parent
+                )
+            })?;
+
+            if child_row >= parent_row {
+                return Err(format!(
+                    "Line from {:?} to {:?}: child_row ({}) must be < parent_row ({})",
+                    line.child, line.parent, child_row, parent_row
+                ));
+            }
+
+            if line.full_interval.start != child_row {
+                return Err(format!(
+                    "Line from {:?} to {:?}: full_interval.start ({}) != child_row ({})",
+                    line.child, line.parent, line.full_interval.start, child_row
+                ));
+            }
+
+            if line.full_interval.end != parent_row {
+                return Err(format!(
+                    "Line from {:?} to {:?}: full_interval.end ({}) != parent_row ({})",
+                    line.child, line.parent, line.full_interval.end, parent_row
+                ));
+            }
+
+            if let Some(last_segment) = line.segments.last() {
+                let segment_end_row = match last_segment {
+                    crate::graph::CommitLineSegment::Straight { to_row } => *to_row,
+                    crate::graph::CommitLineSegment::Curve { on_row, .. } => *on_row,
+                };
+
+                if segment_end_row != line.full_interval.end {
+                    return Err(format!(
+                        "Line from {:?} to {:?}: last segment ends at row {} but full_interval.end is {}",
+                        line.child, line.parent, segment_end_row, line.full_interval.end
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_column_correctness(
+        graph: &crate::graph::GraphData,
+        oid_to_row: &HashMap<Oid, usize>,
+    ) -> Result<(), String> {
+        for line in &graph.lines {
+            let child_row = *oid_to_row.get(&line.child).ok_or_else(|| {
+                format!("Line references non-existent child commit {:?}", line.child)
+            })?;
+
+            let parent_row = *oid_to_row.get(&line.parent).ok_or_else(|| {
+                format!(
+                    "Line references non-existent parent commit {:?}",
+                    line.parent
+                )
+            })?;
+
+            let child_lane = graph.commits[child_row].lane;
+            if line.child_column != child_lane {
+                return Err(format!(
+                    "Line from {:?} to {:?}: child_column ({}) != child's lane ({})",
+                    line.child, line.parent, line.child_column, child_lane
+                ));
+            }
+
+            let mut current_column = line.child_column;
+            for segment in &line.segments {
+                if let crate::graph::CommitLineSegment::Curve { to_column, .. } = segment {
+                    current_column = *to_column;
+                }
+            }
+
+            let parent_lane = graph.commits[parent_row].lane;
+            if current_column != parent_lane {
+                return Err(format!(
+                    "Line from {:?} to {:?}: ending column ({}) != parent's lane ({})",
+                    line.child, line.parent, current_column, parent_lane
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_segment_continuity(graph: &crate::graph::GraphData) -> Result<(), String> {
+        for line in &graph.lines {
+            if line.segments.is_empty() {
+                return Err(format!(
+                    "Line from {:?} to {:?} has no segments",
+                    line.child, line.parent
+                ));
+            }
+
+            let mut current_row = line.full_interval.start;
+
+            for (idx, segment) in line.segments.iter().enumerate() {
+                let segment_end_row = match segment {
+                    crate::graph::CommitLineSegment::Straight { to_row } => *to_row,
+                    crate::graph::CommitLineSegment::Curve { on_row, .. } => *on_row,
+                };
+
+                if segment_end_row < current_row {
+                    return Err(format!(
+                        "Line from {:?} to {:?}: segment {} ends at row {} which is before current row {}",
+                        line.child, line.parent, idx, segment_end_row, current_row
+                    ));
+                }
+
+                current_row = segment_end_row;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_coverage(graph: &crate::graph::GraphData) -> Result<(), String> {
+        let mut expected_edges: HashSet<(Oid, Oid)> = HashSet::default();
+        for entry in &graph.commits {
+            for parent in &entry.data.parents {
+                expected_edges.insert((entry.data.sha, *parent));
+            }
+        }
+
+        let mut found_edges: HashSet<(Oid, Oid)> = HashSet::default();
+        for line in &graph.lines {
+            let edge = (line.child, line.parent);
+
+            if found_edges.contains(&edge) {
+                return Err(format!(
+                    "Duplicate line found for edge {:?} -> {:?}",
+                    line.child, line.parent
+                ));
+            }
+
+            found_edges.insert(edge);
+
+            if !expected_edges.contains(&edge) {
+                return Err(format!(
+                    "Orphan line found: {:?} -> {:?} is not in the commit graph",
+                    line.child, line.parent
+                ));
+            }
+        }
+
+        for (child, parent) in &expected_edges {
+            if !found_edges.contains(&(*child, *parent)) {
+                return Err(format!("Missing line for edge {:?} -> {:?}", child, parent));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_all_invariants(
+        graph: &crate::graph::GraphData,
+        commits: &[Arc<InitialGraphCommitData>],
+    ) -> Result<(), String> {
+        verify_commit_order(graph, commits)?;
+        let oid_to_row = build_oid_to_row_map(graph);
+        verify_line_endpoints(graph, &oid_to_row)?;
+        verify_column_correctness(graph, &oid_to_row)?;
+        verify_segment_continuity(graph)?;
+        verify_coverage(graph)?;
+        Ok(())
     }
 }

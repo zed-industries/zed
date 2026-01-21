@@ -304,12 +304,13 @@ fn init_test(cx: &mut TestAppContext) {
   - [x] Support linear, branching, merging, and octopus merge patterns
   - [x] 80% realistic / 20% adversarial distribution
 
-- [ ] **Step 7: Implement verification functions**
-  - [ ] `verify_line_endpoints` - check full_interval matches commit rows
-  - [ ] `verify_column_correctness` - check columns match commit lanes
-  - [ ] `verify_segment_continuity` - check segments are ordered and continuous
-  - [ ] `verify_coverage` - check all parent-child edges have lines
-  - [ ] `verify_all_invariants` - call all verification functions
+- [x] **Step 7: Implement verification functions**
+  - [x] `verify_line_endpoints` - check full_interval matches commit rows
+  - [x] `verify_column_correctness` - check columns match commit lanes
+  - [x] `verify_segment_continuity` - check segments are ordered and continuous
+  - [x] `verify_coverage` - check all parent-child edges have lines
+  - [x] `verify_all_invariants` - call all verification functions
+  - [x] `find_commit_row` - helper to find commit row by Oid
 
 - [ ] **Step 8: Create GitGraphTestContext helper**
   - [ ] Implement `GitGraphTestContext::new()` to set up full integration
