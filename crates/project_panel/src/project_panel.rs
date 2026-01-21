@@ -1303,7 +1303,7 @@ impl ProjectPanel {
                 total_actions_height + total_separators_height + dynamic_spacing;
 
             let (_, entry_ix, _) = self
-                .index_for_selection(selection.clone())
+                .index_for_selection(*selection)
                 .unwrap_or_default();
 
             let offset_y = self.scroll_handle.offset().y.to_f64();
