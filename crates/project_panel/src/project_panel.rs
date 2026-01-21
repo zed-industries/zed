@@ -1143,10 +1143,6 @@ impl ProjectPanel {
                             .when(is_dir, |menu| {
                                 menu.separator()
                                     .action("Find in Folder…", Box::new(NewSearchInDirectory))
-                                    .action(
-                                        "Collapse All",
-                                        Box::new(CollapseSelectedEntryAndChildren),
-                                    )
                             })
                             .when(is_unfoldable, |menu| {
                                 menu.action("Unfold Directory", Box::new(UnfoldDirectory))
@@ -1204,6 +1200,12 @@ impl ProjectPanel {
                                         Box::new(workspace::AddFolderToProject),
                                     )
                                     .action("Remove from Project", Box::new(RemoveFromProject))
+                            })
+                            .when(is_dir, |menu| {
+                                menu.separator().action(
+                                    "Collapse All",
+                                    Box::new(CollapseSelectedEntryAndChildren),
+                                )
                             })
                     }
                 })
