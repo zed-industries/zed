@@ -466,11 +466,26 @@ impl AgentServerStore {
                         let icon = icon_path;
                         let agent_server_name = ExternalAgentServerName(agent_name.clone().into());
                         self.external_agents
-                            .entry(agent_server_name)
+                            .entry(agent_server_name.clone())
                             .and_modify(|entry| {
                                 entry.icon = icon_shared.clone();
                                 entry.display_name = Some(display_name.clone());
                                 entry.source = ExternalAgentSource::Extension;
+                            })
+                            .or_insert_with(|| {
+                                ExternalAgentEntry::new(
+                                    Box::new(RemoteExternalAgentServer {
+                                        project_id: *project_id,
+                                        upstream_client: upstream_client.clone(),
+                                        name: agent_server_name.clone(),
+                                        status_tx: None,
+                                        new_version_available_tx: None,
+                                    })
+                                        as Box<dyn ExternalAgentServer>,
+                                    ExternalAgentSource::Extension,
+                                    icon_shared.clone(),
+                                    Some(display_name.clone()),
+                                )
                             });
 
                         agents.push(ExternalExtensionAgent {
