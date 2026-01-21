@@ -115,6 +115,12 @@ impl LaneState {
                                                 to_row: ending_row,
                                             });
                                         }
+                                    } else if *to_column != final_destination {
+                                        segments.push(CommitLineSegment::Curve {
+                                            to_column: final_destination,
+                                            on_row: ending_row,
+                                            curve_kind: CurveKind::Checkout,
+                                        });
                                     }
                                 } else {
                                     *on_row = ending_row;
@@ -344,25 +350,46 @@ impl GraphData {
 
             let commit_color = self.get_lane_color(commit_lane);
 
-            self.lane_states
-                .iter_mut()
-                .enumerate()
-                .filter_map(|(lane_column, state)| {
-                    state
-                        .is_parent_commit(&commit.sha, false)
-                        .then(|| {
-                            state.to_commit_lines(
-                                commit_row,
-                                lane_column,
-                                commit_lane,
-                                commit_color,
-                            )
-                        })
-                        .flatten()
-                })
-                .for_each(|commit_line| {
+            for lane_column in 0..self.lane_states.len() {
+                let state = &mut self.lane_states[lane_column];
+                if !state.is_parent_commit(&commit.sha, false) {
+                    continue;
+                }
+
+                if let LaneState::Active {
+                    starting_row,
+                    segments,
+                    ..
+                } = state
+                {
+                    if let Some(CommitLineSegment::Curve {
+                        to_column,
+                        curve_kind: CurveKind::Merge,
+                        ..
+                    }) = segments.first_mut()
+                    {
+                        let curve_row = *starting_row + 1;
+                        let would_overlap = if lane_column != commit_lane && curve_row < commit_row
+                        {
+                            self.commits[curve_row..commit_row]
+                                .iter()
+                                .any(|c| c.lane == commit_lane)
+                        } else {
+                            false
+                        };
+
+                        if would_overlap {
+                            *to_column = lane_column;
+                        }
+                    }
+                }
+
+                if let Some(commit_line) =
+                    state.to_commit_lines(commit_row, lane_column, commit_lane, commit_color)
+                {
                     self.lines.push(Rc::new(commit_line));
-                });
+                }
+            }
 
             commit
                 .parents

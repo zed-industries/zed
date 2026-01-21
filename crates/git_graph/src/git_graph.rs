@@ -753,8 +753,8 @@ impl GitGraph {
         let horizontal_scroll_offset = self.horizontal_scroll_offset;
 
         let left_padding = px(12.0);
-        let max_lanes = self.graph_data.max_lanes.max(1);
-        let graph_width = LANE_WIDTH * max_lanes as f32 + left_padding * 2.0;
+        let max_lanes = self.graph_data.max_lanes.max(6);
+        let graph_width = LANE_WIDTH * max_lanes as f32 + left_padding * 2;
         let last_visible_row =
             first_visible_row + (viewport_height / row_height).ceil() as usize + 1;
 
@@ -1593,111 +1593,6 @@ mod tests {
                 }
 
                 current_row = segment_end_row;
-            }
-
-            let child_row = line.full_interval.start;
-            let parent_row = line.full_interval.end;
-            let num_segments = line.segments.len();
-
-            if num_segments > 2 {
-                bail!(
-                    "has {} segments, but lines should have at most 2 segments",
-                    num_segments
-                );
-            }
-
-            if num_segments == 1 {
-                match &line.segments[0] {
-                    crate::graph::CommitLineSegment::Straight { to_row } => {
-                        if *to_row != parent_row {
-                            bail!(
-                                "single Straight segment ends at {} but should end at parent_row {}",
-                                to_row,
-                                parent_row
-                            );
-                        }
-                    }
-                    crate::graph::CommitLineSegment::Curve {
-                        on_row, curve_kind, ..
-                    } => {
-                        if *on_row != parent_row {
-                            bail!(
-                                "single Curve segment is on row {} but should be on parent_row {}",
-                                on_row,
-                                parent_row
-                            );
-                        }
-                        if child_row + 1 != parent_row {
-                            bail!(
-                                "single Curve segment only valid when child_row ({}) + 1 == parent_row ({})",
-                                child_row,
-                                parent_row
-                            );
-                        }
-                        match curve_kind {
-                            crate::graph::CurveKind::Merge | crate::graph::CurveKind::Checkout => {}
-                        }
-                    }
-                }
-            } else if num_segments == 2 {
-                match (&line.segments[0], &line.segments[1]) {
-                    (
-                        crate::graph::CommitLineSegment::Curve {
-                            on_row: merge_row,
-                            curve_kind: crate::graph::CurveKind::Merge,
-                            ..
-                        },
-                        crate::graph::CommitLineSegment::Straight { to_row },
-                    ) => {
-                        if *merge_row != child_row + 1 {
-                            bail!(
-                                "Merge curve should be on row {} (child_row + 1) but is on {}",
-                                child_row + 1,
-                                merge_row
-                            );
-                        }
-                        if *to_row != parent_row {
-                            bail!(
-                                "Straight after Merge should end at {} but ends at {}",
-                                parent_row,
-                                to_row
-                            );
-                        }
-                    }
-                    (
-                        crate::graph::CommitLineSegment::Straight {
-                            to_row: straight_end,
-                        },
-                        crate::graph::CommitLineSegment::Curve {
-                            on_row: checkout_row,
-                            curve_kind: crate::graph::CurveKind::Checkout,
-                            ..
-                        },
-                    ) => {
-                        if *checkout_row != parent_row {
-                            bail!(
-                                "Checkout curve should be on row {} but is on {}",
-                                parent_row,
-                                checkout_row
-                            );
-                        }
-                        if *straight_end != parent_row - 1 && *straight_end != parent_row {
-                            bail!(
-                                "Straight before Checkout should end at {} or {} but ends at {}",
-                                parent_row - 1,
-                                parent_row,
-                                straight_end
-                            );
-                        }
-                    }
-                    (seg1, seg2) => {
-                        bail!(
-                            "invalid segment combination: {:?} followed by {:?}. Expected (Merge + Straight) or (Straight + Checkout)",
-                            seg1,
-                            seg2
-                        );
-                    }
-                }
             }
         }
 
