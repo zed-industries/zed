@@ -358,7 +358,7 @@
       "cmd-shift-enter": "agent::SendImmediately",
       "cmd-shift-alt-enter": "agent::SendNextQueuedMessage",
       "cmd-shift-backspace": "agent::RemoveFirstQueuedMessage",
-      "shift-e": "agent::EditFirstQueuedMessage",
+      "cmd-ctrl-e": "agent::EditFirstQueuedMessage",
       "cmd-alt-backspace": "agent::ClearMessageQueue",
       "cmd-shift-v": "agent::PasteRaw",
       "cmd-i": "agent::ToggleProfileSelector",
