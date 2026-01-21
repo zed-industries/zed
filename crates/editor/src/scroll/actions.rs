@@ -2,7 +2,9 @@ use super::Axis;
 use crate::{
     Autoscroll, Editor, EditorMode, EditorSettings, NextScreen, NextScrollCursorCenterTopBottom,
     SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT, ScrollCursorBottom, ScrollCursorCenter,
-    ScrollCursorCenterTopBottom, ScrollCursorTop, display_map::DisplayRow, scroll::ScrollOffset,
+    ScrollCursorCenterTopBottom, ScrollCursorTop,
+    display_map::DisplayRow,
+    scroll::{ScrollBehavior, ScrollOffset},
 };
 use gpui::{Context, Point, Window};
 use settings::Settings;
@@ -28,31 +30,23 @@ impl Editor {
         &mut self,
         scroll_position: Point<ScrollOffset>,
         axis: Option<Axis>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.scroll_manager.update_ongoing_scroll(axis);
-        self.set_scroll_position(scroll_position, window, cx);
-    }
-
-    pub fn scroll_animated(
-        &mut self,
-        scroll_position: Point<ScrollOffset>,
-        axis: Option<Axis>,
+        behavior: ScrollBehavior,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let smooth_scroll = EditorSettings::get_global(cx).smooth_scroll;
-        if !smooth_scroll.enabled {
-            return self.scroll(scroll_position, axis, window, cx);
-        }
-
         let current_position = self.scroll_position(cx);
         self.scroll_manager.update_ongoing_scroll(axis);
-        self.scroll_manager
-            .start_animation(current_position, scroll_position);
 
-        cx.notify();
+        match behavior {
+            ScrollBehavior::RequestAnimation if smooth_scroll.enabled => {
+                self.scroll_manager
+                    .start_animation(current_position, scroll_position);
+            }
+            _ => {
+                self.set_scroll_position(scroll_position, window, cx);
+            }
+        }
     }
 
     pub fn scroll_cursor_center_top_bottom(

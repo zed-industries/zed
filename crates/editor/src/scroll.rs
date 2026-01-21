@@ -149,6 +149,12 @@ impl ActiveScrollbarState {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub enum ScrollBehavior {
+    Instant,
+    RequestAnimation,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub enum ScrollAnimationPhase {
     Intermediate,
     Final,

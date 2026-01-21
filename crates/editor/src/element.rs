@@ -30,8 +30,8 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition},
     scroll::{
-        ActiveScrollbarState, Autoscroll, ScrollOffset, ScrollPixelOffset, ScrollbarThumbState,
-        scroll_amount::ScrollAmount,
+        ActiveScrollbarState, Autoscroll, ScrollBehavior, ScrollOffset, ScrollPixelOffset,
+        ScrollbarThumbState, scroll_amount::ScrollAmount,
     },
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
@@ -7841,12 +7841,13 @@ impl EditorElement {
                         }
 
                         if scroll_position != base_scroll_position {
-                            if is_precise {
-                                editor.scroll(scroll_position, axis, window, cx);
+                            let scroll_behaviour = if is_precise {
+                                ScrollBehavior::Instant
                             } else {
-                                editor.scroll_animated(scroll_position, axis, window, cx);
-                            }
+                                ScrollBehavior::RequestAnimation
+                            };
 
+                            editor.scroll(scroll_position, axis, scroll_behaviour, window, cx);
                             cx.stop_propagation();
                         } else if y < 0. {
                             // Due to clamping, we may fail to detect cases of overscroll to the top;
