@@ -426,7 +426,14 @@ pub fn into_open_ai(
         for content in message.content {
             match content {
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                    if !text.trim().is_empty() {
+                    let should_add = if message.role == Role::User {
+                        // Including whitespace-only user messages can cause error with OpenAI compatible APIs
+                        // See https://github.com/zed-industries/zed/issues/40097
+                        !text.trim().is_empty()
+                    } else {
+                        !text.is_empty()
+                    };
+                    if should_add {
                         add_message_content_part(
                             open_ai::MessagePart::Text { text },
                             message.role,
@@ -792,8 +799,18 @@ impl OpenAiEventMapper {
         };
 
         if let Some(delta) = choice.delta.as_ref() {
+            if let Some(reasoning_content) = delta.reasoning_content.clone() {
+                if !reasoning_content.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                        text: reasoning_content,
+                        signature: None,
+                    }));
+                }
+            }
             if let Some(content) = delta.content.clone() {
-                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                if !content.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                }
             }
 
             if let Some(tool_calls) = delta.tool_calls.as_ref() {
