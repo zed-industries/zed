@@ -363,7 +363,15 @@ pub fn into_open_ai(
         for content in message.content {
             match content {
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                    if !text.is_empty() {
+                    if !text.trim().is_empty() {
+                    let should_add = if message.role == Role::User {
+                        // Including whitespace-only user messages can cause error with OpenAI compatible APIs
+                        // See https://github.com/zed-industries/zed/issues/40097
+                        !text.trim().is_empty()
+                    } else {
+                        !text.is_empty()
+                    };
+                    if should_add {
                         add_message_content_part(
                             open_ai::MessagePart::Text { text },
                             message.role,
