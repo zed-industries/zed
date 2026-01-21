@@ -377,6 +377,7 @@ pub fn init(cx: &mut App) {
             cx.new(|cx| Editor::single_line(window, cx)),
         )) as Arc<dyn ErasedEditor>
     });
+    _ = multi_buffer::EXCERPT_CONTEXT_LINES.set(multibuffer_context_lines);
 }
 
 pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) {

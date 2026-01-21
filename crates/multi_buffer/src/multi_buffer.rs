@@ -44,7 +44,7 @@ use std::{
     ops::{self, AddAssign, ControlFlow, Range, RangeBounds, Sub, SubAssign},
     rc::Rc,
     str,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 use sum_tree::{Bias, Cursor, Dimension, Dimensions, SumTree, TreeMap};
@@ -58,6 +58,12 @@ use util::post_inc;
 use ztracing::instrument;
 
 pub use self::path_key::PathKey;
+
+pub static EXCERPT_CONTEXT_LINES: OnceLock<fn(&App) -> u32> = OnceLock::new();
+
+pub fn excerpt_context_lines(cx: &App) -> u32 {
+    EXCERPT_CONTEXT_LINES.get().map(|f| f(cx)).unwrap_or(2)
+}
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ExcerptId(u32);
