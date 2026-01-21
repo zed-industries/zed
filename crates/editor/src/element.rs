@@ -9574,6 +9574,16 @@ impl Element for EditorElement {
                     );
                     let end_row = DisplayRow(end_row);
 
+                    if start_row > end_row {
+                        dbg!(
+                            start_row,
+                            end_row,
+                            visible_height_in_lines,
+                            bounds,
+                            height_in_lines
+                        );
+                    }
+
                     let row_infos = snapshot // note we only get the visual range
                         .row_infos(start_row)
                         .take((start_row..end_row).len())

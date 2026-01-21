@@ -2640,6 +2640,13 @@ impl Window {
     ) -> R {
         self.invalidator.debug_assert_paint_or_prepaint();
         if let Some(mask) = mask {
+            if mask.bounds.size.height < 0.0.into() {
+                panic!(
+                    "invalid content mask with negative value: {}",
+                    &mask.bounds.size
+                );
+            }
+
             let mask = mask.intersect(&self.content_mask());
             self.content_mask_stack.push(mask);
             let result = f(self);
@@ -2808,7 +2815,7 @@ impl Window {
             .unwrap_or_else(|| ContentMask {
                 bounds: Bounds {
                     origin: Point::default(),
-                    size: self.viewport_size,
+                    size: self.viewport_size.max(&Size::new(px(0.0), px(0.0))),
                 },
             })
     }
