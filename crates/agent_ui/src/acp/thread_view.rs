@@ -1875,14 +1875,48 @@ impl AcpThreadView {
     }
 
     fn emit_thread_error_telemetry(&self, error: &ThreadError, cx: &mut Context<Self>) {
-        let (error_kind, acp_error_code) = match error {
-            ThreadError::PaymentRequired => ("payment_required", None),
-            ThreadError::ModelRequestLimitReached(_) => ("model_request_limit_reached", None),
-            ThreadError::ToolUseLimitReached => ("tool_use_limit_reached", None),
-            ThreadError::Refusal => ("refusal", None),
-            ThreadError::AuthenticationRequired(_) => ("authentication_required", None),
-            ThreadError::Other { acp_error_code, .. } => ("other", acp_error_code.clone()),
-        };
+        let (error_kind, acp_error_code, message): (&str, Option<SharedString>, SharedString) =
+            match error {
+                ThreadError::PaymentRequired => (
+                    "payment_required",
+                    None,
+                    "You reached your free usage limit. Upgrade to Zed Pro for more prompts."
+                        .into(),
+                ),
+                ThreadError::ModelRequestLimitReached(plan) => {
+                    let message = match plan {
+                        cloud_llm_client::Plan::V1(PlanV1::ZedPro) => {
+                            "Upgrade to usage-based billing for more prompts."
+                        }
+                        cloud_llm_client::Plan::V1(PlanV1::ZedProTrial)
+                        | cloud_llm_client::Plan::V1(PlanV1::ZedFree) => {
+                            "Upgrade to Zed Pro for more prompts."
+                        }
+                        cloud_llm_client::Plan::V2(_) => "Model prompt limit reached.",
+                    };
+                    ("model_request_limit_reached", None, message.into())
+                }
+                ThreadError::ToolUseLimitReached => (
+                    "tool_use_limit_reached",
+                    None,
+                    "Consecutive tool use limit reached.".into(),
+                ),
+                ThreadError::Refusal => {
+                    let model_or_agent_name = self.current_model_name(cx);
+                    let message = format!(
+                        "{} refused to respond to this prompt. This can happen when a model believes the prompt violates its content policy or safety guidelines, so rephrasing it can sometimes address the issue.",
+                        model_or_agent_name
+                    );
+                    ("refusal", None, message.into())
+                }
+                ThreadError::AuthenticationRequired(message) => {
+                    ("authentication_required", None, message.clone())
+                }
+                ThreadError::Other {
+                    acp_error_code,
+                    message,
+                } => ("other", acp_error_code.clone(), message.clone()),
+            };
 
         let (agent_telemetry_id, session_id) = self
             .thread()
@@ -1901,6 +1935,7 @@ impl AcpThreadView {
             session_id = session_id,
             kind = error_kind,
             acp_error_code = acp_error_code,
+            message = Some(message),
         );
     }
 
