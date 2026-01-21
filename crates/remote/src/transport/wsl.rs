@@ -467,8 +467,13 @@ impl RemoteConnection for WslRemoteConnection {
         } else {
             write!(&mut exec, "{} -l", self.shell)?;
         }
-        let (command, args) =
-            ShellBuilder::new(&Shell::Program(self.shell.clone()), false).build(Some(exec), &[]);
+        // This command is already executed within a pseudo-terminal (for `Interactive::Yes`),
+        // and may ultimately `exec` into an interactive login shell (when `program` is `None`).
+        // Avoid running the wrapper shell in interactive mode, otherwise it will source rc files
+        // (e.g. `~/.zshrc`) and then source them again when the final login shell starts.
+        let (command, args) = ShellBuilder::new(&Shell::Program(self.shell.clone()), false)
+            .non_interactive()
+            .build(Some(exec), &[]);
 
         let mut wsl_args = if let Some(user) = &self.connection_options.user {
             vec![
@@ -525,6 +530,57 @@ impl RemoteConnection for WslRemoteConnection {
 
     fn has_wsl_interop(&self) -> bool {
         self.has_wsl_interop
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_command_does_not_use_interactive_wrapper_shell() -> Result<()> {
+        let connection = WslRemoteConnection {
+            remote_binary_path: None,
+            platform: RemotePlatform {
+                os: RemoteOs::Linux,
+                arch: RemoteArch::X86_64,
+            },
+            shell: "/usr/bin/zsh".to_string(),
+            shell_kind: ShellKind::new("/usr/bin/zsh", false),
+            default_system_shell: "/bin/sh".to_string(),
+            has_wsl_interop: false,
+            connection_options: WslConnectionOptions {
+                distro_name: "Ubuntu".to_string(),
+                user: None,
+            },
+        };
+
+        let mut env = HashMap::default();
+        env.insert("ZED_TERM".to_string(), "true".to_string());
+
+        let command = connection.build_command(
+            None,
+            &[],
+            &env,
+            Some("/home/user".to_string()),
+            None,
+            Interactive::Yes,
+        )?;
+
+        assert_eq!(command.program, "wsl.exe");
+        assert!(command.args.iter().any(|arg| arg == "-c"));
+        assert!(
+            !command.args.iter().any(|arg| arg == "-i"),
+            "wrapper shell must not be interactive"
+        );
+
+        let argv = command.args.join(" ");
+        assert!(
+            argv.contains("exec env") && argv.contains("/usr/bin/zsh -l"),
+            "must exec into the final login shell after setting env"
+        );
+
+        Ok(())
     }
 }
 
