@@ -310,7 +310,7 @@
       "ctrl-shift-enter": "agent::SendImmediately",
       "ctrl-shift-alt-enter": "agent::SendNextQueuedMessage",
       "ctrl-shift-backspace": "agent::RemoveFirstQueuedMessage",
-      "shift-e": "agent::EditFirstQueuedMessage",
+      "ctrl-alt-e": "agent::EditFirstQueuedMessage",
       "ctrl-alt-backspace": "agent::ClearMessageQueue",
       "ctrl-shift-v": "agent::PasteRaw",
       "ctrl-i": "agent::ToggleProfileSelector",
