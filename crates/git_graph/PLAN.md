@@ -287,9 +287,9 @@ fn init_test(cx: &mut TestAppContext) {
   - [x] Send commits through channel in GRAPH_CHUNK_SIZE chunks
   - [x] Handle empty graph_commits case
 
-- [ ] **Step 4: Add set_graph_commits helper to FakeFs**
-  - [ ] Find repo state by path
-  - [ ] Update graph_commits field
+- [x] **Step 4: Add set_graph_commits helper to FakeFs**
+  - [x] Find repo state by path
+  - [x] Update graph_commits field
 
 - [ ] **Step 5: Create test module in git_graph.rs**
   - [ ] Add `#[cfg(test)] mod tests`
