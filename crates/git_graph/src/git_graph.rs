@@ -1308,27 +1308,12 @@ mod persistence {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use collections::{HashMap, HashSet};
-    use fs::FakeFs;
     use git::Oid;
     use git::repository::InitialGraphCommitData;
-    use gpui::TestAppContext;
-    use project::Project;
     use rand::prelude::*;
-    use serde_json::json;
-    use settings::SettingsStore;
     use smallvec::{SmallVec, smallvec};
     use std::sync::Arc;
-    use util::path;
-
-    fn init_test(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
-        });
-    }
 
     /// Generates a random commit DAG suitable for testing git graph rendering.
     ///
@@ -1646,5 +1631,38 @@ mod tests {
         verify_segment_continuity(graph)?;
         verify_coverage(graph)?;
         Ok(())
+    }
+
+    #[test]
+    fn test_git_graph_random_commits() {
+        for seed in 0..50 {
+            let mut rng = StdRng::seed_from_u64(seed);
+
+            let adversarial = rng.random_bool(0.2);
+            let num_commits = if adversarial {
+                rng.random_range(10..100)
+            } else {
+                rng.random_range(5..50)
+            };
+
+            let commits = generate_random_commit_dag(&mut rng, num_commits, adversarial);
+
+            assert_eq!(
+                num_commits,
+                commits.len(),
+                "seed={}: Generate random commit dag didn't generate the correct amount of commits",
+                seed
+            );
+
+            let mut graph_data = crate::graph::GraphData::new(8);
+            graph_data.add_commits(&commits);
+
+            if let Err(error) = verify_all_invariants(&graph_data, &commits) {
+                panic!(
+                    "Graph invariant violation (seed={}, adversarial={}, num_commits={}):\n{}",
+                    seed, adversarial, num_commits, error
+                );
+            }
+        }
     }
 }
