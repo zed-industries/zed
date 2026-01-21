@@ -432,7 +432,9 @@ pub enum CustomAgentServerSettings {
         path: PathBuf,
         #[serde(default)]
         args: Vec<String>,
-        env: Option<HashMap<String, String>>,
+        /// Default: {}
+        #[serde(default)]
+        env: HashMap<String, String>,
         /// The default mode to use for this agent.
         ///
         /// Note: Not only all agents support modes.
@@ -468,6 +470,11 @@ pub enum CustomAgentServerSettings {
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
     Extension {
+        /// Additional environment variables to pass to the agent.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        env: HashMap<String, String>,
         /// The default mode to use for this agent.
         ///
         /// Note: Not only all agents support modes.
@@ -503,6 +510,11 @@ pub enum CustomAgentServerSettings {
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
     Registry {
+        /// Additional environment variables to pass to the agent.
+        ///
+        /// Default: {}
+        #[serde(default)]
+        env: HashMap<String, String>,
         /// The default mode to use for this agent.
         ///
         /// Note: Not only all agents support modes.
