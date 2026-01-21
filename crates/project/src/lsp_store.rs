@@ -1229,18 +1229,11 @@ impl LocalLspStore {
         clangd_ext::register_notifications(lsp_store, language_server, adapter);
     }
 
-    fn shutdown_language_servers_on_quit(
-        &mut self,
-        cx: &mut Context<LspStore>,
-    ) -> impl Future<Output = ()> + use<> {
-        let request_timeout = ProjectSettings::get_global(cx)
-            .global_lsp_settings
-            .get_request_timeout();
-
+    fn shutdown_language_servers_on_quit(&mut self) -> impl Future<Output = ()> + use<> {
         let shutdown_futures = self
             .language_servers
             .drain()
-            .map(|(_, server_state)| Self::shutdown_server(server_state, request_timeout))
+            .map(|(_, server_state)| Self::shutdown_server(server_state))
             .collect::<Vec<_>>();
 
         async move {
@@ -1248,19 +1241,16 @@ impl LocalLspStore {
         }
     }
 
-    async fn shutdown_server(
-        server_state: LanguageServerState,
-        request_timeout: Duration,
-    ) -> anyhow::Result<()> {
+    async fn shutdown_server(server_state: LanguageServerState) -> anyhow::Result<()> {
         match server_state {
             LanguageServerState::Running { server, .. } => {
-                if let Some(shutdown) = server.shutdown(request_timeout) {
+                if let Some(shutdown) = server.shutdown() {
                     shutdown.await;
                 }
             }
             LanguageServerState::Starting { startup, .. } => {
                 if let Some(server) = startup.await
-                    && let Some(shutdown) = server.shutdown(request_timeout)
+                    && let Some(shutdown) = server.shutdown()
                 {
                     shutdown.await;
                 }
@@ -4122,10 +4112,10 @@ impl LspStore {
                 yarn,
                 next_diagnostic_group_id: Default::default(),
                 diagnostics: Default::default(),
-                _subscription: cx.on_app_quit(|this, cx| {
+                _subscription: cx.on_app_quit(|this, _| {
                     this.as_local_mut()
                         .unwrap()
-                        .shutdown_language_servers_on_quit(cx)
+                        .shutdown_language_servers_on_quit()
                 }),
                 lsp_tree: LanguageServerTree::new(
                     manifest_tree,
@@ -11094,14 +11084,7 @@ impl LspStore {
         };
 
         let Some(server) = server else { return };
-
-        let request_timeout: Duration = cx.update(|app| {
-            ProjectSettings::get_global(app)
-                .global_lsp_settings
-                .get_request_timeout()
-        });
-
-        if let Some(shutdown) = server.shutdown(request_timeout) {
+        if let Some(shutdown) = server.shutdown() {
             shutdown.await;
         }
     }

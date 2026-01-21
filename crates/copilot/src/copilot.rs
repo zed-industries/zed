@@ -313,7 +313,7 @@ impl Copilot {
                 }
             });
         let _subscriptions = [
-            cx.on_app_quit(Self::shutdown_language_server),
+            cx.on_app_quit(|copilot, _| copilot.shutdown_language_server()),
             send_focus_notification,
         ];
         let mut this = Self {
@@ -342,20 +342,9 @@ impl Copilot {
         this
     }
 
-    fn shutdown_language_server(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> impl Future<Output = ()> + use<> {
-        let request_timeout = ProjectSettings::get_global(cx)
-            .global_lsp_settings
-            .get_request_timeout();
-
+    fn shutdown_language_server(&mut self) -> impl Future<Output = ()> + use<> {
         let shutdown = match mem::replace(&mut self.server, CopilotServer::Disabled) {
-            CopilotServer::Running(server) => {
-                Some(Box::pin(
-                    async move { server.lsp.shutdown(request_timeout) },
-                ))
-            }
+            CopilotServer::Running(server) => Some(Box::pin(async move { server.lsp.shutdown() })),
             _ => None,
         };
 
@@ -464,7 +453,7 @@ impl Copilot {
             }),
             _subscriptions: [
                 send_focus_notification,
-                cx.on_app_quit(Self::shutdown_language_server),
+                cx.on_app_quit(|copilot: &mut Self, _| copilot.shutdown_language_server()),
             ],
             buffers: Default::default(),
         });

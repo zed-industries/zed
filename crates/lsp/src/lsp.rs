@@ -60,7 +60,7 @@ pub const DEFAULT_LSP_REQUEST_TIMEOUT: Duration =
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
-type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
+type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>) -> Task<()>>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
 /// Kind of language server stdio given to an IO handler.
@@ -953,10 +953,7 @@ impl LanguageServer {
     }
 
     /// Sends a shutdown request to the language server process and prepares the [`LanguageServer`] to be dropped.
-    pub fn shutdown(
-        &self,
-        request_timeout: Duration,
-    ) -> Option<impl 'static + Send + Future<Output = Option<()>> + use<>> {
+    pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>> + use<>> {
         let tasks = self.io_tasks.lock().take()?;
 
         let response_handlers = self.response_handlers.clone();
@@ -971,7 +968,7 @@ impl LanguageServer {
             &outbound_tx,
             &notification_serializers,
             &executor,
-            request_timeout,
+            SERVER_SHUTDOWN_TIMEOUT,
             (),
         );
 
@@ -1266,7 +1263,7 @@ impl LanguageServer {
 
     fn request_internal_with_timer<T, U>(
         next_id: &AtomicI32,
-        response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
+        response_handlers: &Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         outbound_tx: &channel::Sender<String>,
         notification_serializers: &channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
@@ -1309,9 +1306,8 @@ impl LanguageServer {
                                     }
                                     Err(error) => Err(anyhow!("{}", error.message)),
                                 };
-                                _ = tx.send(response);
+                                tx.send(response).ok();
                             })
-                            .detach();
                     }),
                 );
             });
@@ -1320,6 +1316,7 @@ impl LanguageServer {
             .try_send(message)
             .context("failed to write to language server's stdin");
 
+        let response_handlers = Arc::clone(response_handlers);
         let notification_serializers = notification_serializers.downgrade();
         let started = Instant::now();
         LspRequest::new(id, async move {
@@ -1359,7 +1356,16 @@ impl LanguageServer {
 
                 message = timer.fuse() => {
                     log::error!("Cancelled LSP request task for {method:?} id {id} {message}");
-                    ConnectionResult::Timeout
+                    match response_handlers
+                        .lock()
+                        .as_mut()
+                        .context("server shut down") {
+                            Ok(handlers) => {
+                                handlers.remove(&RequestId::Int(id));
+                                ConnectionResult::Timeout
+                            }
+                            Err(e) => ConnectionResult::Result(Err(e)),
+                        }
                 }
             }
         })
@@ -1367,7 +1373,7 @@ impl LanguageServer {
 
     fn request_internal<T>(
         next_id: &AtomicI32,
-        response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
+        response_handlers: &Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         outbound_tx: &channel::Sender<String>,
         notification_serializers: &channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
@@ -1567,7 +1573,7 @@ impl LanguageServer {
 
 impl Drop for LanguageServer {
     fn drop(&mut self) {
-        if let Some(shutdown) = self.shutdown(DEFAULT_LSP_REQUEST_TIMEOUT) {
+        if let Some(shutdown) = self.shutdown() {
             self.executor.spawn(shutdown).detach();
         }
     }
