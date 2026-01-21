@@ -1311,11 +1311,25 @@ mod persistence {
 #[cfg(test)]
 mod tests {
     use collections::{HashMap, HashSet};
+    use fs::FakeFs;
     use git::Oid;
     use git::repository::InitialGraphCommitData;
+    use gpui::TestAppContext;
+    use project::Project;
     use rand::prelude::*;
+    use serde_json::json;
+    use settings::SettingsStore;
     use smallvec::{SmallVec, smallvec};
+    use std::path::Path;
     use std::sync::Arc;
+
+    // todo! check if the settings store is actually needed for this
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
 
     /// Generates a random commit DAG suitable for testing git graph rendering.
     ///
@@ -1579,6 +1593,109 @@ mod tests {
 
                 current_row = segment_end_row;
             }
+
+            let child_row = line.full_interval.start;
+            let parent_row = line.full_interval.end;
+            let num_segments = line.segments.len();
+
+            if num_segments > 2 {
+                return Err(format!(
+                    "Line from {:?} to {:?}: has {} segments, but lines should have at most 2 segments (Merge curve + Straight, or Straight + Checkout curve)",
+                    line.child, line.parent, num_segments
+                ));
+            }
+
+            if num_segments == 1 {
+                match &line.segments[0] {
+                    crate::graph::CommitLineSegment::Straight { to_row } => {
+                        if *to_row != parent_row {
+                            return Err(format!(
+                                "Line from {:?} to {:?}: single Straight segment ends at {} but should end at parent_row {}",
+                                line.child, line.parent, to_row, parent_row
+                            ));
+                        }
+                    }
+                    crate::graph::CommitLineSegment::Curve {
+                        on_row, curve_kind, ..
+                    } => {
+                        if *on_row != parent_row {
+                            return Err(format!(
+                                "Line from {:?} to {:?}: single Curve segment is on row {} but should be on parent_row {}",
+                                line.child, line.parent, on_row, parent_row
+                            ));
+                        }
+                        if child_row + 1 != parent_row {
+                            return Err(format!(
+                                "Line from {:?} to {:?}: single Curve segment only valid when child_row ({}) + 1 == parent_row ({})",
+                                line.child, line.parent, child_row, parent_row
+                            ));
+                        }
+                        match curve_kind {
+                            crate::graph::CurveKind::Merge | crate::graph::CurveKind::Checkout => {}
+                        }
+                    }
+                }
+            } else if num_segments == 2 {
+                match (&line.segments[0], &line.segments[1]) {
+                    (
+                        crate::graph::CommitLineSegment::Curve {
+                            on_row: merge_row,
+                            curve_kind: crate::graph::CurveKind::Merge,
+                            ..
+                        },
+                        crate::graph::CommitLineSegment::Straight { to_row },
+                    ) => {
+                        if *merge_row != child_row + 1 {
+                            return Err(format!(
+                                "Line from {:?} to {:?}: Merge curve should be on row {} (child_row + 1) but is on {}",
+                                line.child,
+                                line.parent,
+                                child_row + 1,
+                                merge_row
+                            ));
+                        }
+                        if *to_row != parent_row {
+                            return Err(format!(
+                                "Line from {:?} to {:?}: Straight after Merge should end at {} but ends at {}",
+                                line.child, line.parent, parent_row, to_row
+                            ));
+                        }
+                    }
+                    (
+                        crate::graph::CommitLineSegment::Straight {
+                            to_row: straight_end,
+                        },
+                        crate::graph::CommitLineSegment::Curve {
+                            on_row: checkout_row,
+                            curve_kind: crate::graph::CurveKind::Checkout,
+                            ..
+                        },
+                    ) => {
+                        if *checkout_row != parent_row {
+                            return Err(format!(
+                                "Line from {:?} to {:?}: Checkout curve should be on row {} but is on {}",
+                                line.child, line.parent, parent_row, checkout_row
+                            ));
+                        }
+                        if *straight_end != parent_row - 1 && *straight_end != parent_row {
+                            return Err(format!(
+                                "Line from {:?} to {:?}: Straight before Checkout should end at {} or {} but ends at {}",
+                                line.child,
+                                line.parent,
+                                parent_row - 1,
+                                parent_row,
+                                straight_end
+                            ));
+                        }
+                    }
+                    (seg1, seg2) => {
+                        return Err(format!(
+                            "Line from {:?} to {:?}: invalid segment combination: {:?} followed by {:?}. Expected (Merge + Straight) or (Straight + Checkout)",
+                            line.child, line.parent, seg1, seg2
+                        ));
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -1711,7 +1828,7 @@ mod tests {
 
     #[test]
     fn test_git_graph_random_commits() {
-        for seed in 0..50 {
+        for seed in 0..100 {
             let mut rng = StdRng::seed_from_u64(seed);
 
             let adversarial = rng.random_bool(0.2);
@@ -1739,6 +1856,73 @@ mod tests {
                     seed, adversarial, num_commits, error
                 );
             }
+        }
+    }
+
+    // The full integration test has less iterations because it's significantly slower
+    // than the random commit test
+    #[gpui::test(iterations = 10)]
+    async fn test_git_graph_random_integration(mut rng: StdRng, cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let adversarial = rng.random_bool(0.2);
+        let num_commits = if adversarial {
+            rng.random_range(10..100)
+        } else {
+            rng.random_range(5..50)
+        };
+
+        let commits = generate_random_commit_dag(&mut rng, num_commits, adversarial);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        fs.set_graph_commits(Path::new("/project/.git"), commits.clone());
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        repository.update(cx, |repo, cx| {
+            repo.graph_data(
+                crate::LogSource::default(),
+                crate::LogOrder::default(),
+                0..usize::MAX,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let graph_commits: Vec<Arc<InitialGraphCommitData>> = repository.update(cx, |repo, cx| {
+            repo.graph_data(
+                crate::LogSource::default(),
+                crate::LogOrder::default(),
+                0..usize::MAX,
+                cx,
+            )
+            .to_vec()
+        });
+
+        let mut graph_data = crate::graph::GraphData::new(8);
+        graph_data.add_commits(&graph_commits);
+
+        if let Err(error) = verify_all_invariants(&graph_data, &commits) {
+            panic!(
+                "Graph invariant violation (adversarial={}, num_commits={}):\n{}",
+                adversarial, num_commits, error
+            );
         }
     }
 }

@@ -1,10 +1,7 @@
 use std::{ops::Range, rc::Rc, sync::Arc};
 
 use collections::HashMap;
-use git::{
-    Oid,
-    repository::{GRAPH_CHUNK_SIZE, InitialGraphCommitData},
-};
+use git::{Oid, repository::InitialGraphCommitData};
 use smallvec::{SmallVec, smallvec};
 use time::{OffsetDateTime, UtcOffset};
 
@@ -32,7 +29,7 @@ enum LaneState {
     Active {
         child: Oid,
         parent: Oid,
-        color: BranchColor,
+        color: Option<BranchColor>,
         starting_row: usize,
         starting_col: usize,
         destination_column: Option<usize>,
@@ -46,6 +43,7 @@ impl LaneState {
         ending_row: usize,
         lane_column: usize,
         parent_column: usize,
+        parent_color: BranchColor,
     ) -> Option<CommitLine> {
         let state = std::mem::replace(self, LaneState::Empty);
 
@@ -60,13 +58,14 @@ impl LaneState {
                 mut segments,
             } => {
                 let final_destination = destination_column.unwrap_or(parent_column);
+                let final_color = color.unwrap_or(parent_color);
 
                 Some(CommitLine {
                     child,
                     parent,
                     child_column: starting_col,
                     full_interval: starting_row..ending_row,
-                    color_idx: color.0 as usize,
+                    color_idx: final_color.0 as usize,
                     segments: {
                         match segments.last_mut() {
                             Some(CommitLineSegment::Straight { to_row })
@@ -92,17 +91,43 @@ impl LaneState {
                                 }
                             }
                             Some(CommitLineSegment::Curve {
-                                on_row, to_column, ..
+                                on_row,
+                                to_column,
+                                curve_kind,
                             }) if *on_row == usize::MAX => {
-                                *on_row = ending_row;
-                                if *to_column != final_destination {
-                                    segments
-                                        .push(CommitLineSegment::Straight { to_row: ending_row });
-                                    segments.push(CommitLineSegment::Curve {
-                                        to_column: final_destination,
-                                        on_row: ending_row,
-                                        curve_kind: CurveKind::Checkout,
-                                    });
+                                if *to_column == usize::MAX {
+                                    *to_column = final_destination;
+                                }
+                                if matches!(curve_kind, CurveKind::Merge) {
+                                    *on_row = starting_row + 1;
+                                    if *on_row < ending_row {
+                                        if *to_column != final_destination {
+                                            segments.push(CommitLineSegment::Straight {
+                                                to_row: ending_row - 1,
+                                            });
+                                            segments.push(CommitLineSegment::Curve {
+                                                to_column: final_destination,
+                                                on_row: ending_row,
+                                                curve_kind: CurveKind::Checkout,
+                                            });
+                                        } else {
+                                            segments.push(CommitLineSegment::Straight {
+                                                to_row: ending_row,
+                                            });
+                                        }
+                                    }
+                                } else {
+                                    *on_row = ending_row;
+                                    if *to_column != final_destination {
+                                        segments.push(CommitLineSegment::Straight {
+                                            to_row: ending_row,
+                                        });
+                                        segments.push(CommitLineSegment::Curve {
+                                            to_column: final_destination,
+                                            on_row: ending_row,
+                                            curve_kind: CurveKind::Checkout,
+                                        });
+                                    }
                                 }
                             }
                             Some(CommitLineSegment::Curve {
@@ -317,20 +342,27 @@ impl GraphData {
 
             let commit_lane = commit_lane.unwrap_or_else(|| self.first_empty_lane_idx());
 
+            let commit_color = self.get_lane_color(commit_lane);
+
             self.lane_states
                 .iter_mut()
                 .enumerate()
                 .filter_map(|(lane_column, state)| {
                     state
                         .is_parent_commit(&commit.sha, false)
-                        .then(|| state.to_commit_lines(commit_row, lane_column, commit_lane))
+                        .then(|| {
+                            state.to_commit_lines(
+                                commit_row,
+                                lane_column,
+                                commit_lane,
+                                commit_color,
+                            )
+                        })
                         .flatten()
                 })
                 .for_each(|commit_line| {
                     self.lines.push(Rc::new(commit_line));
                 });
-
-            let commit_color = self.get_lane_color(commit_lane);
 
             commit
                 .parents
@@ -341,7 +373,7 @@ impl GraphData {
                         self.lane_states[commit_lane] = LaneState::Active {
                             parent: *parent,
                             child: commit.sha,
-                            color: commit_color,
+                            color: Some(commit_color),
                             starting_col: commit_lane,
                             starting_row: commit_row,
                             destination_column: None,
@@ -349,18 +381,17 @@ impl GraphData {
                         };
                     } else {
                         let new_lane = self.first_empty_lane_idx();
-                        let new_color = self.get_lane_color(new_lane);
 
                         self.lane_states[new_lane] = LaneState::Active {
                             parent: *parent,
                             child: commit.sha,
-                            color: new_color,
+                            color: None,
                             starting_col: commit_lane,
                             starting_row: commit_row,
                             destination_column: None,
                             segments: smallvec![CommitLineSegment::Curve {
-                                to_column: new_lane,
-                                on_row: commit_row + 1,
+                                to_column: usize::MAX,
+                                on_row: usize::MAX,
                                 curve_kind: CurveKind::Merge,
                             },],
                         };
