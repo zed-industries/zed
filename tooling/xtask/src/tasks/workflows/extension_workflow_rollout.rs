@@ -29,17 +29,17 @@ fn fetch_extension_repos() -> NamedJob {
             .add_with((
                 "script",
                 indoc! {r#"
-                    const repos = await github.paginate(github.rest.repos.listForOrg, {{
+                    const repos = await github.paginate(github.rest.repos.listForOrg, {
                         org: 'zed-extensions',
                         type: 'public',
                         per_page: 100,
-                    }});
+                    });
 
                     const filteredRepos = repos
                         .filter(repo => !repo.archived)
                         .map(repo => repo.name);
 
-                    console.log(`Found ${{filteredRepos.length}} extension repos`);
+                    console.log(`Found ${filteredRepos.length} extension repos`);
                     return filteredRepos;
                 "#},
             ))
