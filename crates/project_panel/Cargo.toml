@@ -16,6 +16,16 @@ harness = false
 path = "src/project_panel.rs"
 doctest = false
 
+[features]
+test-support = [
+    "client/test-support",
+    "editor/test-support",
+    "gpui/test-support",
+    "language/test-support",
+    "project/test-support",
+    "workspace/test-support",
+]
+
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
