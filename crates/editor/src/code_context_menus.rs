@@ -31,10 +31,7 @@ use std::{
     rc::Rc,
 };
 use task::ResolvedTask;
-use ui::{
-    Color, IntoElement, ListItem, Pixels, Popover, ScrollAxes, Scrollbars, Styled, WithScrollbar,
-    prelude::*,
-};
+use ui::{HighlightedLabel, ListItem, Popover, ScrollAxes, Scrollbars, WithScrollbar, prelude::*};
 use util::ResultExt;
 
 use crate::EditorSettings;
@@ -154,7 +151,7 @@ impl CodeContextMenu {
     pub fn visible(&self) -> bool {
         match self {
             CodeContextMenu::Completions(menu) => menu.visible(),
-            CodeContextMenu::CodeActions(menu) => menu.visible_len() > 0,
+            CodeContextMenu::CodeActions(menu) => menu.visible(),
         }
     }
 
@@ -166,7 +163,7 @@ impl CodeContextMenu {
     }
 
     pub fn render(
-        &self,
+        &mut self,
         style: &EditorStyle,
         max_height_in_lines: u32,
         window: &mut Window,
@@ -198,7 +195,7 @@ impl CodeContextMenu {
                 .get_or_create_entry_markdown(completions_menu.selected_item, cx)
                 .as_ref()
                 .is_some_and(|markdown| markdown.focus_handle(cx).contains_focused(window, cx)),
-            CodeContextMenu::CodeActions(_) => false,
+            CodeContextMenu::CodeActions(menu) => menu.focused(window, cx),
         }
     }
 
@@ -224,7 +221,7 @@ impl CodeContextMenu {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContextMenuOrigin {
     Cursor,
     GutterIndicator(DisplayRow),
@@ -1540,6 +1537,8 @@ pub fn create_code_actions_popover(
     deployed_from: Option<CodeActionSource>,
     task_context: TaskContext,
     task_position: Option<Anchor>,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
 ) -> FuzzyPopover<CodeActionsItem> {
     let origin = deployed_from.as_ref().map(|source| match source {
         CodeActionSource::Indicator(row) | CodeActionSource::RunMenu(row) => {
@@ -1549,6 +1548,7 @@ pub fn create_code_actions_popover(
     });
 
     let is_quick_action_bar = matches!(origin, Some(ContextMenuOrigin::QuickActionBar));
+    let parent_editor = cx.weak_entity();
 
     FuzzyPopover::new(
         actions.iter().collect(),
@@ -1558,10 +1558,8 @@ pub fn create_code_actions_popover(
         task_position,
         UniformListScrollHandle::default(),
         |item| item.menu_label(),
-        move |item, match_positions, selected, cx| {
-            use ui::ListItem;
+        move |item, match_positions, selected, _cx| {
             let label = item.menu_label();
-            let colors = cx.theme().colors();
 
             ListItem::new(SharedString::from(label.clone()))
                 .inset(true)
@@ -1572,10 +1570,15 @@ pub fn create_code_actions_popover(
                         .min_w(CODE_ACTION_MENU_MIN_WIDTH)
                         .max_w(CODE_ACTION_MENU_MAX_WIDTH)
                         .overflow_hidden()
-                        .text_ellipsis()
-                        .when(is_quick_action_bar, |this| this.text_ui(cx))
-                        .when(selected, |this| this.text_color(colors.text_accent))
-                        .child(ui::HighlightedLabel::new(label, match_positions)),
+                        .child(
+                            HighlightedLabel::new(label, match_positions)
+                                .size(if is_quick_action_bar {
+                                    LabelSize::Default
+                                } else {
+                                    LabelSize::Small
+                                })
+                                .truncate(),
+                        ),
                 )
                 .into_any_element()
         },
@@ -1590,5 +1593,8 @@ pub fn create_code_actions_popover(
                 task.detach_and_log_err(cx)
             }
         },
+        parent_editor,
+        window,
+        cx,
     )
 }

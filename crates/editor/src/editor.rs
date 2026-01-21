@@ -4436,16 +4436,6 @@ impl Editor {
     }
 
     pub fn handle_input(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let is_code_actions_menu_open = matches!(
-            self.context_menu.borrow().as_ref(),
-            Some(CodeContextMenu::CodeActions(_))
-        );
-
-        if is_code_actions_menu_open {
-            self.update_code_actions_filter(text, window, cx);
-            return;
-        }
-
         let text: Arc<str> = text.into();
 
         if self.read_only(cx) {
@@ -6608,10 +6598,17 @@ impl Editor {
                     deployed_from,
                     task_context_value,
                     task_position,
+                    window,
+                    cx,
                 );
 
                 *editor.context_menu.borrow_mut() = Some(CodeContextMenu::CodeActions(popover));
                 cx.notify();
+                if let Some(CodeContextMenu::CodeActions(menu)) =
+                    editor.context_menu.borrow().as_ref()
+                {
+                    menu.focus(window, cx);
+                }
                 if spawn_straight_away
                     && let Some(task) = editor.confirm_code_action(
                         &ConfirmCodeAction { item_ix: Some(0) },
@@ -7023,23 +7020,6 @@ impl Editor {
         self.available_code_actions
             .as_ref()
             .is_some_and(|(_, actions)| !actions.is_empty())
-    }
-
-    pub fn update_code_actions_filter(
-        &mut self,
-        text: &str,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(CodeContextMenu::CodeActions(menu)) = self.context_menu.borrow_mut().as_mut() {
-            menu.filter(text, cx);
-        }
-    }
-
-    pub fn backspace_code_actions_filter(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(CodeContextMenu::CodeActions(menu)) = self.context_menu.borrow_mut().as_mut() {
-            menu.backspace_filter(cx);
-        }
     }
 
     fn render_inline_code_actions(
@@ -10252,8 +10232,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
-        let menu = self.context_menu.borrow();
-        let menu = menu.as_ref()?;
+        let mut menu = self.context_menu.borrow_mut();
+        let menu = menu.as_mut()?;
         if !menu.visible() {
             return None;
         };
@@ -10562,16 +10542,6 @@ impl Editor {
     }
 
     pub fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
-        let is_code_actions_menu_open = matches!(
-            self.context_menu.borrow().as_ref(),
-            Some(CodeContextMenu::CodeActions(_))
-        );
-
-        if is_code_actions_menu_open {
-            self.backspace_code_actions_filter(window, cx);
-            return;
-        }
-
         if self.read_only(cx) {
             return;
         }

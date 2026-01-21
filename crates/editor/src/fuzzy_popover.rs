@@ -1,16 +1,23 @@
-use crate::{Editor, code_context_menus::ContextMenuOrigin};
+use crate::{
+    Editor, EditorEvent,
+    actions::{MoveDown, MoveUp},
+    code_context_menus::ContextMenuOrigin,
+};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, Context, Entity, ListSizingBehavior, Pixels, ScrollStrategy, Size,
-    UniformListScrollHandle, Window, div, px, uniform_list,
+    AnyElement, App, Context, Entity, Focusable, InteractiveElement, ListSizingBehavior,
+    ParentElement, Pixels, ScrollStrategy, Size, Styled, Subscription, UniformListScrollHandle,
+    WeakEntity, Window, div, px, uniform_list,
 };
 use language::Buffer;
 use multi_buffer::Anchor;
+use settings::Settings;
 use std::ops::Range;
 use std::rc::Rc;
-use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, atomic::AtomicBool};
 use task::TaskContext;
-use ui::{Popover, h_flex, prelude::*};
+use theme::ThemeSettings;
+use ui::{Popover, prelude::*, utils::WithRemSize};
 
 pub struct FuzzyPopover<T: Clone> {
     pub items: Vec<T>,
@@ -18,14 +25,16 @@ pub struct FuzzyPopover<T: Clone> {
     pub origin: Option<ContextMenuOrigin>,
     pub context: TaskContext,
     pub task_position: Option<Anchor>,
-    filter_query: String,
+    search_editor: Entity<Editor>,
     filtered_items: Option<Vec<T>>,
     filter_matches: Option<Vec<StringMatch>>,
     pub selected_item: usize,
     pub scroll_handle: UniformListScrollHandle,
+    last_query: String,
     get_label: Rc<dyn Fn(&T) -> String>,
     render_item: Rc<dyn Fn(&T, Vec<usize>, bool, &Context<Editor>) -> AnyElement>,
     on_confirm: Rc<dyn Fn(&T, usize, &mut Editor, &mut Window, &mut Context<Editor>)>,
+    _editor_subscription: Subscription,
 }
 
 impl<T: Clone + 'static> FuzzyPopover<T> {
@@ -39,28 +48,51 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
         get_label: impl Fn(&T) -> String + 'static,
         render_item: impl Fn(&T, Vec<usize>, bool, &Context<Editor>) -> AnyElement + 'static,
         on_confirm: impl Fn(&T, usize, &mut Editor, &mut Window, &mut Context<Editor>) + 'static,
+        _parent_editor: WeakEntity<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
     ) -> Self {
+        let search_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Search actions…", window, cx);
+            editor
+        });
+
+        let _editor_subscription =
+            cx.subscribe(&search_editor, move |_this, _editor, event, cx| {
+                if let EditorEvent::BufferEdited = event {
+                    cx.notify();
+                }
+            });
+
         Self {
             items,
             origin,
             buffer,
             context,
             task_position,
-            filter_query: String::new(),
+            search_editor,
             filtered_items: None,
             filter_matches: None,
             selected_item: 0,
             scroll_handle,
+            last_query: String::new(),
             get_label: Rc::new(get_label),
             render_item: Rc::new(render_item),
             on_confirm: Rc::new(on_confirm),
+            _editor_subscription,
         }
     }
 
-    pub fn filter(&mut self, query: &str, cx: &mut Context<Editor>) {
-        self.filter_query.push_str(query);
+    fn update_filtered_items(&mut self, cx: &App) {
+        let query = self.search_editor.read(cx).text(cx);
 
-        if self.filter_query.is_empty() {
+        if query == self.last_query {
+            return;
+        }
+        self.last_query = query.clone();
+
+        if query.is_empty() {
             self.filtered_items = None;
             self.filter_matches = None;
         } else {
@@ -74,15 +106,16 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
                 })
                 .collect();
 
-            let cancellation_flag = AtomicBool::new(false);
+            let cancellation_flag = Arc::new(AtomicBool::new(false));
+            let background = cx.background_executor().clone();
             let matches_task = fuzzy::match_strings(
                 &candidates,
-                &self.filter_query,
-                self.filter_query.chars().any(|c| c.is_uppercase()),
+                &query,
+                query.chars().any(|c| c.is_uppercase()),
                 false,
                 100,
                 &cancellation_flag,
-                cx.background_executor().clone(),
+                background,
             );
 
             let matches = smol::block_on(matches_task);
@@ -96,31 +129,6 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
         }
 
         self.selected_item = 0;
-        cx.notify();
-    }
-
-    pub fn backspace_filter(&mut self, cx: &mut Context<Editor>) {
-        if self.filter_query.pop().is_some() {
-            if self.filter_query.is_empty() {
-                self.filtered_items = None;
-                self.filter_matches = None;
-            } else {
-                let query = self.filter_query.clone();
-                self.filter_query.clear();
-                self.filter(&query, cx);
-                return;
-            }
-            self.selected_item = 0;
-        }
-        cx.notify();
-    }
-
-    pub fn clear_filter(&mut self, cx: &mut Context<Editor>) {
-        self.filter_query.clear();
-        self.filtered_items = None;
-        self.filter_matches = None;
-        self.selected_item = 0;
-        cx.notify();
     }
 
     pub fn visible_len(&self) -> usize {
@@ -138,7 +146,7 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
     }
 
     pub fn visible(&self) -> bool {
-        self.visible_len() > 0
+        true
     }
 
     pub(crate) fn select_first(&mut self, cx: &mut Context<Editor>) {
@@ -182,6 +190,7 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
         } else {
             if current > 0 { current - 1 } else { len - 1 }
         };
+
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         cx.notify();
@@ -198,6 +207,7 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
         } else {
             if current + 1 < len { current + 1 } else { 0 }
         };
+
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         cx.notify();
@@ -207,12 +217,25 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
         self.origin.unwrap_or(ContextMenuOrigin::Cursor)
     }
 
+    pub fn focus(&self, window: &mut Window, cx: &mut Context<Editor>) {
+        self.search_editor.update(cx, |editor, editor_cx| {
+            editor.focus_handle(editor_cx).focus(window, editor_cx);
+        });
+    }
+
+    pub fn focused(&self, window: &Window, cx: &App) -> bool {
+        let focus_handle = self.search_editor.read(cx).focus_handle(cx);
+        focus_handle.is_focused(window) || focus_handle.contains_focused(window, cx)
+    }
+
     pub fn render(
-        &self,
+        &mut self,
         max_height_in_lines: u32,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> AnyElement {
+        self.update_filtered_items(cx);
+
         let selected_item = self.selected_item;
         let items_to_render = if let Some(filtered) = &self.filtered_items {
             filtered.clone()
@@ -224,6 +247,11 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
         let filter_matches = self.filter_matches.clone();
         let render_item = self.render_item.clone();
         let on_confirm_outer = self.on_confirm.clone();
+
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+        let max_height = max_height_in_lines as f32 * ui_font_size;
+        let search_editor_height = ui_font_size * 2.5 + px(20.);
+        let list_max_height = max_height - search_editor_height;
 
         let list = uniform_list(
             "fuzzy_popover",
@@ -264,8 +292,7 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
             }),
         )
         .occlude()
-        .max_h(max_height_in_lines as f32 * window.line_height())
-        .track_scroll(&self.scroll_handle)
+        .max_h(list_max_height)
         .with_width_from_item(
             items_for_width
                 .iter()
@@ -273,38 +300,63 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
                 .max_by_key(|(_, item)| (self.get_label)(item).chars().count())
                 .map(|(ix, _)| ix),
         )
+        .track_scroll(&self.scroll_handle)
         .with_sizing_behavior(ListSizingBehavior::Infer);
 
-        let children = if !self.filter_query.is_empty() {
-            vec![
-                div()
-                    .id("fuzzy_popover_filter")
-                    .px_2()
-                    .py_1()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
+        Popover::new()
+            .child(
+                WithRemSize::new(ui_font_size)
+                    .max_h(max_height)
+                    .min_w_40()
+                    .overflow_hidden()
                     .child(
-                        h_flex()
+                        v_flex()
+                            .on_action(cx.listener(|editor, _: &MoveUp, _window, cx| {
+                                if let Some(menu) = editor.context_menu.borrow_mut().as_mut() {
+                                    match menu {
+                                        crate::code_context_menus::CodeContextMenu::CodeActions(
+                                            popover,
+                                        ) => {
+                                            popover.select_prev(cx);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }))
+                            .on_action(cx.listener(|editor, _: &MoveDown, _window, cx| {
+                                if let Some(menu) = editor.context_menu.borrow_mut().as_mut() {
+                                    match menu {
+                                        crate::code_context_menus::CodeContextMenu::CodeActions(
+                                            popover,
+                                        ) => {
+                                            popover.select_next(cx);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }))
+                            .gap_1()
                             .child(
-                                ui::Icon::new(ui::IconName::MagnifyingGlass)
-                                    .size(ui::IconSize::XSmall)
-                                    .color(ui::Color::Muted),
+                                h_flex()
+                                    .pb_1()
+                                    .px_2p5()
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .flex_none()
+                                    .overflow_hidden()
+                                    .child(self.search_editor.clone()),
                             )
-                            .child(
-                                div()
-                                    .ml_2()
-                                    .text_color(cx.theme().colors().text_muted)
-                                    .child(format!("Filter: {}", self.filter_query)),
-                            ),
-                    )
-                    .into_any_element(),
-                list.into_any_element(),
-            ]
-        } else {
-            vec![list.into_any_element()]
-        };
-
-        Popover::new().children(children).into_any_element()
+                            .when(self.visible_len() > 0, |this| this.child(list))
+                            .when(self.visible_len() == 0, |this| {
+                                this.child(
+                                    h_flex()
+                                        .p_2()
+                                        .child(Label::new("No matches").color(Color::Muted)),
+                                )
+                            }),
+                    ),
+            )
+            .into_any_element()
     }
 
     pub fn render_aside(
