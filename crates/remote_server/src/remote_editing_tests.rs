@@ -173,9 +173,9 @@ async fn do_search_and_assert(
     query: &str,
     files_to_include: PathMatcher,
     match_full_paths: bool,
-    expected_path: &str,
+    expected_paths: &[&str],
     mut cx: TestAppContext,
-) -> Entity<Buffer> {
+) -> Vec<Entity<Buffer>> {
     let query = query.to_string();
     let receiver = project.update(&mut cx, |project, cx| {
         project.search(
@@ -194,19 +194,23 @@ async fn do_search_and_assert(
         )
     });
 
-    let first_response = receiver.rx.recv().await.unwrap();
-    let SearchResult::Buffer { buffer, .. } = first_response else {
-        panic!("incorrect result");
-    };
-    buffer.update(&mut cx, |buffer, cx| {
-        assert_eq!(
-            buffer.file().unwrap().full_path(cx).to_string_lossy(),
-            expected_path
-        )
-    });
+    let mut buffers = Vec::new();
+    for expected_path in expected_paths {
+        let response = receiver.rx.recv().await.unwrap();
+        let SearchResult::Buffer { buffer, .. } = response else {
+            panic!("incorrect result");
+        };
+        buffer.update(&mut cx, |buffer, cx| {
+            assert_eq!(
+                buffer.file().unwrap().full_path(cx).to_string_lossy(),
+                *expected_path
+            )
+        });
+        buffers.push(buffer);
+    }
 
     assert!(receiver.rx.recv().await.is_err());
-    buffer
+    buffers
 }
 
 #[gpui::test]
@@ -237,15 +241,16 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
 
     cx.run_until_parked();
 
-    let buffer = do_search_and_assert(
+    let buffers = do_search_and_assert(
         &project,
         "project",
         Default::default(),
         false,
-        path!("project1/README.md"),
+        &[path!("project1/README.md")],
         cx.clone(),
     )
     .await;
+    let buffer = buffers.into_iter().next().unwrap();
 
     // test that the headless server is tracking which buffers we have open correctly.
     cx.run_until_parked();
@@ -257,7 +262,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
         "project",
         Default::default(),
         false,
-        path!("project1/README.md"),
+        &[path!("project1/README.md")],
         cx.clone(),
     )
     .await;
@@ -276,7 +281,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
         "project",
         Default::default(),
         false,
-        path!("project1/README.md"),
+        &[path!("project1/README.md")],
         cx.clone(),
     )
     .await;
@@ -319,6 +324,7 @@ async fn test_remote_project_search_inclusion(
 
     cx.run_until_parked();
 
+    // Case 1: Test search with path matcher limiting to only one worktree
     let path_matcher = PathMatcher::new(
         &["project1/*.md".to_owned()],
         util::paths::PathStyle::local(),
@@ -328,8 +334,19 @@ async fn test_remote_project_search_inclusion(
         &project,
         "project",
         path_matcher,
-        true,
-        path!("project1/README.md"),
+        true, // should be true in case of multiple worktrees
+        &[path!("project1/README.md")],
+        cx.clone(),
+    )
+    .await;
+
+    // Case 2: Test search without path matcher, matching both worktrees
+    do_search_and_assert(
+        &project,
+        "project",
+        Default::default(),
+        true, // should be true in case of multiple worktrees
+        &[path!("project1/README.md"), path!("project2/README.md")],
         cx.clone(),
     )
     .await;
