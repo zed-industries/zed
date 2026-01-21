@@ -536,7 +536,9 @@ impl BufferDiffInner<Entity<language::Buffer>> {
                     let next_pending_hunk_offset_range =
                         next_pending_hunk.buffer_range.to_offset(buffer);
                     if next_pending_hunk_offset_range.start <= buffer_offset_range.end {
-                        buffer_offset_range.end = next_pending_hunk_offset_range.end;
+                        buffer_offset_range.end = buffer_offset_range
+                            .end
+                            .max(next_pending_hunk_offset_range.end);
                         pending_hunks_iter.next();
                         continue;
                     }
