@@ -399,7 +399,7 @@ async fn build_buffer_diff(
             secondary_diff.update_diff(
                 text_snapshot.clone(),
                 Some(old_text),
-                Some(true),
+                Some(false),
                 language.clone(),
                 cx,
             )
