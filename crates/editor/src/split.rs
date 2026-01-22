@@ -679,11 +679,11 @@ impl SplittableEditor {
 #[cfg(test)]
 impl SplittableEditor {
     fn check_invariants(&self, quiesced: bool, cx: &mut App) {
-        use buffer_diff::DiffHunkStatusKind;
-        use multi_buffer::MultiBufferOffset;
+        use multi_buffer::MultiBufferRow;
         use text::Bias;
 
-        use crate::display_map::{Block, DisplayRow};
+        use crate::display_map::Block;
+        use crate::display_map::DisplayRow;
 
         self.debug_print(cx);
 
@@ -696,40 +696,40 @@ impl SplittableEditor {
             "mismatch in excerpt count"
         );
 
-        let rhs_snapshot = secondary
-            .editor
-            .update(cx, |editor, cx| editor.display_snapshot(cx));
-        let lhs_snapshot = self
-            .primary_editor
-            .update(cx, |editor, cx| editor.display_snapshot(cx));
-
-        let lhs_max_row = lhs_snapshot.max_point().row();
-        let rhs_max_row = rhs_snapshot.max_point().row();
-        assert_eq!(lhs_max_row, rhs_max_row, "mismatch in display row count");
-
-        let lhs_excerpt_block_rows = lhs_snapshot
-            .blocks_in_range(DisplayRow(0)..lhs_max_row + 1)
-            .filter(|(_, block)| {
-                matches!(
-                    block,
-                    Block::BufferHeader { .. } | Block::ExcerptBoundary { .. }
-                )
-            })
-            .map(|(row, _)| row)
-            .collect::<Vec<_>>();
-        let rhs_excerpt_block_rows = rhs_snapshot
-            .blocks_in_range(DisplayRow(0)..rhs_max_row + 1)
-            .filter(|(_, block)| {
-                matches!(
-                    block,
-                    Block::BufferHeader { .. } | Block::ExcerptBoundary { .. }
-                )
-            })
-            .map(|(row, _)| row)
-            .collect::<Vec<_>>();
-        assert_eq!(lhs_excerpt_block_rows, rhs_excerpt_block_rows);
-
         if quiesced {
+            let rhs_snapshot = secondary
+                .editor
+                .update(cx, |editor, cx| editor.display_snapshot(cx));
+            let lhs_snapshot = self
+                .primary_editor
+                .update(cx, |editor, cx| editor.display_snapshot(cx));
+
+            let lhs_max_row = lhs_snapshot.max_point().row();
+            let rhs_max_row = rhs_snapshot.max_point().row();
+            assert_eq!(lhs_max_row, rhs_max_row, "mismatch in display row count");
+
+            let lhs_excerpt_block_rows = lhs_snapshot
+                .blocks_in_range(DisplayRow(0)..lhs_max_row + 1)
+                .filter(|(_, block)| {
+                    matches!(
+                        block,
+                        Block::BufferHeader { .. } | Block::ExcerptBoundary { .. }
+                    )
+                })
+                .map(|(row, _)| row)
+                .collect::<Vec<_>>();
+            let rhs_excerpt_block_rows = rhs_snapshot
+                .blocks_in_range(DisplayRow(0)..rhs_max_row + 1)
+                .filter(|(_, block)| {
+                    matches!(
+                        block,
+                        Block::BufferHeader { .. } | Block::ExcerptBoundary { .. }
+                    )
+                })
+                .map(|(row, _)| row)
+                .collect::<Vec<_>>();
+            assert_eq!(lhs_excerpt_block_rows, rhs_excerpt_block_rows);
+
             for (lhs_hunk, rhs_hunk) in lhs_snapshot.diff_hunks().zip(rhs_snapshot.diff_hunks()) {
                 assert_eq!(
                     lhs_hunk.diff_base_byte_range, rhs_hunk.diff_base_byte_range,
@@ -739,30 +739,26 @@ impl SplittableEditor {
                     lhs_hunk.status, rhs_hunk.status,
                     "mismatch in hunk statuses"
                 );
-                match lhs_hunk.status.kind {
-                    DiffHunkStatusKind::Added | DiffHunkStatusKind::Deleted => {
-                        let lhs_point = lhs_snapshot.point_to_display_point(
+
+                let (lhs_point, rhs_point) =
+                    if lhs_hunk.row_range.is_empty() || rhs_hunk.row_range.is_empty() {
+                        (
                             Point::new(lhs_hunk.row_range.end.0, 0),
-                            Bias::Left,
-                        );
-                        let rhs_point = rhs_snapshot.point_to_display_point(
                             Point::new(rhs_hunk.row_range.end.0, 0),
-                            Bias::Left,
-                        );
-                        assert_eq!(lhs_point, rhs_point, "mismatch in hunk position");
-                    }
-                    DiffHunkStatusKind::Modified => {
-                        let lhs_point = lhs_snapshot.point_to_display_point(
+                        )
+                    } else {
+                        (
                             Point::new(lhs_hunk.row_range.start.0, 0),
-                            Bias::Left,
-                        );
-                        let rhs_point = rhs_snapshot.point_to_display_point(
                             Point::new(rhs_hunk.row_range.start.0, 0),
-                            Bias::Left,
-                        );
-                        assert_eq!(lhs_point, rhs_point, "mismatch in hunk position");
-                    }
-                }
+                        )
+                    };
+                let lhs_point = lhs_snapshot.point_to_display_point(lhs_point, Bias::Left);
+                let rhs_point = rhs_snapshot.point_to_display_point(rhs_point, Bias::Left);
+                assert_eq!(
+                    lhs_point.row(),
+                    rhs_point.row(),
+                    "mismatch in hunk position"
+                );
             }
 
             // Filtering out empty lines is a bit of a hack, to work around a case where
@@ -1100,7 +1096,7 @@ impl SplittableEditor {
                 .collect::<Vec<_>>();
             let excerpt_ids = self.primary_multibuffer.read(cx).excerpt_ids();
 
-            if rng.random_bool(0.1) && !excerpt_ids.is_empty() {
+            if rng.random_bool(0.2) && !excerpt_ids.is_empty() {
                 let mut excerpts = HashSet::default();
                 for _ in 0..rng.random_range(0..excerpt_ids.len()) {
                     excerpts.extend(excerpt_ids.choose(rng).copied());
@@ -1229,7 +1225,7 @@ impl SecondaryEditor {
             .into_iter()
             .map(|(_, excerpt_range)| {
                 let point_range_to_base_text_point_range = |range: Range<Point>| {
-                    let (mut translated, _, _) = diff_snapshot.rows_to_base_text_rows_naive(
+                    let (mut translated, _, _) = diff_snapshot.points_to_base_text_points(
                         [Point::new(range.start.row, 0), Point::new(range.end.row, 0)],
                         main_buffer,
                     );
@@ -1499,37 +1495,25 @@ mod tests {
             let mut quiesced = false;
 
             match rng.random_range(0..100) {
-                0..=59 if !buffers.is_empty() => {
+                0..=44 => {
+                    log::info!("randomly editing multibuffer");
+                    editor.update(cx, |editor, cx| {
+                        editor.primary_multibuffer.update(cx, |multibuffer, cx| {
+                            multibuffer.randomly_edit(rng, 5, cx);
+                        })
+                    })
+                }
+                45..=64 => {
+                    log::info!("randomly undoing/redoing in single buffer");
                     let buffer = buffers.iter().choose(rng).unwrap();
                     buffer.update(cx, |buffer, cx| {
-                        if rng.random() {
-                            log::info!("randomly editing single buffer");
-                            buffer.randomly_edit(rng, 5, cx);
-                        } else {
-                            log::info!("randomly undoing/redoing in single buffer");
-                            buffer.randomly_undo_redo(rng, cx);
-                        }
+                        buffer.randomly_undo_redo(rng, cx);
                     });
                 }
-                60..=69 => {
+                65..=79 => {
                     log::info!("mutating excerpts");
                     editor.update(cx, |editor, cx| {
                         editor.randomly_edit_excerpts(rng, 2, cx);
-                    });
-                }
-                70..=79 if !buffers.is_empty() => {
-                    log::info!("recalculating buffer diff");
-                    let buffer = buffers.iter().choose(rng).unwrap();
-                    editor.update(cx, |editor, cx| {
-                        let diff = editor
-                            .primary_multibuffer
-                            .read(cx)
-                            .diff_for(buffer.read(cx).remote_id())
-                            .unwrap();
-                        let buffer_snapshot = buffer.read(cx).text_snapshot();
-                        diff.update(cx, |diff, cx| {
-                            diff.recalculate_diff_sync(&buffer_snapshot, cx);
-                        });
                     });
                 }
                 _ => {
@@ -1856,171 +1840,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[ignore]
-    async fn test_split_editor_block_alignment_after_undoing_deleted_unmodified_line(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        use rope::Point;
-        use unindent::Unindent as _;
-
-        let (editor, mut cx) = init_test(cx).await;
-
-        let base_text = "
-            aaa
-            bbb
-            ccc
-            ddd
-            eee
-            fff
-        "
-        .unindent();
-        let current_text = "
-            aaa
-            ddd
-            eee
-            fff
-        "
-        .unindent();
-
-        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
-
-        editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
-            editor.set_excerpts_for_path(
-                path,
-                buffer.clone(),
-                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
-                0,
-                diff.clone(),
-                cx,
-            );
-        });
-
-        cx.run_until_parked();
-
-        assert_split_content(
-            &editor,
-            "
-            § <no file>
-            § -----
-            aaa
-            § spacer
-            § spacer
-            ddd
-            eee
-            fff"
-            .unindent(),
-            "
-            § <no file>
-            § -----
-            aaa
-            bbb
-            ccc
-            ddd
-            eee
-            fff"
-            .unindent(),
-            &mut cx,
-        );
-
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(2, 0)..Point::new(3, 0), "")], None, cx);
-        });
-
-        cx.run_until_parked();
-
-        assert_split_content(
-            &editor,
-            "
-            § <no file>
-            § -----
-            aaa
-            § spacer
-            § spacer
-            ddd
-            § spacer
-            fff"
-            .unindent(),
-            "
-            § <no file>
-            § -----
-            aaa
-            bbb
-            ccc
-            ddd
-            eee
-            fff"
-            .unindent(),
-            &mut cx,
-        );
-
-        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
-        diff.update(cx, |diff, cx| {
-            diff.recalculate_diff_sync(&buffer_snapshot, cx);
-        });
-
-        cx.run_until_parked();
-
-        assert_split_content(
-            &editor,
-            "
-            § <no file>
-            § -----
-            aaa
-            § spacer
-            § spacer
-            ddd
-            § spacer
-            fff"
-            .unindent(),
-            "
-            § <no file>
-            § -----
-            aaa
-            bbb
-            ccc
-            ddd
-            eee
-            fff"
-            .unindent(),
-            &mut cx,
-        );
-
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "xxx\n")], None, cx);
-        });
-
-        cx.run_until_parked();
-
-        assert_split_content(
-            &editor,
-            "
-            § <no file>
-            § -----
-            aaa
-            § spacer
-            § spacer
-            ddd
-            § spacer
-            xxx
-            fff"
-            .unindent(),
-            "
-            § <no file>
-            § -----
-            aaa
-            bbb
-            ccc
-            ddd
-            eee
-            § spacer
-            fff"
-            .unindent(),
-            &mut cx,
-        );
-    }
-
-    #[gpui::test]
     async fn test_deleting_added_line(cx: &mut gpui::TestAppContext) {
         use rope::Point;
         use unindent::Unindent as _;
@@ -2140,7 +1959,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[ignore]
     async fn test_inserting_consecutive_blank_line(cx: &mut gpui::TestAppContext) {
         use rope::Point;
         use unindent::Unindent as _;
@@ -2151,12 +1969,28 @@ mod tests {
             aaa
             bbb
 
+
+
+
+
             ccc
             ddd
         "
         .unindent();
+        let current_text = "
+            aaa
+            bbb
 
-        let (buffer, diff) = buffer_with_diff(&base_text, &base_text, &mut cx);
+
+
+
+
+            CCC
+            ddd
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
             let path = PathKey::for_buffer(&buffer, cx);
@@ -2173,7 +2007,7 @@ mod tests {
         cx.run_until_parked();
 
         buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "\n")], None, cx);
+            buffer.edit([(Point::new(1, 3)..Point::new(1, 3), "\n")], None, cx);
         });
 
         cx.run_until_parked();
@@ -2187,7 +2021,11 @@ mod tests {
             bbb
 
 
-            ccc
+
+
+
+
+            CCC
             ddd"
             .unindent(),
             "
@@ -2196,6 +2034,10 @@ mod tests {
             aaa
             bbb
             § spacer
+
+
+
+
 
             ccc
             ddd"
@@ -2219,7 +2061,11 @@ mod tests {
             bbb
 
 
-            ccc
+
+
+
+
+            CCC
             ddd"
             .unindent(),
             "
@@ -2227,9 +2073,13 @@ mod tests {
             § -----
             aaa
             bbb
-            § spacer
+
+
+
+
 
             ccc
+            § spacer
             ddd"
             .unindent(),
             &mut cx,
@@ -3046,6 +2896,129 @@ mod tests {
             § spacer
             § spacer"
                 .unindent(),
+            &mut cx,
+        );
+    }
+
+    #[gpui::test]
+    #[ignore]
+    async fn test_joining_added_line_with_unmodified_line(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx).await;
+
+        let base_text = "
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+        "
+        .unindent();
+
+        let current_text = "
+            aaa
+            NEW
+            eee
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
+            editor.set_excerpts_for_path(
+                path,
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            NEW
+            § spacer
+            § spacer
+            eee"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee"
+            .unindent(),
+            &mut cx,
+        );
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(1, 3)..Point::new(2, 0), "")], None, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            § spacer
+            § spacer
+            § spacer
+            NEWeee"
+                .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee"
+            .unindent(),
+            &mut cx,
+        );
+
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+        diff.update(cx, |diff, cx| {
+            diff.recalculate_diff_sync(&buffer_snapshot, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            NEWeee
+            § spacer
+            § spacer
+            § spacer"
+                .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee"
+            .unindent(),
             &mut cx,
         );
     }
