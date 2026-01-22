@@ -82,7 +82,6 @@ jobs:
       run: |
         PREV_COMMIT="${{ steps.prev-tag.outputs.prev_commit }}"
 
-        # Determine which workflow directory to use based on repo
         if [ "${{ matrix.repo }}" = "workflows" ]; then
             WORKFLOW_DIR="extensions/workflows"
         else
@@ -98,7 +97,6 @@ jobs:
             xargs -I{} basename {} 2>/dev/null | \
             tr '\n' ' ' || echo "")
 
-        # Trim whitespace
         REMOVED_FILES=$(echo "$REMOVED_FILES" | xargs)
 
         echo "Files to remove: $REMOVED_FILES"
@@ -192,7 +190,7 @@ jobs:
             git push origin ":refs/tags/extension-workflows" || true
         fi
 
-        echo "Creating new tag extension-workflows at $(git rev-parse --short HEAD)"
+        echo "Creating new tag 'extension-workflows' at $(git rev-parse --short HEAD)"
         git tag "extension-workflows"
         git push origin "extension-workflows"
       shell: bash -euxo pipefail {0}

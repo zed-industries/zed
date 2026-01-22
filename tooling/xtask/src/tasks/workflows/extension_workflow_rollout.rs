@@ -102,7 +102,6 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
         let step = named::bash(formatdoc! {r#"
             PREV_COMMIT="{prev_commit}"
 
-            # Determine which workflow directory to use based on repo
             if [ "${{{{ matrix.repo }}}}" = "workflows" ]; then
                 WORKFLOW_DIR="extensions/workflows"
             else
@@ -118,7 +117,6 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
                 xargs -I{{}} basename {{}} 2>/dev/null | \
                 tr '\n' ' ' || echo "")
 
-            # Trim whitespace
             REMOVED_FILES=$(echo "$REMOVED_FILES" | xargs)
 
             echo "Files to remove: $REMOVED_FILES"
@@ -266,7 +264,7 @@ fn create_rollout_tag(rollout_job: &NamedJob) -> NamedJob {
                 git push origin ":refs/tags/{ROLLOUT_TAG_NAME}" || true
             fi
 
-            echo "Creating new tag {ROLLOUT_TAG_NAME} at $(git rev-parse --short HEAD)"
+            echo "Creating new tag '{ROLLOUT_TAG_NAME}' at $(git rev-parse --short HEAD)"
             git tag "{ROLLOUT_TAG_NAME}"
             git push origin "{ROLLOUT_TAG_NAME}"
         "#})
