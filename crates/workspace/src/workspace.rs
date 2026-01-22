@@ -227,6 +227,8 @@ actions!(
         ToggleAllDocks,
         /// Closes the current window.
         CloseWindow,
+        /// Closes the current project.
+        CloseProject,
         /// Opens the feedback dialog.
         Feedback,
         /// Follows the next collaborator in the session.
@@ -8289,7 +8291,7 @@ pub fn open_new(
     let task = Workspace::new_local(
         Vec::new(),
         app_state,
-        None,
+        open_options.replace_window,
         open_options.env,
         Some(Box::new(init)),
         cx,
