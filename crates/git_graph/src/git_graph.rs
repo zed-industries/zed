@@ -1,12 +1,8 @@
-mod graph;
-
-use graph::format_timestamp;
-
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use git::{
-    BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, ParsedGitRemote,
+    BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
-    repository::{CommitDiff, LogOrder, LogSource},
+    repository::{CommitDiff, InitialGraphCommitData, LogOrder, LogSource},
 };
 use git_ui::commit_tooltip::CommitAvatar;
 use gpui::{
@@ -20,16 +16,15 @@ use project::{
     git_store::{CommitDataState, GitStoreEvent, Repository, RepositoryEvent},
 };
 use settings::Settings;
-use std::ops::Range;
+use smallvec::{SmallVec, smallvec};
+use std::{ops::Range, rc::Rc, sync::Arc, sync::OnceLock};
 use theme::{AccentColors, ThemeSettings};
-use time::{OffsetDateTime, UtcOffset};
+use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{ContextMenu, ScrollableHandle, Table, TableInteractionState, Tooltip, prelude::*};
 use workspace::{
     Workspace,
     item::{Item, ItemEvent, SerializableItem},
 };
-
-use crate::graph::{AllCommitCount, CommitLineSegment, CurveKind};
 
 const LANE_WIDTH: Pixels = px(16.0);
 const LINE_WIDTH: Pixels = px(1.5);
@@ -45,6 +40,458 @@ actions!(
         OpenCommitView,
     ]
 );
+
+fn timestamp_format() -> &'static [BorrowedFormatItem<'static>] {
+    static FORMAT: OnceLock<Vec<BorrowedFormatItem<'static>>> = OnceLock::new();
+    FORMAT.get_or_init(|| {
+        time::format_description::parse("[day] [month repr:short] [year] [hour]:[minute]")
+            .unwrap_or_default()
+    })
+}
+
+fn format_timestamp(timestamp: i64) -> String {
+    let Ok(datetime) = OffsetDateTime::from_unix_timestamp(timestamp) else {
+        return "Unknown".to_string();
+    };
+
+    let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+    let local_datetime = datetime.to_offset(local_offset);
+
+    local_datetime
+        .format(timestamp_format())
+        .unwrap_or_default()
+}
+
+pub fn accent_colors_count(accents: &AccentColors) -> usize {
+    accents.0.len()
+}
+
+#[derive(Copy, Clone, Debug)]
+struct BranchColor(u8);
+
+#[derive(Debug)]
+enum LaneState {
+    Empty,
+    Active {
+        child: Oid,
+        parent: Oid,
+        color: Option<BranchColor>,
+        starting_row: usize,
+        starting_col: usize,
+        destination_column: Option<usize>,
+        segments: SmallVec<[CommitLineSegment; 1]>,
+    },
+}
+
+impl LaneState {
+    fn to_commit_lines(
+        &mut self,
+        ending_row: usize,
+        lane_column: usize,
+        parent_column: usize,
+        parent_color: BranchColor,
+    ) -> Option<CommitLine> {
+        let state = std::mem::replace(self, LaneState::Empty);
+
+        match state {
+            LaneState::Active {
+                #[cfg_attr(not(test), allow(unused_variables))]
+                parent,
+                #[cfg_attr(not(test), allow(unused_variables))]
+                child,
+                color,
+                starting_row,
+                starting_col,
+                destination_column,
+                mut segments,
+            } => {
+                let final_destination = destination_column.unwrap_or(parent_column);
+                let final_color = color.unwrap_or(parent_color);
+
+                Some(CommitLine {
+                    #[cfg(test)]
+                    child,
+                    #[cfg(test)]
+                    parent,
+                    child_column: starting_col,
+                    full_interval: starting_row..ending_row,
+                    color_idx: final_color.0 as usize,
+                    segments: {
+                        match segments.last_mut() {
+                            Some(CommitLineSegment::Straight { to_row })
+                                if *to_row == usize::MAX =>
+                            {
+                                if final_destination != lane_column {
+                                    *to_row = ending_row - 1;
+
+                                    let curved_line = CommitLineSegment::Curve {
+                                        to_column: final_destination,
+                                        on_row: ending_row,
+                                        curve_kind: CurveKind::Checkout,
+                                    };
+
+                                    if *to_row == starting_row {
+                                        let last_index = segments.len() - 1;
+                                        segments[last_index] = curved_line;
+                                    } else {
+                                        segments.push(curved_line);
+                                    }
+                                } else {
+                                    *to_row = ending_row;
+                                }
+                            }
+                            Some(CommitLineSegment::Curve {
+                                on_row,
+                                to_column,
+                                curve_kind,
+                            }) if *on_row == usize::MAX => {
+                                if *to_column == usize::MAX {
+                                    *to_column = final_destination;
+                                }
+                                if matches!(curve_kind, CurveKind::Merge) {
+                                    *on_row = starting_row + 1;
+                                    if *on_row < ending_row {
+                                        if *to_column != final_destination {
+                                            segments.push(CommitLineSegment::Straight {
+                                                to_row: ending_row - 1,
+                                            });
+                                            segments.push(CommitLineSegment::Curve {
+                                                to_column: final_destination,
+                                                on_row: ending_row,
+                                                curve_kind: CurveKind::Checkout,
+                                            });
+                                        } else {
+                                            segments.push(CommitLineSegment::Straight {
+                                                to_row: ending_row,
+                                            });
+                                        }
+                                    } else if *to_column != final_destination {
+                                        segments.push(CommitLineSegment::Curve {
+                                            to_column: final_destination,
+                                            on_row: ending_row,
+                                            curve_kind: CurveKind::Checkout,
+                                        });
+                                    }
+                                } else {
+                                    *on_row = ending_row;
+                                    if *to_column != final_destination {
+                                        segments.push(CommitLineSegment::Straight {
+                                            to_row: ending_row,
+                                        });
+                                        segments.push(CommitLineSegment::Curve {
+                                            to_column: final_destination,
+                                            on_row: ending_row,
+                                            curve_kind: CurveKind::Checkout,
+                                        });
+                                    }
+                                }
+                            }
+                            Some(CommitLineSegment::Curve {
+                                on_row, to_column, ..
+                            }) => {
+                                if *on_row < ending_row {
+                                    if *to_column != final_destination {
+                                        segments.push(CommitLineSegment::Straight {
+                                            to_row: ending_row - 1,
+                                        });
+                                        segments.push(CommitLineSegment::Curve {
+                                            to_column: final_destination,
+                                            on_row: ending_row,
+                                            curve_kind: CurveKind::Checkout,
+                                        });
+                                    } else {
+                                        segments.push(CommitLineSegment::Straight {
+                                            to_row: ending_row,
+                                        });
+                                    }
+                                } else if *to_column != final_destination {
+                                    segments.push(CommitLineSegment::Curve {
+                                        to_column: final_destination,
+                                        on_row: ending_row,
+                                        curve_kind: CurveKind::Checkout,
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+
+                        segments
+                    },
+                })
+            }
+            LaneState::Empty => None,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        match self {
+            LaneState::Empty => true,
+            LaneState::Active { .. } => false,
+        }
+    }
+}
+
+pub struct CommitEntry {
+    data: Arc<InitialGraphCommitData>,
+    lane: usize,
+    color_idx: usize,
+}
+
+type ActiveLaneIdx = usize;
+
+pub(crate) enum AllCommitCount {
+    NotLoaded,
+    Loaded(usize),
+}
+
+#[derive(Debug)]
+pub(crate) enum CurveKind {
+    Merge,
+    Checkout,
+}
+
+#[derive(Debug)]
+pub(crate) enum CommitLineSegment {
+    Straight {
+        to_row: usize,
+    },
+    Curve {
+        to_column: usize,
+        on_row: usize,
+        curve_kind: CurveKind,
+    },
+}
+
+#[derive(Debug)]
+pub struct CommitLine {
+    #[cfg(test)]
+    child: Oid,
+    #[cfg(test)]
+    parent: Oid,
+    child_column: usize,
+    full_interval: Range<usize>,
+    color_idx: usize,
+    segments: SmallVec<[CommitLineSegment; 1]>,
+}
+
+impl CommitLine {
+    pub fn get_first_visible_segment_idx(
+        &self,
+        first_visible_row: usize,
+    ) -> Option<(usize, usize)> {
+        if first_visible_row > self.full_interval.end {
+            return None;
+        } else if first_visible_row <= self.full_interval.start {
+            return Some((0, self.child_column));
+        }
+
+        let mut current_column = self.child_column;
+
+        for (idx, segment) in self.segments.iter().enumerate() {
+            match segment {
+                CommitLineSegment::Straight { to_row } => {
+                    if *to_row >= first_visible_row {
+                        return Some((idx, current_column));
+                    }
+                }
+                CommitLineSegment::Curve {
+                    to_column, on_row, ..
+                } => {
+                    if *on_row >= first_visible_row {
+                        return Some((idx, current_column));
+                    }
+                    current_column = *to_column;
+                }
+            }
+        }
+
+        None
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct CommitLineKey {
+    child: Oid,
+    parent: Oid,
+}
+
+pub struct GraphData {
+    lane_states: SmallVec<[LaneState; 8]>,
+    lane_colors: HashMap<ActiveLaneIdx, BranchColor>,
+    parent_to_lanes: HashMap<Oid, SmallVec<[usize; 1]>>,
+    next_color: BranchColor,
+    accent_colors_count: usize,
+    commits: Vec<Rc<CommitEntry>>,
+    max_commit_count: AllCommitCount,
+    max_lanes: usize,
+    lines: Vec<Rc<CommitLine>>,
+    active_commit_lines: HashMap<CommitLineKey, usize>,
+    active_commit_lines_by_parent: HashMap<Oid, SmallVec<[usize; 1]>>,
+}
+
+impl GraphData {
+    pub fn new(accent_colors_count: usize) -> Self {
+        GraphData {
+            lane_states: SmallVec::default(),
+            lane_colors: HashMap::default(),
+            parent_to_lanes: HashMap::default(),
+            next_color: BranchColor(0),
+            accent_colors_count,
+            commits: Vec::default(),
+            max_commit_count: AllCommitCount::NotLoaded,
+            max_lanes: 0,
+            lines: Vec::default(),
+            active_commit_lines: HashMap::default(),
+            active_commit_lines_by_parent: HashMap::default(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.lane_states.clear();
+        self.lane_colors.clear();
+        self.parent_to_lanes.clear();
+        self.commits.clear();
+        self.lines.clear();
+        self.active_commit_lines.clear();
+        self.active_commit_lines_by_parent.clear();
+        self.next_color = BranchColor(0);
+        self.max_commit_count = AllCommitCount::NotLoaded;
+        self.max_lanes = 0;
+    }
+
+    fn first_empty_lane_idx(&mut self) -> ActiveLaneIdx {
+        self.lane_states
+            .iter()
+            .position(LaneState::is_empty)
+            .unwrap_or_else(|| {
+                self.lane_states.push(LaneState::Empty);
+                self.lane_states.len() - 1
+            })
+    }
+
+    fn get_lane_color(&mut self, lane_idx: ActiveLaneIdx) -> BranchColor {
+        let accent_colors_count = self.accent_colors_count;
+        *self.lane_colors.entry(lane_idx).or_insert_with(|| {
+            let color_idx = self.next_color;
+            self.next_color = BranchColor((self.next_color.0 + 1) % accent_colors_count as u8);
+            color_idx
+        })
+    }
+
+    pub(crate) fn add_commits(&mut self, commits: &[Arc<InitialGraphCommitData>]) {
+        self.commits.reserve(commits.len());
+        self.lines.reserve(commits.len() / 2);
+
+        for commit in commits.iter() {
+            let commit_row = self.commits.len();
+
+            let commit_lane = self
+                .parent_to_lanes
+                .get(&commit.sha)
+                .and_then(|lanes| lanes.first().copied());
+
+            let commit_lane = commit_lane.unwrap_or_else(|| self.first_empty_lane_idx());
+
+            let commit_color = self.get_lane_color(commit_lane);
+
+            if let Some(lanes) = self.parent_to_lanes.remove(&commit.sha) {
+                for lane_column in lanes {
+                    let state = &mut self.lane_states[lane_column];
+
+                    if let LaneState::Active {
+                        starting_row,
+                        segments,
+                        ..
+                    } = state
+                    {
+                        if let Some(CommitLineSegment::Curve {
+                            to_column,
+                            curve_kind: CurveKind::Merge,
+                            ..
+                        }) = segments.first_mut()
+                        {
+                            let curve_row = *starting_row + 1;
+                            let would_overlap =
+                                if lane_column != commit_lane && curve_row < commit_row {
+                                    self.commits[curve_row..commit_row]
+                                        .iter()
+                                        .any(|c| c.lane == commit_lane)
+                                } else {
+                                    false
+                                };
+
+                            if would_overlap {
+                                *to_column = lane_column;
+                            }
+                        }
+                    }
+
+                    if let Some(commit_line) =
+                        state.to_commit_lines(commit_row, lane_column, commit_lane, commit_color)
+                    {
+                        self.lines.push(Rc::new(commit_line));
+                    }
+                }
+            }
+
+            commit
+                .parents
+                .iter()
+                .enumerate()
+                .for_each(|(parent_idx, parent)| {
+                    if parent_idx == 0 {
+                        self.lane_states[commit_lane] = LaneState::Active {
+                            parent: *parent,
+                            child: commit.sha,
+                            color: Some(commit_color),
+                            starting_col: commit_lane,
+                            starting_row: commit_row,
+                            destination_column: None,
+                            segments: smallvec![CommitLineSegment::Straight { to_row: usize::MAX }],
+                        };
+
+                        self.parent_to_lanes
+                            .entry(*parent)
+                            .or_default()
+                            .push(commit_lane);
+                    } else {
+                        let new_lane = self.first_empty_lane_idx();
+
+                        self.lane_states[new_lane] = LaneState::Active {
+                            parent: *parent,
+                            child: commit.sha,
+                            color: None,
+                            starting_col: commit_lane,
+                            starting_row: commit_row,
+                            destination_column: None,
+                            segments: smallvec![CommitLineSegment::Curve {
+                                to_column: usize::MAX,
+                                on_row: usize::MAX,
+                                curve_kind: CurveKind::Merge,
+                            },],
+                        };
+
+                        self.parent_to_lanes
+                            .entry(*parent)
+                            .or_default()
+                            .push(new_lane);
+                    }
+                });
+
+            self.max_lanes = self.max_lanes.max(self.lane_states.len());
+
+            self.commits.push(Rc::new(CommitEntry {
+                data: commit.clone(),
+                lane: commit_lane,
+                color_idx: commit_color.0 as usize,
+            }));
+        }
+    }
+}
+
+// ============================================================================
+// GitGraph Component
+// ============================================================================
 
 pub fn init(cx: &mut App) {
     workspace::register_serializable_item::<GitGraph>(cx);
@@ -76,10 +523,6 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
-}
-
-pub fn accent_colors_count(accents: &AccentColors) -> usize {
-    accents.0.len()
 }
 
 fn lane_center_x(
@@ -133,7 +576,7 @@ fn draw_commit_circle(center_x: Pixels, center_y: Pixels, color: Hsla, window: &
 
 pub struct GitGraph {
     focus_handle: FocusHandle,
-    graph_data: crate::graph::GraphData,
+    graph_data: GraphData,
     project: Entity<Project>,
     error: Option<SharedString>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
@@ -163,7 +606,7 @@ impl GitGraph {
 
         let git_store = project.read(cx).git_store().clone();
         let accent_colors = cx.theme().accents();
-        let mut graph = crate::graph::GraphData::new(accent_colors_count(accent_colors));
+        let mut graph = GraphData::new(accent_colors_count(accent_colors));
         let log_source = LogSource::default();
         let log_order = LogOrder::default();
 
@@ -1325,6 +1768,7 @@ mod persistence {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use anyhow::{Context, Result, bail};
     use collections::{HashMap, HashSet};
     use fs::FakeFs;
@@ -1449,7 +1893,7 @@ mod tests {
         }
     }
 
-    fn build_oid_to_row_map(graph: &crate::graph::GraphData) -> HashMap<Oid, usize> {
+    fn build_oid_to_row_map(graph: &GraphData) -> HashMap<Oid, usize> {
         graph
             .commits
             .iter()
@@ -1459,7 +1903,7 @@ mod tests {
     }
 
     fn verify_commit_order(
-        graph: &crate::graph::GraphData,
+        graph: &GraphData,
         commits: &[Arc<InitialGraphCommitData>],
     ) -> Result<()> {
         if graph.commits.len() != commits.len() {
@@ -1486,10 +1930,7 @@ mod tests {
         Ok(())
     }
 
-    fn verify_line_endpoints(
-        graph: &crate::graph::GraphData,
-        oid_to_row: &HashMap<Oid, usize>,
-    ) -> Result<()> {
+    fn verify_line_endpoints(graph: &GraphData, oid_to_row: &HashMap<Oid, usize>) -> Result<()> {
         for line in &graph.lines {
             let child_row = *oid_to_row
                 .get(&line.child)
@@ -1525,8 +1966,8 @@ mod tests {
 
             if let Some(last_segment) = line.segments.last() {
                 let segment_end_row = match last_segment {
-                    crate::graph::CommitLineSegment::Straight { to_row } => *to_row,
-                    crate::graph::CommitLineSegment::Curve { on_row, .. } => *on_row,
+                    CommitLineSegment::Straight { to_row } => *to_row,
+                    CommitLineSegment::Curve { on_row, .. } => *on_row,
                 };
 
                 if segment_end_row != line.full_interval.end {
@@ -1543,7 +1984,7 @@ mod tests {
     }
 
     fn verify_column_correctness(
-        graph: &crate::graph::GraphData,
+        graph: &GraphData,
         oid_to_row: &HashMap<Oid, usize>,
     ) -> Result<()> {
         for line in &graph.lines {
@@ -1566,7 +2007,7 @@ mod tests {
 
             let mut current_column = line.child_column;
             for segment in &line.segments {
-                if let crate::graph::CommitLineSegment::Curve { to_column, .. } = segment {
+                if let CommitLineSegment::Curve { to_column, .. } = segment {
                     current_column = *to_column;
                 }
             }
@@ -1584,7 +2025,7 @@ mod tests {
         Ok(())
     }
 
-    fn verify_segment_continuity(graph: &crate::graph::GraphData) -> Result<()> {
+    fn verify_segment_continuity(graph: &GraphData) -> Result<()> {
         for line in &graph.lines {
             if line.segments.is_empty() {
                 bail!("Line has no segments");
@@ -1594,8 +2035,8 @@ mod tests {
 
             for (idx, segment) in line.segments.iter().enumerate() {
                 let segment_end_row = match segment {
-                    crate::graph::CommitLineSegment::Straight { to_row } => *to_row,
-                    crate::graph::CommitLineSegment::Curve { on_row, .. } => *on_row,
+                    CommitLineSegment::Straight { to_row } => *to_row,
+                    CommitLineSegment::Curve { on_row, .. } => *on_row,
                 };
 
                 if segment_end_row < current_row {
@@ -1614,7 +2055,7 @@ mod tests {
         Ok(())
     }
 
-    fn verify_line_overlaps(graph: &crate::graph::GraphData) -> Result<()> {
+    fn verify_line_overlaps(graph: &GraphData) -> Result<()> {
         for line in &graph.lines {
             let child_row = line.full_interval.start;
 
@@ -1623,7 +2064,7 @@ mod tests {
 
             for segment in &line.segments {
                 match segment {
-                    crate::graph::CommitLineSegment::Straight { to_row } => {
+                    CommitLineSegment::Straight { to_row } => {
                         for row in (current_row + 1)..*to_row {
                             if row < graph.commits.len() {
                                 let commit_at_row = &graph.commits[row];
@@ -1641,7 +2082,7 @@ mod tests {
                         }
                         current_row = *to_row;
                     }
-                    crate::graph::CommitLineSegment::Curve {
+                    CommitLineSegment::Curve {
                         to_column, on_row, ..
                     } => {
                         current_column = *to_column;
@@ -1654,7 +2095,7 @@ mod tests {
         Ok(())
     }
 
-    fn verify_coverage(graph: &crate::graph::GraphData) -> Result<()> {
+    fn verify_coverage(graph: &GraphData) -> Result<()> {
         let mut expected_edges: HashSet<(Oid, Oid)> = HashSet::default();
         for entry in &graph.commits {
             for parent in &entry.data.parents {
@@ -1699,15 +2140,15 @@ mod tests {
     }
 
     fn verify_merge_line_optimality(
-        graph: &crate::graph::GraphData,
+        graph: &GraphData,
         oid_to_row: &HashMap<Oid, usize>,
     ) -> Result<()> {
         for line in &graph.lines {
             let first_segment = line.segments.first();
             let is_merge_line = matches!(
                 first_segment,
-                Some(crate::graph::CommitLineSegment::Curve {
-                    curve_kind: crate::graph::CurveKind::Merge,
+                Some(CommitLineSegment::Curve {
+                    curve_kind: CurveKind::Merge,
                     ..
                 })
             );
@@ -1726,8 +2167,7 @@ mod tests {
 
             let parent_lane = graph.commits[parent_row].lane;
 
-            let Some(crate::graph::CommitLineSegment::Curve { to_column, .. }) = first_segment
-            else {
+            let Some(CommitLineSegment::Curve { to_column, .. }) = first_segment else {
                 continue;
             };
 
@@ -1776,7 +2216,7 @@ mod tests {
 
                 let is_straight_segment = matches!(
                     line.segments.get(1),
-                    Some(crate::graph::CommitLineSegment::Straight { .. })
+                    Some(CommitLineSegment::Straight { .. })
                 );
 
                 if !is_straight_segment {
@@ -1793,7 +2233,7 @@ mod tests {
     }
 
     fn verify_all_invariants(
-        graph: &crate::graph::GraphData,
+        graph: &GraphData,
         commits: &[Arc<InitialGraphCommitData>],
     ) -> Result<()> {
         let oid_to_row = build_oid_to_row_map(graph);
@@ -1840,7 +2280,7 @@ mod tests {
             }),
         ];
 
-        let mut graph_data = crate::graph::GraphData::new(8);
+        let mut graph_data = GraphData::new(8);
         graph_data.add_commits(&commits);
 
         if let Err(error) = verify_all_invariants(&graph_data, &commits) {
@@ -1874,7 +2314,7 @@ mod tests {
             }),
         ];
 
-        let mut graph_data = crate::graph::GraphData::new(8);
+        let mut graph_data = GraphData::new(8);
         graph_data.add_commits(&commits);
 
         if let Err(error) = verify_all_invariants(&graph_data, &commits) {
@@ -1903,7 +2343,7 @@ mod tests {
                 seed
             );
 
-            let mut graph_data = crate::graph::GraphData::new(8);
+            let mut graph_data = GraphData::new(8);
             graph_data.add_commits(&commits);
 
             if let Err(error) = verify_all_invariants(&graph_data, &commits) {
@@ -1971,7 +2411,7 @@ mod tests {
             .to_vec()
         });
 
-        let mut graph_data = crate::graph::GraphData::new(8);
+        let mut graph_data = GraphData::new(8);
         graph_data.add_commits(&graph_commits);
 
         if let Err(error) = verify_all_invariants(&graph_data, &commits) {
