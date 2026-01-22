@@ -94,8 +94,8 @@ pub fn terminal_size(window: &mut Window, cx: &mut App) -> terminal::TerminalBou
 
     let cell_width = text_system
         .advance(font_id, font_pixels, 'w')
-        .unwrap()
-        .width;
+        .map(|advance| advance.width)
+        .unwrap_or(Pixels::ZERO);
 
     let num_lines = ReplSettings::get_global(cx).max_lines;
     let columns = ReplSettings::get_global(cx).max_columns;
@@ -129,8 +129,8 @@ pub fn max_width_for_columns(
     let font_id = text_system.resolve_font(&text_style.font());
     let cell_width = text_system
         .advance(font_id, font_pixels, 'w')
-        .unwrap()
-        .width;
+        .map(|advance| advance.width)
+        .unwrap_or(Pixels::ZERO);
 
     Some(px(cell_width * columns as f32))
 }
