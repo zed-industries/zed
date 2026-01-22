@@ -687,16 +687,35 @@ pub async fn derive_paths_with_position(
     path_strings: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> Vec<PathWithPosition> {
     join_all(path_strings.into_iter().map(|path_str| async move {
-        let canonicalized = fs.canonicalize(Path::new(path_str.as_ref())).await;
-        (path_str, canonicalized)
+        let original = path_str.as_ref();
+
+        // On Windows, `path:line[:column]` is never a valid filename (':' isn't allowed), but the
+        // filesystem may still accept it (e.g. NTFS alternate data streams). Canonicalizing the
+        // whole string can therefore succeed and cause us to drop the position suffix.
+        //
+        // To ensure `zed file:line[:column]` jumps to the right location, canonicalize only the
+        // base path and keep the parsed row/column.
+        #[cfg(target_os = "windows")]
+        {
+            let parsed = PathWithPosition::parse_str(original);
+            if parsed.row.is_some() {
+                return match fs.canonicalize(&parsed.path).await {
+                    Ok(canonicalized) => PathWithPosition {
+                        path: canonicalized,
+                        row: parsed.row,
+                        column: parsed.column,
+                    },
+                    Err(_) => parsed,
+                };
+            }
+        }
+
+        match fs.canonicalize(Path::new(original)).await {
+            Ok(canonicalized) => PathWithPosition::from_path(canonicalized),
+            Err(_) => PathWithPosition::parse_str(original),
+        }
     }))
     .await
-    .into_iter()
-    .map(|(original, canonicalized)| match canonicalized {
-        Ok(canonicalized) => PathWithPosition::from_path(canonicalized),
-        Err(_) => PathWithPosition::parse_str(original.as_ref()),
-    })
-    .collect()
 }
 
 #[cfg(test)]
@@ -717,6 +736,35 @@ mod tests {
     use std::{sync::Arc, task::Poll};
     use util::path;
     use workspace::{AppState, Workspace};
+
+    #[cfg(target_os = "windows")]
+    #[gpui::test]
+    async fn test_derive_paths_with_position_preserves_row_on_windows(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "README.md": "line 1\nline 2\nline 3\n",
+                // Create an entry for the full `path:line` string so `canonicalize` would succeed
+                // even if it were attempted on the full string.
+                "README.md:2": "not used\n",
+            }),
+        )
+        .await;
+
+        let original = format!("{}:2", path!("/dir/README.md"));
+        let parsed = derive_paths_with_position(fs.as_ref(), [&original]).await;
+        assert_eq!(
+            parsed,
+            vec![PathWithPosition {
+                path: path!("/dir/README.md").into(),
+                row: Some(2),
+                column: None,
+            }]
+        );
+    }
 
     #[gpui::test]
     fn test_parse_ssh_url(cx: &mut TestAppContext) {

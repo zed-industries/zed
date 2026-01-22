@@ -1554,20 +1554,40 @@ impl ToString for IdType {
 }
 
 fn parse_url_arg(arg: &str, cx: &App) -> String {
-    match std::fs::canonicalize(Path::new(&arg)) {
-        Ok(path) => format!("file://{}", path.display()),
-        Err(_) => {
-            if arg.starts_with("file://")
-                || arg.starts_with("zed://")
-                || arg.starts_with("zed-cli://")
-                || arg.starts_with("ssh://")
-                || parse_zed_link(arg, cx).is_some()
-            {
-                arg.into()
-            } else {
-                format!("file://{arg}")
+    if arg.starts_with("file://")
+        || arg.starts_with("zed://")
+        || arg.starts_with("zed-cli://")
+        || arg.starts_with("ssh://")
+        || parse_zed_link(arg, cx).is_some()
+    {
+        return arg.into();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use util::paths::PathWithPosition;
+
+        // On Windows, `path:line[:column]` is never a valid filesystem path (':' isn't allowed
+        // in filenames), but we still want to canonicalize the base path so opening works even
+        // when forwarding the request to an already-running Zed instance with a different CWD.
+        let path_with_position = PathWithPosition::parse_str(arg);
+        if let Some(row) = path_with_position.row {
+            if let Ok(canonicalized_path) = std::fs::canonicalize(&path_with_position.path) {
+                let mut canonicalized = canonicalized_path.display().to_string();
+                canonicalized.push(':');
+                canonicalized.push_str(&row.to_string());
+                if let Some(column) = path_with_position.column {
+                    canonicalized.push(':');
+                    canonicalized.push_str(&column.to_string());
+                }
+                return format!("file://{canonicalized}");
             }
         }
+    }
+
+    match std::fs::canonicalize(Path::new(arg)) {
+        Ok(path) => format!("file://{}", path.display()),
+        Err(_) => format!("file://{arg}"),
     }
 }
 
