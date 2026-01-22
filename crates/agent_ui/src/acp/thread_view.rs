@@ -1834,6 +1834,9 @@ impl AcpThreadView {
                     acp_error_code,
                     message,
                 } => ("other", acp_error_code.clone(), message.clone()),
+                ThreadError::ModelRequestLimitReached { .. } | ThreadError::ToolUseLimitReached => {
+                    return;
+                }
             };
 
         let (agent_telemetry_id, session_id) = self
