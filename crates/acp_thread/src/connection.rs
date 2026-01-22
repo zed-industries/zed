@@ -64,11 +64,7 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
 
-    fn resume(
-        &self,
-        _session_id: &acp::SessionId,
-        _cx: &App,
-    ) -> Option<Rc<dyn AgentSessionResume>> {
+    fn retry(&self, _session_id: &acp::SessionId, _cx: &App) -> Option<Rc<dyn AgentSessionRetry>> {
         None
     }
 
@@ -135,7 +131,7 @@ pub trait AgentSessionTruncate {
     fn run(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
 }
 
-pub trait AgentSessionResume {
+pub trait AgentSessionRetry {
     fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>>;
 }
 
