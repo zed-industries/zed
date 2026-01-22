@@ -27,6 +27,8 @@ pub struct TaskTemplate {
     /// Executable command to spawn.
     pub command: String,
     /// Arguments to the command.
+    /// If they contain shell-unsafe characters ('$' etc), they should be escaped.
+    /// See `quote_arg` and unquote_arg`.
     #[serde(default)]
     pub args: Vec<String>,
     /// Env overrides for the command, will be appended to the terminal's environment from the settings.
@@ -425,6 +427,37 @@ fn substitute_all_template_variables_in_map(
         new_map.insert(new_key, new_value);
     }
     Some(new_map)
+}
+
+// Finish the old single-quoted sequence, add "\'", start a new single-quoted sequence
+const SINGLE_QUOTE_QUOTED_IN_SINGLE_QUOTED_STRING: &str = "'\\''";
+
+/// Quotes an argument (e.g. a test name) for use in a shell command.
+/// Using the single-quote technique described in https://stackoverflow.com/a/20053121:
+/// `It's a "string"` => `'It'\''s a "string"'`
+pub fn quote_arg(name: &str) -> String {
+    let mut quoted = "'".to_string();
+    for c in name.chars() {
+        if c == '\'' {
+            quoted.push_str(SINGLE_QUOTE_QUOTED_IN_SINGLE_QUOTED_STRING);
+        } else {
+            quoted.push(c);
+        }
+    }
+    quoted.push('\'');
+    quoted
+}
+
+/// Unquotes an argument previously quoted via `quote_arg`.
+pub fn unquote_arg(name: &str) -> String {
+    if name.starts_with('\'') && name.ends_with('\'') {
+        return name[1..name.len() - 1].replace(SINGLE_QUOTE_QUOTED_IN_SINGLE_QUOTED_STRING, "'");
+    }
+    // If this condition above not true, it's suspicious, since this function should be called only
+    // on strings that are known to be quoted.
+    // However, it should be safe to fall back to the original string (the result of this function
+    // is supposed to be "unsafe" for raw shell usage anyway).
+    name.to_string()
 }
 
 #[cfg(test)]

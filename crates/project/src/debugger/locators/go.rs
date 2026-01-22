@@ -4,7 +4,7 @@ use collections::HashMap;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
 use gpui::{BackgroundExecutor, SharedString};
 use serde::{Deserialize, Serialize};
-use task::{DebugScenario, SpawnInTerminal, TaskTemplate};
+use task::{DebugScenario, SpawnInTerminal, TaskTemplate, unquote_arg};
 
 pub(crate) struct GoLocator;
 
@@ -98,6 +98,10 @@ impl DapLocator for GoLocator {
         if build_config.command != "go" {
             return None;
         }
+
+        // Given a "test" or "run" Go command, parse its arguments and build a corresponding
+        // DAP command to be sent to Delve.
+
         let go_action = build_config.args.first()?;
 
         match go_action.as_str() {
@@ -114,29 +118,9 @@ impl DapLocator for GoLocator {
 
                 for arg in build_config.args.iter().skip(1) {
                     if all_args_are_test || next_arg_is_test {
-                        // HACK: tasks assume that they are run in a shell context,
-                        // so the -run regex has escaped specials. Delve correctly
-                        // handles escaping, so we undo that here.
-                        if let Some((left, right)) = arg.split_once("/")
-                            && left.starts_with("\\^")
-                            && left.ends_with("\\$")
-                            && right.starts_with("\\^")
-                            && right.ends_with("\\$")
-                        {
-                            let mut left = left[1..left.len() - 2].to_string();
-                            left.push('$');
-
-                            let mut right = right[1..right.len() - 2].to_string();
-                            right.push('$');
-
-                            args.push(format!("{left}/{right}"));
-                        } else if arg.starts_with("\\^") && arg.ends_with("\\$") {
-                            let mut arg = arg[1..arg.len() - 2].to_string();
-                            arg.push('$');
-                            args.push(arg);
-                        } else {
-                            args.push(arg.clone());
-                        }
+                        // Test name regexes were quoted to run in a shell context.
+                        // Let's unquote them using the reverse algorithm
+                        args.push(unquote_arg(arg));
                         next_arg_is_test = false;
                     } else if next_arg_is_build {
                         build_flags.push(arg.clone());
@@ -387,7 +371,7 @@ mod tests {
                 "-tags".to_string(),
                 "integration,unit".to_string(),
                 "-run".to_string(),
-                "Foo".to_string(),
+                "'^TestFoo$/^subtest_for_Konstantin'\\''s_case$'".to_string(),
                 ".".to_string(),
             ],
             ..Default::default()
@@ -408,7 +392,7 @@ mod tests {
                 build_flags: vec!["-tags".to_string(), "integration,unit".to_string(),],
                 args: vec![
                     "-test.run".to_string(),
-                    "Foo".to_string(),
+                    "^TestFoo$/^subtest_for_Konstantin's_case$".to_string(),
                     "-test.v".to_string()
                 ],
                 env: HashMap::default(),
