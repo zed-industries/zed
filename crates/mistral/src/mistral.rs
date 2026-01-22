@@ -216,16 +216,6 @@ impl Model {
             } => supports_images.unwrap_or(false),
         }
     }
-
-    pub fn supports_thinking(&self) -> bool {
-        match self {
-            Self::MagistralMediumLatest | Self::MagistralSmallLatest => true,
-            Self::Custom {
-                supports_thinking, ..
-            } => supports_thinking.unwrap_or(false),
-            _ => false,
-        }
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

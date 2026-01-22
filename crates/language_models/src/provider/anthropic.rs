@@ -495,10 +495,6 @@ impl LanguageModel for AnthropicModel {
         true
     }
 
-    fn supports_thinking(&self) -> bool {
-        self.model.supports_thinking()
-    }
-
     fn supports_streaming_tools(&self) -> bool {
         true
     }
