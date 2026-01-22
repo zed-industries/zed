@@ -1196,6 +1196,7 @@ impl acp::Client for ClientDelegate {
                                 AlternateScroll::On,
                                 None,
                                 0,
+                                cx.background_executor(),
                             )?;
                             let lower = cx.new(|cx| builder.subscribe(cx));
                             thread.on_terminal_provider_event(
