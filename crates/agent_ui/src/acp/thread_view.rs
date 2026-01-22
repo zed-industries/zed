@@ -99,7 +99,10 @@ enum ThreadError {
     PaymentRequired,
     Refusal,
     AuthenticationRequired(SharedString),
-    Other(SharedString),
+    Other {
+        message: SharedString,
+        acp_error_code: Option<SharedString>,
+    },
 }
 
 impl ThreadError {
@@ -111,16 +114,25 @@ impl ThreadError {
         {
             Self::AuthenticationRequired(acp_error.message.clone().into())
         } else {
-            let string = format!("{:#}", error);
+            let message: SharedString = format!("{:#}", error).into();
+
+            // Extract ACP error code if available
+            let acp_error_code = error
+                .downcast_ref::<acp::Error>()
+                .map(|acp_error| SharedString::from(acp_error.code.to_string()));
+
             // TODO: we should have Gemini return better errors here.
             if agent.clone().downcast::<agent_servers::Gemini>().is_some()
-                && string.contains("Could not load the default credentials")
-                || string.contains("API key not valid")
-                || string.contains("Request had invalid authentication credentials")
+                && message.contains("Could not load the default credentials")
+                || message.contains("API key not valid")
+                || message.contains("Request had invalid authentication credentials")
             {
-                Self::AuthenticationRequired(string.into())
+                Self::AuthenticationRequired(message)
             } else {
-                Self::Other(string.into())
+                Self::Other {
+                    message,
+                    acp_error_code,
+                }
             }
         }
     }
@@ -1932,8 +1944,57 @@ impl AcpThreadView {
     }
 
     fn handle_thread_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
-        self.thread_error = Some(ThreadError::from_err(error, &self.agent));
+        let thread_error = ThreadError::from_err(error, &self.agent);
+        self.emit_thread_error_telemetry(&thread_error, cx);
+        self.thread_error = Some(thread_error);
         cx.notify();
+    }
+
+    fn emit_thread_error_telemetry(&self, error: &ThreadError, cx: &mut Context<Self>) {
+        let (error_kind, acp_error_code, message): (&str, Option<SharedString>, SharedString) =
+            match error {
+                ThreadError::PaymentRequired => (
+                    "payment_required",
+                    None,
+                    "You reached your free usage limit. Upgrade to Zed Pro for more prompts."
+                        .into(),
+                ),
+                ThreadError::Refusal => {
+                    let model_or_agent_name = self.current_model_name(cx);
+                    let message = format!(
+                        "{} refused to respond to this prompt. This can happen when a model believes the prompt violates its content policy or safety guidelines, so rephrasing it can sometimes address the issue.",
+                        model_or_agent_name
+                    );
+                    ("refusal", None, message.into())
+                }
+                ThreadError::AuthenticationRequired(message) => {
+                    ("authentication_required", None, message.clone())
+                }
+                ThreadError::Other {
+                    acp_error_code,
+                    message,
+                } => ("other", acp_error_code.clone(), message.clone()),
+            };
+
+        let (agent_telemetry_id, session_id) = self
+            .thread()
+            .map(|t| {
+                let thread = t.read(cx);
+                (
+                    thread.connection().telemetry_id(),
+                    thread.session_id().clone(),
+                )
+            })
+            .unzip();
+
+        telemetry::event!(
+            "Agent Panel Error Shown",
+            agent = agent_telemetry_id,
+            session_id = session_id,
+            kind = error_kind,
+            acp_error_code = acp_error_code,
+            message = message,
+        );
     }
 
     fn clear_thread_error(&mut self, cx: &mut Context<Self>) {
@@ -2018,7 +2079,9 @@ impl AcpThreadView {
             }
             AcpThreadEvent::Refusal => {
                 self.thread_retry_status.take();
-                self.thread_error = Some(ThreadError::Refusal);
+                let thread_error = ThreadError::Refusal;
+                self.emit_thread_error_telemetry(&thread_error, cx);
+                self.thread_error = Some(thread_error);
                 let model_or_agent_name = self.current_model_name(cx);
                 let notification_message =
                     format!("{} refused to respond to this request", model_or_agent_name);
@@ -7844,7 +7907,9 @@ impl AcpThreadView {
 
     fn render_thread_error(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let content = match self.thread_error.as_ref()? {
-            ThreadError::Other(error) => self.render_any_thread_error(error.clone(), window, cx),
+            ThreadError::Other { message, .. } => {
+                self.render_any_thread_error(message.clone(), window, cx)
+            }
             ThreadError::Refusal => self.render_refusal_error(cx),
             ThreadError::AuthenticationRequired(error) => {
                 self.render_authentication_required_error(error.clone(), cx)
