@@ -10,8 +10,8 @@ pub use anchor::{Anchor, AnchorRangeExt};
 
 use anyhow::{Result, anyhow};
 use buffer_diff::{
-    BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffHunk, DiffHunkSecondaryStatus,
-    DiffHunkStatus, DiffHunkStatusKind,
+    BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffChanged, DiffHunk,
+    DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
@@ -537,12 +537,19 @@ impl DiffState {
     fn new(diff: Entity<BufferDiff>, cx: &mut Context<MultiBuffer>) -> Self {
         DiffState {
             _subscription: cx.subscribe(&diff, |this, diff, event, cx| match event {
-                BufferDiffEvent::DiffChanged {
+                BufferDiffEvent::DiffChanged(DiffChanged {
                     changed_range,
                     base_text_changed_range: _,
-                } => {
-                    if let Some(changed_range) = changed_range.clone() {
-                        this.buffer_diff_changed(diff, changed_range, cx)
+                    extended_range,
+                }) => {
+                    let use_extended = this.snapshot.borrow().use_extended_diff_range;
+                    let range = if use_extended {
+                        extended_range.clone()
+                    } else {
+                        changed_range.clone()
+                    };
+                    if let Some(range) = range {
+                        this.buffer_diff_changed(diff, range, cx)
                     }
                     cx.emit(Event::BufferDiffChanged);
                 }
@@ -564,10 +571,11 @@ impl DiffState {
             _subscription: cx.subscribe(&diff, {
                 let main_buffer = main_buffer.clone();
                 move |this, diff, event, cx| match event {
-                    BufferDiffEvent::DiffChanged {
+                    BufferDiffEvent::DiffChanged(DiffChanged {
                         changed_range: _,
                         base_text_changed_range,
-                    } => {
+                        extended_range: _,
+                    }) => {
                         if let Some(base_text_changed_range) = base_text_changed_range.clone() {
                             this.inverted_buffer_diff_changed(
                                 diff,
@@ -609,6 +617,7 @@ pub struct MultiBufferSnapshot {
     trailing_excerpt_update_count: usize,
     all_diff_hunks_expanded: bool,
     show_deleted_hunks: bool,
+    use_extended_diff_range: bool,
     show_headers: bool,
 }
 
@@ -1903,6 +1912,7 @@ impl MultiBuffer {
             trailing_excerpt_update_count,
             all_diff_hunks_expanded: _,
             show_deleted_hunks: _,
+            use_extended_diff_range: _,
             show_headers: _,
         } = self.snapshot.get_mut();
         let start = ExcerptDimension(MultiBufferOffset::ZERO);
@@ -2647,6 +2657,10 @@ impl MultiBuffer {
         self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], true, cx);
     }
 
+    pub fn set_use_extended_diff_range(&mut self, use_extended: bool, _cx: &mut Context<Self>) {
+        self.snapshot.get_mut().use_extended_diff_range = use_extended;
+    }
+
     pub fn has_multiple_hunks(&self, cx: &App) -> bool {
         self.read(cx)
             .diff_hunks_in_range(Anchor::min()..Anchor::max())
@@ -2987,6 +3001,7 @@ impl MultiBuffer {
             trailing_excerpt_update_count: _,
             all_diff_hunks_expanded: _,
             show_deleted_hunks: _,
+            use_extended_diff_range: _,
             show_headers: _,
         } = snapshot;
         *is_dirty = false;
@@ -3422,6 +3437,7 @@ impl MultiBuffer {
                         edit_buffer_start..edit_buffer_end,
                         main_buffer,
                     ) {
+                        did_expand_hunks = true;
                         let hunk_buffer_range = hunk.diff_base_byte_range.clone();
                         if hunk_buffer_range.start < excerpt_buffer_start {
                             log::trace!("skipping hunk that starts before excerpt");

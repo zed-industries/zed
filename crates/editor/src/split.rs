@@ -9,7 +9,7 @@ use gpui::{
 use language::{Buffer, Capability};
 use multi_buffer::{
     Anchor, BufferOffset, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer,
-    MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, PathKey,
+    MultiBufferPoint, MultiBufferSnapshot, PathKey,
 };
 use project::Project;
 use rope::Point;
@@ -40,7 +40,7 @@ pub(crate) fn convert_lhs_rows_to_rhs(
         lhs_bounds,
         |diff, points, buffer| {
             let (points, first_group, prev_boundary) =
-                diff.base_text_rows_to_rows_naive(points, buffer);
+                diff.base_text_points_to_points(points, buffer);
             (points.collect(), first_group, prev_boundary)
         },
     )
@@ -59,7 +59,7 @@ pub(crate) fn convert_rhs_rows_to_lhs(
         rhs_bounds,
         |diff, points, buffer| {
             let (points, first_group, prev_boundary) =
-                diff.rows_to_base_text_rows_naive(points, buffer);
+                diff.points_to_base_text_points(points, buffer);
             (points.collect(), first_group, prev_boundary)
         },
     )
@@ -471,6 +471,7 @@ impl SplittableEditor {
             editor.set_delegate_expand_excerpts(true);
             editor.buffer().update(cx, |primary_multibuffer, cx| {
                 primary_multibuffer.set_show_deleted_hunks(false, cx);
+                primary_multibuffer.set_use_extended_diff_range(true, cx);
             })
         });
 
@@ -539,6 +540,7 @@ impl SplittableEditor {
             primary.set_delegate_expand_excerpts(false);
             primary.buffer().update(cx, |buffer, cx| {
                 buffer.set_show_deleted_hunks(true, cx);
+                buffer.set_use_extended_diff_range(false, cx);
             });
             primary.display_map.update(cx, |dm, cx| {
                 dm.set_companion(None, cx);
