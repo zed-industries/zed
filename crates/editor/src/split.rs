@@ -1457,7 +1457,8 @@ impl SplittableEditor {
                 buffer.update(cx, |buffer, cx| {
                     buffer.randomly_edit(rng, 1, cx);
                 });
-                let ranges = diff.update(cx, |diff, cx| {
+                let buffer_snapshot = buffer.read(cx).text_snapshot();
+                diff.update(cx, |diff, cx| {
                     diff.recalculate_diff_sync(&buffer_snapshot, cx);
                 });
                 let path = PathKey::for_buffer(&buffer, cx);
@@ -1843,27 +1844,15 @@ mod tests {
                     log::info!("mutating excerpts");
                     editor.update(cx, |editor, cx| {
                         editor.randomly_edit_excerpts(rng, 2, cx);
-                        false
-                    }
-                    80..=89 if !buffers.is_empty() => {
-                        log::info!("recalculating buffer diff");
-                        let buffer = buffers.iter().choose(rng).unwrap();
-                        let diff = editor
-                            .primary_multibuffer
-                            .read(cx)
-                            .diff_for(buffer.read(cx).remote_id())
-                            .unwrap();
-                        let buffer_snapshot = buffer.read(cx).snapshot();
-                        diff.update(cx, |diff, cx| {
-                            diff.recalculate_diff_sync(&buffer_snapshot, cx);
-                        });
-                        false
-                    }
-                    _ => {
-                        log::info!("quiescing");
-                        for buffer in buffers {
-                            let buffer_snapshot = buffer.read(cx).snapshot();
-                            let diff = editor
+                    });
+                }
+                _ => {
+                    log::info!("quiescing");
+                    for buffer in buffers {
+                        let buffer_snapshot =
+                            buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+                        let diff = editor.update(cx, |editor, cx| {
+                            editor
                                 .primary_multibuffer
                                 .read(cx)
                                 .diff_for(buffer.read(cx).remote_id())
