@@ -3821,8 +3821,6 @@ impl AcpThreadView {
             .filter_map(|c| c.subagent_thread().cloned())
             .collect();
 
-        let tool_call_status = tool_call.status.clone();
-
         v_flex()
             .mx_5()
             .my_1p5()
@@ -3836,7 +3834,7 @@ impl AcpThreadView {
                             entry_ix,
                             context_ix,
                             &thread,
-                            &tool_call_status,
+                            &tool_call.status,
                             window,
                             cx,
                         )
