@@ -468,7 +468,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
             .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>)
             .add_request_handler(share_agent_thread)
-            .add_request_handler(get_shared_agent_thread);
+            .add_request_handler(get_shared_agent_thread)
+            .add_request_handler(forward_project_search_chunk);
 
         Arc::new(server)
     }
@@ -1554,6 +1555,7 @@ fn notify_rejoined_projects(
                         path: settings_file.path,
                         content: Some(settings_file.content),
                         kind: Some(settings_file.kind.to_proto().into()),
+                        outside_worktree: Some(settings_file.outside_worktree),
                     },
                 )?;
             }
@@ -1986,6 +1988,7 @@ async fn join_project(
                     path: settings_file.path,
                     content: Some(settings_file.content),
                     kind: Some(settings_file.kind.to_proto() as i32),
+                    outside_worktree: Some(settings_file.outside_worktree),
                 },
             )?;
         }
@@ -2423,6 +2426,20 @@ async fn update_context(message: proto::UpdateContext, session: MessageContext) 
         },
     );
 
+    Ok(())
+}
+
+async fn forward_project_search_chunk(
+    message: proto::FindSearchCandidatesChunk,
+    response: Response<proto::FindSearchCandidatesChunk>,
+    session: MessageContext,
+) -> Result<()> {
+    let peer_id = message.peer_id.context("missing peer_id")?;
+    let payload = session
+        .peer
+        .forward_request(session.connection_id, peer_id.into(), message)
+        .await?;
+    response.send(payload)?;
     Ok(())
 }
 

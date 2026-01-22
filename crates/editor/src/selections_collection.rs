@@ -109,10 +109,6 @@ impl SelectionsCollection {
         self.pending.as_ref().map(|pending| &pending.selection)
     }
 
-    pub fn pending_anchor_mut(&mut self) -> Option<&mut Selection<Anchor>> {
-        self.pending.as_mut().map(|pending| &mut pending.selection)
-    }
-
     pub fn pending<D>(&self, snapshot: &DisplaySnapshot) -> Option<Selection<D>>
     where
         D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
@@ -461,6 +457,72 @@ impl SelectionsCollection {
         })
     }
 
+    /// Finds the next columnar selection by walking display rows one at a time
+    /// so that soft-wrapped lines are considered and not skipped.
+    pub fn find_next_columnar_selection_by_display_row(
+        &mut self,
+        display_map: &DisplaySnapshot,
+        start_row: DisplayRow,
+        end_row: DisplayRow,
+        above: bool,
+        positions: &Range<Pixels>,
+        reversed: bool,
+        text_layout_details: &TextLayoutDetails,
+    ) -> Option<Selection<Point>> {
+        let mut row = start_row;
+        while row != end_row {
+            if above {
+                row.0 -= 1;
+            } else {
+                row.0 += 1;
+            }
+
+            if let Some(selection) = self.build_columnar_selection(
+                display_map,
+                row,
+                positions,
+                reversed,
+                text_layout_details,
+            ) {
+                return Some(selection);
+            }
+        }
+        None
+    }
+
+    /// Finds the next columnar selection by skipping to the next buffer row,
+    /// ignoring soft-wrapped lines.
+    pub fn find_next_columnar_selection_by_buffer_row(
+        &mut self,
+        display_map: &DisplaySnapshot,
+        start_row: DisplayRow,
+        end_row: DisplayRow,
+        above: bool,
+        goal_columns: &Range<u32>,
+        reversed: bool,
+        text_layout_details: &TextLayoutDetails,
+    ) -> Option<Selection<Point>> {
+        let mut row = start_row;
+        let direction = if above { -1 } else { 1 };
+        while row != end_row {
+            let new_row =
+                display_map.start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction);
+            row = new_row.row();
+            let buffer_row = new_row.to_point(display_map).row;
+
+            if let Some(selection) = self.build_columnar_selection_from_buffer_columns(
+                display_map,
+                buffer_row,
+                goal_columns,
+                reversed,
+                text_layout_details,
+            ) {
+                return Some(selection);
+            }
+        }
+        None
+    }
+
     pub fn change_with<R>(
         &mut self,
         snapshot: &DisplaySnapshot,
@@ -480,6 +542,11 @@ impl SelectionsCollection {
         if cfg!(debug_assertions) {
             mutable_collection.disjoint.iter().for_each(|selection| {
                 assert!(
+                     selection.start.cmp(&selection.end, &snapshot).is_le(),
+                    "disjoint selection has start > end: {:?}",
+                    mutable_collection.disjoint
+                );
+                assert!(
                     snapshot.can_resolve(&selection.start),
                     "disjoint selection start is not resolvable for the given snapshot:\n{selection:?}, {excerpt:?}",
                     excerpt = snapshot.buffer_for_excerpt(selection.start.excerpt_id).map(|snapshot| snapshot.remote_id()),
@@ -490,8 +557,20 @@ impl SelectionsCollection {
                     excerpt = snapshot.buffer_for_excerpt(selection.end.excerpt_id).map(|snapshot| snapshot.remote_id()),
                 );
             });
+            assert!(
+                mutable_collection
+                    .disjoint
+                    .is_sorted_by(|first, second| first.end.cmp(&second.start, &snapshot).is_le()),
+                "disjoint selections are not sorted: {:?}",
+                mutable_collection.disjoint
+            );
             if let Some(pending) = &mutable_collection.pending {
                 let selection = &pending.selection;
+                assert!(
+                    selection.start.cmp(&selection.end, &snapshot).is_le(),
+                    "pending selection has start > end: {:?}",
+                    selection
+                );
                 assert!(
                     snapshot.can_resolve(&selection.start),
                     "pending selection start is not resolvable for the given snapshot: {pending:?}, {excerpt:?}",
@@ -867,7 +946,6 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         for selection in disjoint
             .iter()
             .sorted_by(|first, second| Ord::cmp(&second.id, &first.id))
-            .collect::<Vec<&Selection<Anchor>>>()
         {
             new_selections.push(Selection {
                 id: self.new_selection_id(),
@@ -994,6 +1072,11 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             })
             .collect();
         self.select(new_selections);
+    }
+
+    pub fn pending_anchor_mut(&mut self) -> Option<&mut Selection<Anchor>> {
+        self.selections_changed = true;
+        self.pending.as_mut().map(|pending| &mut pending.selection)
     }
 
     /// Compute new ranges for any selections that were located in excerpts that have

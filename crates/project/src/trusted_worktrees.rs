@@ -11,7 +11,7 @@
 //! Unless `trust_all_worktrees` auto trust is enabled, does not trust anything that was not persisted before.
 //! When dealing with "restricted" and other related concepts in the API, it means all explicitly restricted, after any of the [`TrustedWorktreesStore::can_trust`] and [`TrustedWorktreesStore::can_trust_global`] calls.
 //!
-//!
+//! Zed does not consider invisible, `worktree.is_visible() == false` worktrees in Zed, as those are programmatically created inside Zed for internal needs, e.g. a tmp dir for `keymap_editor.rs` needs.
 //!
 //!
 //! Path rust hierarchy.
@@ -55,16 +55,9 @@ use util::debug_panic;
 
 use crate::{project_settings::ProjectSettings, worktree_store::WorktreeStore};
 
-pub fn init(
-    db_trusted_paths: DbTrustedPaths,
-    downstream_client: Option<(AnyProtoClient, ProjectId)>,
-    upstream_client: Option<(AnyProtoClient, ProjectId)>,
-    cx: &mut App,
-) {
+pub fn init(db_trusted_paths: DbTrustedPaths, cx: &mut App) {
     if TrustedWorktrees::try_get_global(cx).is_none() {
-        let trusted_worktrees = cx.new(|_| {
-            TrustedWorktreesStore::new(db_trusted_paths, downstream_client, upstream_client)
-        });
+        let trusted_worktrees = cx.new(|_| TrustedWorktreesStore::new(db_trusted_paths));
         cx.set_global(TrustedWorktrees(trusted_worktrees))
     }
 }
@@ -80,21 +73,21 @@ pub fn track_worktree_trust(
     match TrustedWorktrees::try_get_global(cx) {
         Some(trusted_worktrees) => {
             trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                if let Some(downstream_client) = downstream_client {
-                    trusted_worktrees.downstream_clients.push(downstream_client);
-                }
-                if let Some(upstream_client) = upstream_client.clone() {
-                    trusted_worktrees.upstream_clients.push(upstream_client);
-                }
-                trusted_worktrees.add_worktree_store(worktree_store, remote_host, cx);
+                trusted_worktrees.add_worktree_store(
+                    worktree_store.clone(),
+                    remote_host,
+                    downstream_client,
+                    upstream_client.clone(),
+                    cx,
+                );
 
                 if let Some((upstream_client, upstream_project_id)) = upstream_client {
                     let trusted_paths = trusted_worktrees
                         .trusted_paths
-                        .iter()
-                        .flat_map(|(_, paths)| {
-                            paths.iter().map(|trusted_path| trusted_path.to_proto())
-                        })
+                        .get(&worktree_store.downgrade())
+                        .into_iter()
+                        .flatten()
+                        .map(|trusted_path| trusted_path.to_proto())
                         .collect::<Vec<_>>();
                     if !trusted_paths.is_empty() {
                         upstream_client
@@ -129,13 +122,18 @@ impl TrustedWorktrees {
 /// or a certain worktree had been trusted.
 #[derive(Debug)]
 pub struct TrustedWorktreesStore {
-    downstream_clients: Vec<(AnyProtoClient, ProjectId)>,
-    upstream_clients: Vec<(AnyProtoClient, ProjectId)>,
-    worktree_stores: HashMap<WeakEntity<WorktreeStore>, Option<RemoteHostLocation>>,
+    worktree_stores: HashMap<WeakEntity<WorktreeStore>, StoreData>,
     db_trusted_paths: DbTrustedPaths,
     trusted_paths: TrustedPaths,
     restricted: HashMap<WeakEntity<WorktreeStore>, HashSet<WorktreeId>>,
     worktree_trust_serialization: Task<()>,
+}
+
+#[derive(Debug, Default)]
+struct StoreData {
+    upstream_client: Option<(AnyProtoClient, ProjectId)>,
+    downstream_client: Option<(AnyProtoClient, ProjectId)>,
+    host: Option<RemoteHostLocation>,
 }
 
 /// An identifier of a host to split the trust questions by.
@@ -226,36 +224,9 @@ type TrustedPaths = HashMap<WeakEntity<WorktreeStore>, HashSet<PathTrust>>;
 pub type DbTrustedPaths = HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>;
 
 impl TrustedWorktreesStore {
-    fn new(
-        db_trusted_paths: DbTrustedPaths,
-        downstream_client: Option<(AnyProtoClient, ProjectId)>,
-        upstream_client: Option<(AnyProtoClient, ProjectId)>,
-    ) -> Self {
-        if let Some((upstream_client, upstream_project_id)) = &upstream_client {
-            let trusted_paths = db_trusted_paths
-                .iter()
-                .flat_map(|(_, paths)| {
-                    paths
-                        .iter()
-                        .cloned()
-                        .map(PathTrust::AbsPath)
-                        .map(|trusted_path| trusted_path.to_proto())
-                })
-                .collect::<Vec<_>>();
-            if !trusted_paths.is_empty() {
-                upstream_client
-                    .send(proto::TrustWorktrees {
-                        project_id: upstream_project_id.0,
-                        trusted_paths,
-                    })
-                    .ok();
-            }
-        }
-
+    fn new(db_trusted_paths: DbTrustedPaths) -> Self {
         Self {
             db_trusted_paths,
-            downstream_clients: downstream_client.into_iter().collect(),
-            upstream_clients: upstream_client.into_iter().collect(),
             trusted_paths: HashMap::default(),
             worktree_stores: HashMap::default(),
             restricted: HashMap::default(),
@@ -306,6 +277,9 @@ impl TrustedWorktreesStore {
                         self.restricted.get_mut(&weak_worktree_store)
                     {
                         restricted_worktrees.remove(worktree_id);
+                        if restricted_worktrees.is_empty() {
+                            self.restricted.remove(&weak_worktree_store);
+                        }
                     };
 
                     if let Some(worktree) =
@@ -321,8 +295,12 @@ impl TrustedWorktreesStore {
                 }
                 PathTrust::AbsPath(abs_path) => {
                     debug_assert!(
-                        abs_path.is_absolute(),
-                        "Cannot trust non-absolute path {abs_path:?}"
+                        util::paths::is_absolute(
+                            &abs_path.to_string_lossy(),
+                            worktree_store.read(cx).path_style()
+                        ),
+                        "Cannot trust non-absolute path {abs_path:?} on path style {style:?}",
+                        style = worktree_store.read(cx).path_style()
                     );
                     if let Some((worktree_id, is_file)) =
                         find_worktree_in_store(worktree_store.read(cx), abs_path, cx)
@@ -399,25 +377,26 @@ impl TrustedWorktreesStore {
             );
         }
 
-        cx.emit(TrustedWorktreesEvent::Trusted(
-            weak_worktree_store,
-            trusted_paths.clone(),
-        ));
-
-        for (upstream_client, upstream_project_id) in &self.upstream_clients {
-            let trusted_paths = trusted_paths
-                .iter()
-                .map(|trusted_path| trusted_path.to_proto())
-                .collect::<Vec<_>>();
-            if !trusted_paths.is_empty() {
-                upstream_client
-                    .send(proto::TrustWorktrees {
-                        project_id: upstream_project_id.0,
-                        trusted_paths,
-                    })
-                    .ok();
+        if let Some(store_data) = self.worktree_stores.get(&weak_worktree_store) {
+            if let Some((upstream_client, upstream_project_id)) = &store_data.upstream_client {
+                let trusted_paths = trusted_paths
+                    .iter()
+                    .map(|trusted_path| trusted_path.to_proto())
+                    .collect::<Vec<_>>();
+                if !trusted_paths.is_empty() {
+                    upstream_client
+                        .send(proto::TrustWorktrees {
+                            project_id: upstream_project_id.0,
+                            trusted_paths,
+                        })
+                        .ok();
+                }
             }
         }
+        cx.emit(TrustedWorktreesEvent::Trusted(
+            weak_worktree_store,
+            trusted_paths,
+        ));
     }
 
     /// Restricts certain entities on this host.
@@ -474,6 +453,12 @@ impl TrustedWorktreesStore {
             return false;
         };
         let worktree_path = worktree.read(cx).abs_path();
+        // Zed opened an "internal" directory: e.g. a tmp dir for `keymap_editor.rs` needs.
+        if !worktree.read(cx).is_visible() {
+            log::debug!("Skipping worktree trust checks for not visible {worktree_path:?}");
+            return true;
+        }
+
         let is_file = worktree.read(cx).is_single_file();
         if self
             .restricted
@@ -491,50 +476,58 @@ impl TrustedWorktreesStore {
             return true;
         }
 
+        // * Single files are auto-approved when something else (not a single file) was approved on this host already.
+        // * If parent path is trusted already, this worktree is stusted also.
+        //
         // See module documentation for details on trust level.
-        if is_file && self.trusted_paths.contains_key(&weak_worktree_store) {
-            return true;
-        }
-
-        let parent_path_trusted =
-            self.trusted_paths
-                .get(&weak_worktree_store)
-                .is_some_and(|trusted_paths| {
-                    trusted_paths.iter().any(|trusted_path| {
-                        let PathTrust::AbsPath(trusted_path) = trusted_path else {
-                            return false;
-                        };
-                        worktree_path.starts_with(trusted_path)
-                    })
-                });
-        if parent_path_trusted {
-            return true;
+        if let Some(trusted_paths) = self.trusted_paths.get(&weak_worktree_store) {
+            let auto_trusted = worktree_store.read_with(cx, |worktree_store, cx| {
+                trusted_paths.iter().any(|trusted_path| match trusted_path {
+                    PathTrust::Worktree(worktree_id) => worktree_store
+                        .worktree_for_id(*worktree_id, cx)
+                        .is_some_and(|worktree| {
+                            let worktree = worktree.read(cx);
+                            worktree_path.starts_with(&worktree.abs_path())
+                                || (is_file && !worktree.is_single_file())
+                        }),
+                    PathTrust::AbsPath(trusted_path) => {
+                        is_file || worktree_path.starts_with(trusted_path)
+                    }
+                })
+            });
+            if auto_trusted {
+                return true;
+            }
         }
 
         self.restricted
             .entry(weak_worktree_store.clone())
             .or_default()
             .insert(worktree_id);
+        log::info!("Worktree {worktree_path:?} is not trusted");
+        if let Some(store_data) = self.worktree_stores.get(&weak_worktree_store) {
+            if let Some((downstream_client, downstream_project_id)) = &store_data.downstream_client
+            {
+                downstream_client
+                    .send(proto::RestrictWorktrees {
+                        project_id: downstream_project_id.0,
+                        worktree_ids: vec![worktree_id.to_proto()],
+                    })
+                    .ok();
+            }
+            if let Some((upstream_client, upstream_project_id)) = &store_data.upstream_client {
+                upstream_client
+                    .send(proto::RestrictWorktrees {
+                        project_id: upstream_project_id.0,
+                        worktree_ids: vec![worktree_id.to_proto()],
+                    })
+                    .ok();
+            }
+        }
         cx.emit(TrustedWorktreesEvent::Restricted(
             weak_worktree_store,
             HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
         ));
-        for (downstream_client, downstream_project_id) in &self.downstream_clients {
-            downstream_client
-                .send(proto::RestrictWorktrees {
-                    project_id: downstream_project_id.0,
-                    worktree_ids: vec![worktree_id.to_proto()],
-                })
-                .ok();
-        }
-        for (upstream_client, upstream_project_id) in &self.upstream_clients {
-            upstream_client
-                .send(proto::RestrictWorktrees {
-                    project_id: upstream_project_id.0,
-                    worktree_ids: vec![worktree_id.to_proto()],
-                })
-                .ok();
-        }
         false
     }
 
@@ -603,10 +596,11 @@ impl TrustedWorktreesStore {
         &mut self,
         cx: &mut Context<Self>,
     ) -> HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>> {
-        self.trusted_paths
+        let new_trusted_paths = self
+            .trusted_paths
             .iter()
             .filter_map(|(worktree_store, paths)| {
-                let host = self.worktree_stores.get(&worktree_store)?.clone();
+                let host = self.worktree_stores.get(&worktree_store)?.host.clone();
                 let abs_paths = paths
                     .iter()
                     .flat_map(|path| match path {
@@ -621,24 +615,37 @@ impl TrustedWorktreesStore {
                     .collect::<HashSet<_>>();
                 Some((host, abs_paths))
             })
-            .chain(self.db_trusted_paths.clone())
+            .chain(self.db_trusted_paths.drain())
             .fold(HashMap::default(), |mut acc, (host, paths)| {
                 acc.entry(host)
                     .or_insert_with(HashSet::default)
                     .extend(paths);
                 acc
-            })
+            });
+
+        self.db_trusted_paths = new_trusted_paths.clone();
+        new_trusted_paths
     }
 
     fn add_worktree_store(
         &mut self,
         worktree_store: Entity<WorktreeStore>,
         remote_host: Option<RemoteHostLocation>,
+        downstream_client: Option<(AnyProtoClient, ProjectId)>,
+        upstream_client: Option<(AnyProtoClient, ProjectId)>,
         cx: &mut Context<Self>,
     ) {
-        let weak_worktree_store = worktree_store.downgrade();
         self.worktree_stores
-            .insert(weak_worktree_store.clone(), remote_host.clone());
+            .retain(|worktree_store, _| worktree_store.is_upgradable());
+        let weak_worktree_store = worktree_store.downgrade();
+        self.worktree_stores.insert(
+            weak_worktree_store.clone(),
+            StoreData {
+                host: remote_host.clone(),
+                downstream_client,
+                upstream_client,
+            },
+        );
 
         let mut new_trusted_paths = HashSet::default();
         if let Some(db_trusted_paths) = self.db_trusted_paths.get(&remote_host) {
@@ -710,7 +717,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> Entity<TrustedWorktreesStore> {
         cx.update(|cx| {
-            init(HashMap::default(), None, None, cx);
+            init(HashMap::default(), cx);
             track_worktree_trust(worktree_store, None, None, None, cx);
             TrustedWorktrees::try_get_global(cx).expect("global should be set")
         })
@@ -1543,6 +1550,108 @@ mod tests {
         assert!(
             can_trust_local_after,
             "local worktree should be trusted on local host"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_invisible_worktree_stores_do_not_affect_trust(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/"),
+            json!({
+                "visible": { "main.rs": "fn main() {}" },
+                "other": { "a.rs": "fn other() {}" },
+                "invisible": { "b.rs": "fn invisible() {}" }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/visible").as_ref()], cx).await;
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let visible_worktree_id = worktree_store.read_with(cx, |store, cx| {
+            store
+                .worktrees()
+                .find(|worktree| worktree.read(cx).root_dir().unwrap().ends_with("visible"))
+                .expect("visible worktree")
+                .read(cx)
+                .id()
+        });
+        let trusted_worktrees = init_trust_global(worktree_store.clone(), cx);
+
+        let events: Rc<RefCell<Vec<TrustedWorktreesEvent>>> = Rc::default();
+        cx.update({
+            let events = events.clone();
+            |cx| {
+                cx.subscribe(&trusted_worktrees, move |_, event, _| {
+                    events.borrow_mut().push(match event {
+                        TrustedWorktreesEvent::Trusted(host, paths) => {
+                            TrustedWorktreesEvent::Trusted(host.clone(), paths.clone())
+                        }
+                        TrustedWorktreesEvent::Restricted(host, paths) => {
+                            TrustedWorktreesEvent::Restricted(host.clone(), paths.clone())
+                        }
+                    });
+                })
+            }
+        })
+        .detach();
+
+        assert!(
+            !trusted_worktrees.update(cx, |store, cx| {
+                store.can_trust(&worktree_store, visible_worktree_id, cx)
+            }),
+            "visible worktree should be restricted initially"
+        );
+        assert_eq!(
+            HashSet::from_iter([(visible_worktree_id)]),
+            trusted_worktrees.read_with(cx, |store, _| {
+                store
+                    .restricted
+                    .get(&worktree_store.downgrade())
+                    .unwrap()
+                    .clone()
+            }),
+            "only visible worktree should be restricted",
+        );
+
+        let (new_visible_worktree, new_invisible_worktree) =
+            worktree_store.update(cx, |worktree_store, cx| {
+                let new_visible_worktree = worktree_store.create_worktree("/other", true, cx);
+                let new_invisible_worktree =
+                    worktree_store.create_worktree("/invisible", false, cx);
+                (new_visible_worktree, new_invisible_worktree)
+            });
+        let (new_visible_worktree, new_invisible_worktree) = (
+            new_visible_worktree.await.unwrap(),
+            new_invisible_worktree.await.unwrap(),
+        );
+
+        let new_visible_worktree_id =
+            new_visible_worktree.read_with(cx, |new_visible_worktree, _| new_visible_worktree.id());
+        assert!(
+            !trusted_worktrees.update(cx, |store, cx| {
+                store.can_trust(&worktree_store, new_visible_worktree_id, cx)
+            }),
+            "new visible worktree should be restricted initially",
+        );
+        assert!(
+            trusted_worktrees.update(cx, |store, cx| {
+                store.can_trust(&worktree_store, new_invisible_worktree.read(cx).id(), cx)
+            }),
+            "invisible worktree should be skipped",
+        );
+        assert_eq!(
+            HashSet::from_iter([visible_worktree_id, new_visible_worktree_id]),
+            trusted_worktrees.read_with(cx, |store, _| {
+                store
+                    .restricted
+                    .get(&worktree_store.downgrade())
+                    .unwrap()
+                    .clone()
+            }),
+            "only visible worktrees should be restricted"
         );
     }
 }
