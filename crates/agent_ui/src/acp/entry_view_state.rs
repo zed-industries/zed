@@ -174,8 +174,7 @@ impl EntryViewState {
                                         view.set_cursor_hidden(true, cx);
                                     });
                                 }
-                            }
-                            if is_tool_call_completed && !terminal_completed {
+                            } else if is_tool_call_completed {
                                 cx.emit(EntryViewEvent {
                                     entry_index: index,
                                     view_event: ViewEvent::TerminalMovedToBackground(id.clone()),
