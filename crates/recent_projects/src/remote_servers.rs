@@ -5,7 +5,9 @@ use crate::{
     },
     ssh_config::parse_ssh_config_hosts,
 };
-use dev_container::start_dev_container;
+use dev_container::{
+    DevContainerConfig, find_devcontainer_configs, start_dev_container_with_config,
+};
 use editor::Editor;
 
 use futures::{FutureExt, channel::oneshot, future::Shared};
@@ -90,33 +92,58 @@ impl CreateRemoteServer {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum DevContainerCreationProgress {
     Initial,
+    SelectingConfig,
     Creating,
     Error(String),
 }
 
 #[derive(Clone)]
 struct CreateRemoteDevContainer {
-    // 3 Navigable Options
-    // - Create from devcontainer.json
-    // - Edit devcontainer.json
-    // - Go back
-    entries: [NavigableEntry; 3],
+    // Dynamic number of navigable entries based on available configs
+    // When selecting: N configs + Go back
+    // When not selecting: Create + Edit + Go back
+    entries: Vec<NavigableEntry>,
     progress: DevContainerCreationProgress,
+    available_configs: Vec<DevContainerConfig>,
+    selected_config: Option<DevContainerConfig>,
 }
 
 impl CreateRemoteDevContainer {
     fn new(window: &mut Window, cx: &mut Context<RemoteServerProjects>) -> Self {
-        let entries = std::array::from_fn(|_| NavigableEntry::focusable(cx));
+        let entries: Vec<NavigableEntry> = (0..3).map(|_| NavigableEntry::focusable(cx)).collect();
         entries[0].focus_handle.focus(window, cx);
         Self {
             entries,
             progress: DevContainerCreationProgress::Initial,
+            available_configs: Vec::new(),
+            selected_config: None,
         }
     }
 
-    fn progress(&mut self, progress: DevContainerCreationProgress) -> Self {
+    fn with_configs(
+        mut self,
+        configs: Vec<DevContainerConfig>,
+        window: &mut Window,
+        cx: &mut Context<RemoteServerProjects>,
+    ) -> Self {
+        self.available_configs = configs.clone();
+        if configs.len() > 1 {
+            self.progress = DevContainerCreationProgress::SelectingConfig;
+            self.entries = configs
+                .iter()
+                .map(|_| NavigableEntry::focusable(cx))
+                .chain(std::iter::once(NavigableEntry::focusable(cx)))
+                .collect();
+            self.entries[0].focus_handle.focus(window, cx);
+        } else if configs.len() == 1 {
+            self.selected_config = Some(configs.into_iter().next().unwrap());
+        }
+        self
+    }
+
+    fn progress(mut self, progress: DevContainerCreationProgress) -> Self {
         self.progress = progress;
-        self.clone()
+        self
     }
 }
 
@@ -654,17 +681,39 @@ impl RemoteServerProjects {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new_inner(
-            Mode::CreateRemoteDevContainer(
-                CreateRemoteDevContainer::new(window, cx)
-                    .progress(DevContainerCreationProgress::Creating),
-            ),
+        let this = Self::new_inner(
+            Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(window, cx)),
             false,
             fs,
             window,
             workspace,
             cx,
-        )
+        );
+
+        // Spawn a task to scan for configs and then start the container
+        cx.spawn_in(window, async move |entity, cx| {
+            let configs = find_devcontainer_configs(cx);
+
+            entity
+                .update_in(cx, |this, window, cx| {
+                    if configs.len() > 1 {
+                        // Multiple configs found - show selection UI
+                        let state = CreateRemoteDevContainer::new(window, cx)
+                            .with_configs(configs, window, cx);
+                        this.mode = Mode::CreateRemoteDevContainer(state);
+                        cx.notify();
+                    } else {
+                        // Single or no config - proceed with opening
+                        let config = configs.into_iter().next();
+                        this.open_dev_container(config, window, cx);
+                        this.view_in_progress_dev_container(window, cx);
+                    }
+                })
+                .log_err();
+        })
+        .detach();
+
+        this
     }
 
     pub fn popover(
@@ -1589,7 +1638,28 @@ impl RemoteServerProjects {
         cx.notify();
     }
 
-    fn open_dev_container(&self, window: &mut Window, cx: &mut Context<Self>) {
+    fn init_dev_container_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |entity, cx| {
+            let configs = find_devcontainer_configs(cx);
+
+            entity
+                .update_in(cx, |this, window, cx| {
+                    let state =
+                        CreateRemoteDevContainer::new(window, cx).with_configs(configs, window, cx);
+                    this.mode = Mode::CreateRemoteDevContainer(state);
+                    cx.notify();
+                })
+                .log_err();
+        })
+        .detach();
+    }
+
+    fn open_dev_container(
+        &self,
+        config: Option<DevContainerConfig>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(app_state) = self
             .workspace
             .read_with(cx, |workspace, _| workspace.app_state().clone())
@@ -1602,7 +1672,9 @@ impl RemoteServerProjects {
 
         cx.spawn_in(window, async move |entity, cx| {
             let (connection, starting_dir) =
-                match start_dev_container(cx, app_state.node_runtime.clone()).await {
+                match start_dev_container_with_config(cx, app_state.node_runtime.clone(), config)
+                    .await
+                {
                     Ok((c, s)) => (Connection::DevContainer(c), s),
                     Err(e) => {
                         log::error!("Failed to start dev container: {:?}", e);
@@ -1615,6 +1687,14 @@ impl RemoteServerProjects {
                                 );
                             })
                             .log_err();
+                        cx.prompt(
+                            gpui::PromptLevel::Critical,
+                            "Failed to start Dev Container",
+                            Some(&format!("{:?}", e)),
+                            &["Ok"],
+                        )
+                        .await
+                        .ok();
                         return;
                     }
                 };
@@ -1720,8 +1800,20 @@ impl RemoteServerProjects {
                     )
                     .into_any_element();
             }
+            DevContainerCreationProgress::SelectingConfig => {
+                return self
+                    .render_config_selection(state, window, cx)
+                    .into_any_element();
+            }
             _ => {}
         };
+
+        let selected_config = state.selected_config.clone();
+
+        let config_label = selected_config
+            .as_ref()
+            .map(|c| c.config_path.display().to_string())
+            .unwrap_or_else(|| "devcontainer.json".to_string());
 
         let mut view = Navigable::new(
             div()
@@ -1740,8 +1832,9 @@ impl RemoteServerProjects {
                                 .id("confirm-create-from-devcontainer-json")
                                 .track_focus(&state.entries[0].focus_handle)
                                 .on_action(cx.listener({
+                                    let config = selected_config.clone();
                                     move |this, _: &menu::Confirm, window, cx| {
-                                        this.open_dev_container(window, cx);
+                                        this.open_dev_container(config.clone(), window, cx);
                                         this.view_in_progress_dev_container(window, cx);
                                     }
                                 }))
@@ -1763,7 +1856,7 @@ impl RemoteServerProjects {
                                                         .gap_1()
                                                         .child(Label::new("Creating From"))
                                                         .child(
-                                                            Label::new("devcontainer.json")
+                                                            Label::new(config_label.clone())
                                                                 .buffer_font(cx),
                                                         )
                                                         .child(LoadingLabel::new("")),
@@ -1789,14 +1882,19 @@ impl RemoteServerProjects {
                                                     .gap_1()
                                                     .child(Label::new("Open or Create New From"))
                                                     .child(
-                                                        Label::new("devcontainer.json")
+                                                        Label::new(config_label.clone())
                                                             .buffer_font(cx),
                                                     ),
                                             )
                                             .on_click(
                                                 cx.listener({
+                                                    let config = selected_config.clone();
                                                     move |this, _, window, cx| {
-                                                        this.open_dev_container(window, cx);
+                                                        this.open_dev_container(
+                                                            config.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
                                                         this.view_in_progress_dev_container(
                                                             window, cx,
                                                         );
@@ -1878,11 +1976,118 @@ impl RemoteServerProjects {
                 .into_any_element(),
         );
 
-        view = view.entry(state.entries[0].clone());
-        view = view.entry(state.entries[1].clone());
-        view = view.entry(state.entries[2].clone());
+        for entry in &state.entries {
+            view = view.entry(entry.clone());
+        }
 
         view.render(window, cx).into_any_element()
+    }
+
+    fn render_config_selection(
+        &self,
+        state: &CreateRemoteDevContainer,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let configs = state.available_configs.clone();
+        let go_back_index = configs.len();
+
+        let mut content = v_flex()
+            .pb_1()
+            .child(ModalHeader::new().child(
+                Headline::new("Select Dev Container Configuration").size(HeadlineSize::XSmall),
+            ))
+            .child(ListSeparator);
+
+        for (index, config) in configs.iter().enumerate() {
+            let config_clone = config.clone();
+            let config_name = config.name.clone();
+            let config_path = config.config_path.display().to_string();
+
+            content = content.child(
+                div()
+                    .id(format!("devcontainer-config-{}", index))
+                    .track_focus(&state.entries[index].focus_handle)
+                    .on_action(cx.listener({
+                        let config = config_clone.clone();
+                        move |this, _: &menu::Confirm, window, cx| {
+                            this.open_dev_container(Some(config.clone()), window, cx);
+                            this.view_in_progress_dev_container(window, cx);
+                        }
+                    }))
+                    .child(
+                        ListItem::new(format!("li-devcontainer-config-{}", index))
+                            .toggle_state(
+                                state.entries[index]
+                                    .focus_handle
+                                    .contains_focused(window, cx),
+                            )
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::FileToml).color(Color::Muted))
+                            .child(
+                                v_flex().child(Label::new(config_name)).child(
+                                    Label::new(config_path)
+                                        .size(ui::LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                            )
+                            .on_click(cx.listener({
+                                let config = config_clone.clone();
+                                move |this, _, window, cx| {
+                                    this.open_dev_container(Some(config.clone()), window, cx);
+                                    this.view_in_progress_dev_container(window, cx);
+                                }
+                            })),
+                    ),
+            );
+        }
+
+        content = content.child(ListSeparator).child(
+            div()
+                .id("devcontainer-config-go-back")
+                .track_focus(&state.entries[go_back_index].focus_handle)
+                .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                    this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                    cx.focus_self(window);
+                    cx.notify();
+                }))
+                .child(
+                    ListItem::new("li-devcontainer-config-go-back")
+                        .toggle_state(
+                            state.entries[go_back_index]
+                                .focus_handle
+                                .contains_focused(window, cx),
+                        )
+                        .inset(true)
+                        .spacing(ui::ListItemSpacing::Sparse)
+                        .start_slot(Icon::new(IconName::ArrowLeft).color(Color::Muted))
+                        .child(Label::new("Go Back"))
+                        .end_slot(
+                            KeyBinding::for_action_in(&menu::Cancel, &self.focus_handle, cx)
+                                .size(rems_from_px(12.)),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                            cx.focus_self(window);
+                            cx.notify()
+                        })),
+                ),
+        );
+
+        let mut view = Navigable::new(
+            div()
+                .track_focus(&self.focus_handle(cx))
+                .size_full()
+                .child(content)
+                .into_any_element(),
+        );
+
+        for entry in &state.entries {
+            view = view.entry(entry.clone());
+        }
+
+        view.render(window, cx)
     }
 
     fn render_create_remote_server(
@@ -2469,17 +2674,11 @@ impl RemoteServerProjects {
                     .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
                     .child(Label::new("Connect Dev Container"))
                     .on_click(cx.listener(|this, _, window, cx| {
-                        let state = CreateRemoteDevContainer::new(window, cx);
-                        this.mode = Mode::CreateRemoteDevContainer(state);
-
-                        cx.notify();
+                        this.init_dev_container_mode(window, cx);
                     })),
             )
             .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                let state = CreateRemoteDevContainer::new(window, cx);
-                this.mode = Mode::CreateRemoteDevContainer(state);
-
-                cx.notify();
+                this.init_dev_container_mode(window, cx);
             }));
 
         #[cfg(target_os = "windows")]
