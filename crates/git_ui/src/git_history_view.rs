@@ -36,7 +36,7 @@ pub fn init(cx: &mut App) {
 
 const PAGE_SIZE: usize = 50;
 
-pub struct FileHistoryView {
+pub struct GitHistoryView {
     history: FileHistory,
     repository: WeakEntity<Repository>,
     git_store: WeakEntity<GitStore>,
@@ -49,7 +49,7 @@ pub struct FileHistoryView {
     has_more: bool,
 }
 
-impl FileHistoryView {
+impl GitHistoryView {
     pub fn open(
         path: RepoPath,
         git_store: WeakEntity<GitStore>,
@@ -76,7 +76,7 @@ impl FileHistoryView {
                     .update_in(cx, |workspace, window, cx| {
                         let project = workspace.project();
                         let view = cx.new(|cx| {
-                            FileHistoryView::new(
+                            GitHistoryView::new(
                                 file_history,
                                 git_store.clone(),
                                 repo.clone(),
@@ -90,7 +90,7 @@ impl FileHistoryView {
                         let pane = workspace.active_pane();
                         pane.update(cx, |pane, cx| {
                             let ix = pane.items().position(|item| {
-                                let view = item.downcast::<FileHistoryView>();
+                                let view = item.downcast::<GitHistoryView>();
                                 view.is_some_and(|v| v.read(cx).history.path == path)
                             });
                             if let Some(ix) = ix {
@@ -446,22 +446,22 @@ impl Asset for CommitAvatarAsset {
     }
 }
 
-impl EventEmitter<ItemEvent> for FileHistoryView {}
+impl EventEmitter<ItemEvent> for GitHistoryView {}
 
-impl Focusable for FileHistoryView {
+impl Focusable for GitHistoryView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Render for FileHistoryView {
+impl Render for GitHistoryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _file_name = self.history.path.file_name().unwrap_or("File");
         let entry_count = self.history.entries.len();
 
         v_flex()
-            .id("file_history_view")
-            .key_context("FileHistoryView")
+            .id("git_history_view")
+            .key_context("GitHistoryView")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
@@ -543,7 +543,7 @@ impl Render for FileHistoryView {
     }
 }
 
-impl Item for FileHistoryView {
+impl Item for GitHistoryView {
     type Event = ItemEvent;
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {

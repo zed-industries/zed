@@ -487,7 +487,7 @@ pub fn init(cx: &mut App) {
                         .read(cx)
                         .repository_and_path_for_project_path(&project_path, cx)
                     {
-                        git_ui::file_history_view::FileHistoryView::open(
+                        git_ui::git_history_view::GitHistoryView::open(
                             repo_path,
                             git_store.downgrade(),
                             repo.downgrade(),
@@ -517,7 +517,7 @@ pub fn init(cx: &mut App) {
                     .read(cx)
                     .repository_and_path_for_project_path(&project_path, cx)
                 {
-                    git_ui::file_history_view::FileHistoryView::open(
+                    git_ui::git_history_view::GitHistoryView::open(
                         repo_path,
                         git_store.downgrade(),
                         repo.downgrade(),

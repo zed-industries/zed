@@ -6,7 +6,7 @@ use crate::project_diff::{self, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
-    file_history_view::FileHistoryView, git_panel_settings::GitPanelSettings, git_status_icon,
+    git_history_view::GitHistoryView, git_panel_settings::GitPanelSettings, git_status_icon,
     repository_selector::RepositorySelector,
 };
 use agent_settings::AgentSettings;
@@ -1233,7 +1233,7 @@ impl GitPanel {
             let repo_path = entry.repo_path.clone();
             let git_store = self.project.read(cx).git_store();
 
-            FileHistoryView::open(
+            GitHistoryView::open(
                 repo_path,
                 git_store.downgrade(),
                 active_repo.downgrade(),
@@ -4489,7 +4489,7 @@ impl GitPanel {
                                         Tooltip::text("Recent Commits")(window, cx)
                                     })
                                     .on_click(move |_, window, cx| {
-                                        FileHistoryView::open(
+                                        GitHistoryView::open(
                                             RepoPath::from_rel_path(RelPath::empty()),
                                             git_store.clone(),
                                             repo.clone(),
