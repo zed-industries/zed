@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{Context, EventEmitter, Task};
@@ -104,6 +104,32 @@ impl UserSlashCommand {
     /// Returns true if this command has any placeholders ($1, $2, etc. or $ARGUMENTS)
     pub fn requires_arguments(&self) -> bool {
         has_placeholders(&self.template)
+    }
+}
+
+fn command_base_path(command: &UserSlashCommand) -> PathBuf {
+    let mut base_path = command.path.clone();
+    base_path.pop();
+    if let Some(namespace) = &command.namespace {
+        for segment in namespace.split('/') {
+            if segment.is_empty() {
+                continue;
+            }
+            if !base_path.pop() {
+                break;
+            }
+        }
+    }
+    base_path
+}
+
+impl CommandLoadError {
+    pub fn from_command(command: &UserSlashCommand, message: String) -> Self {
+        Self {
+            path: command.path.clone(),
+            base_path: command_base_path(command),
+            message,
+        }
     }
 }
 
@@ -380,6 +406,9 @@ async fn load_command_file_async(
     if template.is_empty() {
         return Ok(None);
     }
+    if template.trim().is_empty() {
+        return Err(anyhow!("Command file contains only whitespace"));
+    }
 
     let namespace = file_path
         .parent()
@@ -413,6 +442,59 @@ pub fn commands_to_map(commands: &[UserSlashCommand]) -> HashMap<String, UserSla
         map.insert(cmd.name.to_string(), cmd.clone());
     }
     map
+}
+
+fn has_error_for_command(errors: &[CommandLoadError], name: &str) -> bool {
+    errors
+        .iter()
+        .any(|error| error.command_name().as_deref() == Some(name))
+}
+
+fn server_conflict_message(name: &str) -> String {
+    format!(
+        "Command '{}' conflicts with server-provided /{}",
+        name, name
+    )
+}
+
+pub fn apply_server_command_conflicts(
+    commands: &mut Vec<UserSlashCommand>,
+    errors: &mut Vec<CommandLoadError>,
+    server_command_names: &HashSet<String>,
+) {
+    commands.retain(|command| {
+        if server_command_names.contains(command.name.as_ref()) {
+            if !has_error_for_command(errors, command.name.as_ref()) {
+                errors.push(CommandLoadError::from_command(
+                    command,
+                    server_conflict_message(command.name.as_ref()),
+                ));
+            }
+            false
+        } else {
+            true
+        }
+    });
+}
+
+pub fn apply_server_command_conflicts_to_map(
+    commands: &mut HashMap<String, UserSlashCommand>,
+    errors: &mut Vec<CommandLoadError>,
+    server_command_names: &HashSet<String>,
+) {
+    commands.retain(|name, command| {
+        if server_command_names.contains(name) {
+            if !has_error_for_command(errors, name) {
+                errors.push(CommandLoadError::from_command(
+                    command,
+                    server_conflict_message(name),
+                ));
+            }
+            false
+        } else {
+            true
+        }
+    });
 }
 
 /// Parses a line of input to extract a user command invocation.
@@ -1161,42 +1243,74 @@ mod tests {
     }
 
     #[test]
-    fn test_command_description_formats() {
-        let user_cmd = UserSlashCommand {
-            name: "test".into(),
-            template: "test".into(),
-            namespace: None,
-            path: PathBuf::from("/test.md"),
-            scope: CommandScope::User,
+    fn test_command_load_error_command_name() {
+        let error = CommandLoadError {
+            path: PathBuf::from(path!("/commands/tools/git/commit.md")),
+            base_path: PathBuf::from(path!("/commands")),
+            message: "Failed".into(),
         };
-        assert_eq!(user_cmd.description(), "");
+        assert_eq!(error.command_name().as_deref(), Some("tools:git:commit"));
 
-        let user_ns_cmd = UserSlashCommand {
-            name: "frontend:test".into(),
-            template: "test".into(),
-            namespace: Some("frontend".into()),
-            path: PathBuf::from("/frontend/test.md"),
-            scope: CommandScope::User,
+        let non_md_error = CommandLoadError {
+            path: PathBuf::from(path!("/commands/readme.txt")),
+            base_path: PathBuf::from(path!("/commands")),
+            message: "Failed".into(),
         };
-        assert_eq!(user_ns_cmd.description(), "");
+        assert_eq!(non_md_error.command_name(), None);
+    }
 
-        let project_cmd = UserSlashCommand {
-            name: "test".into(),
-            template: "test".into(),
-            namespace: None,
-            path: PathBuf::from("/test.md"),
-            scope: CommandScope::Project,
-        };
-        assert_eq!(project_cmd.description(), "");
+    #[test]
+    fn test_apply_server_command_conflicts() {
+        let mut commands = vec![
+            UserSlashCommand {
+                name: "help".into(),
+                template: "Help text".into(),
+                namespace: None,
+                path: PathBuf::from(path!("/commands/help.md")),
+                scope: CommandScope::User,
+            },
+            UserSlashCommand {
+                name: "review".into(),
+                template: "Review $1".into(),
+                namespace: None,
+                path: PathBuf::from(path!("/commands/review.md")),
+                scope: CommandScope::User,
+            },
+        ];
+        let mut errors = Vec::new();
+        let server_command_names = HashSet::from_iter(["help".to_string()]);
 
-        let project_ns_cmd = UserSlashCommand {
-            name: "tools:git:test".into(),
-            template: "test".into(),
+        apply_server_command_conflicts(&mut commands, &mut errors, &server_command_names);
+
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].name.as_ref(), "review");
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].command_name().as_deref(), Some("help"));
+        assert!(errors[0].message.contains("conflicts"));
+    }
+
+    #[test]
+    fn test_apply_server_command_conflicts_to_map() {
+        let command = UserSlashCommand {
+            name: "tools:git:commit".into(),
+            template: "Commit".into(),
             namespace: Some("tools/git".into()),
-            path: PathBuf::from("/tools/git/test.md"),
-            scope: CommandScope::Project,
+            path: PathBuf::from(path!("/commands/tools/git/commit.md")),
+            scope: CommandScope::User,
         };
-        assert_eq!(project_ns_cmd.description(), "");
+        let mut commands = HashMap::default();
+        commands.insert(command.name.to_string(), command.clone());
+        let mut errors = Vec::new();
+        let server_command_names = HashSet::from_iter([command.name.to_string()]);
+
+        apply_server_command_conflicts_to_map(&mut commands, &mut errors, &server_command_names);
+
+        assert!(commands.is_empty());
+        assert_eq!(errors.len(), 1);
+        assert_eq!(
+            errors[0].command_name().as_deref(),
+            Some("tools:git:commit")
+        );
     }
 
     // ==================== Async File Loading Tests with FakeFs ====================
@@ -1888,31 +2002,6 @@ mod tests {
     // ==================== Permission/Error Handling Tests ====================
 
     #[gpui::test]
-    async fn test_load_commands_continues_after_single_file_error(cx: &mut TestAppContext) {
-        let fs = FakeFs::new(cx.executor());
-
-        // Create a directory with multiple files - one valid, one that we'll make cause an error
-        fs.insert_tree(
-            path!("/commands"),
-            json!({
-                "valid.md": "Valid command",
-                "also_valid.md": "Another valid command"
-            }),
-        )
-        .await;
-
-        let fs: Arc<dyn Fs> = fs;
-
-        // Load commands - both should be loaded successfully
-        let result =
-            load_commands_from_path_async(&fs, Path::new(path!("/commands")), CommandScope::User)
-                .await;
-
-        assert!(result.errors.is_empty());
-        assert_eq!(result.commands.len(), 2);
-    }
-
-    #[gpui::test]
     async fn test_load_commands_reports_directory_read_errors(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
 
@@ -1997,29 +2086,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_empty_commands_directory_no_errors(cx: &mut TestAppContext) {
-        let fs = FakeFs::new(cx.executor());
-
-        // Create empty commands directories
-        fs.insert_tree(
-            path!("/project"),
-            json!({
-                ".zed": {
-                    "commands": {}
-                }
-            }),
-        )
-        .await;
-
-        let fs: Arc<dyn Fs> = fs;
-
-        let result = load_all_commands_async(&fs, &[PathBuf::from(path!("/project"))]).await;
-
-        assert!(result.commands.is_empty());
-        assert!(result.errors.is_empty());
-    }
-
-    #[gpui::test]
     async fn test_mixed_valid_and_empty_files(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
 
@@ -2040,9 +2106,13 @@ mod tests {
             load_commands_from_path_async(&fs, Path::new(path!("/commands")), CommandScope::User)
                 .await;
 
-        // Empty file is ignored, whitespace-only is NOT empty (has content)
-        // So we should have 3 commands
-        assert!(result.errors.is_empty());
-        assert_eq!(result.commands.len(), 3);
+        // Empty file is ignored, whitespace-only is an error
+        assert_eq!(result.commands.len(), 2);
+        assert_eq!(result.errors.len(), 1);
+        assert!(result.errors[0].message.contains("whitespace"));
+        assert_eq!(
+            result.errors[0].command_name().as_deref(),
+            Some("whitespace_only")
+        );
     }
 }

@@ -466,7 +466,7 @@ impl MessageEditor {
         let supports_embedded_context = self.prompt_capabilities.borrow().embedded_context;
 
         cx.spawn(async move |_, cx| {
-            let (user_commands, user_command_errors) = match user_slash_commands {
+            let (mut user_commands, mut user_command_errors) = match user_slash_commands {
                 UserSlashCommands::Cached { commands, errors } => (commands, errors),
                 UserSlashCommands::FromFs { fs, worktree_roots } => {
                     let load_result =
@@ -478,6 +478,16 @@ impl MessageEditor {
                     )
                 }
             };
+
+            let server_command_names = available_commands
+                .iter()
+                .map(|command| command.name.clone())
+                .collect::<HashSet<_>>();
+            user_slash_command::apply_server_command_conflicts_to_map(
+                &mut user_commands,
+                &mut user_command_errors,
+                &server_command_names,
+            );
 
             // Check if the user is trying to use an errored slash command.
             // If so, report the error to the user.

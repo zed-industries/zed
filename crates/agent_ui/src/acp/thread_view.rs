@@ -74,7 +74,7 @@ use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::user_slash_command::{
-    CommandLoadError, SlashCommandRegistry, SlashCommandRegistryEvent,
+    self, CommandLoadError, SlashCommandRegistry, SlashCommandRegistryEvent, UserSlashCommand,
 };
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
@@ -359,6 +359,8 @@ pub struct AcpThreadView {
     discarded_partial_edits: HashSet<acp::ToolCallId>,
     prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+    cached_user_commands: Rc<RefCell<HashMap<String, UserSlashCommand>>>,
+    cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
     is_loading_contents: bool,
     new_server_version_available: Option<SharedString>,
     resume_thread_metadata: Option<AgentSessionInfo>,
@@ -425,6 +427,7 @@ impl AcpThreadView {
         let available_commands = Rc::new(RefCell::new(vec![]));
         let cached_user_commands = Rc::new(RefCell::new(collections::HashMap::default()));
         let cached_user_command_errors = Rc::new(RefCell::new(Vec::new()));
+        let mut command_load_errors = Vec::new();
 
         let agent_server_store = project.read(cx).agent_server_store().clone();
         let agent_display_name = agent_server_store
@@ -515,25 +518,29 @@ impl AcpThreadView {
             let registry = cx.new(|cx| SlashCommandRegistry::new(fs, worktree_roots, cx));
 
             // Subscribe to registry changes to update error display and cached commands
-            let cached_user_commands_for_subscription = cached_user_commands.clone();
-            let cached_user_command_errors_for_subscription = cached_user_command_errors.clone();
             cx.subscribe(&registry, move |this, registry, event, cx| match event {
                 SlashCommandRegistryEvent::CommandsChanged => {
-                    let errors = registry.read(cx).errors().to_vec();
-                    this.command_load_errors = errors.clone();
-                    // Reset dismissed state when errors change so new errors are shown
-                    this.command_load_errors_dismissed = false;
-                    *cached_user_commands_for_subscription.borrow_mut() =
-                        registry.read(cx).commands().clone();
-                    *cached_user_command_errors_for_subscription.borrow_mut() = errors;
-                    cx.notify();
+                    this.refresh_cached_user_commands_from_registry(&registry, cx);
                 }
             })
             .detach();
 
             // Initialize cached commands and errors from registry
-            *cached_user_commands.borrow_mut() = registry.read(cx).commands().clone();
-            *cached_user_command_errors.borrow_mut() = registry.read(cx).errors().to_vec();
+            let mut commands = registry.read(cx).commands().clone();
+            let mut errors = registry.read(cx).errors().to_vec();
+            let server_command_names = available_commands
+                .borrow()
+                .iter()
+                .map(|command| command.name.clone())
+                .collect::<HashSet<_>>();
+            user_slash_command::apply_server_command_conflicts_to_map(
+                &mut commands,
+                &mut errors,
+                &server_command_names,
+            );
+            command_load_errors = errors.clone();
+            *cached_user_commands.borrow_mut() = commands;
+            *cached_user_command_errors.borrow_mut() = errors;
 
             Some(registry)
         } else {
@@ -573,7 +580,7 @@ impl AcpThreadView {
             thread_retry_status: None,
             thread_error: None,
             thread_error_markdown: None,
-            command_load_errors: Vec::new(),
+            command_load_errors,
             command_load_errors_dismissed: false,
             slash_command_registry,
             token_limit_callout_dismissed: false,
@@ -592,6 +599,8 @@ impl AcpThreadView {
             discarded_partial_edits: HashSet::default(),
             prompt_capabilities,
             available_commands,
+            cached_user_commands,
+            cached_user_command_errors,
             editor_expanded: false,
             should_be_following: false,
             recent_history_entries,
@@ -630,6 +639,7 @@ impl AcpThreadView {
             cx,
         );
         self.available_commands.replace(vec![]);
+        self.refresh_cached_user_commands(cx);
         self.new_server_version_available.take();
         self.message_queue.clear();
         self.recent_history_entries.clear();
@@ -2023,6 +2033,7 @@ impl AcpThreadView {
 
                 let has_commands = !available_commands.is_empty();
                 self.available_commands.replace(available_commands);
+                self.refresh_cached_user_commands(cx);
 
                 let agent_display_name = self
                     .agent_server_store
@@ -7596,26 +7607,51 @@ impl AcpThreadView {
         cx.notify();
     }
 
-    /// Returns the cached slash commands from the registry, if available.
-    pub fn cached_slash_commands(
-        &self,
-        cx: &App,
-    ) -> collections::HashMap<String, crate::user_slash_command::UserSlashCommand> {
-        self.slash_command_registry
-            .as_ref()
-            .map(|registry| registry.read(cx).commands().clone())
-            .unwrap_or_default()
+    fn refresh_cached_user_commands(&mut self, cx: &mut Context<Self>) {
+        let Some(registry) = self.slash_command_registry.clone() else {
+            return;
+        };
+        self.refresh_cached_user_commands_from_registry(&registry, cx);
     }
 
-    /// Returns the cached slash command errors from the registry, if available.
-    pub fn cached_slash_command_errors(
+    fn refresh_cached_user_commands_from_registry(
+        &mut self,
+        registry: &Entity<SlashCommandRegistry>,
+        cx: &mut Context<Self>,
+    ) {
+        let (mut commands, mut errors) = registry.read_with(cx, |registry, _| {
+            (registry.commands().clone(), registry.errors().to_vec())
+        });
+        let server_command_names = self
+            .available_commands
+            .borrow()
+            .iter()
+            .map(|command| command.name.clone())
+            .collect::<HashSet<_>>();
+        user_slash_command::apply_server_command_conflicts_to_map(
+            &mut commands,
+            &mut errors,
+            &server_command_names,
+        );
+
+        self.command_load_errors = errors.clone();
+        self.command_load_errors_dismissed = false;
+        *self.cached_user_commands.borrow_mut() = commands;
+        *self.cached_user_command_errors.borrow_mut() = errors;
+        cx.notify();
+    }
+
+    /// Returns the cached slash commands, if available.
+    pub fn cached_slash_commands(
         &self,
-        cx: &App,
-    ) -> Vec<crate::user_slash_command::CommandLoadError> {
-        self.slash_command_registry
-            .as_ref()
-            .map(|registry| registry.read(cx).errors().to_vec())
-            .unwrap_or_default()
+        _cx: &App,
+    ) -> collections::HashMap<String, UserSlashCommand> {
+        self.cached_user_commands.borrow().clone()
+    }
+
+    /// Returns the cached slash command errors, if available.
+    pub fn cached_slash_command_errors(&self, _cx: &App) -> Vec<CommandLoadError> {
+        self.cached_user_command_errors.borrow().clone()
     }
 
     fn render_thread_error(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {

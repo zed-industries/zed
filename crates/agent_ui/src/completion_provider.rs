@@ -5,10 +5,10 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use crate::acp::AcpThreadHistory;
-use crate::user_slash_command::{CommandLoadError, UserSlashCommand};
+use crate::user_slash_command::{self, CommandLoadError, UserSlashCommand};
 use acp_thread::{AgentSessionInfo, MentionUri};
 use anyhow::Result;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::{
     CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
 };
@@ -615,6 +615,10 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
     fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<AvailableCommand>> {
         let commands = self.source.available_commands(cx);
+        let server_command_names = commands
+            .iter()
+            .map(|command| command.name.as_ref().to_string())
+            .collect::<HashSet<_>>();
 
         // Try to use cached user commands and errors first
         let cached_user_commands = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
@@ -654,7 +658,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             let mut commands = commands;
 
             // Use cached commands/errors if available, otherwise load from disk
-            let (user_commands, user_command_errors): (
+            let (mut user_commands, mut user_command_errors): (
                 Vec<UserSlashCommand>,
                 Vec<CommandLoadError>,
             ) = if let Some(cached) = cached_user_commands {
@@ -668,6 +672,22 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             } else {
                 (Vec::new(), Vec::new())
             };
+
+            user_slash_command::apply_server_command_conflicts(
+                &mut user_commands,
+                &mut user_command_errors,
+                &server_command_names,
+            );
+
+            let conflicting_names: HashSet<String> = user_command_errors
+                .iter()
+                .filter_map(|error| error.command_name())
+                .filter(|name| server_command_names.contains(name))
+                .collect();
+
+            if !conflicting_names.is_empty() {
+                commands.retain(|command| !conflicting_names.contains(command.name.as_ref()));
+            }
 
             for cmd in user_commands {
                 commands.push(AvailableCommand {
