@@ -20,7 +20,7 @@ use futures::{
         mpsc::{self, Sender, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
-    future::{BoxFuture, Shared},
+    future::{BoxFuture, Shared, WeakShared},
     select, select_biased,
 };
 use gpui::{
@@ -112,6 +112,15 @@ pub struct CommandTemplate {
     pub env: HashMap<String, String>,
 }
 
+/// Whether a command should be run with TTY allocation for interactive use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Interactive {
+    /// Allocate a pseudo-TTY for interactive terminal use.
+    Yes,
+    /// Do not allocate a TTY - for commands that communicate via piped stdio.
+    No,
+}
+
 pub trait RemoteClientDelegate: Send + Sync {
     fn ask_password(
         &self,
@@ -142,7 +151,7 @@ const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
 const INITIAL_CONNECTION_TIMEOUT: Duration =
     Duration::from_secs(if cfg!(debug_assertions) { 5 } else { 60 });
 
-const MAX_RECONNECT_ATTEMPTS: usize = 3;
+pub const MAX_RECONNECT_ATTEMPTS: usize = 3;
 
 enum State {
     Connecting,
@@ -241,7 +250,7 @@ impl State {
                 heartbeat_task,
                 ..
             } => Self::Connected {
-                remote_connection: remote_connection,
+                remote_connection,
                 delegate,
                 multiplex_task,
                 heartbeat_task,
@@ -315,7 +324,7 @@ pub struct RemoteClient {
 
 #[derive(Debug)]
 pub enum RemoteClientEvent {
-    Disconnected,
+    Disconnected { server_not_running: bool },
 }
 
 impl EventEmitter<RemoteClientEvent> for RemoteClient {}
@@ -433,18 +442,20 @@ impl RemoteClient {
                         return Err(error);
                     }
                     Err(_) => {
-                        let mut error =
-                            "remote client did not become ready within the timeout".to_owned();
+                        let mut error = String::new();
                         if let Some(status) = io_task.now_or_never() {
+                            error.push_str("Client exited with ");
                             match status {
                                 Ok(exit_code) => {
-                                    error.push_str(&format!(", exit_code={exit_code:?}"))
+                                    error.push_str(&format!(" exit_code {exit_code:?}"))
                                 }
-                                Err(e) => error.push_str(&format!(", error={e:?}")),
+                                Err(e) => error.push_str(&format!(" error {e:?}")),
                             }
+                        } else {
+                            error.push_str("client did not become ready within the timeout");
                         }
                         let error = anyhow::anyhow!("{error}");
-                        log::error!("failed to establish connection: {}", error);
+                        log::error!("failed to establish connection: {error}");
                         return Err(error);
                     }
                 }
@@ -533,13 +544,17 @@ impl RemoteClient {
             .map(|state| state.can_reconnect())
             .unwrap_or(false);
         if !can_reconnect {
-            log::info!("aborting reconnect, because not in state that allows reconnecting");
-            let error = if let Some(state) = self.state.as_ref() {
-                format!("invalid state, cannot reconnect while in state {state}")
+            let state = if let Some(state) = self.state.as_ref() {
+                state.to_string()
             } else {
                 "no state set".to_string()
             };
-            anyhow::bail!(error);
+            log::info!(
+                "aborting reconnect, because not in state that allows reconnecting: {state}"
+            );
+            anyhow::bail!(
+                "aborting reconnect, because not in state that allows reconnecting: {state}"
+            );
         }
 
         let state = self.state.take().unwrap();
@@ -654,7 +669,7 @@ impl RemoteClient {
             };
 
             State::Connected {
-                remote_connection: remote_connection,
+                remote_connection,
                 delegate,
                 multiplex_task,
                 heartbeat_task: Self::heartbeat(this.clone(), connection_activity_rx, cx),
@@ -868,7 +883,9 @@ impl RemoteClient {
         self.state.replace(state);
 
         if is_reconnect_exhausted || is_server_not_running {
-            cx.emit(RemoteClientEvent::Disconnected);
+            cx.emit(RemoteClientEvent::Disconnected {
+                server_not_running: is_server_not_running,
+            });
         }
         cx.notify();
     }
@@ -886,6 +903,11 @@ impl RemoteClient {
             .map_or(false, |connection| connection.shares_network_interface())
     }
 
+    pub fn has_wsl_interop(&self) -> bool {
+        self.remote_connection()
+            .map_or(false, |connection| connection.has_wsl_interop())
+    }
+
     pub fn build_command(
         &self,
         program: Option<String>,
@@ -894,10 +916,29 @@ impl RemoteClient {
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
+        self.build_command_with_options(
+            program,
+            args,
+            env,
+            working_dir,
+            port_forward,
+            Interactive::Yes,
+        )
+    }
+
+    pub fn build_command_with_options(
+        &self,
+        program: Option<String>,
+        args: &[String],
+        env: &HashMap<String, String>,
+        working_dir: Option<String>,
+        port_forward: Option<(u16, String, u16)>,
+        interactive: Interactive,
+    ) -> Result<CommandTemplate> {
         let Some(connection) = self.remote_connection() else {
             return Err(anyhow!("no remote connection"));
         };
-        connection.build_command(program, args, env, working_dir, port_forward)
+        connection.build_command(program, args, env, working_dir, port_forward, interactive)
     }
 
     pub fn build_forward_ports_command(
@@ -954,6 +995,64 @@ impl RemoteClient {
 
     pub fn path_style(&self) -> PathStyle {
         self.path_style
+    }
+
+    /// Forcibly disconnects from the remote server by killing the underlying connection.
+    /// This will trigger the reconnection logic if reconnection attempts remain.
+    /// Useful for testing reconnection behavior in real environments.
+    pub fn force_disconnect(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let Some(connection) = self.remote_connection() else {
+            return Task::ready(Err(anyhow!("no active remote connection to disconnect")));
+        };
+
+        log::info!("force_disconnect: killing remote connection");
+
+        cx.spawn(async move |_, _| {
+            connection.kill().await?;
+            Ok(())
+        })
+    }
+
+    /// Simulates a timeout by pausing heartbeat responses.
+    /// This will cause heartbeat failures and eventually trigger reconnection
+    /// after MAX_MISSED_HEARTBEATS are missed.
+    /// Useful for testing timeout behavior in real environments.
+    pub fn force_heartbeat_timeout(&mut self, attempts: usize, cx: &mut Context<Self>) {
+        log::info!("force_heartbeat_timeout: triggering heartbeat failure state");
+
+        if let Some(State::Connected {
+            remote_connection,
+            delegate,
+            multiplex_task,
+            heartbeat_task,
+        }) = self.state.take()
+        {
+            self.set_state(
+                if attempts == 0 {
+                    State::HeartbeatMissed {
+                        missed_heartbeats: MAX_MISSED_HEARTBEATS,
+                        remote_connection,
+                        delegate,
+                        multiplex_task,
+                        heartbeat_task,
+                    }
+                } else {
+                    State::ReconnectFailed {
+                        remote_connection,
+                        delegate,
+                        error: anyhow!("forced heartbeat timeout"),
+                        attempts,
+                    }
+                },
+                cx,
+            );
+
+            self.reconnect(cx)
+                .context("failed to start reconnect after forced timeout")
+                .log_err();
+        } else {
+            log::warn!("force_heartbeat_timeout: not in Connected state, ignoring");
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1041,7 +1140,7 @@ impl RemoteClient {
 }
 
 enum ConnectionPoolEntry {
-    Connecting(Shared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>>),
+    Connecting(WeakShared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>>),
     Connected(Weak<dyn RemoteConnection>),
 }
 
@@ -1062,21 +1161,30 @@ impl ConnectionPool {
         let connection = self.connections.get(&opts);
         match connection {
             Some(ConnectionPoolEntry::Connecting(task)) => {
-                delegate.set_status(
-                    Some("Waiting for existing connection attempt"),
-                    &mut cx.to_async(),
-                );
-                return task.clone();
+                if let Some(task) = task.upgrade() {
+                    log::debug!("Connecting task is still alive");
+                    cx.spawn(async move |cx| {
+                        delegate.set_status(Some("Waiting for existing connection attempt"), cx)
+                    })
+                    .detach();
+                    return task;
+                }
+                log::debug!("Connecting task is dead, removing it and restarting a connection");
+                self.connections.remove(&opts);
             }
             Some(ConnectionPoolEntry::Connected(remote)) => {
                 if let Some(remote) = remote.upgrade()
                     && !remote.has_been_killed()
                 {
+                    log::debug!("Connection is still alive");
                     return Task::ready(Ok(remote)).shared();
                 }
+                log::debug!("Connection is dead, removing it and restarting a connection");
                 self.connections.remove(&opts);
             }
-            None => {}
+            None => {
+                log::debug!("No existing connection found, starting a new one");
+            }
         }
 
         let task = cx
@@ -1134,9 +1242,10 @@ impl ConnectionPool {
                 }
             })
             .shared();
-
-        self.connections
-            .insert(opts.clone(), ConnectionPoolEntry::Connecting(task.clone()));
+        if let Some(task) = task.downgrade() {
+            self.connections
+                .insert(opts.clone(), ConnectionPoolEntry::Connecting(task));
+        }
         task
     }
 }
@@ -1155,7 +1264,13 @@ impl RemoteConnectionOptions {
         match self {
             RemoteConnectionOptions::Ssh(opts) => opts.host.to_string(),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
-            RemoteConnectionOptions::Docker(opts) => opts.name.clone(),
+            RemoteConnectionOptions::Docker(opts) => {
+                if opts.use_podman {
+                    format!("[podman] {}", opts.name)
+                } else {
+                    opts.name.clone()
+                }
+            }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(opts) => format!("mock-{}", opts.id),
         }
@@ -1220,6 +1335,7 @@ pub trait RemoteConnection: Send + Sync {
         env: &HashMap<String, String>,
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
+        interactive: Interactive,
     ) -> Result<CommandTemplate>;
     fn build_forward_ports_command(
         &self,
@@ -1279,6 +1395,7 @@ pub(crate) struct ChannelClient {
     task: Mutex<Task<Result<()>>>,
     remote_started: Signal<()>,
     has_wsl_interop: bool,
+    executor: BackgroundExecutor,
 }
 
 impl ChannelClient {
@@ -1297,6 +1414,7 @@ impl ChannelClient {
             message_handlers: Default::default(),
             buffer: Mutex::new(VecDeque::new()),
             name,
+            executor: cx.background_executor().clone(),
             task: Mutex::new(Self::start_handling_messages(
                 this.clone(),
                 incoming_rx,
@@ -1480,7 +1598,7 @@ impl ChannelClient {
                 Ok(())
             },
             async {
-                smol::Timer::after(timeout).await;
+                self.executor.timer(timeout).await;
                 anyhow::bail!("Timed out resyncing remote client")
             },
         )
@@ -1494,7 +1612,7 @@ impl ChannelClient {
                 Ok(())
             },
             async {
-                smol::Timer::after(timeout).await;
+                self.executor.timer(timeout).await;
                 anyhow::bail!("Timed out pinging remote client")
             },
         )

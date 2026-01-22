@@ -61,6 +61,7 @@ impl ProjectSymbolsDelegate {
         }
     }
 
+    // Note if you make changes to this, also change `agent_ui::completion_provider::search_symbols`
     fn filter(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         const MAX_MATCHES: usize = 100;
         let mut visible_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
@@ -178,7 +179,15 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        self.filter(&query, window, cx);
+        // Try to support rust-analyzer's path based symbols feature which
+        // allows to search by rust path syntax, in that case we only want to
+        // filter names by the last segment
+        // Ideally this was a first class LSP feature (rich queries)
+        let query_filter = query
+            .rsplit_once("::")
+            .map_or(&*query, |(_, suffix)| suffix)
+            .to_owned();
+        self.filter(&query_filter, window, cx);
         self.show_worktree_root_name = self.project.read(cx).visible_worktrees(cx).count() > 1;
         let symbols = self
             .project
@@ -208,7 +217,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                     delegate.visible_match_candidates = visible_match_candidates;
                     delegate.external_match_candidates = external_match_candidates;
                     delegate.symbols = symbols;
-                    delegate.filter(&query, window, cx);
+                    delegate.filter(&query_filter, window, cx);
                 })
                 .log_err();
             }
@@ -246,7 +255,8 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             } => abs_path.to_string_lossy(),
         };
         let label = symbol.label.text.clone();
-        let path = path.to_string();
+        let line_number = symbol.range.start.0.row + 1;
+        let path = path.into_owned();
 
         let settings = ThemeSettings::get_global(cx);
 
@@ -282,7 +292,15 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         .child(LabelLike::new().child(
                             StyledText::new(label).with_default_highlights(&text_style, highlights),
                         ))
-                        .child(Label::new(path).size(LabelSize::Small).color(Color::Muted)),
+                        .child(
+                            h_flex()
+                                .child(Label::new(path).size(LabelSize::Small).color(Color::Muted))
+                                .child(
+                                    Label::new(format!(":{}", line_number))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Placeholder),
+                                ),
+                        ),
                 ),
         )
     }
@@ -354,17 +372,24 @@ mod tests {
                 let executor = cx.background_executor().clone();
                 let fake_symbols = fake_symbols.clone();
                 async move {
+                    let (query, prefixed) = match params.query.strip_prefix("dir::") {
+                        Some(query) => (query, true),
+                        None => (&*params.query, false),
+                    };
                     let candidates = fake_symbols
                         .iter()
                         .enumerate()
+                        .filter(|(_, symbol)| {
+                            !prefixed || symbol.location.uri.path().contains("dir")
+                        })
                         .map(|(id, symbol)| StringMatchCandidate::new(id, &symbol.name))
                         .collect::<Vec<_>>();
-                    let matches = if params.query.is_empty() {
+                    let matches = if query.is_empty() {
                         Vec::new()
                     } else {
                         fuzzy::match_strings(
                             &candidates,
-                            &params.query,
+                            &query,
                             true,
                             true,
                             100,
@@ -433,6 +458,16 @@ mod tests {
         cx.run_until_parked();
         symbols.read_with(cx, |symbols, _| {
             assert_eq!(symbols.delegate.matches.len(), 0);
+        });
+
+        // Check that rust-analyzer path style symbols work
+        symbols.update_in(cx, |p, window, cx| {
+            p.update_matches("dir::to".to_string(), window, cx);
+        });
+
+        cx.run_until_parked();
+        symbols.read_with(cx, |symbols, _| {
+            assert_eq!(symbols.delegate.matches.len(), 1);
         });
     }
 

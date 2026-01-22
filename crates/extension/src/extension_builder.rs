@@ -55,6 +55,12 @@ pub struct CompileExtensionOptions {
     pub release: bool,
 }
 
+impl CompileExtensionOptions {
+    pub const fn dev() -> Self {
+        Self { release: false }
+    }
+}
+
 #[derive(Deserialize)]
 struct CargoToml {
     package: CargoTomlPackage,

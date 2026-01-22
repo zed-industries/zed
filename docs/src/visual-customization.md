@@ -2,7 +2,7 @@
 
 Various aspects of Zed's visual layout can be configured via either the settings window or the `settings.json` file, which you can access via {#action zed::OpenSettings} ({#kb zed::OpenSettings}) and {#action zed::OpenSettingsFile} ({#kb zed::OpenSettingsFile}) respectively.
 
-See [Configuring Zed](./configuring-zed.md) for additional information and other non-visual settings.
+See [All Settings](./reference/all-settings.md) for additional information and other non-visual settings.
 
 ## Themes
 
@@ -529,7 +529,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
   }
 ```
 
-See [Terminal settings](./configuring-zed.md#terminal) for additional non-visual customization options.
+See [Terminal settings](./reference/all-settings.md#terminal) for additional non-visual customization options.
 
 ### Other Panels
 

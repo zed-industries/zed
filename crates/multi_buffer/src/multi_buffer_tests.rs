@@ -4012,7 +4012,7 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
             diff.update_diff(
                 buffer.read(cx).text_snapshot(),
                 Some(base_text.into()),
-                false,
+                None,
                 None,
                 cx,
             )
@@ -4050,7 +4050,7 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
             diff.update_diff(
                 buffer.read(cx).text_snapshot(),
                 Some(base_text.into()),
-                false,
+                None,
                 None,
                 cx,
             )
@@ -4889,4 +4889,123 @@ fn test_excerpts_containment_functions(cx: &mut App) {
         containing.is_none(),
         "excerpt_containing should return None for ranges spanning multiple excerpts"
     );
+}
+
+#[gpui::test]
+fn test_range_to_buffer_ranges_with_range_bounds(cx: &mut App) {
+    use std::ops::Bound;
+
+    let buffer_1 = cx.new(|cx| Buffer::local("aaa\nbbb", cx));
+    let buffer_2 = cx.new(|cx| Buffer::local("ccc", cx));
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    let (excerpt_1_id, excerpt_2_id) = multibuffer.update(cx, |multibuffer, cx| {
+        let excerpt_1_id = multibuffer.push_excerpts(
+            buffer_1.clone(),
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 3))],
+            cx,
+        )[0];
+
+        let excerpt_2_id = multibuffer.push_excerpts(
+            buffer_2.clone(),
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(0, 3))],
+            cx,
+        )[0];
+
+        (excerpt_1_id, excerpt_2_id)
+    });
+
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+    assert_eq!(snapshot.text(), "aaa\nbbb\nccc");
+
+    let excerpt_2_start = Point::new(2, 0);
+
+    let ranges_half_open = snapshot.range_to_buffer_ranges(Point::zero()..excerpt_2_start);
+    assert_eq!(
+        ranges_half_open.len(),
+        1,
+        "Half-open range ending at excerpt start should EXCLUDE that excerpt"
+    );
+    assert_eq!(ranges_half_open[0].2, excerpt_1_id);
+
+    let ranges_inclusive = snapshot.range_to_buffer_ranges(Point::zero()..=excerpt_2_start);
+    assert_eq!(
+        ranges_inclusive.len(),
+        2,
+        "Inclusive range ending at excerpt start should INCLUDE that excerpt"
+    );
+    assert_eq!(ranges_inclusive[0].2, excerpt_1_id);
+    assert_eq!(ranges_inclusive[1].2, excerpt_2_id);
+
+    let ranges_unbounded =
+        snapshot.range_to_buffer_ranges((Bound::Included(Point::zero()), Bound::Unbounded));
+    assert_eq!(
+        ranges_unbounded.len(),
+        2,
+        "Unbounded end should include all excerpts"
+    );
+    assert_eq!(ranges_unbounded[0].2, excerpt_1_id);
+    assert_eq!(ranges_unbounded[1].2, excerpt_2_id);
+
+    let ranges_excluded_end = snapshot.range_to_buffer_ranges((
+        Bound::Included(Point::zero()),
+        Bound::Excluded(excerpt_2_start),
+    ));
+    assert_eq!(
+        ranges_excluded_end.len(),
+        1,
+        "Excluded end bound should exclude excerpt starting at that point"
+    );
+    assert_eq!(ranges_excluded_end[0].2, excerpt_1_id);
+
+    let buffer_empty = cx.new(|cx| Buffer::local("", cx));
+    let multibuffer_trailing_empty = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    let (te_excerpt_1_id, te_excerpt_2_id) =
+        multibuffer_trailing_empty.update(cx, |multibuffer, cx| {
+            let excerpt_1_id = multibuffer.push_excerpts(
+                buffer_1.clone(),
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 3))],
+                cx,
+            )[0];
+
+            let excerpt_2_id = multibuffer.push_excerpts(
+                buffer_empty.clone(),
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(0, 0))],
+                cx,
+            )[0];
+
+            (excerpt_1_id, excerpt_2_id)
+        });
+
+    let snapshot_trailing = multibuffer_trailing_empty.read(cx).snapshot(cx);
+    assert_eq!(snapshot_trailing.text(), "aaa\nbbb\n");
+
+    let max_point = snapshot_trailing.max_point();
+
+    let ranges_half_open_max = snapshot_trailing.range_to_buffer_ranges(Point::zero()..max_point);
+    assert_eq!(
+        ranges_half_open_max.len(),
+        1,
+        "Half-open range to max_point should EXCLUDE trailing empty excerpt at max_point"
+    );
+    assert_eq!(ranges_half_open_max[0].2, te_excerpt_1_id);
+
+    let ranges_inclusive_max = snapshot_trailing.range_to_buffer_ranges(Point::zero()..=max_point);
+    assert_eq!(
+        ranges_inclusive_max.len(),
+        2,
+        "Inclusive range to max_point should INCLUDE trailing empty excerpt"
+    );
+    assert_eq!(ranges_inclusive_max[0].2, te_excerpt_1_id);
+    assert_eq!(ranges_inclusive_max[1].2, te_excerpt_2_id);
+
+    let ranges_unbounded_trailing = snapshot_trailing
+        .range_to_buffer_ranges((Bound::Included(Point::zero()), Bound::Unbounded));
+    assert_eq!(
+        ranges_unbounded_trailing.len(),
+        2,
+        "Unbounded end should include trailing empty excerpt"
+    );
+    assert_eq!(ranges_unbounded_trailing[0].2, te_excerpt_1_id);
+    assert_eq!(ranges_unbounded_trailing[1].2, te_excerpt_2_id);
 }
