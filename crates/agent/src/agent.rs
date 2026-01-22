@@ -1460,7 +1460,10 @@ impl AgentSessionList for NativeAgentSessionList {
             .update(cx, |store, cx| store.delete_threads(cx))
     }
 
-    fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<acp_thread::SessionListUpdate>> {
+    fn watch(
+        &self,
+        _cx: &mut App,
+    ) -> Option<smol::channel::Receiver<acp_thread::SessionListUpdate>> {
         Some(self.updates_rx.clone())
     }
 
