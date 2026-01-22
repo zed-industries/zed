@@ -6814,10 +6814,7 @@ impl MultiBufferSnapshot {
     /// For inverted diffs (used in side-by-side diff view), returns the main buffer
     /// snapshot that the diff's anchors refer to. Returns `None` if the diff is not
     /// inverted or if there's no diff for the given buffer ID.
-    pub fn inverted_diff_main_buffer(
-        &self,
-        buffer_id: BufferId,
-    ) -> Option<&text::BufferSnapshot> {
+    pub fn inverted_diff_main_buffer(&self, buffer_id: BufferId) -> Option<&text::BufferSnapshot> {
         self.diffs
             .get(&buffer_id)
             .and_then(|diff| diff.main_buffer.as_ref())

@@ -579,8 +579,7 @@ impl SplittableEditor {
         });
 
         // Copy soft wrap state from primary (source of truth) to secondary
-        let primary_soft_wrap_override =
-            self.primary_editor.read(cx).soft_wrap_mode_override;
+        let primary_soft_wrap_override = self.primary_editor.read(cx).soft_wrap_mode_override;
         secondary.editor.update(cx, |editor, cx| {
             editor.soft_wrap_mode_override = primary_soft_wrap_override;
             cx.notify();
@@ -1500,8 +1499,7 @@ impl Render for SplittableEditor {
     ) -> impl ui::IntoElement {
         let inner = if self.secondary.is_some() {
             let style = self.primary_editor.read(cx).create_style(cx);
-            SplitEditorView::new(cx.entity(), style, self.split_state.clone())
-                .into_any_element()
+            SplitEditorView::new(cx.entity(), style, self.split_state.clone()).into_any_element()
         } else {
             self.primary_editor.clone().into_any_element()
         };

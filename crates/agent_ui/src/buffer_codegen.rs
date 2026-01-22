@@ -679,8 +679,7 @@ impl CodegenAlternative {
         let language_name = {
             let multibuffer = self.buffer.read(cx);
             let snapshot = multibuffer.snapshot(cx);
-            let ranges =
-                snapshot.range_to_buffer_ranges(self.range.start..=self.range.end);
+            let ranges = snapshot.range_to_buffer_ranges(self.range.start..=self.range.end);
             ranges
                 .first()
                 .and_then(|(buffer, _, _)| buffer.language())
