@@ -157,6 +157,8 @@ enum Command {
     Split(SplitArgs),
     /// Filter a JSONL dataset by programming language (based on cursor_path extension)
     FilterLanguages(FilterLanguagesArgs),
+    /// Import Anthropic batch results by batch IDs (useful for recovering after database loss)
+    ImportBatch(ImportBatchArgs),
 }
 
 impl Display for Command {
@@ -189,6 +191,9 @@ impl Display for Command {
             Command::SplitCommit(_) => write!(f, "split-commit"),
             Command::Split(_) => write!(f, "split"),
             Command::FilterLanguages(_) => write!(f, "filter-languages"),
+            Command::ImportBatch(args) => {
+                write!(f, "import-batch --batch-ids {}", args.batch_ids.join(" "))
+            }
         }
     }
 }
@@ -308,6 +313,13 @@ struct SynthesizeArgs {
     fresh: bool,
 }
 
+#[derive(Debug, Args, Clone)]
+struct ImportBatchArgs {
+    /// Anthropic batch IDs to import (e.g., msgbatch_xxx)
+    #[clap(long, required = true, num_args = 1..)]
+    batch_ids: Vec<String>,
+}
+
 impl EpArgs {
     fn output_path(&self) -> Option<PathBuf> {
         if self.in_place {
@@ -391,7 +403,9 @@ async fn load_examples(
         examples.truncate(limit);
     }
 
-    Progress::global().set_total_examples(examples.len());
+    let progress = Progress::global();
+    progress.set_total_examples(examples.len());
+    progress.set_max_example_name_len(examples.iter().map(|e| &e.spec.name));
 
     Ok(examples)
 }
@@ -469,6 +483,21 @@ fn main() {
     };
 
     match &command {
+        Command::ImportBatch(import_args) => {
+            smol::block_on(async {
+                let client = anthropic_client::AnthropicClient::batch(&paths::LLM_CACHE_DB)
+                    .expect("Failed to create Anthropic client");
+                if let Err(e) = client.import_batches(&import_args.batch_ids).await {
+                    eprintln!("Error importing batches: {:?}", e);
+                    std::process::exit(1);
+                }
+                println!(
+                    "Successfully imported {} batch(es)",
+                    import_args.batch_ids.len()
+                );
+            });
+            return;
+        }
         Command::Clean => {
             std::fs::remove_dir_all(&*paths::DATA_DIR).unwrap();
             return;
@@ -672,7 +701,8 @@ fn main() {
                                         | Command::Synthesize(_)
                                         | Command::SplitCommit(_)
                                         | Command::Split(_)
-                                        | Command::FilterLanguages(_) => {
+                                        | Command::FilterLanguages(_)
+                                        | Command::ImportBatch(_) => {
                                             unreachable!()
                                         }
                                     }
