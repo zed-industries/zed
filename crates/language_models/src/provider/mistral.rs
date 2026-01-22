@@ -325,10 +325,6 @@ impl LanguageModel for MistralLanguageModel {
         self.model.supports_images()
     }
 
-    fn supports_thinking(&self) -> bool {
-        self.model.supports_thinking()
-    }
-
     fn telemetry_id(&self) -> String {
         format!("mistral/{}", self.model.id())
     }
