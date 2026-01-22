@@ -1981,17 +1981,17 @@ impl Editor {
                 let outline_items = contained_outline_items
                     .into_iter()
                     .map(move |outline_item| {
-                        dbg!(
-                            &outline_item.range,
-                            Anchor::range_in_buffer(excerpt_id, outline_item.range.clone())
-                        );
-                        dbg!(
-                            &outline_item.source_range_for_text,
-                            Anchor::range_in_buffer(
-                                excerpt_id,
-                                outline_item.source_range_for_text.clone()
-                            )
-                        );
+                        // dbg!(
+                        //     &outline_item.range,
+                        //     Anchor::range_in_buffer(excerpt_id, outline_item.range.clone())
+                        // );
+                        // dbg!(
+                        //     &outline_item.source_range_for_text,
+                        //     Anchor::range_in_buffer(
+                        //         excerpt_id,
+                        //         outline_item.source_range_for_text.clone()
+                        //     )
+                        // );
                         // dbg!(&outline_item.body_range, Anchor::range_in_buffer(excerpt_id, outline_item.body_range))
                         // dbg!(&outline_item.text);
                         let buffer_point: Point =

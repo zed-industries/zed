@@ -55,8 +55,8 @@ use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
 use markdown::Markdown;
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
-    MultiBufferRow, RowInfo,
+    Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferOffset,
+    MultiBufferPoint, MultiBufferRow, RowInfo,
 };
 
 use edit_prediction_types::EditPredictionGranularity;
@@ -4799,10 +4799,11 @@ impl EditorElement {
             // let Some(&row_info) = row_infos.get(start_point.row as usize) else {
             //     continue;
             // };
-            dbg!(item.text, start_point, point);
+            // TODO why is start point wrong then?
+            dbg!(item.text, start_point, point, sticky_row);
 
             let line = layout_line(
-                sticky_row,
+                DisplayRow(point.row), // TODO
                 snapshot,
                 &self.style,
                 editor_width,
@@ -4810,6 +4811,9 @@ impl EditorElement {
                 window,
                 cx,
             );
+
+            // So why do we have the wrong text here in the multibuffer case?
+            // dbg!(&line.fragments);
 
             let line_number = show_line_numbers.then(|| {
                 let buffer_row_number = point.row;
@@ -4886,7 +4890,11 @@ impl EditorElement {
         style: &EditorStyle,
         cx: &App,
     ) -> Vec<(StickyHeader, Point)> {
-        let scroll_top = snapshot.scroll_position().y;
+        let mut scroll_top = snapshot.scroll_position().y;
+        if !snapshot.is_singleton() {
+            scroll_top = scroll_top + FILE_HEADER_HEIGHT as f64;
+        }
+        // dbg!(&scroll_top);
 
         let mut end_rows = Vec::<DisplayRow>::new();
         let mut rows = Vec::<(StickyHeader, Point)>::new();
@@ -4926,7 +4934,12 @@ impl EditorElement {
                 end_rows.pop();
             }
             let depth = end_rows.len();
+
             let adjusted_scroll_top = scroll_top + depth as f64;
+            // dbg!(&adjusted_scroll_top, &window.line_height());
+            // if !snapshot.is_singleton() {
+            //     adjusted_scroll_top = adjusted_scroll_top + FILE_HEADER_HEIGHT as f64;
+            // }
 
             if sticky_row.as_f64() >= adjusted_scroll_top || end_row.as_f64() <= adjusted_scroll_top
             {
@@ -11635,6 +11648,13 @@ pub fn layout_line(
     window: &mut Window,
     cx: &mut App,
 ) -> LineWithInvisibles {
+    dbg!(&row);
+    // Experimentation on how we can layout lines outside of the visible context, in a multibuffer situation
+    // let other = snapshot.buffer_snapshot().chunks(
+    //     MultiBufferOffset(row.0 as usize)..MultiBufferOffset((row.0 + 1) as usize),
+    //     true,
+    // );
+    // dbg!(other);
     let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), true, style);
     LineWithInvisibles::from_chunks(
         chunks,

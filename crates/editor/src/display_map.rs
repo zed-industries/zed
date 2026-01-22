@@ -1065,6 +1065,7 @@ impl DisplaySnapshot {
         language_aware: bool,
         highlight_styles: HighlightStyles,
     ) -> DisplayChunks<'_> {
+        dbg!(&display_rows);
         self.block_snapshot.chunks(
             BlockRow(display_rows.start.0)..BlockRow(display_rows.end.0),
             language_aware,
@@ -1084,6 +1085,7 @@ impl DisplaySnapshot {
         language_aware: bool,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
+        dbg!(&display_rows);
         self.chunks(
             display_rows,
             language_aware,

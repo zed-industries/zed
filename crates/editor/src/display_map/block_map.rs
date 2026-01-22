@@ -1378,6 +1378,7 @@ impl BlockSnapshot {
         highlights: Highlights<'a>,
     ) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
+        dbg!(&max_output_row);
 
         let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
         cursor.seek(&rows.start, Bias::Right);
@@ -1469,6 +1470,7 @@ impl BlockSnapshot {
 
     #[ztracing::instrument(skip_all)]
     pub(crate) fn sticky_header_excerpt(&self, position: f64) -> Option<StickyHeaderExcerpt<'_>> {
+        // TODO could this be used?
         let top_row = position as u32;
         let mut cursor = self.transforms.cursor::<BlockRow>(());
         cursor.seek(&BlockRow(top_row), Bias::Right);
