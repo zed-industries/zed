@@ -262,7 +262,7 @@ impl GitGraph {
         div()
             .px_1p5()
             .py_0p5()
-            .h(self.row_height)
+            .h(self.row_height - px(4.0))
             .flex()
             .items_center()
             .justify_center()
