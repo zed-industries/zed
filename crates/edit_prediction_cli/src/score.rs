@@ -42,6 +42,9 @@ pub async fn run_scoring(
     let zero_scores = ExampleScore {
         delta_chr_f: 0.0,
         braces_disbalance: 0,
+        exact_lines_tp: 0,
+        exact_lines_fp: 0,
+        exact_lines_fn: 0,
     };
 
     progress.set_substatus("computing metrics");
@@ -82,9 +85,21 @@ pub async fn run_scoring(
             std::fs::write("/tmp/unbalanced-text.after", &actual_text).ok();
         }
 
+        // Compute exact lines match against best matching expected patch
+        let best_exact_lines = example
+            .spec
+            .expected_patches
+            .iter()
+            .map(|expected_patch| metrics::exact_lines_match(expected_patch, &actual_patch))
+            .max_by_key(|m| m.true_positives)
+            .unwrap_or_default();
+
         scores.push(ExampleScore {
             delta_chr_f: best_delta_chr_f,
             braces_disbalance,
+            exact_lines_tp: best_exact_lines.true_positives,
+            exact_lines_fp: best_exact_lines.false_positives,
+            exact_lines_fn: best_exact_lines.false_negatives,
         });
     }
 
@@ -93,53 +108,73 @@ pub async fn run_scoring(
 }
 
 pub fn print_report(examples: &[Example]) {
+    use crate::metrics::ClassificationMetrics;
+
+    const LINE_WIDTH: usize = 100;
+    let separator = "─".repeat(LINE_WIDTH);
+
+    eprintln!("{}", separator);
     eprintln!(
-        "──────────────────────────────────────────────────────────────────────────────────────"
+        "{:<40} {:>8} {:>5} {:>4} {:>4} {:>4} {:>7} {:>7} {:>7}",
+        "Example", "DeltaChrF", "Brace", "TP", "FP", "FN", "Prec", "Rec", "F1"
     );
-    eprintln!(
-        "{:<50} {:>14} {:>10}",
-        "Example name", "BracesDisbalance", "DeltaChrF"
-    );
-    eprintln!(
-        "──────────────────────────────────────────────────────────────────────────────────────"
-    );
+    eprintln!("{}", separator);
 
     let mut all_delta_chr_f_scores = Vec::new();
     let mut braces_disbalance_sum: usize = 0;
+    let mut total_exact_lines = ClassificationMetrics::default();
     let mut total_scores: usize = 0;
 
     for example in examples {
         for score in example.score.iter() {
+            let exact_lines = ClassificationMetrics {
+                true_positives: score.exact_lines_tp,
+                false_positives: score.exact_lines_fp,
+                false_negatives: score.exact_lines_fn,
+            };
+
             eprintln!(
-                "{:<50} {:>14} {:>9.2}",
-                truncate_name(&example.spec.name, 50),
+                "{:<40} {:>8.2} {:>5} {:>4} {:>4} {:>4} {:>6.1}% {:>6.1}% {:>6.1}%",
+                truncate_name(&example.spec.name, 40),
+                score.delta_chr_f,
                 score.braces_disbalance,
-                score.delta_chr_f
+                score.exact_lines_tp,
+                score.exact_lines_fp,
+                score.exact_lines_fn,
+                exact_lines.precision() * 100.0,
+                exact_lines.recall() * 100.0,
+                exact_lines.f1() * 100.0
             );
 
             all_delta_chr_f_scores.push(score.delta_chr_f);
             total_scores += 1;
             braces_disbalance_sum += score.braces_disbalance;
+            total_exact_lines.true_positives += score.exact_lines_tp;
+            total_exact_lines.false_positives += score.exact_lines_fp;
+            total_exact_lines.false_negatives += score.exact_lines_fn;
         }
     }
 
-    eprintln!(
-        "──────────────────────────────────────────────────────────────────────────────────────"
-    );
+    eprintln!("{}", separator);
 
     if !all_delta_chr_f_scores.is_empty() {
         let avg_delta_chr_f: f32 =
             all_delta_chr_f_scores.iter().sum::<f32>() / all_delta_chr_f_scores.len() as f32;
         let braces_disbalance_avg: f32 = braces_disbalance_sum as f32 / total_scores as f32;
-        let braces_disbalance_display = format!("{:.2}", braces_disbalance_avg);
 
         eprintln!(
-            "{:<50} {:>14} {:>9.2}",
-            "AVERAGE", braces_disbalance_display, avg_delta_chr_f
+            "{:<40} {:>8.2} {:>5.1} {:>4} {:>4} {:>4} {:>6.1}% {:>6.1}% {:>6.1}%",
+            "TOTAL / AVERAGE",
+            avg_delta_chr_f,
+            braces_disbalance_avg,
+            total_exact_lines.true_positives,
+            total_exact_lines.false_positives,
+            total_exact_lines.false_negatives,
+            total_exact_lines.precision() * 100.0,
+            total_exact_lines.recall() * 100.0,
+            total_exact_lines.f1() * 100.0
         );
-        eprintln!(
-            "──────────────────────────────────────────────────────────────────────────────────────"
-        );
+        eprintln!("{}", separator);
     }
 
     eprintln!("\n");
