@@ -6498,6 +6498,7 @@ dependencies = [
  "async-trait",
  "cocoa 0.26.0",
  "collections",
+ "fs",
  "fsevent",
  "futures 0.3.31",
  "git",
