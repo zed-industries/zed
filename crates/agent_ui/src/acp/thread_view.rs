@@ -438,7 +438,7 @@ impl AcpThreadView {
         let placeholder = placeholder_text(agent_display_name.as_ref(), false);
 
         let message_editor = cx.new(|cx| {
-            let mut editor = MessageEditor::new(
+            let mut editor = MessageEditor::new_with_cache(
                 workspace.clone(),
                 project.downgrade(),
                 thread_store.clone(),
@@ -1515,7 +1515,7 @@ impl AcpThreadView {
         let cached_commands = self.cached_slash_commands(cx);
         let cached_errors = self.cached_slash_command_errors(cx);
         let contents = message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents(
+            message_editor.contents_with_cache(
                 full_mention_content,
                 Some(cached_commands),
                 Some(cached_errors),
@@ -1684,7 +1684,7 @@ impl AcpThreadView {
         let cached_commands = self.cached_slash_commands(cx);
         let cached_errors = self.cached_slash_command_errors(cx);
         let contents = self.message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents(
+            message_editor.contents_with_cache(
                 full_mention_content,
                 Some(cached_commands),
                 Some(cached_errors),

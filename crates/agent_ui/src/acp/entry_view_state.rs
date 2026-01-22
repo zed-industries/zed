@@ -93,7 +93,7 @@ impl EntryViewState {
                     }
                 } else {
                     let message_editor = cx.new(|cx| {
-                        let mut editor = MessageEditor::new(
+                        let mut editor = MessageEditor::new_with_cache(
                             self.workspace.clone(),
                             self.project.clone(),
                             self.thread_store.clone(),

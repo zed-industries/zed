@@ -143,6 +143,40 @@ impl MessageEditor {
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+        agent_name: SharedString,
+        placeholder: &str,
+        mode: EditorMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let cached_user_commands = Rc::new(RefCell::new(collections::HashMap::default()));
+        let cached_user_command_errors = Rc::new(RefCell::new(Vec::new()));
+        Self::new_with_cache(
+            workspace,
+            project,
+            thread_store,
+            history,
+            prompt_store,
+            prompt_capabilities,
+            available_commands,
+            cached_user_commands,
+            cached_user_command_errors,
+            agent_name,
+            placeholder,
+            mode,
+            window,
+            cx,
+        )
+    }
+
+    pub fn new_with_cache(
+        workspace: WeakEntity<Workspace>,
+        project: WeakEntity<Project>,
+        thread_store: Option<Entity<ThreadStore>>,
+        history: WeakEntity<AcpThreadHistory>,
+        prompt_store: Option<Entity<PromptStore>>,
+        prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
+        available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
         cached_user_commands: Rc<RefCell<collections::HashMap<String, UserSlashCommand>>>,
         cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
         agent_name: SharedString,
@@ -422,6 +456,14 @@ impl MessageEditor {
     }
 
     pub fn contents(
+        &self,
+        full_mention_content: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
+        self.contents_with_cache(full_mention_content, None, None, cx)
+    }
+
+    pub fn contents_with_cache(
         &self,
         full_mention_content: bool,
         cached_user_commands: Option<
@@ -1295,7 +1337,7 @@ mod tests {
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
@@ -1373,7 +1415,7 @@ mod tests {
 
         let (content, _) = message_editor
             .update(cx, |message_editor, cx| {
-                message_editor.contents(false, None, None, cx)
+                message_editor.contents_with_cache(false, None, None, cx)
             })
             .await
             .unwrap();
@@ -1412,7 +1454,7 @@ mod tests {
         let workspace_handle = workspace.downgrade();
         let message_editor = workspace.update_in(cx, |_, window, cx| {
             cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace_handle.clone(),
                     project.downgrade(),
                     thread_store.clone(),
@@ -1442,7 +1484,7 @@ mod tests {
 
         let contents_result = message_editor
             .update(cx, |message_editor, cx| {
-                message_editor.contents(false, None, None, cx)
+                message_editor.contents_with_cache(false, None, None, cx)
             })
             .await;
 
@@ -1462,7 +1504,7 @@ mod tests {
 
         let contents_result = message_editor
             .update(cx, |message_editor, cx| {
-                message_editor.contents(false, None, None, cx)
+                message_editor.contents_with_cache(false, None, None, cx)
             })
             .await;
 
@@ -1479,7 +1521,7 @@ mod tests {
 
         let contents_result = message_editor
             .update(cx, |message_editor, cx| {
-                message_editor.contents(false, None, None, cx)
+                message_editor.contents_with_cache(false, None, None, cx)
             })
             .await;
 
@@ -1493,7 +1535,7 @@ mod tests {
 
         let (content, _) = message_editor
             .update(cx, |message_editor, cx| {
-                message_editor.contents(false, None, None, cx)
+                message_editor.contents_with_cache(false, None, None, cx)
             })
             .await
             .unwrap();
@@ -1513,7 +1555,7 @@ mod tests {
         // The @ mention functionality should not be affected
         let (content, _) = message_editor
             .update(cx, |message_editor, cx| {
-                message_editor.contents(false, None, None, cx)
+                message_editor.contents_with_cache(false, None, None, cx)
             })
             .await
             .unwrap();
@@ -1587,7 +1629,7 @@ mod tests {
         let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
             let message_editor = cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
@@ -1813,7 +1855,7 @@ mod tests {
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
             let message_editor = cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
@@ -2308,7 +2350,7 @@ mod tests {
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
-                let editor = MessageEditor::new(
+                let editor = MessageEditor::new_with_cache(
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
@@ -2419,7 +2461,7 @@ mod tests {
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
-                let mut editor = MessageEditor::new(
+                let mut editor = MessageEditor::new_with_cache(
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
@@ -2501,7 +2543,7 @@ mod tests {
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
-                let mut editor = MessageEditor::new(
+                let mut editor = MessageEditor::new_with_cache(
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
@@ -2554,7 +2596,7 @@ mod tests {
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
@@ -2610,7 +2652,7 @@ mod tests {
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
@@ -2667,7 +2709,7 @@ mod tests {
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
@@ -2698,7 +2740,7 @@ mod tests {
 
         let (content, _) = message_editor
             .update(cx, |message_editor, cx| {
-                message_editor.contents(false, None, None, cx)
+                message_editor.contents_with_cache(false, None, None, cx)
             })
             .await
             .unwrap();
@@ -2736,7 +2778,7 @@ mod tests {
         let (message_editor, editor) = workspace.update_in(cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
             let message_editor = cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
@@ -2780,7 +2822,9 @@ mod tests {
         });
 
         let content = message_editor
-            .update(cx, |editor, cx| editor.contents(false, None, None, cx))
+            .update(cx, |editor, cx| {
+                editor.contents_with_cache(false, None, None, cx)
+            })
             .await
             .unwrap()
             .0;
@@ -2807,7 +2851,9 @@ mod tests {
         });
 
         let content = message_editor
-            .update(cx, |editor, cx| editor.contents(false, None, None, cx))
+            .update(cx, |editor, cx| {
+                editor.contents_with_cache(false, None, None, cx)
+            })
             .await
             .unwrap()
             .0;
@@ -2898,7 +2944,7 @@ mod tests {
         let message_editor = workspace.update_in(&mut cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
             let message_editor = cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
