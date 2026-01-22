@@ -633,12 +633,15 @@ impl Vim {
 
     fn activate(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
         let vim = Vim::new(window, cx);
-
-        if !editor.mode().is_full() {
-            vim.update(cx, |vim, _| {
+        let state = vim.update(cx, |vim, cx| {
+            if !editor.mode().is_full() {
                 vim.mode = Mode::Insert;
-            });
-        }
+            }
+
+            vim.state_for_editor_settings(cx)
+        });
+
+        Vim::sync_vim_settings_to_editor(&state, editor, window, cx);
 
         editor.register_addon(VimAddon {
             entity: vim.clone(),
@@ -1305,7 +1308,7 @@ impl Vim {
         forced_motion
     }
 
-    pub fn cursor_shape(&self, cx: &mut App) -> CursorShape {
+    pub fn cursor_shape(&self, cx: &App) -> CursorShape {
         let cursor_shape = VimSettings::get_global(cx).cursor_shape;
         match self.mode {
             Mode::Normal => {
@@ -2022,23 +2025,52 @@ impl Vim {
     }
 
     fn sync_vim_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.update_editor(cx, |vim, editor, cx| {
-            editor.set_cursor_shape(vim.cursor_shape(cx), cx);
-            editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
-            let collapse_matches = !HelixModeSetting::get_global(cx).0;
-            editor.set_collapse_matches(collapse_matches);
-            editor.set_input_enabled(vim.editor_input_enabled());
-            editor.set_autoindent(vim.should_autoindent());
-            editor.set_cursor_offset_on_selection(vim.mode.is_visual());
-            editor
-                .selections
-                .set_line_mode(matches!(vim.mode, Mode::VisualLine));
-
-            let hide_edit_predictions = !matches!(vim.mode, Mode::Insert | Mode::Replace);
-            editor.set_edit_predictions_hidden_for_vim_mode(hide_edit_predictions, window, cx);
+        let state = self.state_for_editor_settings(cx);
+        self.update_editor(cx, |_, editor, cx| {
+            Vim::sync_vim_settings_to_editor(&state, editor, window, cx);
         });
         cx.notify()
     }
+
+    fn state_for_editor_settings(&self, cx: &App) -> VimEditorSettingsState {
+        VimEditorSettingsState {
+            cursor_shape: self.cursor_shape(cx),
+            clip_at_line_ends: self.clip_at_line_ends(),
+            collapse_matches: !HelixModeSetting::get_global(cx).0,
+            input_enabled: self.editor_input_enabled(),
+            autoindent: self.should_autoindent(),
+            cursor_offset_on_selection: self.mode.is_visual(),
+            line_mode: matches!(self.mode, Mode::VisualLine),
+            hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace),
+        }
+    }
+
+    fn sync_vim_settings_to_editor(
+        state: &VimEditorSettingsState,
+        editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        editor.set_cursor_shape(state.cursor_shape, cx);
+        editor.set_clip_at_line_ends(state.clip_at_line_ends, cx);
+        editor.set_collapse_matches(state.collapse_matches);
+        editor.set_input_enabled(state.input_enabled);
+        editor.set_autoindent(state.autoindent);
+        editor.set_cursor_offset_on_selection(state.cursor_offset_on_selection);
+        editor.selections.set_line_mode(state.line_mode);
+        editor.set_edit_predictions_hidden_for_vim_mode(state.hide_edit_predictions, window, cx);
+    }
+}
+
+struct VimEditorSettingsState {
+    cursor_shape: CursorShape,
+    clip_at_line_ends: bool,
+    collapse_matches: bool,
+    input_enabled: bool,
+    autoindent: bool,
+    cursor_offset_on_selection: bool,
+    line_mode: bool,
+    hide_edit_predictions: bool,
 }
 
 #[derive(RegisterSetting)]
