@@ -1,9 +1,17 @@
-use std::{ops::Range, rc::Rc, sync::Arc};
+use std::{ops::Range, rc::Rc, sync::Arc, sync::OnceLock};
 
 use collections::HashMap;
 use git::{Oid, repository::InitialGraphCommitData};
 use smallvec::{SmallVec, smallvec};
-use time::{OffsetDateTime, UtcOffset};
+use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
+
+fn timestamp_format() -> &'static [BorrowedFormatItem<'static>] {
+    static FORMAT: OnceLock<Vec<BorrowedFormatItem<'static>>> = OnceLock::new();
+    FORMAT.get_or_init(|| {
+        time::format_description::parse("[day] [month repr:short] [year] [hour]:[minute]")
+            .unwrap_or_default()
+    })
+}
 
 pub fn format_timestamp(timestamp: i64) -> String {
     let Ok(datetime) = OffsetDateTime::from_unix_timestamp(timestamp) else {
@@ -13,10 +21,9 @@ pub fn format_timestamp(timestamp: i64) -> String {
     let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
     let local_datetime = datetime.to_offset(local_offset);
 
-    // todo! do we have to parse this function every time?
-    let format = time::format_description::parse("[day] [month repr:short] [year] [hour]:[minute]")
-        .unwrap_or_default();
-    local_datetime.format(&format).unwrap_or_default()
+    local_datetime
+        .format(timestamp_format())
+        .unwrap_or_default()
 }
 
 // todo! On accent colors updating it's len we need to update lane colors to use different indices

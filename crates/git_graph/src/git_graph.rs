@@ -760,7 +760,6 @@ impl GitGraph {
 
         let viewport_range = first_visible_row.min(loaded_commit_count.saturating_sub(1))
             ..(last_visible_row).min(loaded_commit_count);
-        // todo! Figure out how we can avoid over allocating this data
         let rows = self.graph_data.commits[viewport_range.clone()].to_vec();
         let commit_lines: Vec<_> = self
             .graph_data
@@ -861,7 +860,6 @@ impl GitGraph {
                                     );
 
                                     let mut to_row = to_row_center(
-                                        // todo! subtract with overflow here
                                         *on_row - first_visible_row,
                                         row_height,
                                         vertical_scroll_offset,
