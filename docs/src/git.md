@@ -5,20 +5,9 @@ title: Zed Editor Git integration documentation
 
 # Git
 
-Zed has built-in Git support for the most common workflows: committing, staging, branching, stashing, and viewing history. You can do most day-to-day Git operations without leaving the editor.
+Zed has built-in Git support that lets you manage version control without leaving the editor. The Git Panel shows your working tree state, staging area, and branch information. Changes you make on the command line are reflected immediately in Zed.
 
-Zed doesn't yet have feature-complete conflict resolution tools or line-by-line staging. If that's part of your workflow, you'll need to use the command line or another tool.
-
-**What you can do in Zed:**
-
-- Commit, stage, push, pull, and fetch
-- View all changes in Project Diff (an editable multibuffer)
-- See diff indicators in buffers and scrollbars
-- Expand inline diffs and revert changes directly in the editor
-- Create, switch, and delete branches
-- View Git blame and file history
-- Stash, pop, apply, and drop changes
-- Manage remotes
+For operations that Zed doesn't support natively, you can use the integrated terminal.
 
 ## Git Panel
 
