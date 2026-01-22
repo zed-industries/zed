@@ -20437,6 +20437,7 @@ dependencies = [
  "text",
  "tracing",
  "util",
+ "worktree",
  "zlog",
  "ztracing",
 ]
