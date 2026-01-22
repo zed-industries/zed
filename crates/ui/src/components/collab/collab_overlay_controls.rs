@@ -1,5 +1,5 @@
-use crate::{Avatar, prelude::*};
-use gpui::{AnyElement, ImageSource, IntoElement};
+use crate::{Avatar, Tooltip, prelude::*};
+use gpui::{AnyElement, ClickEvent, ImageSource, IntoElement};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct CollabOverlayControls {
@@ -8,6 +8,10 @@ pub struct CollabOverlayControls {
     is_muted: bool,
     is_deafened: bool,
     is_screen_sharing: bool,
+    on_toggle_mute: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_toggle_deafen: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_toggle_screen_share: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_leave: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
 impl CollabOverlayControls {
@@ -18,6 +22,10 @@ impl CollabOverlayControls {
             is_muted: false,
             is_deafened: false,
             is_screen_sharing: false,
+            on_toggle_mute: None,
+            on_toggle_deafen: None,
+            on_toggle_screen_share: None,
+            on_leave: None,
         }
     }
 
@@ -38,6 +46,38 @@ impl CollabOverlayControls {
 
     pub fn is_screen_sharing(mut self, is_screen_sharing: bool) -> Self {
         self.is_screen_sharing = is_screen_sharing;
+        self
+    }
+
+    pub fn on_toggle_mute(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_toggle_mute = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_toggle_deafen(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_toggle_deafen = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_toggle_screen_share(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_toggle_screen_share = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_leave(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_leave = Some(Box::new(handler));
         self
     }
 }
@@ -73,18 +113,42 @@ impl RenderOnce for CollabOverlayControls {
                         .child(
                             IconButton::new("mic", mic_icon)
                                 .icon_size(IconSize::Small)
-                                .when(self.is_muted, |this| this.icon_color(Color::Muted)),
+                                .tooltip(Tooltip::text(if self.is_muted {
+                                    "Unmute"
+                                } else {
+                                    "Mute"
+                                }))
+                                .when(self.is_muted, |this| this.icon_color(Color::Muted))
+                                .when_some(self.on_toggle_mute, |this, handler| {
+                                    this.on_click(handler)
+                                }),
                         )
                         .child(
                             IconButton::new("audio", audio_icon)
                                 .icon_size(IconSize::Small)
-                                .when(self.is_deafened, |this| this.icon_color(Color::Muted)),
+                                .tooltip(Tooltip::text(if self.is_deafened {
+                                    "Undeafen"
+                                } else {
+                                    "Deafen"
+                                }))
+                                .when(self.is_deafened, |this| this.icon_color(Color::Muted))
+                                .when_some(self.on_toggle_deafen, |this, handler| {
+                                    this.on_click(handler)
+                                }),
                         )
                         .child(
                             IconButton::new("screen", screen_icon)
                                 .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::text(if self.is_screen_sharing {
+                                    "Stop Sharing Screen"
+                                } else {
+                                    "Share Screen"
+                                }))
                                 .when(self.is_screen_sharing, |this| {
                                     this.icon_color(Color::Accent)
+                                })
+                                .when_some(self.on_toggle_screen_share, |this, handler| {
+                                    this.on_click(handler)
                                 }),
                         ),
                 ),
@@ -95,7 +159,9 @@ impl RenderOnce for CollabOverlayControls {
                     .icon(IconName::Exit)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted),
+                    .icon_color(Color::Muted)
+                    .tooltip(Tooltip::text("Leave Call"))
+                    .when_some(self.on_leave, |this, handler| this.on_click(handler)),
             )
     }
 }

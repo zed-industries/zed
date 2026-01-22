@@ -2,10 +2,16 @@ use call::room::Room;
 use call::ActiveCall;
 use channel::ChannelStore;
 use client::User;
-use gpui::{App, AnyElement, Context, Entity, EventEmitter, Render, Subscription, WeakEntity, Window};
+use gpui::{
+    AnyElement, App, Context, Entity, EventEmitter, Render, ScreenCaptureSource, Subscription,
+    Task, WeakEntity, Window,
+};
 use rpc::proto;
+use std::rc::Rc;
 use std::sync::Arc;
+use title_bar::collab::{toggle_deafen, toggle_mute, toggle_screen_sharing};
 use ui::{CollabOverlay, CollabOverlayControls, CollabOverlayHeader, ParticipantItem, prelude::*};
+
 use workspace::Workspace;
 
 pub struct CollabOverlayPanel {
@@ -136,34 +142,81 @@ impl CollabOverlayPanel {
         participants
     }
 
-    fn render_controls(&self, room: &Entity<Room>, cx: &App) -> CollabOverlayControls {
-        let room = room.read(cx);
+    fn render_controls(
+        &self,
+        room: &Entity<Room>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> CollabOverlayControls {
+        let room_read = room.read(cx);
 
-        let avatar_uri = room
+        let avatar_uri = room_read
             .local_participant_user(cx)
             .map(|user| user.avatar_uri.to_string())
             .unwrap_or_else(|| "https://avatars.githubusercontent.com/u/1?v=4".into());
 
-        let is_muted = room.is_muted();
-        let is_deafened = room.is_deafened().unwrap_or(false);
-        let is_screen_sharing = room.is_sharing_screen();
+        let is_muted = room_read.is_muted();
+        let is_deafened = room_read.is_deafened().unwrap_or(false);
+        let is_screen_sharing = room_read.is_sharing_screen();
+
+        let should_share = !is_screen_sharing;
 
         CollabOverlayControls::new(avatar_uri)
             .is_muted(is_muted)
             .is_deafened(is_deafened)
             .is_screen_sharing(is_screen_sharing)
+            .on_toggle_mute(|_, _, cx| {
+                toggle_mute(cx);
+            })
+            .on_toggle_deafen(|_, _, cx| {
+                toggle_deafen(cx);
+            })
+            .on_toggle_screen_share(move |_, window, cx| {
+                window
+                    .spawn(cx, async move |cx| {
+                        let screen = if should_share {
+                            cx.update(|_, cx| pick_default_screen(cx))?.await
+                        } else {
+                            Ok(None)
+                        };
+                        cx.update(|window, cx| toggle_screen_sharing(screen, window, cx))?;
+                        anyhow::Ok(())
+                    })
+                    .detach();
+            })
+            .on_leave(|_, _, cx| {
+                ActiveCall::global(cx)
+                    .update(cx, |call, cx| call.hang_up(cx))
+                    .detach_and_log_err(cx);
+            })
     }
 }
 
+fn pick_default_screen(cx: &mut App) -> Task<anyhow::Result<Option<Rc<dyn ScreenCaptureSource>>>> {
+    let source = cx.screen_capture_sources();
+    cx.spawn(async move |_| {
+        let available_sources = source.await??;
+        Ok(available_sources
+            .iter()
+            .find(|it| {
+                it.as_ref()
+                    .metadata()
+                    .is_ok_and(|meta| meta.is_main.unwrap_or_default())
+            })
+            .or_else(|| available_sources.first())
+            .cloned())
+    })
+}
+
 impl Render for CollabOverlayPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() else {
             return div().into_any_element();
         };
 
         let channel_name = self.channel_name(cx);
         let participants = self.render_participants(&room, cx);
-        let controls = self.render_controls(&room, cx);
+        let controls = self.render_controls(&room, window, cx);
 
         CollabOverlay::new()
             .header(CollabOverlayHeader::new(channel_name).is_open(true))
