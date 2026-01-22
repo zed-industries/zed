@@ -5877,7 +5877,7 @@ impl Workspace {
         }
     }
 
-    fn has_any_items(&self, cx: &App) -> bool {
+    fn has_any_items_open(&self, cx: &App) -> bool {
         self.panes.iter().any(|pane| pane.read(cx).items_len() > 0)
     }
 
@@ -5886,7 +5886,7 @@ impl Workspace {
         if let Some(connection) = self.project.read(cx).remote_connection_options(cx) {
             WorkspaceLocation::Location(SerializedWorkspaceLocation::Remote(connection), paths)
         } else if self.project.read(cx).is_local() {
-            if !paths.is_empty() || self.has_any_items(cx) {
+            if !paths.is_empty() || self.has_any_items_open(cx) {
                 WorkspaceLocation::Location(SerializedWorkspaceLocation::Local, paths)
             } else {
                 WorkspaceLocation::DetachFromSession
@@ -8141,7 +8141,10 @@ pub fn open_workspace_by_id(
         app_state.languages.clone(),
         app_state.fs.clone(),
         None,
-        true,
+        project::LocalProjectFlags {
+            init_worktree_trust: true,
+            ..project::LocalProjectFlags::default()
+        },
         cx,
     );
 
