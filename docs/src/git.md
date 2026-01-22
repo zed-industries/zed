@@ -7,7 +7,7 @@ title: Zed Editor Git integration documentation
 
 Zed has built-in Git support for the most common workflows: committing, staging, branching, stashing, and viewing history. You can do most day-to-day Git operations without leaving the editor.
 
-Zed doesn't yet have conflict resolution tools or line-by-line staging—for those, you'll need to use the command line or another tool.
+Zed doesn't yet have feature-complete conflict resolution tools or line-by-line staging. If that's part of your workflow, you'll need to use the command line or another tool.
 
 **What you can do in Zed:**
 
@@ -26,58 +26,36 @@ The Git Panel gives you a birds-eye view of the state of your working tree and o
 
 You can open the Git Panel using {#action git_panel::ToggleFocus}, or by clicking the Git icon in the status bar.
 
-In the panel you can see the state of your project at a glance—which repository and branch are active, what files have changed and the current staging state of each file.
+In the panel you can see the state of your project at a glance: which repository and branch are active, what files have changed and the current staging state of each file.
 
 Zed monitors your repository so that changes you make on the command line are instantly reflected.
 
 ### Configuration
 
-Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows) and search for "git" to see all available options.
+Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows) to customize Git behavior. Settings are spread across two pages:
 
-**Git Panel settings** (`git_panel` in JSON):
+- **Panels > Git Panel**: Panel position, tree vs flat view, status display style
+- **Version Control**: Gutter indicators, inline blame, hunk styles
 
-- `dock`: Where to position the panel (`left`, `right`, or `bottom`)
-- `default_width`: Panel width in pixels
-- `status_style`: Show file status as `icon` or `letter`
-- `sort_by_path`: Sort entries by path instead of status
-- `tree_view`: Show entries as a tree instead of a flat list
-- `collapse_untracked_diff`: Collapse untracked files in diffs
-- `fallback_branch_name`: Default branch name when `git init` doesn't specify one
-- `button`: Show/hide the Git Panel button in the status bar
+#### Moving the Git Panel
 
-**Git integration settings** (`git` in JSON):
+By default, the Git Panel docks on the left. Go to **Panels > Git Panel** and change **Git Panel Dock** to move it to the right or bottom.
 
-- `git_gutter`: Show diff indicators in the gutter (`tracked_files` or `hide`)
-- `gutter_debounce`: Milliseconds to wait before updating gutter indicators
-- `inline_blame`: Show blame info on the current line (with `enabled`, `delay_ms`, and formatting options)
-- `hunk_style`: How to display diff hunks (`staged_hollow`, `solid`, etc.)
-- `path_style`: Display paths as `file_name_first` or `file_path_first`
+#### Switching to Tree View
 
-**Commit message formatting** (under `languages."Git Commit"`):
+The Git Panel shows a flat list of changed files by default. To see files organized by folder hierarchy instead, toggle **Tree View** in the panel's context menu, or enable it in **Panels > Git Panel**.
 
-- `preferred_line_length`: Hard wrap width (default: `72`)
-- `soft_wrap`: How text wraps while typing (`editor_width`, `none`, `preferred_line_length`, `bounded`)
+#### Inline Blame
 
-```json
-{
-  "git_panel": {
-    "dock": "left",
-    "status_style": "icon",
-    "tree_view": true
-  },
-  "git": {
-    "inline_blame": {
-      "enabled": true,
-      "delay_ms": 500
-    }
-  },
-  "languages": {
-    "Git Commit": {
-      "preferred_line_length": 72
-    }
-  }
-}
-```
+Zed shows Git blame information on the current line. To turn this off or add a delay before it appears, go to **Version Control > Inline Git Blame**.
+
+#### Hiding the Gutter Indicators
+
+The colored bars in the gutter that show added, modified, and deleted lines can be hidden. Go to **Version Control > Git Gutter** and set **Visibility** to "Hide".
+
+#### Commit Message Line Length
+
+Zed wraps commit messages at 72 characters (a Git convention). To change this, search for "Git Commit" in Settings and adjust **Preferred Line Length**.
 
 ## Project Diff
 
@@ -87,11 +65,11 @@ All of the changes displayed in the Project Diff behave exactly the same as any 
 
 You can stage or unstage each hunk as well as a whole file by hitting the buttons on the tab bar or their corresponding keybindings.
 
-<!-- Add media -->
-
 ### Word Diff Highlighting
 
-By default, Zed highlights changed words within modified lines to make it easier to spot exactly what changed. You can disable this per-language using the `word_diff_enabled` setting:
+By default, Zed highlights changed words within modified lines to make it easier to spot exactly what changed. To disable this globally, open the Settings Editor and go to **Languages & Tools > Miscellaneous**, then turn off **Word Diff Enabled**.
+
+To disable word diff for specific languages only, add this to your settings.json:
 
 ```json
 {
@@ -103,25 +81,15 @@ By default, Zed highlights changed words within modified lines to make it easier
 }
 ```
 
-To disable word diff highlighting globally:
-
-```json
-{
-  "word_diff_enabled": false
-}
-```
-
 ## File History
 
-File History shows the commit history for an individual file, letting you browse how a file has changed over time.
+File History shows the commit history for an individual file. Select a commit to see the diff showing what changed.
 
 To open File History:
 
 - Right-click on a file in the Project Panel and select "Open File History"
 - Right-click on an editor tab and select "Open File History"
 - Use the Command Palette and search for "file history"
-
-The File History view displays a list of commits that modified the file. Select a commit to see the diff showing what changed in that commit.
 
 ## Fetch, Push, and Pull
 
@@ -139,9 +107,7 @@ This matches Git's standard behavior, so if you've configured `pushRemote` or `p
 
 ## Remotes
 
-Zed supports managing Git remotes directly from the interface. You can view, add, and work with multiple remotes for your repository.
-
-To manage remotes, use the Command Palette and search for remote-related actions, or use the Git Panel's remote selector when pushing or fetching.
+When your repository has multiple remotes, Zed shows a remote selector in the Git Panel. Click the remote button next to push/pull to choose which remote to use for that operation.
 
 ## Staging Workflow
 
