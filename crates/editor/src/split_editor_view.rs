@@ -52,6 +52,7 @@ impl SplitEditorState {
         }
     }
 
+    #[allow(clippy::misnamed_getters)]
     pub fn left_ratio(&self) -> f32 {
         self.visible_left_ratio
     }
