@@ -43,8 +43,7 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, File};
 use language_model::{
-    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    Role, ZED_CLOUD_PROVIDER_ID,
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use menu;
 use multi_buffer::ExcerptInfo;
@@ -80,7 +79,6 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
-use ztracing::instrument;
 actions!(
     git_panel,
     [
@@ -1198,7 +1196,6 @@ impl GitPanel {
         self.selected_entry.and_then(|i| self.entries.get(i))
     }
 
-    #[instrument(skip_all)]
     fn open_diff(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         maybe!({
             let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
@@ -1249,7 +1246,6 @@ impl GitPanel {
         });
     }
 
-    #[instrument(skip_all)]
     fn open_file(
         &mut self,
         _: &menu::SecondaryConfirm,
@@ -2575,18 +2571,7 @@ impl GitPanel {
         }
     }
 
-    async fn load_commit_message_prompt(
-        is_using_legacy_zed_pro: bool,
-        cx: &mut AsyncApp,
-    ) -> String {
-        // Remove this once we stop supporting legacy Zed Pro
-        // In legacy Zed Pro, Git commit summary generation did not count as a
-        // prompt. If the user changes the prompt, our classification will fail,
-        // meaning that users will be charged for generating commit messages.
-        if is_using_legacy_zed_pro {
-            return BuiltInPrompt::CommitMessage.default_content().to_string();
-        }
-
+    async fn load_commit_message_prompt(cx: &mut AsyncApp) -> String {
         let load = async {
             let store = cx.update(|cx| PromptStore::global(cx)).await.ok()?;
             store
@@ -2630,13 +2615,6 @@ impl GitPanel {
         let project = self.project.clone();
         let repo_work_dir = repo.read(cx).work_directory_abs_path.clone();
 
-        // Remove this once we stop supporting legacy Zed Pro
-        let is_using_legacy_zed_pro = provider.id() == ZED_CLOUD_PROVIDER_ID
-            && self.workspace.upgrade().map_or(false, |workspace| {
-                workspace.read(cx).user_store().read(cx).plan()
-                    == Some(cloud_llm_client::Plan::V1(cloud_llm_client::PlanV1::ZedPro))
-            });
-
         self.generate_commit_message_task = Some(cx.spawn(async move |this, mut cx| {
              async move {
                 let _defer = cx.on_drop(&this, |this, _cx| {
@@ -2672,7 +2650,7 @@ impl GitPanel {
 
                 let rules_content = Self::load_project_rules(&project, &repo_work_dir, &mut cx).await;
 
-                let prompt = Self::load_commit_message_prompt(is_using_legacy_zed_pro, &mut cx).await;
+                let prompt = Self::load_commit_message_prompt(&mut cx).await;
 
                 let subject = this.update(cx, |this, cx| {
                     this.commit_editor.read(cx).text(cx).lines().next().map(ToOwned::to_owned).unwrap_or_default()
@@ -2702,7 +2680,6 @@ impl GitPanel {
                     thread_id: None,
                     prompt_id: None,
                     intent: Some(CompletionIntent::GenerateGitCommitMessage),
-                    mode: None,
                     messages: vec![LanguageModelRequestMessage {
                         role: Role::User,
                         content: vec![content.into()],
@@ -2714,6 +2691,7 @@ impl GitPanel {
                     stop: Vec::new(),
                     temperature,
                     thinking_allowed: false,
+                    bypass_rate_limit: false,
                 };
 
                 let stream = model.stream_completion_text(request, cx);
@@ -3908,11 +3886,7 @@ impl GitPanel {
         &self,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        if !agent_settings::AgentSettings::get_global(cx).enabled(cx)
-            || LanguageModelRegistry::read_global(cx)
-                .commit_message_model()
-                .is_none()
-        {
+        if !agent_settings::AgentSettings::get_global(cx).enabled(cx) {
             return None;
         }
 
@@ -3927,7 +3901,7 @@ impl GitPanel {
                             .with_rotate_animation(2),
                     )
                     .child(
-                        Label::new("Generating Commit...")
+                        Label::new("Generating Commit…")
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
@@ -3935,25 +3909,37 @@ impl GitPanel {
             );
         }
 
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let has_commit_model_configuration_error = model_registry
+            .configuration_error(model_registry.commit_message_model(), cx)
+            .is_some();
         let can_commit = self.can_commit();
+
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
+
         Some(
             IconButton::new("generate-commit-message", IconName::AiEdit)
                 .shape(ui::IconButtonShape::Square)
-                .icon_color(Color::Muted)
+                .icon_color(if has_commit_model_configuration_error {
+                    Color::Disabled
+                } else {
+                    Color::Muted
+                })
                 .tooltip(move |_window, cx| {
-                    if can_commit {
+                    if !can_commit {
+                        Tooltip::simple("No Changes to Commit", cx)
+                    } else if has_commit_model_configuration_error {
+                        Tooltip::simple("Configure an LLM provider to generate commit messages", cx)
+                    } else {
                         Tooltip::for_action_in(
                             "Generate Commit Message",
                             &git::GenerateCommitMessage,
                             &editor_focus_handle,
                             cx,
                         )
-                    } else {
-                        Tooltip::simple("No changes to commit", cx)
                     }
                 })
-                .disabled(!can_commit)
+                .disabled(!can_commit || has_commit_model_configuration_error)
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.generate_commit_message(cx);
                 }))
@@ -5080,9 +5066,9 @@ impl GitPanel {
                     this.selected_entry = Some(ix);
                     cx.notify();
                     if event.modifiers().secondary() {
-                        this.open_file(&Default::default(), window, cx) // here?
+                        this.open_file(&Default::default(), window, cx)
                     } else {
-                        this.open_diff(&Default::default(), window, cx); // here?
+                        this.open_diff(&Default::default(), window, cx);
                         this.focus_handle.focus(window, cx);
                     }
                 })

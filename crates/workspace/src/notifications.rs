@@ -308,8 +308,11 @@ impl Render for LanguageServerPrompt {
                                 h_flex()
                                     .gap_1()
                                     .child(
-                                        CopyButton::new(request.message.clone())
-                                            .tooltip_label("Copy Description"),
+                                        CopyButton::new(
+                                            "copy-description",
+                                            request.message.clone(),
+                                        )
+                                        .tooltip_label("Copy Description"),
                                     )
                                     .child(
                                         IconButton::new(close_id, close_icon)

@@ -131,7 +131,16 @@ impl ActionLog {
         cx: &mut Context<Self>,
     ) {
         match event {
-            BufferEvent::Edited => self.handle_buffer_edited(buffer, cx),
+            BufferEvent::Edited => {
+                let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
+                    return;
+                };
+                let buffer_version = buffer.read(cx).version();
+                if !buffer_version.changed_since(&tracked_buffer.version) {
+                    return;
+                }
+                self.handle_buffer_edited(buffer, cx);
+            }
             BufferEvent::FileHandleChanged => {
                 self.handle_buffer_file_changed(buffer, cx);
             }
@@ -399,7 +408,7 @@ impl ActionLog {
                 diff.update_diff(
                     buffer_snapshot.clone(),
                     Some(new_base_text),
-                    true,
+                    Some(true),
                     language,
                     cx,
                 )
@@ -464,10 +473,13 @@ impl ActionLog {
 
     /// Mark a buffer as edited by agent, so we can refresh it in the context
     pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        let new_version = buffer.read(cx).version();
         let tracked_buffer = self.track_buffer_internal(buffer, false, cx);
         if let TrackedBufferStatus::Deleted = tracked_buffer.status {
             tracked_buffer.status = TrackedBufferStatus::Modified;
         }
+
+        tracked_buffer.version = new_version;
         tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
     }
 
@@ -762,6 +774,15 @@ impl ActionLog {
             .collect()
     }
 
+    /// Returns all tracked buffers for debugging purposes
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn tracked_buffers_for_debug(
+        &self,
+        _cx: &App,
+    ) -> impl Iterator<Item = (&Entity<Buffer>, &TrackedBuffer)> {
+        self.tracked_buffers.iter()
+    }
+
     /// Iterate over buffers changed since last read or edited by the model
     pub fn stale_buffers<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a Entity<Buffer>> {
         self.tracked_buffers
@@ -954,13 +975,14 @@ enum ChangeAuthor {
     Agent,
 }
 
+#[derive(Debug)]
 enum TrackedBufferStatus {
     Created { existing_file_content: Option<Rope> },
     Modified,
     Deleted,
 }
 
-struct TrackedBuffer {
+pub struct TrackedBuffer {
     buffer: Entity<Buffer>,
     diff_base: Rope,
     unreviewed_edits: Patch<u32>,
@@ -975,6 +997,16 @@ struct TrackedBuffer {
 }
 
 impl TrackedBuffer {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn diff(&self) -> &Entity<BufferDiff> {
+        &self.diff
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn diff_base_len(&self) -> usize {
+        self.diff_base.len()
+    }
+
     fn has_edits(&self, cx: &App) -> bool {
         self.diff
             .read(cx)

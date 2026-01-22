@@ -1,0 +1,32 @@
+[package]
+name = "copilot_ui"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/copilot_ui.rs"
+doctest = false
+
+[features]
+default = []
+test-support = [
+    "copilot/test-support",
+    "gpui/test-support",
+]
+
+[dependencies]
+anyhow.workspace = true
+copilot.workspace = true
+gpui.workspace = true
+log.workspace = true
+lsp.workspace = true
+menu.workspace = true
+serde_json.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true

@@ -26,6 +26,8 @@ collections.workspace = true
 component.workspace = true
 convert_case.workspace = true
 copilot.workspace = true
+copilot_chat.workspace = true
+copilot_ui.workspace = true
 credentials_provider.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
 extension.workspace = true
