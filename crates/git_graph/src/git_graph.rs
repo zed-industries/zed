@@ -134,6 +134,12 @@ pub struct GitGraph {
 }
 
 impl GitGraph {
+    fn row_height(cx: &App) -> Pixels {
+        let settings = ThemeSettings::get_global(cx);
+        let font_size = settings.buffer_font_size(cx);
+        font_size + px(12.0)
+    }
+
     pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, window, |_, _, cx| cx.notify())
@@ -168,7 +174,7 @@ impl GitGraph {
         })
         .detach();
 
-        let _subscriptions = if let Some(repository) = project.read(cx).active_repository(cx) {
+        let mut _subscriptions = if let Some(repository) = project.read(cx).active_repository(cx) {
             repository.update(cx, |repository, cx| {
                 let commits =
                     repository.graph_data(log_source.clone(), log_order, 0..usize::MAX, cx);
@@ -180,11 +186,21 @@ impl GitGraph {
             vec![]
         };
 
-        let settings = ThemeSettings::get_global(cx);
-        let font_size = settings.buffer_font_size(cx);
-        let row_height = font_size + px(12.0);
-
         let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
+        let mut row_height = Self::row_height(cx);
+
+        cx.observe_global_in::<settings::SettingsStore>(window, move |this, _window, cx| {
+            let new_row_height = Self::row_height(cx);
+            if new_row_height != row_height {
+                this.row_height = new_row_height;
+                this.table_interaction_state.update(cx, |state, _cx| {
+                    state.scroll_handle.0.borrow_mut().last_item_size = None;
+                });
+                row_height = new_row_height;
+            }
+            cx.notify();
+        })
+        .detach();
 
         GitGraph {
             focus_handle,
@@ -237,8 +253,7 @@ impl GitGraph {
         div()
             .px_1p5()
             .py_0p5()
-            // todo! height should probably be based off of font size
-            .h(px(22.0))
+            .h(self.row_height)
             .flex()
             .items_center()
             .justify_center()
