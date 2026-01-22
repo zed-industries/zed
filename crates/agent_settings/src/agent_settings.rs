@@ -600,10 +600,6 @@ mod tests {
             !terminal.always_confirm.is_empty(),
             "terminal should have confirm rules"
         );
-        assert!(
-            !terminal.always_allow.is_empty(),
-            "terminal should have allow rules"
-        );
 
         let edit_file = permissions
             .tools
@@ -623,13 +619,10 @@ mod tests {
             "delete_path should have deny rules"
         );
 
-        let fetch = permissions
-            .tools
-            .get("fetch")
-            .expect("fetch tool should be configured");
+        // fetch tool should be configured (with default_mode: confirm)
         assert!(
-            !fetch.always_allow.is_empty(),
-            "fetch should have allow rules"
+            permissions.tools.contains_key("fetch"),
+            "fetch tool should be configured"
         );
     }
 
@@ -660,40 +653,6 @@ mod tests {
             assert!(
                 terminal.always_deny.iter().any(|r| r.is_match(cmd)),
                 "Command '{}' should be blocked by deny rules",
-                cmd
-            );
-        }
-    }
-
-    #[test]
-    fn test_default_allow_rules_match_safe_commands() {
-        let default_json = include_str!("../../../assets/settings/default.json");
-        let value: serde_json::Value = serde_json_lenient::from_str(default_json).unwrap();
-        let tool_permissions = value["agent"]["tool_permissions"].clone();
-        let content: ToolPermissionsContent = serde_json::from_value(tool_permissions).unwrap();
-        let permissions = compile_tool_permissions(Some(content));
-
-        let terminal = permissions.tools.get("terminal").unwrap();
-
-        let safe_commands = [
-            "cargo build",
-            "cargo test",
-            "cargo check",
-            "npm test",
-            "pnpm install",
-            "yarn run build",
-            "ls",
-            "ls -la",
-            "cat file.txt",
-            "git status",
-            "git log",
-            "git diff",
-        ];
-
-        for cmd in &safe_commands {
-            assert!(
-                terminal.always_allow.iter().any(|r| r.is_match(cmd)),
-                "Command '{}' should be allowed by allow rules",
                 cmd
             );
         }
