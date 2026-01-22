@@ -257,12 +257,7 @@ impl ImageView {
         }
     }
 
-    fn handle_pinch(
-        &mut self,
-        event: &PinchEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn handle_pinch(&mut self, event: &PinchEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let zoom_factor = 1.0 + event.delta;
         self.set_zoom(self.zoom_level * zoom_factor, Some(event.position), cx);
     }
