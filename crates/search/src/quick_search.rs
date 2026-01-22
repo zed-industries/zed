@@ -15,8 +15,8 @@ use editor::EditorSettings;
 use editor::{Editor, EditorEvent, EditorMode, RowHighlightOptions};
 use gpui::{
     Action, App, AsyncApp, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, HighlightStyle, KeyContext, ParentElement, Render, Styled, StyledText,
-    Subscription, Task, WeakEntity, Window, actions, px, relative,
+    Focusable, HighlightStyle, KeyContext, ParentElement, Render, Styled, StyledText, Subscription,
+    Task, WeakEntity, Window, actions, px, relative,
 };
 use language::Buffer;
 use language::language_settings::SoftWrap;
@@ -24,7 +24,7 @@ use menu;
 use multi_buffer::{ExcerptRange, MultiBuffer};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::SearchResults;
-use project::search::{SearchQuery, SearchResult, SearchInputKind};
+use project::search::{SearchInputKind, SearchQuery, SearchResult};
 use project::search_history::SearchHistoryCursor;
 use project::{Project, ProjectPath};
 use settings::Settings;
@@ -39,7 +39,16 @@ use util::{ResultExt, paths::PathMatcher};
 use workspace::{ModalView, SplitDirection, Workspace, pane, searchable::SearchableItem};
 pub use zed_actions::quick_search::Toggle;
 
-actions!(quick_search, [ReplaceNext, ReplaceAll, ToggleFilters, ToggleSplitMenu, ToggleHistory]);
+actions!(
+    quick_search,
+    [
+        ReplaceNext,
+        ReplaceAll,
+        ToggleFilters,
+        ToggleSplitMenu,
+        ToggleHistory
+    ]
+);
 
 const SEARCH_DEBOUNCE_MS: u64 = 100;
 
@@ -133,11 +142,7 @@ impl QuickSearch {
             let weak_workspace = cx.entity().downgrade();
             let initial_query = if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
                 let query = editor.update(cx, |editor, cx| editor.query_suggestion(window, cx));
-                if !query.is_empty() {
-                    Some(query)
-                } else {
-                    None
-                }
+                if !query.is_empty() { Some(query) } else { None }
             } else {
                 None
             };
@@ -1196,13 +1201,21 @@ impl QuickSearchDelegate {
             let include_text = self.included_files_editor.read(cx).text(cx);
             match self.parse_path_matches(include_text, cx) {
                 Ok(matcher) => {
-                    if self.panels_with_errors.remove(&InputPanel::Include).is_some() {
+                    if self
+                        .panels_with_errors
+                        .remove(&InputPanel::Include)
+                        .is_some()
+                    {
                         cx.notify();
                     }
                     matcher
                 }
                 Err(e) => {
-                    if self.panels_with_errors.insert(InputPanel::Include, e.to_string()).is_none() {
+                    if self
+                        .panels_with_errors
+                        .insert(InputPanel::Include, e.to_string())
+                        .is_none()
+                    {
                         cx.notify();
                     }
                     PathMatcher::default()
@@ -1217,13 +1230,21 @@ impl QuickSearchDelegate {
             let exclude_text = self.excluded_files_editor.read(cx).text(cx);
             match self.parse_path_matches(exclude_text, cx) {
                 Ok(matcher) => {
-                    if self.panels_with_errors.remove(&InputPanel::Exclude).is_some() {
+                    if self
+                        .panels_with_errors
+                        .remove(&InputPanel::Exclude)
+                        .is_some()
+                    {
                         cx.notify();
                     }
                     matcher
                 }
                 Err(e) => {
-                    if self.panels_with_errors.insert(InputPanel::Exclude, e.to_string()).is_none() {
+                    if self
+                        .panels_with_errors
+                        .insert(InputPanel::Exclude, e.to_string())
+                        .is_none()
+                    {
                         cx.notify();
                     }
                     PathMatcher::default()
@@ -1272,7 +1293,11 @@ impl QuickSearchDelegate {
                 Some(search_query)
             }
             Err(e) => {
-                if self.panels_with_errors.insert(InputPanel::Query, e.to_string()).is_none() {
+                if self
+                    .panels_with_errors
+                    .insert(InputPanel::Query, e.to_string())
+                    .is_none()
+                {
                     cx.notify();
                 }
                 None
@@ -1342,24 +1367,28 @@ impl QuickSearchDelegate {
             .iter()
             .map(str::to_string)
             .collect();
-        
+
         let editor = editor.clone();
-        Some(ContextMenu::build(window, cx, move |mut menu, _window, _| {
-            if history_entries.is_empty() {
-                menu.header("No recent searches")
-            } else {
-                for query in history_entries {
-                    let editor = editor.clone();
-                    let query_for_click: String = query.clone();
-                    menu = menu.entry(query, None, move |window, cx| {
-                        editor.update(cx, |editor, cx| {
-                            editor.set_text(query_for_click.clone(), window, cx);
+        Some(ContextMenu::build(
+            window,
+            cx,
+            move |mut menu, _window, _| {
+                if history_entries.is_empty() {
+                    menu.header("No recent searches")
+                } else {
+                    for query in history_entries {
+                        let editor = editor.clone();
+                        let query_for_click: String = query.clone();
+                        menu = menu.entry(query, None, move |window, cx| {
+                            editor.update(cx, |editor, cx| {
+                                editor.set_text(query_for_click.clone(), window, cx);
+                            });
                         });
-                    });
+                    }
+                    menu
                 }
-                menu
-            }
-        }))
+            },
+        ))
     }
 }
 
@@ -1424,18 +1453,21 @@ impl PickerDelegate for QuickSearchDelegate {
                                 PopoverMenu::new("history-menu-popover")
                                     .with_handle(self.history_popover_menu_handle.clone())
                                     .trigger(
-                                        IconButton::new("search-history", IconName::MagnifyingGlass)
-                                            .tooltip({
-                                                let focus_handle = editor.focus_handle(cx);
-                                                move |_window, cx| {
-                                                    Tooltip::for_action_in(
-                                                        "Search History",
-                                                        &ToggleHistory,
-                                                        &focus_handle,
-                                                        cx,
-                                                    )
-                                                }
-                                            }),
+                                        IconButton::new(
+                                            "search-history",
+                                            IconName::MagnifyingGlass,
+                                        )
+                                        .tooltip({
+                                            let focus_handle = editor.focus_handle(cx);
+                                            move |_window, cx| {
+                                                Tooltip::for_action_in(
+                                                    "Search History",
+                                                    &ToggleHistory,
+                                                    &focus_handle,
+                                                    cx,
+                                                )
+                                            }
+                                        }),
                                     )
                                     .menu({
                                         let editor = editor.clone();
@@ -1610,11 +1642,14 @@ impl PickerDelegate for QuickSearchDelegate {
                                         .rounded_md()
                                         .px_1()
                                         .border_color(
-                                            if self.panels_with_errors.contains_key(&InputPanel::Include) {
+                                            if self
+                                                .panels_with_errors
+                                                .contains_key(&InputPanel::Include)
+                                            {
                                                 Color::Error.color(cx)
                                             } else {
                                                 gpui::transparent_black()
-                                            }
+                                            },
                                         )
                                         .child(self.included_files_editor.clone()),
                                 ),
@@ -1636,11 +1671,14 @@ impl PickerDelegate for QuickSearchDelegate {
                                         .rounded_md()
                                         .px_1()
                                         .border_color(
-                                            if self.panels_with_errors.contains_key(&InputPanel::Exclude) {
+                                            if self
+                                                .panels_with_errors
+                                                .contains_key(&InputPanel::Exclude)
+                                            {
                                                 Color::Error.color(cx)
                                             } else {
                                                 gpui::transparent_black()
-                                            }
+                                            },
                                         )
                                         .child(self.excluded_files_editor.clone()),
                                 ),
