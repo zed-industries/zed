@@ -62,7 +62,7 @@ fn format_timestamp(timestamp: i64) -> String {
         .unwrap_or_default()
 }
 
-pub fn accent_colors_count(accents: &AccentColors) -> usize {
+fn accent_colors_count(accents: &AccentColors) -> usize {
     accents.0.len()
 }
 
@@ -231,7 +231,7 @@ impl LaneState {
     }
 }
 
-pub struct CommitEntry {
+struct CommitEntry {
     data: Arc<InitialGraphCommitData>,
     lane: usize,
     color_idx: usize,
@@ -239,19 +239,19 @@ pub struct CommitEntry {
 
 type ActiveLaneIdx = usize;
 
-pub(crate) enum AllCommitCount {
+enum AllCommitCount {
     NotLoaded,
     Loaded(usize),
 }
 
 #[derive(Debug)]
-pub(crate) enum CurveKind {
+enum CurveKind {
     Merge,
     Checkout,
 }
 
 #[derive(Debug)]
-pub(crate) enum CommitLineSegment {
+enum CommitLineSegment {
     Straight {
         to_row: usize,
     },
@@ -263,7 +263,7 @@ pub(crate) enum CommitLineSegment {
 }
 
 #[derive(Debug)]
-pub struct CommitLine {
+struct CommitLine {
     #[cfg(test)]
     child: Oid,
     #[cfg(test)]
@@ -275,10 +275,7 @@ pub struct CommitLine {
 }
 
 impl CommitLine {
-    pub fn get_first_visible_segment_idx(
-        &self,
-        first_visible_row: usize,
-    ) -> Option<(usize, usize)> {
+    fn get_first_visible_segment_idx(&self, first_visible_row: usize) -> Option<(usize, usize)> {
         if first_visible_row > self.full_interval.end {
             return None;
         } else if first_visible_row <= self.full_interval.start {
@@ -315,7 +312,7 @@ struct CommitLineKey {
     parent: Oid,
 }
 
-pub struct GraphData {
+struct GraphData {
     lane_states: SmallVec<[LaneState; 8]>,
     lane_colors: HashMap<ActiveLaneIdx, BranchColor>,
     parent_to_lanes: HashMap<Oid, SmallVec<[usize; 1]>>,
@@ -330,7 +327,7 @@ pub struct GraphData {
 }
 
 impl GraphData {
-    pub fn new(accent_colors_count: usize) -> Self {
+    fn new(accent_colors_count: usize) -> Self {
         GraphData {
             lane_states: SmallVec::default(),
             lane_colors: HashMap::default(),
@@ -346,7 +343,7 @@ impl GraphData {
         }
     }
 
-    pub fn clear(&mut self) {
+    fn clear(&mut self) {
         self.lane_states.clear();
         self.lane_colors.clear();
         self.parent_to_lanes.clear();
@@ -378,7 +375,7 @@ impl GraphData {
         })
     }
 
-    pub(crate) fn add_commits(&mut self, commits: &[Arc<InitialGraphCommitData>]) {
+    fn add_commits(&mut self, commits: &[Arc<InitialGraphCommitData>]) {
         self.commits.reserve(commits.len());
         self.lines.reserve(commits.len() / 2);
 
@@ -488,10 +485,6 @@ impl GraphData {
         }
     }
 }
-
-// ============================================================================
-// GitGraph Component
-// ============================================================================
 
 pub fn init(cx: &mut App) {
     workspace::register_serializable_item::<GitGraph>(cx);
