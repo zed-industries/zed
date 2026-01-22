@@ -410,7 +410,7 @@ impl ActionLog {
                 diff.update_diff(
                     buffer_snapshot.clone(),
                     Some(new_base_text),
-                    true,
+                    Some(true),
                     language,
                     language_registry,
                     cx,

@@ -3151,7 +3151,7 @@ impl BufferGitState {
                                 diff.update_diff(
                                     buffer.clone(),
                                     head,
-                                    head_changed,
+                                    head_changed.then_some(true),
                                     language.clone(),
                                     language_registry.clone(),
                                     cx,

@@ -181,7 +181,7 @@ async fn build_buffer_diff(
             diff.update_diff(
                 new_buffer_snapshot.clone(),
                 Some(old_buffer_snapshot.text().into()),
-                true,
+                Some(true),
                 new_buffer_snapshot.language().cloned(),
                 Some(language_registry.clone()),
                 cx,

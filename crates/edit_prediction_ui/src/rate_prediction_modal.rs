@@ -330,7 +330,7 @@ impl RatePredictionsModal {
                     let update = diff.update_diff(
                         new_buffer_snapshot.clone(),
                         Some(old_buffer_snapshot.text().into()),
-                        true,
+                        Some(true),
                         language,
                         new_buffer_language_registry,
                         cx,

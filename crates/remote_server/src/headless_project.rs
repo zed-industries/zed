@@ -195,6 +195,7 @@ impl HeadlessProject {
                 fs.clone(),
                 worktree_store.clone(),
                 task_store.clone(),
+                true,
                 cx,
             );
             observer.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);

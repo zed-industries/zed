@@ -202,7 +202,10 @@ impl ExampleInstance {
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
             cx,
         );
 
@@ -560,6 +563,7 @@ impl ExampleInstance {
                 tool_choice: None,
                 stop: Vec::new(),
                 thinking_allowed: true,
+                bypass_rate_limit: false,
             };
 
             let model = model.clone();

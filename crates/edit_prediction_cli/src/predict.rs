@@ -31,21 +31,30 @@ pub async fn run_prediction(
     example_progress: &ExampleProgress,
     mut cx: AsyncApp,
 ) -> anyhow::Result<()> {
-    let provider = args.provider;
     let repetition_count = args.repetitions;
 
     if let Some(existing_prediction) = example.predictions.first() {
-        if existing_prediction.provider == provider {
-            return Ok(());
-        } else {
-            example.predictions.clear();
+        let has_prediction = existing_prediction.actual_patch.is_some()
+            || !existing_prediction.actual_output.is_empty();
+        if has_prediction {
+            match args.provider {
+                None => return Ok(()),
+                Some(provider) if existing_prediction.provider == provider => return Ok(()),
+                Some(_) => example.predictions.clear(),
+            }
         }
     }
+
+    let Some(provider) = args.provider else {
+        anyhow::bail!(
+            "No existing predictions found. Use --provider to specify which model to use for prediction."
+        );
+    };
 
     run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
 
     if let PredictionProvider::Teacher(version) | PredictionProvider::TeacherNonBatching(version) =
-        args.provider
+        provider
     {
         let _step_progress = example_progress.start(Step::Predict);
 
@@ -186,8 +195,9 @@ pub async fn run_prediction(
             .unwrap()
             .predictions
             .push(ExamplePrediction {
-                actual_patch: String::new(),
+                actual_patch: None,
                 actual_output: String::new(),
+                error: None,
                 provider,
             });
 
@@ -204,16 +214,14 @@ pub async fn run_prediction(
             })
             .await?;
 
-        let actual_patch = prediction
-            .and_then(|prediction| {
-                let prediction = prediction.prediction.ok()?;
-                prediction
-                    .edit_preview
-                    .as_unified_diff(prediction.snapshot.file(), &prediction.edits)
-            })
-            .unwrap_or_default();
+        let actual_patch = prediction.and_then(|prediction| {
+            let prediction = prediction.prediction.ok()?;
+            prediction
+                .edit_preview
+                .as_unified_diff(prediction.snapshot.file(), &prediction.edits)
+        });
 
-        let has_prediction = !actual_patch.is_empty();
+        let has_prediction = actual_patch.as_ref().is_some_and(|p| !p.is_empty());
 
         updated_example
             .lock()
@@ -293,8 +301,9 @@ async fn predict_anthropic(
     let actual_patch = TeacherPrompt::parse(&example, &actual_output)?;
 
     let prediction = ExamplePrediction {
-        actual_patch,
+        actual_patch: Some(actual_patch),
         actual_output,
+        error: None,
         provider: if batched {
             PredictionProvider::Teacher(version)
         } else {
@@ -306,9 +315,9 @@ async fn predict_anthropic(
     Ok(())
 }
 
-pub async fn sync_batches(provider: &PredictionProvider) -> anyhow::Result<()> {
+pub async fn sync_batches(provider: Option<&PredictionProvider>) -> anyhow::Result<()> {
     match provider {
-        PredictionProvider::Teacher(..) => {
+        Some(PredictionProvider::Teacher(..)) => {
             let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
                 AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
                     .expect("Failed to create Anthropic client")

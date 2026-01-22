@@ -451,6 +451,11 @@ pub struct LanguageModelRequest {
     pub stop: Vec<String>,
     pub temperature: Option<f32>,
     pub thinking_allowed: bool,
+    /// When true, this request bypasses the rate limiter. Used for nested requests
+    /// (like edit agent requests spawned from within a tool call) that are already
+    /// "part of" a rate-limited request to avoid deadlocks.
+    #[serde(default)]
+    pub bypass_rate_limit: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

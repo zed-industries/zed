@@ -64,11 +64,7 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
 
-    fn resume(
-        &self,
-        _session_id: &acp::SessionId,
-        _cx: &App,
-    ) -> Option<Rc<dyn AgentSessionResume>> {
+    fn retry(&self, _session_id: &acp::SessionId, _cx: &App) -> Option<Rc<dyn AgentSessionRetry>> {
         None
     }
 
@@ -135,7 +131,7 @@ pub trait AgentSessionTruncate {
     fn run(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
 }
 
-pub trait AgentSessionResume {
+pub trait AgentSessionRetry {
     fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>>;
 }
 
@@ -226,6 +222,15 @@ impl AgentSessionInfo {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum SessionListUpdate {
+    Refresh,
+    SessionInfo {
+        session_id: acp::SessionId,
+        update: acp::SessionInfoUpdate,
+    },
+}
+
 pub trait AgentSessionList {
     fn list_sessions(
         &self,
@@ -245,7 +250,7 @@ pub trait AgentSessionList {
         Task::ready(Err(anyhow::anyhow!("delete_sessions not supported")))
     }
 
-    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+    fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
         None
     }
 

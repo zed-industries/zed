@@ -586,7 +586,7 @@ pub struct Chunk<'a> {
 }
 
 /// A set of edits to a given version of a buffer, computed asynchronously.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Diff {
     pub base_version: clock::Global,
     pub line_ending: LineEnding,
@@ -2148,11 +2148,15 @@ impl Buffer {
 
     /// Spawns a background task that asynchronously computes a `Diff` between the buffer's text
     /// and the given new text.
-    pub fn diff(&self, mut new_text: String, cx: &App) -> Task<Diff> {
+    pub fn diff<T>(&self, new_text: T, cx: &App) -> Task<Diff>
+    where
+        T: AsRef<str> + Send + 'static,
+    {
         let old_text = self.as_rope().clone();
         let base_version = self.version();
         cx.background_spawn(async move {
             let old_text = old_text.to_string();
+            let mut new_text = new_text.as_ref().to_owned();
             let line_ending = LineEnding::detect(&new_text);
             LineEnding::normalize(&mut new_text);
             let edits = text_diff(&old_text, &new_text);
