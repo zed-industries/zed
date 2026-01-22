@@ -560,6 +560,10 @@ impl LanguageModel for CloudLanguageModel {
         self.model.supports_images
     }
 
+    fn supports_thinking(&self) -> bool {
+        self.model.supports_thinking
+    }
+
     fn supports_streaming_tools(&self) -> bool {
         self.model.supports_streaming_tools
     }

@@ -370,6 +370,31 @@ impl Model {
         }
     }
 
+    pub fn supports_thinking(&self) -> bool {
+        match self {
+            Self::ClaudeOpus4
+            | Self::ClaudeOpus4_1
+            | Self::ClaudeOpus4Thinking
+            | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking
+            | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet4Thinking
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4_5Thinking
+            | Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking
+            | Self::ClaudeHaiku4_5
+            | Self::ClaudeHaiku4_5Thinking => true,
+            Self::Claude3_5Sonnet
+            | Self::Claude3_5Haiku
+            | Self::Claude3Opus
+            | Self::Claude3Sonnet
+            | Self::Claude3Haiku => false,
+            Self::Custom { mode, .. } => matches!(mode, AnthropicModelMode::Thinking { .. }),
+        }
+    }
+
     pub fn default_temperature(&self) -> f32 {
         match self {
             Self::ClaudeOpus4
