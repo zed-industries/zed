@@ -6440,13 +6440,11 @@ impl AcpThreadView {
             "Enable Thinking Mode".to_string()
         };
 
-        // TODO: Pick a better icon (or use text).
         Some(
-            IconButton::new("thinking-mode", IconName::MagnifyingGlass)
+            IconButton::new("thinking-mode", IconName::ToolThink)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
                 .toggle_state(thinking)
-                .selected_icon_color(Some(Color::Custom(cx.theme().players().agent().cursor)))
                 .tooltip(Tooltip::text(tooltip_label))
                 .on_click(cx.listener(move |this, _, _window, cx| {
                     if let Some(thread) = this.as_native_thread(cx) {
