@@ -5423,14 +5423,15 @@ impl Project {
     async fn handle_create_file_for_peer(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::CreateFileForPeer>,
-        cx: AsyncApp,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         use proto::create_file_for_peer::Variant;
         log::debug!("handle_create_file_for_peer: received message");
 
-        let downloading_files = this.read_with(&cx, |this, _| this.downloading_files.clone())?;
+        let downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>> =
+            this.update(&mut cx, |this, _| this.downloading_files.clone());
 
-        match envelope.payload.variant {
+        match &envelope.payload.variant {
             Some(Variant::State(state)) => {
                 log::debug!(
                     "handle_create_file_for_peer: got State: id={}, content_size={}",
@@ -5478,8 +5479,8 @@ impl Project {
                 let mut files = downloading_files.lock();
 
                 // Find the entry by file_id
-                let key_to_remove = {
-                    let mut found_key = None;
+                let key_to_remove: Option<(WorktreeId, String)> = {
+                    let mut found_key: Option<(WorktreeId, String)> = None;
                     let mut should_write = false;
                     let mut destination = PathBuf::new();
                     let mut content = Vec::new();

@@ -709,17 +709,18 @@ impl HeadlessProject {
         );
         use proto::create_file_for_peer::Variant;
 
-        let (worktree_store, session) = this.read_with(&cx, |this, _| {
-            (this.worktree_store.clone(), this.session.clone())
-        })?;
+        let (worktree_store, session): (Entity<WorktreeStore>, AnyProtoClient) = this
+            .read_with(&cx, |this, _| {
+                (this.worktree_store.clone(), this.session.clone())
+            });
 
         let worktree = worktree_store
-            .read_with(&cx, |store, cx| store.worktree_for_id(worktree_id, cx))?
+            .read_with(&cx, |store, cx| store.worktree_for_id(worktree_id, cx))
             .context("worktree not found")?;
 
-        let download_task = worktree.update(&mut cx, |worktree, cx| {
+        let download_task = worktree.update(&mut cx, |worktree: &mut Worktree, cx| {
             worktree.load_binary_file(path.as_ref(), cx)
-        })?;
+        });
 
         let downloaded_file = download_task.await?;
         let content = downloaded_file.content;
@@ -729,7 +730,7 @@ impl HeadlessProject {
             content.len()
         );
 
-        let proto_file = worktree.read_with(&cx, |_worktree, cx| file.to_proto(cx))?;
+        let proto_file = worktree.read_with(&cx, |_worktree: &Worktree, cx| file.to_proto(cx));
         let file_id = NEXT_FILE_ID.fetch_add(1, Ordering::SeqCst);
         log::debug!("handle_download_file_by_path: assigned file_id={}", file_id);
 
