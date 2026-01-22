@@ -139,5 +139,6 @@ recent_projects = { workspace = true, features = ["test-support"] }
 title_bar = { workspace = true, features = ["test-support"] }
 semver.workspace = true
 reqwest_client.workspace = true
+tempfile.workspace = true
 tree-sitter-md.workspace = true
 unindent.workspace = true

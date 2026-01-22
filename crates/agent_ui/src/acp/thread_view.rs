@@ -20,7 +20,10 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
-use feature_flags::{AgentSharingFeatureFlag, AgentV2FeatureFlag, FeatureFlagAppExt};
+use feature_flags::{
+    AgentSharingFeatureFlag, AgentV2FeatureFlag, FeatureFlagAppExt as _,
+    UserSlashCommandsFeatureFlag,
+};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -55,7 +58,9 @@ use ui::{
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
-use workspace::{CollaboratorId, NewTerminal, Toast, Workspace, notifications::NotificationId};
+use workspace::{
+    CollaboratorId, NewTerminal, OpenOptions, Toast, Workspace, notifications::NotificationId,
+};
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
@@ -69,6 +74,9 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
+use crate::user_slash_command::{
+    self, CommandLoadError, SlashCommandRegistry, SlashCommandRegistryEvent, UserSlashCommand,
+};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
     CycleFavoriteModels, CycleModeSelector, EditFirstQueuedMessage, ExpandMessageEditor, Follow,
@@ -324,6 +332,9 @@ pub struct AcpThreadView {
     thread_retry_status: Option<RetryStatus>,
     thread_error: Option<ThreadError>,
     thread_error_markdown: Option<Entity<Markdown>>,
+    command_load_errors: Vec<CommandLoadError>,
+    command_load_errors_dismissed: bool,
+    slash_command_registry: Option<Entity<SlashCommandRegistry>>,
     token_limit_callout_dismissed: bool,
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
@@ -347,6 +358,8 @@ pub struct AcpThreadView {
     discarded_partial_edits: HashSet<acp::ToolCallId>,
     prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+    cached_user_commands: Rc<RefCell<HashMap<String, UserSlashCommand>>>,
+    cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
     is_loading_contents: bool,
     new_server_version_available: Option<SharedString>,
     resume_thread_metadata: Option<AgentSessionInfo>,
@@ -406,6 +419,9 @@ impl AcpThreadView {
     ) -> Self {
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![]));
+        let cached_user_commands = Rc::new(RefCell::new(collections::HashMap::default()));
+        let cached_user_command_errors = Rc::new(RefCell::new(Vec::new()));
+        let mut command_load_errors = Vec::new();
 
         let agent_server_store = project.read(cx).agent_server_store().clone();
         let agent_display_name = agent_server_store
@@ -416,7 +432,7 @@ impl AcpThreadView {
         let placeholder = placeholder_text(agent_display_name.as_ref(), false);
 
         let message_editor = cx.new(|cx| {
-            let mut editor = MessageEditor::new(
+            let mut editor = MessageEditor::new_with_cache(
                 workspace.clone(),
                 project.downgrade(),
                 thread_store.clone(),
@@ -424,6 +440,8 @@ impl AcpThreadView {
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
                 available_commands.clone(),
+                cached_user_commands.clone(),
+                cached_user_command_errors.clone(),
                 agent.name(),
                 &placeholder,
                 editor::EditorMode::AutoHeight {
@@ -450,6 +468,8 @@ impl AcpThreadView {
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
                 available_commands.clone(),
+                cached_user_commands.clone(),
+                cached_user_command_errors.clone(),
                 agent.name(),
             )
         });
@@ -480,6 +500,46 @@ impl AcpThreadView {
         let show_codex_windows_warning = cfg!(windows)
             && project.read(cx).is_local()
             && agent.clone().downcast::<agent_servers::Codex>().is_some();
+
+        // Create SlashCommandRegistry to cache user-defined slash commands and watch for changes
+        let slash_command_registry = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+            let fs = project.read(cx).fs().clone();
+            let worktree_roots: Vec<std::path::PathBuf> = project
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect();
+            let registry = cx.new(|cx| SlashCommandRegistry::new(fs, worktree_roots, cx));
+
+            // Subscribe to registry changes to update error display and cached commands
+            cx.subscribe(&registry, move |this, registry, event, cx| match event {
+                SlashCommandRegistryEvent::CommandsChanged => {
+                    this.refresh_cached_user_commands_from_registry(&registry, cx);
+                }
+            })
+            .detach();
+
+            // Initialize cached commands and errors from registry
+            let mut commands = registry.read(cx).commands().clone();
+            let mut errors = registry.read(cx).errors().to_vec();
+            let server_command_names = available_commands
+                .borrow()
+                .iter()
+                .map(|command| command.name.clone())
+                .collect::<HashSet<_>>();
+            user_slash_command::apply_server_command_conflicts_to_map(
+                &mut commands,
+                &mut errors,
+                &server_command_names,
+            );
+            command_load_errors = errors.clone();
+            *cached_user_commands.borrow_mut() = commands;
+            *cached_user_command_errors.borrow_mut() = errors;
+
+            Some(registry)
+        } else {
+            None
+        };
 
         let recent_history_entries = history.read(cx).get_recent_sessions(3);
         let history_subscription = cx.observe(&history, |this, history, cx| {
@@ -514,6 +574,9 @@ impl AcpThreadView {
             thread_retry_status: None,
             thread_error: None,
             thread_error_markdown: None,
+            command_load_errors,
+            command_load_errors_dismissed: false,
+            slash_command_registry,
             token_limit_callout_dismissed: false,
             thread_feedback: Default::default(),
             auth_task: None,
@@ -532,6 +595,8 @@ impl AcpThreadView {
             discarded_partial_edits: HashSet::default(),
             prompt_capabilities,
             available_commands,
+            cached_user_commands,
+            cached_user_command_errors,
             editor_expanded: false,
             should_be_following: false,
             recent_history_entries,
@@ -570,6 +635,7 @@ impl AcpThreadView {
             cx,
         );
         self.available_commands.replace(vec![]);
+        self.refresh_cached_user_commands(cx);
         self.new_server_version_available.take();
         self.recent_history_entries.clear();
         self.turn_tokens = None;
@@ -1473,8 +1539,15 @@ impl AcpThreadView {
                 .is_some_and(|profile| profile.tools.is_empty())
         });
 
+        let cached_commands = self.cached_slash_commands(cx);
+        let cached_errors = self.cached_slash_command_errors(cx);
         let contents = message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents(full_mention_content, cx)
+            message_editor.contents_with_cache(
+                full_mention_content,
+                Some(cached_commands),
+                Some(cached_errors),
+                cx,
+            )
         });
 
         self.thread_error.take();
@@ -1635,8 +1708,15 @@ impl AcpThreadView {
                 .is_some_and(|profile| profile.tools.is_empty())
         });
 
+        let cached_commands = self.cached_slash_commands(cx);
+        let cached_errors = self.cached_slash_command_errors(cx);
         let contents = self.message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents(full_mention_content, cx)
+            message_editor.contents_with_cache(
+                full_mention_content,
+                Some(cached_commands),
+                Some(cached_errors),
+                cx,
+            )
         });
 
         let message_editor = self.message_editor.clone();
@@ -1998,6 +2078,7 @@ impl AcpThreadView {
 
                 let has_commands = !available_commands.is_empty();
                 self.available_commands.replace(available_commands);
+                self.refresh_cached_user_commands(cx);
 
                 let agent_display_name = self
                     .agent_server_store
@@ -7615,6 +7696,156 @@ impl AcpThreadView {
             )
     }
 
+    fn render_command_load_errors(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        if self.command_load_errors_dismissed || self.command_load_errors.is_empty() {
+            return None;
+        }
+
+        let error_count = self.command_load_errors.len();
+        let title = if error_count == 1 {
+            "Failed to load slash command"
+        } else {
+            "Failed to load slash commands"
+        };
+
+        let workspace = self.workspace.clone();
+
+        Some(
+            v_flex()
+                .w_full()
+                .p_2()
+                .gap_1()
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().surface_background)
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::Warning)
+                                        .size(IconSize::Small)
+                                        .color(Color::Warning),
+                                )
+                                .child(
+                                    Label::new(title)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Warning),
+                                ),
+                        )
+                        .child(
+                            IconButton::new("dismiss-command-errors", IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text("Dismiss"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.clear_command_load_errors(cx);
+                                })),
+                        ),
+                )
+                .children(self.command_load_errors.iter().enumerate().map({
+                    move |(i, error)| {
+                        let path = error.path.clone();
+                        let workspace = workspace.clone();
+                        let file_name = error
+                            .path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| error.path.display().to_string());
+
+                        h_flex()
+                            .id(ElementId::Name(format!("command-error-{i}").into()))
+                            .gap_1()
+                            .px_1()
+                            .py_0p5()
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .hover(|style| style.bg(cx.theme().colors().element_hover))
+                            .tooltip(Tooltip::text(format!(
+                                "Click to open {}\n\n{}",
+                                error.path.display(),
+                                error.message
+                            )))
+                            .on_click({
+                                move |_, window, cx| {
+                                    if let Some(workspace) = workspace.upgrade() {
+                                        workspace.update(cx, |workspace, cx| {
+                                            workspace
+                                                .open_abs_path(
+                                                    path.clone(),
+                                                    OpenOptions::default(),
+                                                    window,
+                                                    cx,
+                                                )
+                                                .detach_and_log_err(cx);
+                                        });
+                                    }
+                                }
+                            })
+                            .child(
+                                Label::new(format!("• {}: {}", file_name, error.message))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                    }
+                })),
+        )
+    }
+
+    fn clear_command_load_errors(&mut self, cx: &mut Context<Self>) {
+        self.command_load_errors_dismissed = true;
+        cx.notify();
+    }
+
+    fn refresh_cached_user_commands(&mut self, cx: &mut Context<Self>) {
+        let Some(registry) = self.slash_command_registry.clone() else {
+            return;
+        };
+        self.refresh_cached_user_commands_from_registry(&registry, cx);
+    }
+
+    fn refresh_cached_user_commands_from_registry(
+        &mut self,
+        registry: &Entity<SlashCommandRegistry>,
+        cx: &mut Context<Self>,
+    ) {
+        let (mut commands, mut errors) = registry.read_with(cx, |registry, _| {
+            (registry.commands().clone(), registry.errors().to_vec())
+        });
+        let server_command_names = self
+            .available_commands
+            .borrow()
+            .iter()
+            .map(|command| command.name.clone())
+            .collect::<HashSet<_>>();
+        user_slash_command::apply_server_command_conflicts_to_map(
+            &mut commands,
+            &mut errors,
+            &server_command_names,
+        );
+
+        self.command_load_errors = errors.clone();
+        self.command_load_errors_dismissed = false;
+        *self.cached_user_commands.borrow_mut() = commands;
+        *self.cached_user_command_errors.borrow_mut() = errors;
+        cx.notify();
+    }
+
+    /// Returns the cached slash commands, if available.
+    pub fn cached_slash_commands(
+        &self,
+        _cx: &App,
+    ) -> collections::HashMap<String, UserSlashCommand> {
+        self.cached_user_commands.borrow().clone()
+    }
+
+    /// Returns the cached slash command errors, if available.
+    pub fn cached_slash_command_errors(&self, _cx: &App) -> Vec<CommandLoadError> {
+        self.cached_user_command_errors.borrow().clone()
+    }
+
     fn render_thread_error(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let content = match self.thread_error.as_ref()? {
             ThreadError::Other(error) => self.render_any_thread_error(error.clone(), window, cx),
@@ -8193,6 +8424,7 @@ impl Render for AcpThreadView {
             .when(self.show_codex_windows_warning, |this| {
                 this.child(self.render_codex_windows_warning(cx))
             })
+            .children(self.render_command_load_errors(cx))
             .children(self.render_thread_error(window, cx))
             .when_some(
                 self.new_server_version_available.as_ref().filter(|_| {
