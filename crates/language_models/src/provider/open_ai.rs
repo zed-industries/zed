@@ -490,7 +490,14 @@ pub fn into_open_ai(
 
         for content in message.content {
             match content {
-                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                MessageContent::Thinking { text, .. } => {
+                    if should_include_thinking(thinking_mode, msg_idx, last_user_message_idx)
+                        && !text.trim().is_empty()
+                    {
+                        current_reasoning.get_or_insert_default().push_str(&text);
+                    }
+                }
+                MessageContent::Text(text) => {
                     let should_add = if message.role == Role::User {
                         // Including whitespace-only user messages can cause error with OpenAI compatible APIs
                         // See https://github.com/zed-industries/zed/issues/40097
@@ -505,13 +512,6 @@ pub fn into_open_ai(
                             &mut messages,
                             &mut current_reasoning,
                         );
-                    }
-                }
-                MessageContent::Thinking { text, .. } => {
-                    if should_include_thinking(thinking_mode, msg_idx, last_user_message_idx)
-                        && !text.trim().is_empty()
-                    {
-                        current_reasoning.get_or_insert_default().push_str(&text);
                     }
                 }
                 MessageContent::RedactedThinking(_) => {
