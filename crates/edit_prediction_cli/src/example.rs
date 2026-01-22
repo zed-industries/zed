@@ -75,8 +75,19 @@ pub struct ExamplePrompt {
 pub struct ExamplePrediction {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actual_patch: Option<String>,
+    #[serde(deserialize_with = "deserialize_null_as_empty_string")]
     pub actual_output: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
     pub provider: PredictionProvider,
+}
+
+fn deserialize_null_as_empty_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<String>::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
