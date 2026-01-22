@@ -698,7 +698,8 @@ impl SplittableEditor {
                         .boundaries
                         .first()
                         .unwrap()
-                        .0
+                        .1
+                        .start
                 })
             })
         });
