@@ -9040,6 +9040,7 @@ dependencies = [
  "editor",
  "extension",
  "extension_host",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "google_ai",

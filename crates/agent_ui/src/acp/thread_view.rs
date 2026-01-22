@@ -21,8 +21,8 @@ use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
 use feature_flags::{
-    AgentSharingFeatureFlag, AgentV2FeatureFlag, FeatureFlagAppExt as _,
-    UserSlashCommandsFeatureFlag,
+    AgentSharingFeatureFlag, AgentV2FeatureFlag, CloudThinkingToggleFeatureFlag,
+    FeatureFlagAppExt as _, UserSlashCommandsFeatureFlag,
 };
 use file_icons::FileIcons;
 use fs::Fs;
@@ -6425,6 +6425,10 @@ impl AcpThreadView {
     }
 
     fn render_thinking_toggle(&self, cx: &mut Context<Self>) -> Option<IconButton> {
+        if !cx.has_flag::<CloudThinkingToggleFeatureFlag>() {
+            return None;
+        }
+
         let thread = self.as_native_thread(cx)?.read(cx);
 
         let supports_thinking = thread.model()?.supports_thinking();
