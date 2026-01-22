@@ -26,7 +26,6 @@ pub fn format_timestamp(timestamp: i64) -> String {
         .unwrap_or_default()
 }
 
-// todo! On accent colors updating it's len we need to update lane colors to use different indices
 #[derive(Copy, Clone, Debug)]
 struct BranchColor(u8);
 

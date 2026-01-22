@@ -4326,8 +4326,7 @@ impl Repository {
                 GraphCommitHandlerState::Open(handler) => {
                     if handler.commit_data_request.try_send(sha).is_ok() {
                         let old_value = self.commit_data.insert(sha, CommitDataState::Loading);
-                        // todo! debug assert
-                        assert!(old_value.is_none(), "We should never overwrite commit data");
+                        debug_assert!(old_value.is_none(), "We should never overwrite commit data");
                     }
                 }
                 GraphCommitHandlerState::Closed => {
@@ -4355,9 +4354,11 @@ impl Repository {
                     let old_value = this
                         .commit_data
                         .insert(sha, CommitDataState::Loaded(Arc::new(commit_data)));
+                    debug_assert!(
+                        !matches!(old_value, Some(CommitDataState::Loaded(_))),
+                        "We should never overwrite commit data"
+                    );
 
-                    // todo! debug
-                    assert!(!matches!(old_value, Some(CommitDataState::Loaded(_))));
                     cx.notify();
                 });
                 if result.is_err() {
