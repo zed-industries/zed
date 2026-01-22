@@ -1291,7 +1291,7 @@ impl LanguageServer {
     pub fn request_custom<M, P, R>(&self, method: M, params: P) -> impl LspRequestFuture<R>
     where
         M: Into<String>,
-        P: Serialize,
+        P: Serialize + 'static,
         R: 'static + Send + DeserializeOwned,
     {
         let method: String = method.into();
