@@ -2097,6 +2097,17 @@ impl EditPredictionStore {
             });
     }
 
+    #[cfg(feature = "cli-support")]
+    pub fn set_recent_paths_for_project(
+        &mut self,
+        project: &Entity<Project>,
+        paths: impl IntoIterator<Item = project::ProjectPath>,
+        cx: &mut Context<Self>,
+    ) {
+        let project_state = self.get_or_init_project(project, cx);
+        project_state.recent_paths = paths.into_iter().collect();
+    }
+
     fn is_file_open_source(
         &self,
         project: &Entity<Project>,
@@ -2198,6 +2209,9 @@ impl EditPredictionStore {
     }
 
     fn configure_context_retrieval(&mut self, cx: &mut Context<'_, EditPredictionStore>) {
+        if cfg!(feature = "cli-support") {
+            return;
+        }
         self.use_context = cx.has_flag::<Zeta2FeatureFlag>()
             && all_language_settings(None, cx).edit_predictions.use_context;
     }

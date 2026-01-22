@@ -1438,12 +1438,16 @@ impl OutlinePanel {
 
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
-                .when(cfg!(target_os = "macos"), |menu| {
-                    menu.action("Reveal in Finder", Box::new(RevealInFileManager))
-                })
-                .when(cfg!(not(target_os = "macos")), |menu| {
-                    menu.action("Reveal in File Manager", Box::new(RevealInFileManager))
-                })
+                .action(
+                    if cfg!(target_os = "macos") {
+                        "Reveal in Finder"
+                    } else if cfg!(target_os = "windows") {
+                        "Reveal in File Explorer"
+                    } else {
+                        "Reveal in File Manager"
+                    },
+                    Box::new(RevealInFileManager),
+                )
                 .action("Open in Terminal", Box::new(OpenInTerminal))
                 .when(is_unfoldable, |menu| {
                     menu.action("Unfold Directory", Box::new(UnfoldDirectory))
@@ -2012,7 +2016,8 @@ impl OutlinePanel {
             .selected_entry()
             .and_then(|entry| self.abs_path(entry, cx))
         {
-            cx.reveal_path(&abs_path);
+            self.project
+                .update(cx, |project, cx| project.reveal_path(&abs_path, cx));
         }
     }
 

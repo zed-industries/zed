@@ -38,7 +38,7 @@ pub trait AgentConnection {
     ) -> Task<Result<Entity<AcpThread>>>;
 
     /// Whether this agent supports loading existing sessions.
-    fn supports_load_session(&self) -> bool {
+    fn supports_load_session(&self, _cx: &App) -> bool {
         false
     }
 
@@ -64,11 +64,7 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
 
-    fn resume(
-        &self,
-        _session_id: &acp::SessionId,
-        _cx: &App,
-    ) -> Option<Rc<dyn AgentSessionResume>> {
+    fn retry(&self, _session_id: &acp::SessionId, _cx: &App) -> Option<Rc<dyn AgentSessionRetry>> {
         None
     }
 
@@ -135,7 +131,7 @@ pub trait AgentSessionTruncate {
     fn run(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
 }
 
-pub trait AgentSessionResume {
+pub trait AgentSessionRetry {
     fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>>;
 }
 
@@ -226,6 +222,15 @@ impl AgentSessionInfo {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum SessionListUpdate {
+    Refresh,
+    SessionInfo {
+        session_id: acp::SessionId,
+        update: acp::SessionInfoUpdate,
+    },
+}
+
 pub trait AgentSessionList {
     fn list_sessions(
         &self,
@@ -245,7 +250,7 @@ pub trait AgentSessionList {
         Task::ready(Err(anyhow::anyhow!("delete_sessions not supported")))
     }
 
-    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+    fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
         None
     }
 
@@ -387,6 +392,56 @@ impl AgentModelList {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct PermissionOptionChoice {
+    pub allow: acp::PermissionOption,
+    pub deny: acp::PermissionOption,
+}
+
+impl PermissionOptionChoice {
+    pub fn label(&self) -> SharedString {
+        self.allow.name.clone().into()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum PermissionOptions {
+    Flat(Vec<acp::PermissionOption>),
+    Dropdown(Vec<PermissionOptionChoice>),
+}
+
+impl PermissionOptions {
+    pub fn is_empty(&self) -> bool {
+        match self {
+            PermissionOptions::Flat(options) => options.is_empty(),
+            PermissionOptions::Dropdown(options) => options.is_empty(),
+        }
+    }
+
+    pub fn first_option_of_kind(
+        &self,
+        kind: acp::PermissionOptionKind,
+    ) -> Option<&acp::PermissionOption> {
+        match self {
+            PermissionOptions::Flat(options) => options.iter().find(|option| option.kind == kind),
+            PermissionOptions::Dropdown(options) => options.iter().find_map(|choice| {
+                if choice.allow.kind == kind {
+                    Some(&choice.allow)
+                } else if choice.deny.kind == kind {
+                    Some(&choice.deny)
+                } else {
+                    None
+                }
+            }),
+        }
+    }
+
+    pub fn allow_once_option_id(&self) -> Option<acp::PermissionOptionId> {
+        self.first_option_of_kind(acp::PermissionOptionKind::AllowOnce)
+            .map(|option| option.option_id.clone())
+    }
+}
+
 #[cfg(feature = "test-support")]
 mod test_support {
     //! Test-only stubs and helpers for acp_thread.
@@ -435,7 +490,7 @@ mod test_support {
     #[derive(Clone, Default)]
     pub struct StubAgentConnection {
         sessions: Arc<Mutex<HashMap<acp::SessionId, Session>>>,
-        permission_requests: HashMap<acp::ToolCallId, Vec<acp::PermissionOption>>,
+        permission_requests: HashMap<acp::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<acp::SessionUpdate>>>,
     }
 
@@ -459,7 +514,7 @@ mod test_support {
 
         pub fn with_permission_requests(
             mut self,
-            permission_requests: HashMap<acp::ToolCallId, Vec<acp::PermissionOption>>,
+            permission_requests: HashMap<acp::ToolCallId, PermissionOptions>,
         ) -> Self {
             self.permission_requests = permission_requests;
             self

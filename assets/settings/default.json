@@ -954,7 +954,9 @@
       //   "temperature": 1.0
       // }
     ],
-    // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
+    // When enabled, the agent can run tool actions without asking for your confirmation.
+    // This setting takes precedence over `always_confirm` patterns and `default_mode` settings,
+    // but `always_deny` patterns still block actions for security.
     //
     // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
     //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
@@ -2234,6 +2236,11 @@
   "global_lsp_settings": {
     // Whether to show the LSP servers button in the status bar.
     "button": true,
+    "notifications": {
+      // Timeout in milliseconds for automatically dismissing language server notifications.
+      // Set to 0 to disable auto-dismiss.
+      "dismiss_timeout_ms": 5000,
+    },
   },
   // Jupyter settings
   "jupyter": {

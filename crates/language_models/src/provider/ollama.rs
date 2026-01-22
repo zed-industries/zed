@@ -480,6 +480,7 @@ impl LanguageModel for OllamaLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let bypass_rate_limit = request.bypass_rate_limit;
         let request = self.to_ollama_request(request);
 
         let http_client = self.http_client.clone();
@@ -488,13 +489,20 @@ impl LanguageModel for OllamaLanguageModel {
             (state.api_key_state.key(&api_url), api_url)
         });
 
-        let future = self.request_limiter.stream(async move {
-            let stream =
-                stream_chat_completion(http_client.as_ref(), &api_url, api_key.as_deref(), request)
-                    .await?;
-            let stream = map_to_language_model_completion_events(stream);
-            Ok(stream)
-        });
+        let future = self.request_limiter.stream_with_bypass(
+            async move {
+                let stream = stream_chat_completion(
+                    http_client.as_ref(),
+                    &api_url,
+                    api_key.as_deref(),
+                    request,
+                )
+                .await?;
+                let stream = map_to_language_model_completion_events(stream);
+                Ok(stream)
+            },
+            bypass_rate_limit,
+        );
 
         future.map_ok(|f| f.boxed()).boxed()
     }

@@ -2,7 +2,7 @@ use crate::{
     FormatPromptArgs, PredictionProvider,
     example::{Example, ExamplePrompt},
     headless::EpAppState,
-    progress::{Progress, Step},
+    progress::{ExampleProgress, Step},
     retrieve_context::run_context_retrieval,
 };
 use anyhow::{Context as _, Result};
@@ -12,17 +12,19 @@ use language::{Buffer, OffsetRangeExt, Point};
 use similar::DiffableStr;
 use std::sync::Arc;
 use std::{fmt::Write as _, ops::Range};
+use zeta_prompt::ZetaVersion;
 use zeta_prompt::format_zeta_prompt;
 
 pub async fn run_format_prompt(
     example: &mut Example,
     args: &FormatPromptArgs,
     app_state: Arc<EpAppState>,
+    example_progress: &ExampleProgress,
     cx: AsyncApp,
 ) -> Result<()> {
-    run_context_retrieval(example, app_state.clone(), cx.clone()).await?;
+    run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
 
-    let step_progress = Progress::global().start(Step::FormatPrompt, &example.spec.name);
+    let step_progress = example_progress.start(Step::FormatPrompt);
 
     let prompt_inputs = example
         .prompt_inputs
@@ -103,6 +105,7 @@ pub async fn run_format_prompt(
                     .first()
                     .context("expected patches is empty")?
                     .clone(),
+                version,
             )?;
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
@@ -117,7 +120,11 @@ pub async fn run_format_prompt(
     Ok(())
 }
 
-pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str) -> Result<String> {
+pub fn zeta2_output_for_patch(
+    input: &zeta_prompt::ZetaPromptInput,
+    patch: &str,
+    version: ZetaVersion,
+) -> Result<String> {
     let mut old_editable_region =
         input.cursor_excerpt[input.editable_range_in_excerpt.clone()].to_string();
 
@@ -125,12 +132,22 @@ pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str)
         old_editable_region.push('\n');
     }
 
-    edit_prediction::udiff::apply_diff_to_string(patch, &old_editable_region).with_context(|| {
-        format!(
-            "Patch:\n```\n{}```\n\nEditable region:\n```\n{}```",
-            patch, old_editable_region
-        )
-    })
+    let mut result = edit_prediction::udiff::apply_diff_to_string(patch, &old_editable_region)
+        .with_context(|| {
+            format!(
+                "Patch:\n```\n{}```\n\nEditable region:\n```\n{}```",
+                patch, old_editable_region
+            )
+        })?;
+
+    if version == ZetaVersion::V0120GitMergeMarkers {
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push_str(zeta_prompt::v0120_git_merge_markers::END_MARKER);
+    }
+
+    Ok(result)
 }
 
 pub struct TeacherPrompt;
@@ -250,6 +267,7 @@ impl TeacherPrompt {
         for file in related_files {
             let path_str = file.path.to_string_lossy();
             writeln!(&mut prompt, "`````{path_str}").ok();
+
             let mut prev_row = 0;
             for excerpt in &file.excerpts {
                 if excerpt.row_range.start > prev_row {
@@ -262,7 +280,7 @@ impl TeacherPrompt {
             if prev_row < file.max_row {
                 prompt.push_str("…\n");
             }
-            prompt.push_str("\n`````");
+            prompt.push_str("\n`````\n");
         }
 
         prompt
@@ -293,9 +311,9 @@ impl TeacherPrompt {
 
     fn extract_editable_region(text: &str) -> String {
         let start = text
-            .find(Self::EDITABLE_REGION_START)
+            .rfind(Self::EDITABLE_REGION_START)
             .map_or(0, |pos| pos + Self::EDITABLE_REGION_START.len());
-        let end = text.find(Self::EDITABLE_REGION_END).unwrap_or(text.len());
+        let end = text.rfind(Self::EDITABLE_REGION_END).unwrap_or(text.len());
 
         let region = &text[start..end];
         let region = region.strip_suffix('\n').unwrap_or(region);
