@@ -161,7 +161,26 @@ To delete a branch, open the branch switcher with {#action git::Switch}, find th
 
 ## Merge Conflicts
 
-When you encounter merge conflicts, Zed displays conflict markers in your files with buttons to help resolve them. The conflict buttons show the actual branch names involved in the conflict (for example, "main" and "feature-branch") rather than generic labels, making it easier to understand which changes come from which branch.
+When you encounter merge conflicts after a merge, rebase, or pull, Zed highlights the conflicting regions in your files and displays resolution buttons above each conflict.
+
+### Viewing Conflicts
+
+Conflicting files appear in the Git Panel with a warning icon. You can also see conflicts in the Project Diff view, where each conflict region is highlighted:
+
+- Changes from your current branch are highlighted in green
+- Changes from the incoming branch are highlighted in blue
+
+### Resolving Conflicts
+
+Each conflict shows three buttons:
+
+- **Use [branch-name]**: Keep the changes from one branch (shows the actual branch name, like "main")
+- **Use [other-branch]**: Keep the changes from the other branch (like "feature-branch")
+- **Use Both**: Keep both sets of changes, with your branch's changes first
+
+Click a button to resolve that conflict. The conflict markers are removed and replaced with your chosen content. After resolving all conflicts in a file, stage it and commit to complete the merge.
+
+> **Tip:** For complex conflicts that need manual editing, you can edit the file directly. Remove the conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) and keep the content you want.
 
 ## Stashing
 
@@ -173,7 +192,7 @@ To stash all your current changes, use the {#action git::StashAll} action. This 
 
 ### Managing Stashes
 
-Zed provides a comprehensive stash picker accessible via {#action git::ViewStash}. From the stash picker, you can:
+Zed provides a stash picker accessible via {#action git::ViewStash} or from the Git Panel's overflow menu. From the stash picker, you can:
 
 - **View stash list**: Browse all your saved stashes with their descriptions and timestamps
 - **Open diffs**: See exactly what changes are stored in each stash
@@ -190,13 +209,13 @@ For faster workflows, Zed provides direct actions to work with the most recent s
 
 ### Stash Diff View
 
-When viewing a specific stash in the diff view, you have additional options available through the interface:
+To view a stash's contents, select it in the stash picker and press {#kb stash_picker::ShowStashItem}. From the diff view, you can use these keybindings:
 
-- Apply the current stash to your working directory
-- Pop the current stash (apply and remove)
-- Remove the stash without applying changes
-
-To open the stash diff view, select a stash from the stash picker and use the {#action stash_picker::ShowStashItem} ({#kb stash_picker::ShowStashItem}) keybinding.
+| Action | Keybinding |
+| ------ | ---------- |
+| Apply stash | {#kb git::ApplyCurrentStash} |
+| Pop stash (apply and remove) | {#kb git::PopCurrentStash} |
+| Drop stash (remove without applying) | {#kb git::DropCurrentStash} |
 
 ## AI Support in Git
 
