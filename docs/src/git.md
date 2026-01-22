@@ -211,11 +211,11 @@ For faster workflows, Zed provides direct actions to work with the most recent s
 
 To view a stash's contents, select it in the stash picker and press {#kb stash_picker::ShowStashItem}. From the diff view, you can use these keybindings:
 
-| Action | Keybinding |
-| ------ | ---------- |
-| Apply stash | {#kb git::ApplyCurrentStash} |
-| Pop stash (apply and remove) | {#kb git::PopCurrentStash} |
-| Drop stash (remove without applying) | {#kb git::DropCurrentStash} |
+| Action                               | Keybinding                   |
+| ------------------------------------ | ---------------------------- |
+| Apply stash                          | {#kb git::ApplyCurrentStash} |
+| Pop stash (apply and remove)         | {#kb git::PopCurrentStash}   |
+| Drop stash (remove without applying) | {#kb git::DropCurrentStash}  |
 
 ## AI Support in Git
 
