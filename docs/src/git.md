@@ -273,7 +273,7 @@ For self-hosted GitHub, GitLab, or Bitbucket instances, add them to the `git_hos
 }
 ```
 
-Supported `provider` values are `github`, `gitlab`, and `bitbucket`. The `name` field is optional and used for display purposes.
+Supported `provider` values are `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, and `sourcehut`. The `name` field is optional and used for display purposes.
 
 ### Permalinks
 
