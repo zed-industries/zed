@@ -154,15 +154,10 @@ impl EntryViewState {
                                 self.workspace.clone(),
                                 self.project.clone(),
                                 terminal.clone(),
+                                terminal_completed,
                                 window,
                                 cx,
                             );
-                            // Hide cursor if terminal is already completed
-                            if terminal_completed {
-                                terminal_view.update(cx, |view, cx| {
-                                    view.set_cursor_hidden(true, cx);
-                                });
-                            }
                             cx.emit(EntryViewEvent {
                                 entry_index: index,
                                 view_event: ViewEvent::NewTerminal(id.clone()),
@@ -360,6 +355,7 @@ fn create_terminal(
     workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
     terminal: Entity<acp_thread::Terminal>,
+    cursor_hidden: bool,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<TerminalView> {
@@ -373,6 +369,7 @@ fn create_terminal(
             cx,
         );
         view.set_embedded_mode(Some(1000), cx);
+        view.set_cursor_hidden(cursor_hidden, cx);
         view
     })
 }
