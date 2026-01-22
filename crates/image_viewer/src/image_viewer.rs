@@ -9,9 +9,9 @@ use file_icons::FileIcons;
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, GlobalElementId, InspectorElementId, InteractiveElement, IntoElement,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
-    Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled, Task, WeakEntity, Window, actions,
-    canvas, div, img, opaque_grey, point, px, size,
+    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PinchEvent,
+    Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled, Task, WeakEntity, Window,
+    actions, canvas, div, img, opaque_grey, point, px, size,
 };
 use language::File as _;
 use persistence::IMAGE_VIEWER;
@@ -255,6 +255,16 @@ impl ImageView {
             self.last_mouse_position = Some(event.position);
             cx.notify();
         }
+    }
+
+    fn handle_pinch(
+        &mut self,
+        event: &PinchEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let zoom_factor = 1.0 + event.delta;
+        self.set_zoom(self.zoom_level * zoom_factor, Some(event.position), cx);
     }
 }
 
@@ -708,6 +718,7 @@ impl Render for ImageView {
                         gpui::CursorStyle::OpenHand
                     })
                     .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
+                    .on_pinch(cx.listener(Self::handle_pinch))
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
                     .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
                     .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
