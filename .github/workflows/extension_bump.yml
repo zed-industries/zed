@@ -91,7 +91,11 @@ jobs:
             BUMP_FILES+=("Cargo.toml")
         fi
 
-        bump2version --verbose --current-version "$OLD_VERSION" --no-configured-files ${{ inputs.bump-type }} "${BUMP_FILES[@]}"
+        bump2version \
+            --search "version = \"{current_version}"\" \
+            --replace "version = \"{new_version}"\" \
+            --current-version "$OLD_VERSION" \
+            --no-configured-files ${{ inputs.bump-type }} "${BUMP_FILES[@]}"
 
         if [[ -f "Cargo.toml" ]]; then
             cargo update --workspace

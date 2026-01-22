@@ -4,8 +4,9 @@ use crate::DockPosition;
 use collections::HashMap;
 use serde::Deserialize;
 pub use settings::{
-    AutosaveSetting, BottomDockLayout, InactiveOpacity, PaneSplitDirectionHorizontal,
-    PaneSplitDirectionVertical, RegisterSetting, RestoreOnStartupBehavior, Settings,
+    AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
+    PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, RegisterSetting,
+    RestoreOnStartupBehavior, Settings,
 };
 
 #[derive(RegisterSetting)]
@@ -27,6 +28,7 @@ pub struct WorkspaceSettings {
     pub max_tabs: Option<NonZeroUsize>,
     pub when_closing_with_no_tabs: settings::CloseWindowWhenNoItems,
     pub on_last_window_closed: settings::OnLastWindowClosed,
+    pub text_rendering_mode: settings::TextRenderingMode,
     pub resize_all_panels_in_dock: Vec<DockPosition>,
     pub close_on_file_delete: bool,
     pub use_system_window_tabs: bool,
@@ -58,6 +60,7 @@ pub struct TabBarSettings {
     pub show: bool,
     pub show_nav_history_buttons: bool,
     pub show_tab_bar_buttons: bool,
+    pub show_pinned_tabs_in_separate_row: bool,
 }
 
 impl Settings for WorkspaceSettings {
@@ -96,6 +99,7 @@ impl Settings for WorkspaceSettings {
             max_tabs: workspace.max_tabs,
             when_closing_with_no_tabs: workspace.when_closing_with_no_tabs.unwrap(),
             on_last_window_closed: workspace.on_last_window_closed.unwrap(),
+            text_rendering_mode: workspace.text_rendering_mode.unwrap(),
             resize_all_panels_in_dock: workspace
                 .resize_all_panels_in_dock
                 .clone()
@@ -118,6 +122,7 @@ impl Settings for TabBarSettings {
             show: tab_bar.show.unwrap(),
             show_nav_history_buttons: tab_bar.show_nav_history_buttons.unwrap(),
             show_tab_bar_buttons: tab_bar.show_tab_bar_buttons.unwrap(),
+            show_pinned_tabs_in_separate_row: tab_bar.show_pinned_tabs_in_separate_row.unwrap(),
         }
     }
 }
@@ -128,6 +133,7 @@ pub struct StatusBarSettings {
     pub active_language_button: bool,
     pub cursor_position_button: bool,
     pub line_endings_button: bool,
+    pub active_encoding_button: EncodingDisplayOptions,
 }
 
 impl Settings for StatusBarSettings {
@@ -138,6 +144,7 @@ impl Settings for StatusBarSettings {
             active_language_button: status_bar.active_language_button.unwrap(),
             cursor_position_button: status_bar.cursor_position_button.unwrap(),
             line_endings_button: status_bar.line_endings_button.unwrap(),
+            active_encoding_button: status_bar.active_encoding_button.unwrap(),
         }
     }
 }

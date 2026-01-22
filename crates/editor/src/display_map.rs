@@ -2266,6 +2266,12 @@ impl Sub for DisplayPoint {
 #[serde(transparent)]
 pub struct DisplayRow(pub u32);
 
+impl DisplayRow {
+    pub(crate) fn as_display_point(&self) -> DisplayPoint {
+        DisplayPoint::new(*self, 0)
+    }
+}
+
 impl Add<DisplayRow> for DisplayRow {
     type Output = Self;
 

@@ -1,17 +1,12 @@
 use futures::channel::oneshot;
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task, TaskLabel};
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
 use language::{
     Capability, Diff, DiffOptions, File, Language, LanguageName, LanguageRegistry,
     language_settings::language_settings, word_diff_ranges,
 };
 use rope::Rope;
-use std::{
-    cmp::Ordering,
-    iter,
-    ops::Range,
-    sync::{Arc, LazyLock},
-};
+use std::{cmp::Ordering, future::Future, iter, ops::Range, sync::Arc};
 use sum_tree::SumTree;
 use text::{
     Anchor, Bias, BufferId, Edit, OffsetRangeExt, Patch, Point, ToOffset as _, ToPoint as _,
@@ -47,7 +42,6 @@ fn translate_point_through_patch(
     }
 }
 
-pub static CALCULATE_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 pub const MAX_WORD_DIFF_LINE_COUNT: usize = 5;
 
 pub struct BufferDiff {
@@ -281,6 +275,7 @@ impl BufferDiffSnapshot {
         &self.inner.buffer_snapshot
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn hunks_intersecting_range<'a>(
         &'a self,
         range: Range<Anchor>,
@@ -719,7 +714,9 @@ impl BufferDiffInner<Entity<language::Buffer>> {
                     let next_pending_hunk_offset_range =
                         next_pending_hunk.buffer_range.to_offset(buffer);
                     if next_pending_hunk_offset_range.start <= buffer_offset_range.end {
-                        buffer_offset_range.end = next_pending_hunk_offset_range.end;
+                        buffer_offset_range.end = buffer_offset_range
+                            .end
+                            .max(next_pending_hunk_offset_range.end);
                         pending_hunks_iter.next();
                         continue;
                     }
@@ -1381,13 +1378,12 @@ impl BufferDiff {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = BufferDiff::new(&buffer, cx);
-        let executor = cx.background_executor().clone();
         let mut base_text = base_text.to_owned();
         text::LineEnding::normalize(&mut base_text);
-        let inner = executor.block(this.update_diff(
+        let inner = cx.foreground_executor().block_on(this.update_diff(
             buffer.clone(),
             Some(Arc::from(base_text)),
-            Some(true),
+            Some(false),
             None,
             cx,
         ));
@@ -1513,38 +1509,36 @@ impl BufferDiff {
             None
         };
 
-        let hunk_task = cx
-            .background_executor()
-            .spawn_labeled(*CALCULATE_DIFF_TASK, {
-                let buffer_snapshot = buffer_snapshot.clone();
-                async move {
-                    let base_text_rope = if let Some(base_text) = &base_text {
-                        if base_text_changed {
-                            Rope::from(base_text.as_ref())
-                        } else {
-                            prev_base_text
-                        }
+        let hunk_task = cx.background_executor().spawn({
+            let buffer_snapshot = buffer_snapshot.clone();
+            async move {
+                let base_text_rope = if let Some(base_text) = &base_text {
+                    if base_text_changed {
+                        Rope::from(base_text.as_ref())
                     } else {
-                        Rope::new()
-                    };
-                    let base_text_exists = base_text.is_some();
-                    let hunks = compute_hunks(
-                        base_text
-                            .clone()
-                            .map(|base_text| (base_text, base_text_rope.clone())),
-                        buffer.clone(),
-                        diff_options,
-                    );
-                    let base_text = base_text.unwrap_or_default();
-                    BufferDiffInner {
-                        base_text,
-                        hunks,
-                        base_text_exists,
-                        pending_hunks: SumTree::new(&buffer),
-                        buffer_snapshot,
+                        prev_base_text
                     }
+                } else {
+                    Rope::new()
+                };
+                let base_text_exists = base_text.is_some();
+                let hunks = compute_hunks(
+                    base_text
+                        .clone()
+                        .map(|base_text| (base_text, base_text_rope.clone())),
+                    buffer.clone(),
+                    diff_options,
+                );
+                let base_text = base_text.unwrap_or_default();
+                BufferDiffInner {
+                    base_text,
+                    hunks,
+                    base_text_exists,
+                    pending_hunks: SumTree::new(&buffer),
+                    buffer_snapshot,
                 }
-            });
+            }
+        });
 
         cx.background_executor().spawn(async move {
             let (inner, base_text_edits) = match base_text_diff_task {
@@ -1564,6 +1558,7 @@ impl BufferDiff {
         })
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn language_changed(
         &mut self,
         language: Option<Arc<Language>>,
@@ -1789,7 +1784,7 @@ impl BufferDiff {
         cx.spawn(async move |this, cx| {
             let Some(state) = this
                 .update(cx, |this, cx| {
-                    this.update_diff(buffer.clone(), base_text, Some(true), language, cx)
+                    this.update_diff(buffer.clone(), base_text, Some(false), language, cx)
                 })
                 .log_err()
             else {
@@ -1819,10 +1814,10 @@ impl BufferDiff {
         let language = self.base_text(cx).language().cloned();
         let base_text = self.base_text_string(cx).map(|s| s.as_str().into());
         let fut = self.update_diff(buffer.clone(), base_text, None, language, cx);
-        let executor = cx.background_executor().clone();
-        let snapshot = executor.block(fut);
+        let fg_executor = cx.foreground_executor().clone();
+        let snapshot = fg_executor.block_on(fut);
         let fut = self.set_snapshot_with_secondary_inner(snapshot, buffer, None, false, cx);
-        let change = executor.block(fut);
+        let change = fg_executor.block_on(fut);
         cx.emit(BufferDiffEvent::DiffChanged(change));
     }
 
@@ -2457,6 +2452,72 @@ mod tests {
                 );
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_stage_all_with_nested_hunks(cx: &mut TestAppContext) {
+        // This test reproduces a crash where staging all hunks would cause an underflow
+        // when there's one large unstaged hunk containing multiple uncommitted hunks.
+        let head_text = "
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff
+            ggg
+            hhh
+            iii
+            jjj
+            kkk
+            lll
+        "
+        .unindent();
+
+        let index_text = "
+            aaa
+            bbb
+            CCC-index
+            DDD-index
+            EEE-index
+            FFF-index
+            GGG-index
+            HHH-index
+            III-index
+            JJJ-index
+            kkk
+            lll
+        "
+        .unindent();
+
+        let buffer_text = "
+            aaa
+            bbb
+            ccc-modified
+            ddd
+            eee-modified
+            fff
+            ggg
+            hhh-modified
+            iii
+            jjj
+            kkk
+            lll
+        "
+        .unindent();
+
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+
+        let unstaged_diff = cx.new(|cx| BufferDiff::new_with_base_text(&index_text, &buffer, cx));
+        let uncommitted_diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new_with_base_text(&head_text, &buffer, cx);
+            diff.set_secondary_diff(unstaged_diff);
+            diff
+        });
+
+        uncommitted_diff.update(cx, |diff, cx| {
+            diff.stage_or_unstage_all_hunks(true, &buffer, true, cx);
+        });
     }
 
     #[gpui::test]

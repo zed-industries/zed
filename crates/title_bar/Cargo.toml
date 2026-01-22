@@ -22,8 +22,10 @@ test-support = [
     "gpui/test-support",
     "http_client/test-support",
     "project/test-support",
+    "remote/test-support",
     "util/test-support",
     "workspace/test-support",
+    "recent_projects/test-support",
 ]
 
 [dependencies]
@@ -37,6 +39,7 @@ cloud_llm_client.workspace = true
 db.workspace = true
 git_ui.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }
+menu.workspace = true
 notifications.workspace = true
 project.workspace = true
 recent_projects.workspace = true

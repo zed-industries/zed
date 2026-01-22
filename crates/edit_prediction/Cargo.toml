@@ -24,6 +24,7 @@ client.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 copilot.workspace = true
+copilot_ui.workspace = true
 db.workspace = true
 edit_prediction_types.workspace = true
 edit_prediction_context.workspace = true
@@ -78,4 +79,5 @@ lsp.workspace = true
 parking_lot.workspace = true
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

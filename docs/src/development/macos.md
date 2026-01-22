@@ -53,6 +53,54 @@ And to run the tests:
 cargo test --workspace
 ```
 
+## Visual Regression Tests
+
+Zed includes visual regression tests that capture screenshots of real Zed windows and compare them against baseline images. These tests require macOS with Screen Recording permission.
+
+### Prerequisites
+
+You must grant Screen Recording permission to your terminal:
+
+1. Run the visual test runner once - macOS will prompt for permission
+2. Or manually: System Settings > Privacy & Security > Screen Recording
+3. Enable your terminal app (e.g., Terminal.app, iTerm2, Ghostty)
+4. Restart your terminal after granting permission
+
+### Running Visual Tests
+
+```sh
+cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+```
+
+### Baseline Images
+
+Baseline images are stored in `crates/zed/test_fixtures/visual_tests/` but are
+**gitignored** to avoid bloating the repository. You must generate them locally
+before running tests.
+
+#### Initial Setup
+
+Before making any UI changes, generate baseline images from a known-good state:
+
+```sh
+git checkout origin/main
+UPDATE_BASELINE=1 cargo run -p zed --bin visual_test_runner --features visual-tests
+git checkout -
+```
+
+This creates baselines that reflect the current expected UI.
+
+#### Updating Baselines
+
+When UI changes are intentional, update the baseline images after your changes:
+
+```sh
+UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+```
+
+> **Note:** In the future, baselines may be stored externally. For now, they
+> remain local-only to keep the git repository lightweight.
+
 ## Troubleshooting
 
 ### Error compiling metal shaders
