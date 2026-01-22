@@ -9575,12 +9575,12 @@ impl Element for EditorElement {
                     let end_row = DisplayRow(end_row);
 
                     if start_row > end_row {
-                        dbg!(
+                        (
                             start_row,
                             end_row,
                             visible_height_in_lines,
                             bounds,
-                            height_in_lines
+                            height_in_lines,
                         );
                     }
 

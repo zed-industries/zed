@@ -693,12 +693,10 @@ impl Style {
             right_bounds.size = right_bounds.size.max(&zero_size);
 
             if right_bounds.size.height < px(0.0) {
-                dbg!(
-                    bounds.origin,
-                    bounds.top_right(),
-                    max_border_width.max(max_corner_radius)
-                );
-                dbg!(right_bounds, left_bounds, top_bounds, bottom_bounds);
+                bounds.origin;
+                bounds.top_right();
+                max_border_width.max(max_corner_radius);
+                (right_bounds, left_bounds, top_bounds, bottom_bounds);
             }
 
             let mut background = self.border_color.unwrap_or_default();
