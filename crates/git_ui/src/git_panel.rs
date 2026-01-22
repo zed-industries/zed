@@ -62,7 +62,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
 use std::future::Future;
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
@@ -1361,6 +1361,26 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.add_entry_to_ignore_file(|repo_root| repo_root.join(".gitignore"), cx);
+    }
+
+    fn add_to_git_exclude(
+        &mut self,
+        _: &git::AddToGitExclude,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.add_entry_to_ignore_file(
+            |repo_root| repo_root.join(".git").join("info").join("exclude"),
+            cx,
+        );
+    }
+
+    fn add_entry_to_ignore_file(
+        &mut self,
+        path_fn: impl FnOnce(Arc<Path>) -> PathBuf + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
         maybe!({
             let list_entry = self.entries.get(self.selected_entry?)?.clone();
             let entry = list_entry.status_entry()?.to_owned();
@@ -1380,11 +1400,11 @@ impl GitPanel {
                     repository.snapshot().work_directory_abs_path
                 })?;
 
-                let gitignore_abs_path = repo_root.join(".gitignore");
+                let ignore_file_path = path_fn(repo_root);
 
                 let buffer: Entity<Buffer> = project
                     .update(cx, |project, cx| {
-                        project.open_local_buffer(gitignore_abs_path, cx)
+                        project.open_local_buffer(ignore_file_path, cx)
                     })?
                     .await?;
 
@@ -4817,6 +4837,11 @@ impl GitPanel {
                     "Add to .gitignore",
                     git::AddToGitignore.boxed_clone(),
                 )
+                .action_disabled_when(
+                    !is_created,
+                    "Add to .git/info/exclude",
+                    git::AddToGitExclude.boxed_clone(),
+                )
                 .separator()
                 .action("Open Diff", menu::Confirm.boxed_clone())
                 .action("Open File", menu::SecondaryConfirm.boxed_clone())
@@ -5437,6 +5462,7 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::restore_tracked_files))
                     .on_action(cx.listener(Self::revert_selected))
                     .on_action(cx.listener(Self::add_to_gitignore))
+                    .on_action(cx.listener(Self::add_to_git_exclude))
                     .on_action(cx.listener(Self::clean_all))
                     .on_action(cx.listener(Self::generate_commit_message_action))
                     .on_action(cx.listener(Self::stash_all))
