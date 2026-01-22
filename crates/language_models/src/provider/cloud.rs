@@ -9,7 +9,6 @@ use cloud_llm_client::{
     ListModelsResponse, Plan, PlanV2, SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME,
     ZED_VERSION_HEADER_NAME,
 };
-use feature_flags::{FeatureFlagAppExt as _, OpenAiResponsesApiFeatureFlag};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
 };
@@ -719,8 +718,8 @@ impl LanguageModel for CloudLanguageModel {
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
         let intent = request.intent;
+        let bypass_rate_limit = request.bypass_rate_limit;
         let app_version = Some(cx.update(|cx| AppVersion::global(cx)));
-        let use_responses_api = cx.update(|cx| cx.has_flag::<OpenAiResponsesApiFeatureFlag>());
         let thinking_allowed = request.thinking_allowed;
         let provider_name = provider_name(&self.model.provider);
         match self.model.provider {
@@ -740,53 +739,58 @@ impl LanguageModel for CloudLanguageModel {
                 );
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
-                let future = self.request_limiter.stream(async move {
-                    let PerformLlmCompletionResponse {
-                        response,
-                        includes_status_messages,
-                    } = Self::perform_llm_completion(
-                        client.clone(),
-                        llm_api_token,
-                        app_version,
-                        CompletionBody {
-                            thread_id,
-                            prompt_id,
-                            intent,
-                            provider: cloud_llm_client::LanguageModelProvider::Anthropic,
-                            model: request.model.clone(),
-                            provider_request: serde_json::to_value(&request)
-                                .map_err(|e| anyhow!(e))?,
-                        },
-                    )
-                    .await
-                    .map_err(|err| match err.downcast::<ApiError>() {
-                        Ok(api_err) => anyhow!(LanguageModelCompletionError::from(api_err)),
-                        Err(err) => anyhow!(err),
-                    })?;
+                let future = self.request_limiter.stream_with_bypass(
+                    async move {
+                        let PerformLlmCompletionResponse {
+                            response,
+                            includes_status_messages,
+                        } = Self::perform_llm_completion(
+                            client.clone(),
+                            llm_api_token,
+                            app_version,
+                            CompletionBody {
+                                thread_id,
+                                prompt_id,
+                                intent,
+                                provider: cloud_llm_client::LanguageModelProvider::Anthropic,
+                                model: request.model.clone(),
+                                provider_request: serde_json::to_value(&request)
+                                    .map_err(|e| anyhow!(e))?,
+                            },
+                        )
+                        .await
+                        .map_err(|err| {
+                            match err.downcast::<ApiError>() {
+                                Ok(api_err) => anyhow!(LanguageModelCompletionError::from(api_err)),
+                                Err(err) => anyhow!(err),
+                            }
+                        })?;
 
-                    let mut mapper = AnthropicEventMapper::new();
-                    Ok(map_cloud_completion_events(
-                        Box::pin(response_lines(response, includes_status_messages)),
-                        &provider_name,
-                        move |event| mapper.map_event(event),
-                    ))
-                });
+                        let mut mapper = AnthropicEventMapper::new();
+                        Ok(map_cloud_completion_events(
+                            Box::pin(response_lines(response, includes_status_messages)),
+                            &provider_name,
+                            move |event| mapper.map_event(event),
+                        ))
+                    },
+                    bypass_rate_limit,
+                );
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
             cloud_llm_client::LanguageModelProvider::OpenAi => {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
 
-                if use_responses_api {
-                    let request = into_open_ai_response(
-                        request,
-                        &self.model.id.0,
-                        self.model.supports_parallel_tool_calls,
-                        true,
-                        None,
-                        None,
-                    );
-                    let future = self.request_limiter.stream(async move {
+                let request = into_open_ai_response(
+                    request,
+                    &self.model.id.0,
+                    self.model.supports_parallel_tool_calls,
+                    true,
+                    None,
+                    None,
+                );
+                let future = self.request_limiter.stream_with_bypass(
+                    async move {
                         let PerformLlmCompletionResponse {
                             response,
                             includes_status_messages,
@@ -812,18 +816,24 @@ impl LanguageModel for CloudLanguageModel {
                             &provider_name,
                             move |event| mapper.map_event(event),
                         ))
-                    });
-                    async move { Ok(future.await?.boxed()) }.boxed()
-                } else {
-                    let request = into_open_ai(
-                        request,
-                        &self.model.id.0,
-                        self.model.supports_parallel_tool_calls,
-                        true,
-                        None,
-                        None,
-                    );
-                    let future = self.request_limiter.stream(async move {
+                    },
+                    bypass_rate_limit,
+                );
+                async move { Ok(future.await?.boxed()) }.boxed()
+            }
+            cloud_llm_client::LanguageModelProvider::XAi => {
+                let client = self.client.clone();
+                let request = into_open_ai(
+                    request,
+                    &self.model.id.0,
+                    self.model.supports_parallel_tool_calls,
+                    false,
+                    None,
+                    None,
+                );
+                let llm_api_token = self.llm_api_token.clone();
+                let future = self.request_limiter.stream_with_bypass(
+                    async move {
                         let PerformLlmCompletionResponse {
                             response,
                             includes_status_messages,
@@ -835,7 +845,7 @@ impl LanguageModel for CloudLanguageModel {
                                 thread_id,
                                 prompt_id,
                                 intent,
-                                provider: cloud_llm_client::LanguageModelProvider::OpenAi,
+                                provider: cloud_llm_client::LanguageModelProvider::XAi,
                                 model: request.model.clone(),
                                 provider_request: serde_json::to_value(&request)
                                     .map_err(|e| anyhow!(e))?,
@@ -849,48 +859,9 @@ impl LanguageModel for CloudLanguageModel {
                             &provider_name,
                             move |event| mapper.map_event(event),
                         ))
-                    });
-                    async move { Ok(future.await?.boxed()) }.boxed()
-                }
-            }
-            cloud_llm_client::LanguageModelProvider::XAi => {
-                let client = self.client.clone();
-                let request = into_open_ai(
-                    request,
-                    &self.model.id.0,
-                    self.model.supports_parallel_tool_calls,
-                    false,
-                    None,
-                    None,
+                    },
+                    bypass_rate_limit,
                 );
-                let llm_api_token = self.llm_api_token.clone();
-                let future = self.request_limiter.stream(async move {
-                    let PerformLlmCompletionResponse {
-                        response,
-                        includes_status_messages,
-                    } = Self::perform_llm_completion(
-                        client.clone(),
-                        llm_api_token,
-                        app_version,
-                        CompletionBody {
-                            thread_id,
-                            prompt_id,
-                            intent,
-                            provider: cloud_llm_client::LanguageModelProvider::XAi,
-                            model: request.model.clone(),
-                            provider_request: serde_json::to_value(&request)
-                                .map_err(|e| anyhow!(e))?,
-                        },
-                    )
-                    .await?;
-
-                    let mut mapper = OpenAiEventMapper::new();
-                    Ok(map_cloud_completion_events(
-                        Box::pin(response_lines(response, includes_status_messages)),
-                        &provider_name,
-                        move |event| mapper.map_event(event),
-                    ))
-                });
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
             cloud_llm_client::LanguageModelProvider::Google => {
@@ -898,33 +869,36 @@ impl LanguageModel for CloudLanguageModel {
                 let request =
                     into_google(request, self.model.id.to_string(), GoogleModelMode::Default);
                 let llm_api_token = self.llm_api_token.clone();
-                let future = self.request_limiter.stream(async move {
-                    let PerformLlmCompletionResponse {
-                        response,
-                        includes_status_messages,
-                    } = Self::perform_llm_completion(
-                        client.clone(),
-                        llm_api_token,
-                        app_version,
-                        CompletionBody {
-                            thread_id,
-                            prompt_id,
-                            intent,
-                            provider: cloud_llm_client::LanguageModelProvider::Google,
-                            model: request.model.model_id.clone(),
-                            provider_request: serde_json::to_value(&request)
-                                .map_err(|e| anyhow!(e))?,
-                        },
-                    )
-                    .await?;
+                let future = self.request_limiter.stream_with_bypass(
+                    async move {
+                        let PerformLlmCompletionResponse {
+                            response,
+                            includes_status_messages,
+                        } = Self::perform_llm_completion(
+                            client.clone(),
+                            llm_api_token,
+                            app_version,
+                            CompletionBody {
+                                thread_id,
+                                prompt_id,
+                                intent,
+                                provider: cloud_llm_client::LanguageModelProvider::Google,
+                                model: request.model.model_id.clone(),
+                                provider_request: serde_json::to_value(&request)
+                                    .map_err(|e| anyhow!(e))?,
+                            },
+                        )
+                        .await?;
 
-                    let mut mapper = GoogleEventMapper::new();
-                    Ok(map_cloud_completion_events(
-                        Box::pin(response_lines(response, includes_status_messages)),
-                        &provider_name,
-                        move |event| mapper.map_event(event),
-                    ))
-                });
+                        let mut mapper = GoogleEventMapper::new();
+                        Ok(map_cloud_completion_events(
+                            Box::pin(response_lines(response, includes_status_messages)),
+                            &provider_name,
+                            move |event| mapper.map_event(event),
+                        ))
+                    },
+                    bypass_rate_limit,
+                );
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
         }

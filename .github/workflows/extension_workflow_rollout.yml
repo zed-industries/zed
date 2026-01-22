@@ -22,7 +22,6 @@ jobs:
 
           const filteredRepos = repos
               .filter(repo => !repo.archived)
-              .filter(repo => repo.name !== 'workflows' && repo.name !== 'material-icon-theme')
               .map(repo => repo.name);
 
           console.log(`Found ${filteredRepos.length} extension repos`);
@@ -58,6 +57,7 @@ jobs:
       with:
         clean: false
         path: zed
+        fetch-depth: '0'
     - name: steps::checkout_repo_with_token
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
@@ -65,10 +65,66 @@ jobs:
         token: ${{ steps.generate-token.outputs.token }}
         repository: zed-extensions/${{ matrix.repo }}
         path: extension
-    - name: extension_workflow_rollout::rollout_workflows_to_extension::copy_workflow_files
+    - id: prev-tag
+      name: extension_workflow_rollout::rollout_workflows_to_extension::get_previous_tag_commit
       run: |
+        PREV_COMMIT=$(git rev-parse "extension-workflows^{commit}" 2>/dev/null || echo "")
+        if [ -z "$PREV_COMMIT" ]; then
+            echo "::error::No previous rollout tag 'extension-workflows' found. Cannot determine file changes."
+            exit 1
+        fi
+        echo "Found previous rollout at commit: $PREV_COMMIT"
+        echo "prev_commit=$PREV_COMMIT" >> "$GITHUB_OUTPUT"
+      shell: bash -euxo pipefail {0}
+      working-directory: zed
+    - id: calc-changes
+      name: extension_workflow_rollout::rollout_workflows_to_extension::get_removed_files
+      run: |
+        PREV_COMMIT="${{ steps.prev-tag.outputs.prev_commit }}"
+
+        if [ "${{ matrix.repo }}" = "workflows" ]; then
+            WORKFLOW_DIR="extensions/workflows"
+        else
+            WORKFLOW_DIR="extensions/workflows/shared"
+        fi
+
+        echo "Calculating changes from $PREV_COMMIT to HEAD for $WORKFLOW_DIR"
+
+        # Get deleted files (status D) and renamed files (status R - old name needs removal)
+        # Using -M to detect renames, then extracting files that are gone from their original location
+        REMOVED_FILES=$(git diff --name-status -M "$PREV_COMMIT" HEAD -- "$WORKFLOW_DIR" | \
+            awk '/^D/ { print $2 } /^R/ { print $2 }' | \
+            xargs -I{} basename {} 2>/dev/null | \
+            tr '\n' ' ' || echo "")
+
+        REMOVED_FILES=$(echo "$REMOVED_FILES" | xargs)
+
+        echo "Files to remove: $REMOVED_FILES"
+        echo "removed_files=$REMOVED_FILES" >> "$GITHUB_OUTPUT"
+      shell: bash -euxo pipefail {0}
+      working-directory: zed
+    - name: extension_workflow_rollout::rollout_workflows_to_extension::sync_workflow_files
+      run: |
+        REMOVED_FILES="${{ steps.calc-changes.outputs.removed_files }}"
+
         mkdir -p extension/.github/workflows
-        cp zed/extensions/workflows/shared/*.yml extension/.github/workflows/
+        cd extension/.github/workflows
+
+        if [ -n "$REMOVED_FILES" ]; then
+            for file in $REMOVED_FILES; do
+                if [ -f "$file" ]; then
+                    rm -f "$file"
+                fi
+            done
+        fi
+
+        cd - > /dev/null
+
+        if [ "${{ matrix.repo }}" = "workflows" ]; then
+            cp zed/extensions/workflows/*.yml extension/.github/workflows/
+        else
+            cp zed/extensions/workflows/shared/*.yml extension/.github/workflows/
+        fi
       shell: bash -euxo pipefail {0}
     - id: short-sha
       name: extension_workflow_rollout::rollout_workflows_to_extension::get_short_sha
@@ -104,3 +160,38 @@ jobs:
       env:
         GH_TOKEN: ${{ steps.generate-token.outputs.token }}
     timeout-minutes: 10
+  create_rollout_tag:
+    needs:
+    - rollout_workflows_to_extension
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - id: generate-token
+      name: extension_bump::generate_token
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        permission-contents: write
+    - name: steps::checkout_repo_with_token
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+        token: ${{ steps.generate-token.outputs.token }}
+        fetch-depth: '0'
+    - name: extension_workflow_rollout::create_rollout_tag::configure_git
+      run: |
+        git config user.name "zed-zippy[bot]"
+        git config user.email "234243425+zed-zippy[bot]@users.noreply.github.com"
+      shell: bash -euxo pipefail {0}
+    - name: extension_workflow_rollout::create_rollout_tag::update_rollout_tag
+      run: |
+        if git rev-parse "extension-workflows" >/dev/null 2>&1; then
+            git tag -d "extension-workflows"
+            git push origin ":refs/tags/extension-workflows" || true
+        fi
+
+        echo "Creating new tag 'extension-workflows' at $(git rev-parse --short HEAD)"
+        git tag "extension-workflows"
+        git push origin "extension-workflows"
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 1

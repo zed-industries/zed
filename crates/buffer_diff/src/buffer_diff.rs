@@ -536,7 +536,9 @@ impl BufferDiffInner<Entity<language::Buffer>> {
                     let next_pending_hunk_offset_range =
                         next_pending_hunk.buffer_range.to_offset(buffer);
                     if next_pending_hunk_offset_range.start <= buffer_offset_range.end {
-                        buffer_offset_range.end = next_pending_hunk_offset_range.end;
+                        buffer_offset_range.end = buffer_offset_range
+                            .end
+                            .max(next_pending_hunk_offset_range.end);
                         pending_hunks_iter.next();
                         continue;
                     }
@@ -2138,6 +2140,72 @@ mod tests {
                 );
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_stage_all_with_nested_hunks(cx: &mut TestAppContext) {
+        // This test reproduces a crash where staging all hunks would cause an underflow
+        // when there's one large unstaged hunk containing multiple uncommitted hunks.
+        let head_text = "
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff
+            ggg
+            hhh
+            iii
+            jjj
+            kkk
+            lll
+        "
+        .unindent();
+
+        let index_text = "
+            aaa
+            bbb
+            CCC-index
+            DDD-index
+            EEE-index
+            FFF-index
+            GGG-index
+            HHH-index
+            III-index
+            JJJ-index
+            kkk
+            lll
+        "
+        .unindent();
+
+        let buffer_text = "
+            aaa
+            bbb
+            ccc-modified
+            ddd
+            eee-modified
+            fff
+            ggg
+            hhh-modified
+            iii
+            jjj
+            kkk
+            lll
+        "
+        .unindent();
+
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+
+        let unstaged_diff = cx.new(|cx| BufferDiff::new_with_base_text(&index_text, &buffer, cx));
+        let uncommitted_diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new_with_base_text(&head_text, &buffer, cx);
+            diff.set_secondary_diff(unstaged_diff);
+            diff
+        });
+
+        uncommitted_diff.update(cx, |diff, cx| {
+            diff.stage_or_unstage_all_hunks(true, &buffer, true, cx);
+        });
     }
 
     #[gpui::test]

@@ -1070,7 +1070,7 @@ impl acp::Client for ClientDelegate {
         let task = thread.update(cx, |thread, cx| {
             thread.request_tool_call_authorization(
                 arguments.tool_call,
-                arguments.options,
+                acp_thread::PermissionOptions::Flat(arguments.options),
                 respect_always_allow_setting,
                 cx,
             )
