@@ -1700,7 +1700,12 @@ impl Workspace {
                 for path in paths_to_open.into_iter() {
                     if let Some((_, project_entry)) = cx
                         .update(|cx| {
-                            Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
+                            Workspace::project_path_for_path(
+                                project_handle.clone(),
+                                &path,
+                                true,
+                                cx,
+                            )
                         })
                         .await
                         .log_err()
@@ -1750,7 +1755,11 @@ impl Workspace {
 
                     project_handle
                         .update(cx, |this, cx| {
-                            this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
+                            this.activate_toolchain(
+                                ProjectPath { worktree_id, path },
+                                toolchain,
+                                cx,
+                            )
                         })
                         .await;
                 }

@@ -372,8 +372,8 @@ impl Worktree {
     ) -> Result<Entity<Self>> {
         let abs_path = path.into();
         let metadata = {
-            let _timer = zlog::time!("Worktree::local fs.metadata")
-                .warn_if_gt(Duration::from_millis(5));
+            let _timer =
+                zlog::time!("Worktree::local fs.metadata").warn_if_gt(Duration::from_millis(5));
             fs.metadata(&abs_path)
                 .await
                 .context("failed to stat worktree path")?
@@ -391,8 +391,8 @@ impl Worktree {
         };
 
         let root_file_handle = if metadata.as_ref().is_some() {
-            let _timer = zlog::time!("Worktree::local fs.open_handle")
-                .warn_if_gt(Duration::from_millis(5));
+            let _timer =
+                zlog::time!("Worktree::local fs.open_handle").warn_if_gt(Duration::from_millis(5));
             fs.open_handle(&abs_path)
                 .await
                 .with_context(|| {
@@ -406,8 +406,7 @@ impl Worktree {
             None
         };
 
-        let _timer = zlog::time!("Worktree::local cx.new")
-            .warn_if_gt(Duration::from_millis(5));
+        let _timer = zlog::time!("Worktree::local cx.new").warn_if_gt(Duration::from_millis(5));
         Ok(cx.new(move |cx: &mut Context<Worktree>| {
             let mut snapshot = LocalSnapshot {
                 ignores_by_parent_abs_path: Default::default(),
