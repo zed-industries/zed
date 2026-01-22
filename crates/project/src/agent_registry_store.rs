@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
 use collections::HashMap;
@@ -9,10 +9,13 @@ use futures::AsyncReadExt;
 use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
 use http_client::{AsyncBody, HttpClient};
 use serde::Deserialize;
+use settings::Settings;
+
+use crate::agent_server_store::{AllAgentServersSettings, CustomAgentServerSettings};
 
 const REGISTRY_URL: &str =
     "https://github.com/agentclientprotocol/registry/releases/latest/download/registry.json";
-const REGISTRY_REFRESH_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const REFRESH_THROTTLE_DURATION: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone, Debug)]
 pub struct RegistryAgentMetadata {
@@ -105,10 +108,16 @@ pub struct AgentRegistryStore {
     is_fetching: bool,
     fetch_error: Option<SharedString>,
     pending_refresh: Option<Task<()>>,
-    _poll_task: Task<Result<()>>,
+    last_refresh: Option<Instant>,
 }
 
 impl AgentRegistryStore {
+    /// Initialize the global AgentRegistryStore.
+    ///
+    /// This loads the cached registry from disk. If the cache is empty but there
+    /// are registry agents configured in settings, it will trigger a network fetch.
+    /// Otherwise, call `refresh()` explicitly when you need fresh data
+    /// (e.g., when opening the Agent Registry page).
     pub fn init_global(cx: &mut App) -> Entity<Self> {
         if let Some(store) = Self::try_global(cx) {
             return store;
@@ -118,11 +127,21 @@ impl AgentRegistryStore {
         let http_client: Arc<dyn HttpClient> = cx.http_client();
 
         let store = cx.new(|cx| Self::new(fs, http_client, cx));
-        store.update(cx, |store, cx| {
-            store.refresh(cx);
-            store.start_polling(cx);
-        });
         cx.set_global(GlobalAgentRegistryStore(store.clone()));
+
+        let has_registry_agents_in_settings = AllAgentServersSettings::get_global(cx)
+            .custom
+            .values()
+            .any(|s| matches!(s, CustomAgentServerSettings::Registry { .. }));
+
+        if has_registry_agents_in_settings {
+            store.update(cx, |store, cx| {
+                if store.agents.is_empty() {
+                    store.refresh(cx);
+                }
+            });
+        }
+
         store
     }
 
@@ -151,6 +170,9 @@ impl AgentRegistryStore {
         self.fetch_error.clone()
     }
 
+    /// Refresh the registry from the network.
+    ///
+    /// This will fetch the latest registry data and update the cache.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         if self.pending_refresh.is_some() {
             return;
@@ -158,6 +180,7 @@ impl AgentRegistryStore {
 
         self.is_fetching = true;
         self.fetch_error = None;
+        self.last_refresh = Some(Instant::now());
         cx.notify();
 
         let fs = self.fs.clone();
@@ -190,6 +213,22 @@ impl AgentRegistryStore {
         }));
     }
 
+    /// Refresh the registry if it hasn't been refreshed recently.
+    ///
+    /// This is useful to call when using a registry-based agent to check for
+    /// updates without making too many network requests. The refresh is
+    /// throttled to at most once per hour.
+    pub fn refresh_if_stale(&mut self, cx: &mut Context<Self>) {
+        let should_refresh = self
+            .last_refresh
+            .map(|last| last.elapsed() >= REFRESH_THROTTLE_DURATION)
+            .unwrap_or(true);
+
+        if should_refresh {
+            self.refresh(cx);
+        }
+    }
+
     fn new(fs: Arc<dyn Fs>, http_client: Arc<dyn HttpClient>, cx: &mut Context<Self>) -> Self {
         let mut store = Self {
             fs: fs.clone(),
@@ -198,7 +237,7 @@ impl AgentRegistryStore {
             is_fetching: false,
             fetch_error: None,
             pending_refresh: None,
-            _poll_task: Task::ready(Ok(())),
+            last_refresh: None,
         };
 
         store.load_cached_registry(fs, store.http_client.clone(), cx);
@@ -235,17 +274,6 @@ impl AgentRegistryStore {
             Ok(())
         })
         .detach_and_log_err(cx);
-    }
-
-    fn start_polling(&mut self, cx: &mut Context<Self>) {
-        self._poll_task = cx.spawn(async move |this, cx| -> Result<()> {
-            loop {
-                this.update(cx, |this, cx| this.refresh(cx))?;
-                cx.background_executor()
-                    .timer(REGISTRY_REFRESH_INTERVAL)
-                    .await;
-            }
-        });
     }
 }
 
