@@ -26,6 +26,7 @@
       "shift-escape": "workspace::ToggleZoom",
       "ctrl-o": "workspace::OpenFiles",
       "ctrl-k ctrl-o": "workspace::Open",
+      "ctrl-k f": "workspace::CloseFolder",
       "ctrl-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
       "ctrl-shift-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
       "ctrl--": ["zed::DecreaseBufferFontSize", { "persist": false }],
