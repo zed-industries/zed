@@ -889,7 +889,9 @@ impl AcpThreadView {
                             })
                         });
 
-                        this.message_editor.focus_handle(cx).focus(window, cx);
+                        if this.focus_handle.contains_focused(window, cx) {
+                            this.message_editor.focus_handle(cx).focus(window, cx);
+                        }
 
                         cx.notify();
                     }
