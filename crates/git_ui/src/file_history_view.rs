@@ -12,10 +12,11 @@ use project::{
     git_store::{GitStore, Repository},
 };
 use std::any::{Any, TypeId};
+use std::ops::Range;
 use std::sync::Arc;
 
 use time::OffsetDateTime;
-use ui::{Avatar, Chip, Divider, ListItem, WithScrollbar, prelude::*};
+use ui::{Avatar, Chip, Divider, ListItem, Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt;
 use workspace::{
     Item, Workspace,
@@ -23,6 +24,10 @@ use workspace::{
 };
 
 use crate::commit_view::CommitView;
+
+/// Number of items from the bottom of the list at which to automatically load
+/// more commits.
+const PREFETCH_THRESHOLD: usize = 5;
 
 actions!(git, [ViewCommitFromHistory, LoadMoreHistory]);
 
@@ -47,6 +52,9 @@ pub struct FileHistoryView {
     focus_handle: FocusHandle,
     loading_more: bool,
     has_more: bool,
+    /// Tracks which item indexes are currently visible so we can determine
+    /// whether to automatically load more commits.
+    visible_range: Range<usize>,
 }
 
 impl FileHistoryView {
@@ -144,6 +152,7 @@ impl FileHistoryView {
             focus_handle,
             loading_more: false,
             has_more,
+            visible_range: 0..0,
         }
     }
 
@@ -183,6 +192,14 @@ impl FileHistoryView {
                         this.loading_more = false;
                         this.has_more = more_history.entries.len() >= PAGE_SIZE;
                         this.history.entries.extend(more_history.entries);
+                        cx.notify();
+                    })
+                    .ok();
+                } else {
+                    // Ensure that `loading_more` is reset in case the task
+                    // fails, so the user can retry and doesn't end up stuck.
+                    this.update(cx, |this, cx| {
+                        this.loading_more = false;
                         cx.notify();
                     })
                     .ok();
@@ -390,6 +407,15 @@ impl FileHistoryView {
             }))
             .into_any_element()
     }
+
+    fn maybe_load_more_on_scroll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.has_more
+            && !self.loading_more
+            && self.visible_range.end + PREFETCH_THRESHOLD >= self.history.entries.len()
+        {
+            self.load_more(window, cx);
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -495,6 +521,9 @@ impl Render for FileHistoryView {
                                         .icon_size(IconSize::Small)
                                         .icon_color(Color::Muted)
                                         .icon_position(IconPosition::Start)
+                                        .when(self.loading_more, |button| {
+                                            button.tooltip(Tooltip::text("Loading more commits..."))
+                                        })
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.load_more(window, cx);
                                         })),
@@ -507,26 +536,22 @@ impl Render for FileHistoryView {
                     .flex_1()
                     .size_full()
                     .child({
-                        let view = cx.weak_entity();
                         uniform_list(
                             "file-history-list",
                             entry_count,
-                            move |range, window, cx| {
-                                let Some(view) = view.upgrade() else {
-                                    return Vec::new();
-                                };
-                                view.update(cx, |this, cx| {
-                                    let mut items = Vec::with_capacity(range.end - range.start);
-                                    for ix in range {
-                                        if let Some(entry) = this.history.entries.get(ix) {
-                                            items.push(
-                                                this.render_commit_entry(ix, entry, window, cx),
-                                            );
-                                        }
+                            cx.processor(|view, range: Range<usize>, window, cx| {
+                                view.visible_range = range.clone();
+                                view.maybe_load_more_on_scroll(window, cx);
+
+                                let mut items = Vec::with_capacity(range.end - range.start);
+                                for ix in range {
+                                    if let Some(entry) = view.history.entries.get(ix) {
+                                        items.push(view.render_commit_entry(ix, entry, window, cx));
                                     }
-                                    items
-                                })
-                            },
+                                }
+
+                                items
+                            }),
                         )
                         .flex_1()
                         .size_full()
