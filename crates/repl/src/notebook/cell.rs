@@ -137,7 +137,7 @@ impl Cell {
                         cx.spawn_in(window, async move |this, cx| {
                             let parsed_markdown = cx
                                 .background_spawn(async move {
-                                    parse_markdown(&source, None, Some(languages)).await
+                                    parse_markdown(&source, None, None, Some(languages)).await
                                 })
                                 .await;
 
