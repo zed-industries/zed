@@ -437,12 +437,15 @@ impl SettingsStore {
     ) {
         let mut content = self.user_settings.clone().unwrap_or_default().content;
         update(&mut content);
-        let new_text = serde_json::to_string(&UserSettingsContent {
-            content,
-            ..Default::default()
-        })
-        .unwrap();
-        _ = self.set_user_settings(&new_text, cx);
+        fn trail(this: &mut SettingsStore, content: Box<SettingsContent>, cx: &mut App) {
+            let new_text = serde_json::to_string(&UserSettingsContent {
+                content,
+                ..Default::default()
+            })
+            .unwrap();
+            _ = this.set_user_settings(&new_text, cx);
+        }
+        trail(self, content, cx);
     }
 
     pub async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {

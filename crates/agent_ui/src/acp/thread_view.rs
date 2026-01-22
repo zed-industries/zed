@@ -21,8 +21,8 @@ use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
 use feature_flags::{
-    AgentSharingFeatureFlag, AgentV2FeatureFlag, FeatureFlagAppExt as _,
-    UserSlashCommandsFeatureFlag,
+    AgentSharingFeatureFlag, AgentV2FeatureFlag, CloudThinkingToggleFeatureFlag,
+    FeatureFlagAppExt as _, UserSlashCommandsFeatureFlag,
 };
 use file_icons::FileIcons;
 use fs::Fs;
@@ -99,7 +99,10 @@ enum ThreadError {
     PaymentRequired,
     Refusal,
     AuthenticationRequired(SharedString),
-    Other(SharedString),
+    Other {
+        message: SharedString,
+        acp_error_code: Option<SharedString>,
+    },
 }
 
 impl ThreadError {
@@ -111,16 +114,25 @@ impl ThreadError {
         {
             Self::AuthenticationRequired(acp_error.message.clone().into())
         } else {
-            let string = format!("{:#}", error);
+            let message: SharedString = format!("{:#}", error).into();
+
+            // Extract ACP error code if available
+            let acp_error_code = error
+                .downcast_ref::<acp::Error>()
+                .map(|acp_error| SharedString::from(acp_error.code.to_string()));
+
             // TODO: we should have Gemini return better errors here.
             if agent.clone().downcast::<agent_servers::Gemini>().is_some()
-                && string.contains("Could not load the default credentials")
-                || string.contains("API key not valid")
-                || string.contains("Request had invalid authentication credentials")
+                && message.contains("Could not load the default credentials")
+                || message.contains("API key not valid")
+                || message.contains("Request had invalid authentication credentials")
             {
-                Self::AuthenticationRequired(string.into())
+                Self::AuthenticationRequired(message)
             } else {
-                Self::Other(string.into())
+                Self::Other {
+                    message,
+                    acp_error_code,
+                }
             }
         }
     }
@@ -413,7 +425,6 @@ impl AcpThreadView {
         thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
         history: Entity<AcpThreadHistory>,
-        track_load_event: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -559,7 +570,6 @@ impl AcpThreadView {
                 resume_thread.clone(),
                 workspace.clone(),
                 project.clone(),
-                track_load_event,
                 window,
                 cx,
             ),
@@ -570,7 +580,7 @@ impl AcpThreadView {
             profile_selector: None,
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
-            list_state: list_state,
+            list_state,
             thread_retry_status: None,
             thread_error: None,
             thread_error_markdown: None,
@@ -630,7 +640,6 @@ impl AcpThreadView {
             self.resume_thread_metadata.clone(),
             self.workspace.clone(),
             self.project.clone(),
-            true,
             window,
             cx,
         );
@@ -651,7 +660,6 @@ impl AcpThreadView {
         resume_thread: Option<AgentSessionInfo>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        track_load_event: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadState {
@@ -713,9 +721,7 @@ impl AcpThreadView {
                 }
             };
 
-            if track_load_event {
-                telemetry::event!("Agent Thread Started", agent = connection.telemetry_id());
-            }
+            telemetry::event!("Agent Thread Started", agent = connection.telemetry_id());
 
             let result = if let Some(resume) = resume_thread.clone() {
                 cx.update(|_, cx| {
@@ -889,7 +895,9 @@ impl AcpThreadView {
                             })
                         });
 
-                        this.message_editor.focus_handle(cx).focus(window, cx);
+                        if this.focus_handle.contains_focused(window, cx) {
+                            this.message_editor.focus_handle(cx).focus(window, cx);
+                        }
 
                         cx.notify();
                     }
@@ -1359,16 +1367,16 @@ impl AcpThreadView {
         matches!(self.thread_state, ThreadState::Loading { .. })
     }
 
-    fn resume_chat(&mut self, cx: &mut Context<Self>) {
+    fn retry_generation(&mut self, cx: &mut Context<Self>) {
         self.thread_error.take();
         let Some(thread) = self.thread() else {
             return;
         };
-        if !thread.read(cx).can_resume(cx) {
+        if !thread.read(cx).can_retry(cx) {
             return;
         }
 
-        let task = thread.update(cx, |thread, cx| thread.resume(cx));
+        let task = thread.update(cx, |thread, cx| thread.retry(cx));
         cx.spawn(async move |this, cx| {
             let result = task.await;
 
@@ -1936,8 +1944,57 @@ impl AcpThreadView {
     }
 
     fn handle_thread_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
-        self.thread_error = Some(ThreadError::from_err(error, &self.agent));
+        let thread_error = ThreadError::from_err(error, &self.agent);
+        self.emit_thread_error_telemetry(&thread_error, cx);
+        self.thread_error = Some(thread_error);
         cx.notify();
+    }
+
+    fn emit_thread_error_telemetry(&self, error: &ThreadError, cx: &mut Context<Self>) {
+        let (error_kind, acp_error_code, message): (&str, Option<SharedString>, SharedString) =
+            match error {
+                ThreadError::PaymentRequired => (
+                    "payment_required",
+                    None,
+                    "You reached your free usage limit. Upgrade to Zed Pro for more prompts."
+                        .into(),
+                ),
+                ThreadError::Refusal => {
+                    let model_or_agent_name = self.current_model_name(cx);
+                    let message = format!(
+                        "{} refused to respond to this prompt. This can happen when a model believes the prompt violates its content policy or safety guidelines, so rephrasing it can sometimes address the issue.",
+                        model_or_agent_name
+                    );
+                    ("refusal", None, message.into())
+                }
+                ThreadError::AuthenticationRequired(message) => {
+                    ("authentication_required", None, message.clone())
+                }
+                ThreadError::Other {
+                    acp_error_code,
+                    message,
+                } => ("other", acp_error_code.clone(), message.clone()),
+            };
+
+        let (agent_telemetry_id, session_id) = self
+            .thread()
+            .map(|t| {
+                let thread = t.read(cx);
+                (
+                    thread.connection().telemetry_id(),
+                    thread.session_id().clone(),
+                )
+            })
+            .unzip();
+
+        telemetry::event!(
+            "Agent Panel Error Shown",
+            agent = agent_telemetry_id,
+            session_id = session_id,
+            kind = error_kind,
+            acp_error_code = acp_error_code,
+            message = message,
+        );
     }
 
     fn clear_thread_error(&mut self, cx: &mut Context<Self>) {
@@ -2022,7 +2079,9 @@ impl AcpThreadView {
             }
             AcpThreadEvent::Refusal => {
                 self.thread_retry_status.take();
-                self.thread_error = Some(ThreadError::Refusal);
+                let thread_error = ThreadError::Refusal;
+                self.emit_thread_error_telemetry(&thread_error, cx);
+                self.thread_error = Some(thread_error);
                 let model_or_agent_name = self.current_model_name(cx);
                 let notification_message =
                     format!("{} refused to respond to this request", model_or_agent_name);
@@ -6157,6 +6216,7 @@ impl AcpThreadView {
                         h_flex()
                             .gap_1()
                             .children(self.render_token_usage(cx))
+                            .children(self.render_thinking_toggle(cx))
                             .children(self.profile_selector.clone())
                             // Either config_options_view OR (mode_selector + model_selector)
                             .children(self.config_options_view.clone())
@@ -6425,6 +6485,42 @@ impl AcpThreadView {
                     .child(Label::new(max).size(LabelSize::Small).color(Color::Muted)),
             )
         }
+    }
+
+    fn render_thinking_toggle(&self, cx: &mut Context<Self>) -> Option<IconButton> {
+        if !cx.has_flag::<CloudThinkingToggleFeatureFlag>() {
+            return None;
+        }
+
+        let thread = self.as_native_thread(cx)?.read(cx);
+
+        let supports_thinking = thread.model()?.supports_thinking();
+        if !supports_thinking {
+            return None;
+        }
+
+        let thinking = thread.thinking_enabled();
+
+        let tooltip_label = if thinking {
+            "Disable Thinking Mode".to_string()
+        } else {
+            "Enable Thinking Mode".to_string()
+        };
+
+        Some(
+            IconButton::new("thinking-mode", IconName::ToolThink)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .toggle_state(thinking)
+                .tooltip(Tooltip::text(tooltip_label))
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    if let Some(thread) = this.as_native_thread(cx) {
+                        thread.update(cx, |thread, cx| {
+                            thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
+                        });
+                    }
+                })),
+        )
     }
 
     fn keep_all(&mut self, _: &KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
@@ -7848,7 +7944,9 @@ impl AcpThreadView {
 
     fn render_thread_error(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let content = match self.thread_error.as_ref()? {
-            ThreadError::Other(error) => self.render_any_thread_error(error.clone(), window, cx),
+            ThreadError::Other { message, .. } => {
+                self.render_any_thread_error(message.clone(), window, cx)
+            }
             ThreadError::Refusal => self.render_refusal_error(cx),
             ThreadError::AuthenticationRequired(error) => {
                 self.render_authentication_required_error(error.clone(), cx)
@@ -7947,7 +8045,7 @@ impl AcpThreadView {
     ) -> Callout {
         let can_resume = self
             .thread()
-            .map_or(false, |thread| thread.read(cx).can_resume(cx));
+            .map_or(false, |thread| thread.read(cx).can_retry(cx));
 
         let markdown = if let Some(markdown) = &self.thread_error_markdown {
             markdown.clone()
@@ -7976,7 +8074,7 @@ impl AcpThreadView {
                                 .icon_size(IconSize::Small)
                                 .tooltip(Tooltip::text("Retry Generation"))
                                 .on_click(cx.listener(|this, _, _window, cx| {
-                                    this.resume_chat(cx);
+                                    this.retry_generation(cx);
                                 })),
                         )
                     })
@@ -8701,7 +8799,6 @@ pub(crate) mod tests {
                     Some(thread_store),
                     None,
                     history.clone(),
-                    false,
                     window,
                     cx,
                 )
@@ -8993,7 +9090,6 @@ pub(crate) mod tests {
                     Some(thread_store),
                     None,
                     history,
-                    false,
                     window,
                     cx,
                 )
@@ -9286,7 +9382,6 @@ pub(crate) mod tests {
                     Some(thread_store.clone()),
                     None,
                     history,
-                    false,
                     window,
                     cx,
                 )

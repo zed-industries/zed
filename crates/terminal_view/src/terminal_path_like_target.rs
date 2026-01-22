@@ -556,9 +556,15 @@ mod tests {
             app_cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let terminal = app_cx.new(|cx| {
-            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
-                .expect("Failed to create display-only terminal")
-                .subscribe(cx)
+            TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+            )
+            .expect("Failed to create display-only terminal")
+            .subscribe(cx)
         });
 
         let workspace_a = workspace.clone();

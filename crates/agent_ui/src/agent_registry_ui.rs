@@ -13,7 +13,7 @@ use project::{AgentRegistryStore, RegistryAgent};
 use settings::{Settings, SettingsStore, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    ButtonStyle, ScrollableHandle, ToggleButtonGroup, ToggleButtonGroupSize,
+    ButtonStyle, Chip, ScrollableHandle, ToggleButtonGroup, ToggleButtonGroupSize,
     ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, WithScrollbar, prelude::*,
 };
 use workspace::{
@@ -539,11 +539,19 @@ impl Render for AgentRegistryPage {
                     .px_4()
                     .bg(cx.theme().colors().editor_background)
                     .child(
-                        h_flex()
-                            .w_full()
-                            .gap_1p5()
-                            .justify_between()
-                            .child(Headline::new("ACP Agent Registry").size(HeadlineSize::XLarge)),
+                        h_flex().w_full().gap_1p5().justify_between().child(
+                            h_flex()
+                                .gap_2()
+                                .items_baseline()
+                                .child(
+                                    Headline::new("ACP Agent Registry").size(HeadlineSize::XLarge),
+                                )
+                                .child(div().id("beta-chip").child(Chip::new("Beta")).tooltip(
+                                    Tooltip::text(
+                                        "The ACP Agent Registry is still in an beta testing phase. For more information, visit https://github.com/agentclientprotocol/registry",
+                                    ),
+                                )),
+                        ),
                     )
                     .child(
                         h_flex()

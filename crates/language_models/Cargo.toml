@@ -32,6 +32,7 @@ credentials_provider.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
 extension.workspace = true
 extension_host.workspace = true
+feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 google_ai = { workspace = true, features = ["schemars"] }

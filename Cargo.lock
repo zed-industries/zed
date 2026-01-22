@@ -292,6 +292,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smol",
  "task",
  "tempfile",
  "terminal",
@@ -507,9 +508,9 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.25.1-rc1"
+version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cb5f4f1ef69bdb8b2095ddd14b09dd74ee0303aae8bd5372667a54cff689a1b"
+checksum = "46319972e74179d707445f64aaa2893bbf6a111de3a9af29b7eb382f8b39e282"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.9.4",
@@ -5516,6 +5517,7 @@ dependencies = [
  "ui",
  "unicode-script",
  "unicode-segmentation",
+ "unicode-width",
  "unindent",
  "url",
  "util",
@@ -6497,6 +6499,7 @@ dependencies = [
  "async-trait",
  "cocoa 0.26.0",
  "collections",
+ "fs",
  "fsevent",
  "futures 0.3.31",
  "git",
@@ -9037,6 +9040,7 @@ dependencies = [
  "editor",
  "extension",
  "extension_host",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "google_ai",
@@ -20436,6 +20440,7 @@ dependencies = [
  "text",
  "tracing",
  "util",
+ "worktree",
  "zlog",
  "ztracing",
 ]
