@@ -40,7 +40,7 @@ actions!(
     git_graph,
     [
         /// Opens the Git Graph panel.
-        OpenGitGraph,
+        Open,
         /// Opens the commit view for the selected commit.
         OpenCommitView,
     ]
@@ -50,11 +50,29 @@ pub fn init(cx: &mut App) {
     workspace::register_serializable_item::<GitGraph>(cx);
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
-        // todo!: We should only register this action when project has a repo we can use to generate the graph
-        workspace.register_action(|workspace, _: &OpenGitGraph, window, cx| {
-            let project = workspace.project().clone();
-            let git_graph = cx.new(|cx| GitGraph::new(project, window, cx));
-            workspace.add_item_to_active_pane(Box::new(git_graph), None, true, window, cx);
+        workspace.register_action_renderer(|div, workspace, _, cx| {
+            div.when(
+                workspace.project().read(cx).active_repository(cx).is_some(),
+                |div| {
+                    let workspace = workspace.weak_handle();
+
+                    div.on_action(move |_: &Open, window, cx| {
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                let project = workspace.project().clone();
+                                let git_graph = cx.new(|cx| GitGraph::new(project, window, cx));
+                                workspace.add_item_to_active_pane(
+                                    Box::new(git_graph),
+                                    None,
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    })
+                },
+            )
         });
     })
     .detach();
