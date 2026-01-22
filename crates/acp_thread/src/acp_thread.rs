@@ -477,7 +477,7 @@ pub enum ToolCallStatus {
     Pending,
     /// The tool call is waiting for confirmation from the user.
     WaitingForConfirmation {
-        options: Vec<acp::PermissionOption>,
+        options: PermissionOptions,
         respond_tx: oneshot::Sender<acp::PermissionOptionId>,
     },
     /// The tool call is currently running.
@@ -1717,7 +1717,7 @@ impl AcpThread {
     pub fn request_tool_call_authorization(
         &mut self,
         tool_call: acp::ToolCallUpdate,
-        options: Vec<acp::PermissionOption>,
+        options: PermissionOptions,
         respect_always_allow_setting: bool,
         cx: &mut Context<Self>,
     ) -> Result<BoxFuture<'static, acp::RequestPermissionOutcome>> {
@@ -1726,13 +1726,7 @@ impl AcpThread {
         if respect_always_allow_setting && AgentSettings::get_global(cx).always_allow_tool_actions {
             // Don't use AllowAlways, because then if you were to turn off always_allow_tool_actions,
             // some tools would (incorrectly) continue to auto-accept.
-            if let Some(allow_once_option) = options.iter().find_map(|option| {
-                if matches!(option.kind, acp::PermissionOptionKind::AllowOnce) {
-                    Some(option.option_id.clone())
-                } else {
-                    None
-                }
-            }) {
+            if let Some(allow_once_option) = options.allow_once_option_id() {
                 self.upsert_tool_call_inner(tool_call, ToolCallStatus::Pending, cx)?;
                 return Ok(async {
                     acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(

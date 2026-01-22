@@ -1,29 +1,25 @@
 # Configuring Zed
 
-Zed is designed to be configured: we want to fit your workflow and preferences exactly. We provide default settings that are designed to be a comfortable starting point for as many people as possible, but we hope you will enjoy tweaking it to make it feel incredible.
+This guide explains how Zed's settings system works, including the Settings Editor, JSON configuration files, and project-specific settings.
 
-In addition to the settings described here, you may also want to change your [theme](./themes.md), configure your [key bindings](./key-bindings.md), set up [tasks](./tasks.md) or install [extensions](https://github.com/zed-industries/extensions).
+For visual customization (themes, fonts, icons), see [Appearance](./appearance.md).
 
 ## Settings Editor
 
-You can browse through many of the supported settings via the Settings Editor, which can be opened with the {#kb zed::OpenSettings} keybinding, or through the `zed: open settings` action in the command palette. Through it, you can customize your local, user settings as well as project settings.
+The **Settings Editor** ({#kb zed::OpenSettings}) is the primary way to configure Zed. It provides a searchable interface where you can browse available settings, see their current values, and make changes.
 
-> Note that not all settings that Zed supports are available through the Settings Editor yet.
-> Some more intricate ones, such as language formatters, can only be changed through the JSON settings file {#kb zed::OpenSettingsFile}.
+To open it:
 
-## User Settings File
+- Press {#kb zed::OpenSettings}
+- Or run `zed: open settings` from the command palette
 
-<!--
-TBD: Settings files. Rewrite with "remote settings" in mind (e.g. `local settings` on the remote host).
-Consider renaming `zed: Open Local Settings` to `zed: Open Project Settings`.
+As you type in the search box, matching settings appear with descriptions and controls to modify them. Changes save automatically to your settings file.
 
-TBD: Add settings documentation about how settings are merged as overlays. E.g. project>local>default. Note how settings that are maps are merged, but settings that are arrays are replaced and must include the defaults.
--->
+> **Note:** Not all settings are available in the Settings Editor yet. Some advanced options, like language formatters, require editing the JSON file directly.
 
-Your settings JSON file can be opened with {#kb zed::OpenSettingsFile}.
-By default it is located at `~/.config/zed/settings.json`, though if you have `XDG_CONFIG_HOME` in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
+## Settings Files
 
-Whatever you have added to your user settings file gets merged with any local configuration inside your projects.
+### User Settings
 
 ### Default Settings
 
@@ -4750,380 +4746,114 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 1. Show directories first, then files
 
+The file is located at:
+
+- macOS: `~/.config/zed/settings.json`
+- Linux: `~/.config/zed/settings.json` (or `$XDG_CONFIG_HOME/zed/settings.json`)
+- Windows: `%APPDATA%\Zed\settings.json`
+
+The syntax is JSON with support for `//` comments.
+
+### Default Settings
+
+To see all available settings with their default values, run {#action zed::OpenDefaultSettings} from the command palette. This opens a read-only reference you can use when editing your own settings.
+
+### Project Settings
+
+Override user settings for a specific project by creating a `.zed/settings.json` file in your project root. Run {#action zed::OpenProjectSettings} to create this file.
+
+Project settings take precedence over user settings for that project only.
+
 ```json [settings]
+// .zed/settings.json
 {
-  "sort_mode": "directories_first"
-}
-```
-
-2. Mix directories and files together
-
-```json [settings]
-{
-  "sort_mode": "mixed"
-}
-```
-
-3. Show files first, then directories
-
-```json [settings]
-{
-  "sort_mode": "files_first"
-}
-```
-
-### Auto Open
-
-- Description: Control whether files are opened automatically after different creation flows in the project panel.
-- Setting: `auto_open`
-- Default:
-
-```json [settings]
-"auto_open": {
-  "on_create": true,
-  "on_paste": true,
-  "on_drop": true
-}
-```
-
-**Options**
-
-- `on_create`: Whether to automatically open newly created files in the editor.
-- `on_paste`: Whether to automatically open files after pasting or duplicating them.
-- `on_drop`: Whether to automatically open files dropped from external sources.
-
-## Agent
-
-Visit [the Configuration page](./ai/configuration.md) under the AI section to learn more about all the agent-related settings.
-
-## Collaboration Panel
-
-- Description: Customizations for the collaboration panel.
-- Setting: `collaboration_panel`
-- Default:
-
-```json [settings]
-{
-  "collaboration_panel": {
-    "button": true,
-    "dock": "left",
-    "default_width": 240
-  }
-}
-```
-
-**Options**
-
-- `button`: Whether to show the collaboration panel button in the status bar
-- `dock`: Where to dock the collaboration panel. Can be `left` or `right`
-- `default_width`: Default width of the collaboration panel
-
-## Debugger
-
-- Description: Configuration for debugger panel and settings
-- Setting: `debugger`
-- Default:
-
-```json [settings]
-{
-  "debugger": {
-    "stepping_granularity": "line",
-    "save_breakpoints": true,
-    "dock": "bottom",
-    "button": true
-  }
-}
-```
-
-See the [debugger page](./debugger.md) for more information about debugging support within Zed.
-
-## Git Panel
-
-- Description: Setting to customize the behavior of the git panel.
-- Setting: `git_panel`
-- Default:
-
-```json [settings]
-{
-  "git_panel": {
-    "button": true,
-    "dock": "left",
-    "default_width": 360,
-    "status_style": "icon",
-    "fallback_branch_name": "main",
-    "sort_by_path": false,
-    "collapse_untracked_diff": false,
-    "scrollbar": {
-      "show": null
-    }
-  }
-}
-```
-
-**Options**
-
-- `button`: Whether to show the git panel button in the status bar
-- `dock`: Where to dock the git panel. Can be `left` or `right`
-- `default_width`: Default width of the git panel
-- `status_style`: How to display git status. Can be `label_color` or `icon`
-- `fallback_branch_name`: What branch name to use if `init.defaultBranch` is not set
-- `sort_by_path`: Whether to sort entries in the panel by path or by status (the default)
-- `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
-- `scrollbar`: When to show the scrollbar in the git panel
-
-## Git Hosting Providers
-
-- Description: Register self-hosted GitHub, GitLab, or Bitbucket instances so commit hashes, issue references, and permalinks resolve to the right host.
-- Setting: `git_hosting_providers`
-- Default: `[]`
-
-**Options**
-
-Each entry accepts:
-
-- `provider`: One of `github`, `gitlab`, or `bitbucket`
-- `name`: Display name for the instance
-- `base_url`: Base URL, e.g. `https://git.example.corp`
-
-You can define these in user or project settings; project settings are merged on top of user settings.
-
-```json [settings]
-{
-  "git_hosting_providers": [
-    {
-      "provider": "github",
-      "name": "BigCorp GitHub",
-      "base_url": "https://git.example.corp"
-    }
-  ]
-}
-```
-
-## Outline Panel
-
-- Description: Customize outline Panel
-- Setting: `outline_panel`
-- Default:
-
-```json [settings]
-"outline_panel": {
-  "button": true,
-  "default_width": 300,
-  "dock": "left",
-  "file_icons": true,
-  "folder_icons": true,
-  "git_status": true,
-  "indent_size": 20,
-  "auto_reveal_entries": true,
-  "auto_fold_dirs": true,
-  "indent_guides": {
-    "show": "always"
-  },
-  "scrollbar": {
-    "show": null
-  }
-}
-```
-
-## Calls
-
-- Description: Customize behavior when participating in a call
-- Setting: `calls`
-- Default:
-
-```json [settings]
-"calls": {
-  // Join calls with the microphone live by default
-  "mute_on_join": false,
-  // Share your project when you are the first to join a channel
-  "share_on_join": false
-},
-```
-
-## Colorize Brackets
-
-- Description: Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor (also known as "rainbow brackets").
-- Setting: `colorize_brackets`
-- Default: `false`
-
-**Options**
-
-`boolean` values
-
-The colors that are used for different indentation levels are defined in the theme (theme key: `accents`). They can be customized by using theme overrides.
-
-## Unnecessary Code Fade
-
-- Description: How much to fade out unused code.
-- Setting: `unnecessary_code_fade`
-- Default: `0.3`
-
-**Options**
-
-Float values between `0.0` and `0.9`, where:
-
-- `0.0` means no fading (unused code looks the same as used code)
-- `0.9` means maximum fading (unused code is very faint but still visible)
-
-**Example**
-
-```json [settings]
-{
-  "unnecessary_code_fade": 0.5
-}
-```
-
-## UI Font Family
-
-- Description: The name of the font to use for text in the UI.
-- Setting: `ui_font_family`
-- Default: `.ZedSans`. This currently aliases to [IBM Plex](https://www.ibm.com/plex/).
-
-**Options**
-
-The name of any font family installed on the system, `".ZedSans"` to use the Zed-provided default, or `".SystemUIFont"` to use the system's default UI font (on macOS and Windows).
-
-## UI Font Features
-
-- Description: The OpenType features to enable for text in the UI.
-- Setting: `ui_font_features`
-- Default:
-
-```json [settings]
-"ui_font_features": {
-  "calt": false
-}
-```
-
-- Platform: macOS and Windows.
-
-**Options**
-
-Zed supports all OpenType features that can be enabled or disabled for a given UI font, as well as setting values for font features.
-
-For example, to disable font ligatures, add the following to your settings:
-
-```json [settings]
-{
-  "ui_font_features": {
-    "calt": false
-  }
-}
-```
-
-You can also set other OpenType features, like setting `cv01` to `7`:
-
-```json [settings]
-{
-  "ui_font_features": {
-    "cv01": 7
-  }
-}
-```
-
-## UI Font Fallbacks
-
-- Description: The font fallbacks to use for text in the UI.
-- Setting: `ui_font_fallbacks`
-- Default: `null`
-- Platform: macOS and Windows.
-
-**Options**
-
-For example, to use `Nerd Font` as a fallback, add the following to your settings:
-
-```json [settings]
-{
-  "ui_font_fallbacks": ["Nerd Font"]
-}
-```
-
-## UI Font Size
-
-- Description: The default font size for text in the UI.
-- Setting: `ui_font_size`
-- Default: `16`
-
-**Options**
-
-`integer` values from `6` to `100` pixels (inclusive)
-
-## UI Font Weight
-
-- Description: The default font weight for text in the UI.
-- Setting: `ui_font_weight`
-- Default: `400`
-
-**Options**
-
-`integer` values between `100` and `900`
-
-## Settings Profiles
-
-- Description: Configure any number of settings profiles that are temporarily applied on top of your existing user settings when selected from `settings profile selector: toggle`.
-- Setting: `profiles`
-- Default: `{}`
-
-In your `settings.json` file, add the `profiles` object.
-Each key within this object is the name of a settings profile, and each value is an object that can include any of Zed's settings.
-
-Example:
-
-```json [settings]
-"profiles": {
-  "Presenting (Dark)": {
-    "agent_buffer_font_size": 18.0,
-    "buffer_font_size": 18.0,
-    "theme": "One Dark",
-    "ui_font_size": 18.0
-  },
-  "Presenting (Light)": {
-    "agent_buffer_font_size": 18.0,
-    "buffer_font_size": 18.0,
-    "theme": "One Light",
-    "ui_font_size": 18.0
-  },
-  "Writing": {
-    "agent_buffer_font_size": 15.0,
-    "buffer_font_size": 15.0,
-    "theme": "Catppuccin Frappé - No Italics",
-    "ui_font_size": 15.0,
-    "tab_bar": { "show": false },
-    "toolbar": { "breadcrumbs": false }
-  }
-}
-```
-
-To preview and enable a settings profile, open the command palette via {#kb command_palette::Toggle} and search for `settings profile selector: toggle`.
-
-## An example configuration:
-
-```json [settings]
-// ~/.config/zed/settings.json
-{
-  "theme": "cave-light",
   "tab_size": 2,
-  "preferred_line_length": 80,
-  "soft_wrap": "none",
+  "formatter": "prettier",
+  "format_on_save": "on"
+}
+```
 
-  "buffer_font_size": 18,
-  "buffer_font_family": ".ZedMono",
+You can also add settings files in subdirectories for more granular control.
 
-  "autosave": "on_focus_change",
-  "format_on_save": "off",
+**Limitation:** Not all settings can be set at the project level. Settings that affect the editor globally (like `theme` or `vim_mode`) only work in user settings. Project settings are limited to editor behavior and language tooling options like `tab_size`, `formatter`, and `format_on_save`.
+
+## How Settings Merge
+
+Settings are applied in layers:
+
+1. **Default settings** — Zed's built-in defaults
+2. **User settings** — Your global preferences
+3. **Project settings** — Project-specific overrides
+
+Later layers override earlier ones. For object settings (like `terminal`), properties merge rather than replace entirely.
+
+## Per-Release Channel Overrides
+
+Use different settings for Stable, Preview, or Nightly builds by adding top-level channel keys:
+
+```json [settings]
+{
+  "theme": "One Dark",
   "vim_mode": false,
-  "projects_online_by_default": true,
+  "nightly": {
+    "theme": "Rosé Pine",
+    "vim_mode": true
+  },
+  "preview": {
+    "theme": "Catppuccin Mocha"
+  }
+}
+```
+
+With this configuration:
+
+- **Stable** uses One Dark with vim mode off
+- **Preview** uses Catppuccin Mocha with vim mode off
+- **Nightly** uses Rosé Pine with vim mode on
+
+Changes made in the Settings Editor apply across all channels.
+
+## Settings Deep Links
+
+Zed supports deep links that open specific settings directly:
+
+```
+zed://settings/theme
+zed://settings/vim_mode
+zed://settings/buffer_font_size
+```
+
+These are useful for sharing configuration tips or linking from documentation.
+
+## Example Configuration
+
+```json [settings]
+{
+  "theme": {
+    "mode": "system",
+    "light": "One Light",
+    "dark": "One Dark"
+  },
+  "buffer_font_family": "JetBrains Mono",
+  "buffer_font_size": 14,
+  "tab_size": 2,
+  "format_on_save": "on",
+  "autosave": "on_focus_change",
+  "vim_mode": false,
   "terminal": {
-    "font_family": "FiraCode Nerd Font Mono",
-    "blinking": "off"
+    "font_family": "JetBrains Mono",
+    "font_size": 14
   },
   "languages": {
-    "C": {
-      "format_on_save": "on",
-      "formatter": "language_server",
-      "preferred_line_length": 64,
-      "soft_wrap": "preferred_line_length"
+    "Python": {
+      "tab_size": 4
     }
   }
 }
 ```
+
+## What's Next
+
+- [Appearance](./appearance.md) — Themes, fonts, and visual customization
+- [Key bindings](./key-bindings.md) — Customize keyboard shortcuts
+- [All Settings](./reference/all-settings.md) — Complete settings reference
