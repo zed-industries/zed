@@ -57,10 +57,9 @@ pub use editor_settings::{
     CompletionDetailAlignment, CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings,
     HideMouseMode, ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
 };
-pub use split_editor_view::SplitEditorView;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, OverlayPainter,
-    OverlayPainterData, PointForPosition,
+    OverlayPainterData, PointForPosition, render_breadcrumb_text,
 };
 pub use git::blame::BlameRenderer;
 pub use hover_popover::hover_markdown_style;
@@ -74,6 +73,7 @@ pub use multi_buffer::{
     ToPoint,
 };
 pub use split::{SplittableEditor, ToggleLockedCursors, ToggleSplitDiff};
+pub use split_editor_view::SplitEditorView;
 pub use text::Bias;
 
 use ::git::{Restore, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
@@ -1313,7 +1313,8 @@ pub struct Editor {
     select_next_is_case_sensitive: Option<bool>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
     scroll_companion: Option<WeakEntity<Editor>>,
-    on_local_selections_changed: Option<Box<dyn Fn(Point, &mut Window, &mut Context<Self>) + 'static>>,
+    on_local_selections_changed:
+        Option<Box<dyn Fn(Point, &mut Window, &mut Context<Self>) + 'static>>,
     suppress_selection_callback: bool,
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
     accent_data: Option<AccentData>,

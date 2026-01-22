@@ -42,15 +42,15 @@ use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatu
 use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
-    DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId,
+    DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, FontWeight,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
     KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
     MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
     Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
-    Size, StatefulInteractiveElement, Style, Styled, TextAlign, TextRun, TextStyleRefinement,
-    WeakEntity, Window, anchored, deferred, div, fill, hsla, linear_color_stop, linear_gradient,
-    outline, pattern_slash, point, px, quad, relative, rgba, size, solid_background,
-    transparent_black,
+    Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
+    TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop,
+    linear_gradient, outline, pattern_slash, point, px, quad, relative, rgba, size,
+    solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
@@ -1364,7 +1364,10 @@ impl EditorElement {
             indicator.is_active && indicator.display_row == valid_point.row()
         });
 
-        let breakpoint_indicator = if gutter_hovered && !is_on_diff_review_button_row && split_side != Some(SplitSide::Left) {
+        let breakpoint_indicator = if gutter_hovered
+            && !is_on_diff_review_button_row
+            && split_side != Some(SplitSide::Left)
+        {
             let buffer_anchor = position_map
                 .snapshot
                 .display_point_to_anchor(valid_point, Bias::Left);
@@ -9625,9 +9628,9 @@ impl Element for EditorElement {
                                     cx,
                                 );
                             });
-                            snapshot = self.editor.update(cx, |editor, cx| {
-                                editor.snapshot(window, cx)
-                            });
+                            snapshot = self
+                                .editor
+                                .update(cx, |editor, cx| editor.snapshot(window, cx));
                         }
                     }
 

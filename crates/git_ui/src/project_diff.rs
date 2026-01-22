@@ -9,7 +9,7 @@ use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor, ToggleSplitDiff,
-    actions::{GoToHunk, GoToPreviousHunk},
+    actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
     multibuffer_context_lines,
     scroll::Autoscroll,
 };

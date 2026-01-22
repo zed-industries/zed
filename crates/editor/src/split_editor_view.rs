@@ -13,9 +13,9 @@ use gpui::{
 use multi_buffer::{Anchor, ExcerptId, ExcerptInfo};
 use project::Entry;
 use settings::Settings;
-use ui::scrollbars::ShowScrollbar;
 use text::BufferId;
 use theme::ActiveTheme;
+use ui::scrollbars::ShowScrollbar;
 use ui::{
     Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName, Indicator, KeyBinding, Label,
     Tooltip, h_flex, prelude::*, right_click_menu, text_for_keystroke, v_flex,
@@ -609,8 +609,7 @@ impl SplitBufferHeadersElement {
                 .render_buffer_header(excerpt, is_folded, selected, false, jump_data, window, cx)
                 .into_any_element();
 
-            let y_offset =
-                (block_row.0 as f64 - scroll_position.y) * f64::from(line_height);
+            let y_offset = (block_row.0 as f64 - scroll_position.y) * f64::from(line_height);
             let origin = point(bounds.origin.x, bounds.origin.y + Pixels::from(y_offset));
 
             let available_size = size(
@@ -662,7 +661,7 @@ impl SplitBufferHeadersElement {
             .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
             .unwrap_or_default();
         let file = for_excerpt.buffer.file();
-        let can_open_excerpts = Editor::can_open_excerpts_in_file(file);
+        let can_open_excerpts = file.is_none_or(|file| file.can_open());
         let path_style = file.map(|file| file.path_style(cx));
         let relative_path = for_excerpt.buffer.resolve_file_path(include_root, cx);
         let (parent_path, filename) = if let Some(path) = &relative_path {
@@ -984,6 +983,7 @@ impl SplitBufferHeadersElement {
                                         window.dispatch_action(
                                             OpenTerminal {
                                                 working_directory: parent_abs_path.clone(),
+                                                local: false,
                                             }
                                             .boxed_clone(),
                                             cx,
