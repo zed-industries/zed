@@ -545,7 +545,11 @@ impl AgentPanel {
                         if let Some(kind) = panel.read(cx).history_kind_for_selected_agent(cx) {
                             menu =
                                 Self::populate_recently_updated_menu_section(menu, panel, kind, cx);
-                            menu = menu.action("View All", Box::new(OpenHistory));
+                            let view_all_label = match kind {
+                                HistoryKind::AgentThreads => "View All",
+                                HistoryKind::TextThreads => "View All Text Threads",
+                            };
+                            menu = menu.action(view_all_label, Box::new(OpenHistory));
                         }
                     }
 
@@ -1335,7 +1339,7 @@ impl AgentPanel {
                     return menu;
                 }
 
-                menu = menu.header("Recently Updated");
+                menu = menu.header("Recent Text Threads");
 
                 for entry in entries {
                     let title = if entry.title.is_empty() {
@@ -1735,7 +1739,7 @@ impl AgentPanel {
             ActiveView::History { kind } => {
                 let title = match kind {
                     HistoryKind::AgentThreads => "History",
-                    HistoryKind::TextThreads => "Text Threads",
+                    HistoryKind::TextThreads => "Text Thread History",
                 };
                 Label::new(title).truncate().into_any_element()
             }
