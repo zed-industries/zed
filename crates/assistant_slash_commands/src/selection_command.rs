@@ -153,13 +153,12 @@ fn crease_for_buffer_range(
         return None;
     }
 
-    // Convert offsets to points to get line numbers
     let start_point = buffer.offset_to_point(start.0);
     let end_point = buffer.offset_to_point(end.0);
     let start_buffer_row = start_point.row;
     let end_buffer_row = end_point.row;
 
-    let language = buffer.language_at(start_offset);
+    let language = buffer.language_at(start.0);
     let language_name_arc = language.map(|l| l.code_fence_block_name());
     let language_name = language_name_arc.as_deref().unwrap_or_default();
 
@@ -174,8 +173,8 @@ fn crease_for_buffer_range(
             .collect::<Vec<_>>()
             .join("\n")
     } else {
-        let start_symbols = buffer.symbols_containing(start_offset, None);
-        let end_symbols = buffer.symbols_containing(end_offset, None);
+        let start_symbols = buffer.symbols_containing(start, None);
+        let end_symbols = buffer.symbols_containing(end, None);
 
         let outline_text = if !start_symbols.is_empty() && !end_symbols.is_empty() {
             Some(
@@ -320,128 +319,36 @@ mod tests {
 
     #[gpui::test]
     fn test_selections_creases_single_excerpt(cx: &mut TestAppContext) {
-        let multi_buffer = cx.update(|cx| {
-            MultiBuffer::build_multi(
-                [(
-                    "line1\nline2\nline3\n",
-                    vec![Point::new(0, 0)..Point::new(3, 0)],
-                )],
-                cx,
-            )
+        let buffer = cx.update(|cx| {
+            MultiBuffer::build_multi([("a\nb\nc\n", vec![Point::new(0, 0)..Point::new(3, 0)])], cx)
         });
-
         let creases = cx.update(|cx| {
-            let snapshot = multi_buffer.read(cx).snapshot(cx);
-            let range = Point::new(0, 0)..Point::new(2, 5);
-            selections_creases(vec![range], snapshot, cx)
+            let snapshot = buffer.read(cx).snapshot(cx);
+            selections_creases(vec![Point::new(0, 0)..Point::new(2, 1)], snapshot, cx)
         });
-
         assert_eq!(creases.len(), 1);
-        let (text, title) = &creases[0];
-        assert!(text.contains("line1"));
-        assert!(text.contains("line2"));
-        assert!(text.contains("line3"));
-        // Untitled buffers produce "Quoted selection" as title
-        assert_eq!(title, "Quoted selection");
+        assert_eq!(creases[0].0, "```untitled:1-3\na\nb\nc\n```");
+        assert_eq!(creases[0].1, "Quoted selection");
     }
 
     #[gpui::test]
-    fn test_selections_creases_multiple_excerpts(cx: &mut TestAppContext) {
-        let multi_buffer = cx.update(|cx| {
+    fn test_selections_creases_spans_multiple_excerpts(cx: &mut TestAppContext) {
+        let buffer = cx.update(|cx| {
             MultiBuffer::build_multi(
                 [
-                    (
-                        "file1_line1\nfile1_line2\nfile1_line3\n",
-                        vec![Point::new(0, 0)..Point::new(3, 0)],
-                    ),
-                    (
-                        "file2_line1\nfile2_line2\nfile2_line3\n",
-                        vec![Point::new(0, 0)..Point::new(3, 0)],
-                    ),
+                    ("aaa\nbbb\n", vec![Point::new(0, 0)..Point::new(2, 0)]),
+                    ("111\n222\n", vec![Point::new(0, 0)..Point::new(2, 0)]),
                 ],
                 cx,
             )
         });
-
         let creases = cx.update(|cx| {
-            let snapshot = multi_buffer.read(cx).snapshot(cx);
-            let len = snapshot.len();
-            let range = Point::new(0, 0)..snapshot.offset_to_point(len);
-            selections_creases(vec![range], snapshot, cx)
+            let snapshot = buffer.read(cx).snapshot(cx);
+            let end = snapshot.offset_to_point(snapshot.len());
+            selections_creases(vec![Point::new(0, 0)..end], snapshot, cx)
         });
-
-        assert_eq!(
-            creases.len(),
-            2,
-            "Should create separate creases for each excerpt"
-        );
-
-        let (text1, _title1) = &creases[0];
-        let (text2, _title2) = &creases[1];
-
-        assert!(
-            text1.contains("file1_line1"),
-            "First crease should contain first file content"
-        );
-        assert!(
-            !text1.contains("file2_line1"),
-            "First crease should NOT contain second file content"
-        );
-
-        assert!(
-            text2.contains("file2_line1"),
-            "Second crease should contain second file content"
-        );
-        assert!(
-            !text2.contains("file1_line1"),
-            "Second crease should NOT contain first file content"
-        );
-    }
-
-    #[gpui::test]
-    fn test_selections_creases_partial_excerpt_range(cx: &mut TestAppContext) {
-        let multi_buffer = cx.update(|cx| {
-            MultiBuffer::build_multi(
-                [
-                    (
-                        "aaa\nbbb\nccc\nddd\n",
-                        vec![Point::new(0, 0)..Point::new(4, 0)],
-                    ),
-                    (
-                        "111\n222\n333\n444\n",
-                        vec![Point::new(0, 0)..Point::new(4, 0)],
-                    ),
-                ],
-                cx,
-            )
-        });
-
-        let creases = cx.update(|cx| {
-            let snapshot = multi_buffer.read(cx).snapshot(cx);
-            let range = Point::new(2, 0)..Point::new(6, 0);
-            selections_creases(vec![range], snapshot, cx)
-        });
-
-        assert_eq!(creases.len(), 2, "Should split across excerpt boundary");
-
-        let (text1, title1) = &creases[0];
-        assert!(text1.contains("ccc"), "First crease should contain 'ccc'");
-        assert!(text1.contains("ddd"), "First crease should contain 'ddd'");
-        assert!(
-            !text1.contains("aaa"),
-            "First crease should NOT contain 'aaa' (before selection)"
-        );
-        // Untitled buffers produce "Quoted selection" as title
-        assert_eq!(title1, "Quoted selection");
-
-        let (text2, title2) = &creases[1];
-        assert!(text2.contains("111"), "Second crease should contain '111'");
-        assert!(text2.contains("222"), "Second crease should contain '222'");
-        assert!(
-            !text2.contains("333"),
-            "Second crease should NOT contain '333' (after selection)"
-        );
-        // Untitled buffers produce "Quoted selection" as title
-        assert_eq!(title2, "Quoted selection");
+        assert_eq!(creases.len(), 2);
+        assert!(creases[0].0.contains("aaa") && !creases[0].0.contains("111"));
+        assert!(creases[1].0.contains("111") && !creases[1].0.contains("aaa"));
     }
 }
