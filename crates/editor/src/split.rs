@@ -1577,10 +1577,6 @@ impl SecondaryEditor {
             })
             .collect();
 
-        let main_buffer = primary_multibuffer_ref
-            .buffer(main_buffer.remote_id())
-            .unwrap();
-
         self.editor.update(cx, |editor, cx| {
             editor.buffer().update(cx, |buffer, cx| {
                 let (ids, _) = buffer.update_path_excerpts(
@@ -1595,7 +1591,7 @@ impl SecondaryEditor {
                         .diff_for(base_text_buffer.read(cx).remote_id())
                         .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
                 {
-                    buffer.add_inverted_diff(diff, main_buffer, cx);
+                    buffer.add_inverted_diff(diff, cx);
                 }
             })
         });
