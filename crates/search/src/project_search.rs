@@ -1114,8 +1114,21 @@ impl ProjectSearchView {
 
         search.update(cx, |search, cx| {
             search.replace_enabled |= action.replace_enabled;
+            if action.regex {
+                search.search_options.insert(SearchOptions::REGEX);
+            }
+            if action.case_sensitive {
+                search.search_options.insert(SearchOptions::CASE_SENSITIVE);
+            }
+            if action.whole_word {
+                search.search_options.insert(SearchOptions::WHOLE_WORD);
+            }
+            if action.include_ignored {
+                search.search_options.insert(SearchOptions::INCLUDE_IGNORED);
+            }
+            let query = action.query.as_deref().or(query.as_deref());
             if let Some(query) = query {
-                search.set_query(&query, window, cx);
+                search.set_query(query, window, cx);
             }
             if let Some(included_files) = action.included_files.as_deref() {
                 search
