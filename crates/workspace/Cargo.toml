@@ -66,6 +66,7 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 zed_actions.workspace = true
+zlog.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

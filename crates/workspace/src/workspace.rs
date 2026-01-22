@@ -1663,16 +1663,23 @@ impl Workspace {
 
         cx.spawn(async move |cx| {
             let mut paths_to_open = Vec::with_capacity(abs_paths.len());
-            for path in abs_paths.into_iter() {
-                if let Some(canonical) = app_state.fs.canonicalize(&path).await.ok() {
-                    paths_to_open.push(canonical)
-                } else {
-                    paths_to_open.push(path)
+            {
+                let _timer = zlog::time!("Workspace::new_local canonicalize paths")
+                    .warn_if_gt(std::time::Duration::from_millis(5));
+                for path in abs_paths.into_iter() {
+                    if let Some(canonical) = app_state.fs.canonicalize(&path).await.ok() {
+                        paths_to_open.push(canonical)
+                    } else {
+                        paths_to_open.push(path)
+                    }
                 }
             }
 
-            let serialized_workspace =
-                persistence::DB.workspace_for_roots(paths_to_open.as_slice());
+            let serialized_workspace = {
+                let _timer = zlog::time!("Workspace::new_local DB.workspace_for_roots")
+                    .warn_if_gt(std::time::Duration::from_millis(5));
+                persistence::DB.workspace_for_roots(paths_to_open.as_slice())
+            };
 
             if let Some(paths) = serialized_workspace.as_ref().map(|ws| &ws.paths) {
                 paths_to_open = paths.ordered_paths().cloned().collect();
@@ -1687,52 +1694,66 @@ impl Workspace {
             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
                 Vec::with_capacity(paths_to_open.len());
 
-            for path in paths_to_open.into_iter() {
-                if let Some((_, project_entry)) = cx
-                    .update(|cx| {
-                        Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
-                    })
-                    .await
-                    .log_err()
-                {
-                    project_paths.push((path, Some(project_entry)));
-                } else {
-                    project_paths.push((path, None));
+            {
+                let _timer = zlog::time!("Workspace::new_local project_path_for_path loop")
+                    .warn_if_gt(std::time::Duration::from_millis(5));
+                for path in paths_to_open.into_iter() {
+                    if let Some((_, project_entry)) = cx
+                        .update(|cx| {
+                            Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
+                        })
+                        .await
+                        .log_err()
+                    {
+                        project_paths.push((path, Some(project_entry)));
+                    } else {
+                        project_paths.push((path, None));
+                    }
                 }
             }
 
             let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
                 serialized_workspace.id
             } else {
+                let _timer = zlog::time!("Workspace::new_local DB.next_id")
+                    .warn_if_gt(std::time::Duration::from_millis(5));
                 DB.next_id().await.unwrap_or_else(|_| Default::default())
             };
 
-            let toolchains = DB.toolchains(workspace_id).await?;
+            let toolchains = {
+                let _timer = zlog::time!("Workspace::new_local DB.toolchains")
+                    .warn_if_gt(std::time::Duration::from_millis(5));
+                DB.toolchains(workspace_id).await?
+            };
 
-            for (toolchain, worktree_path, path) in toolchains {
-                let toolchain_path = PathBuf::from(toolchain.path.clone().to_string());
-                let Some(worktree_id) = project_handle.read_with(cx, |this, cx| {
-                    this.find_worktree(&worktree_path, cx)
-                        .and_then(|(worktree, rel_path)| {
-                            if rel_path.is_empty() {
-                                Some(worktree.read(cx).id())
-                            } else {
-                                None
-                            }
+            {
+                let _timer = zlog::time!("Workspace::new_local toolchain activation loop")
+                    .warn_if_gt(std::time::Duration::from_millis(5));
+                for (toolchain, worktree_path, path) in toolchains {
+                    let toolchain_path = PathBuf::from(toolchain.path.clone().to_string());
+                    let Some(worktree_id) = project_handle.read_with(cx, |this, cx| {
+                        this.find_worktree(&worktree_path, cx)
+                            .and_then(|(worktree, rel_path)| {
+                                if rel_path.is_empty() {
+                                    Some(worktree.read(cx).id())
+                                } else {
+                                    None
+                                }
+                            })
+                    }) else {
+                        // We did not find a worktree with a given path, but that's whatever.
+                        continue;
+                    };
+                    if !app_state.fs.is_file(toolchain_path.as_path()).await {
+                        continue;
+                    }
+
+                    project_handle
+                        .update(cx, |this, cx| {
+                            this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
                         })
-                }) else {
-                    // We did not find a worktree with a given path, but that's whatever.
-                    continue;
-                };
-                if !app_state.fs.is_file(toolchain_path.as_path()).await {
-                    continue;
+                        .await;
                 }
-
-                project_handle
-                    .update(cx, |this, cx| {
-                        this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
-                    })
-                    .await;
             }
             if let Some(workspace) = serialized_workspace.as_ref() {
                 project_handle.update(cx, |this, cx| {
@@ -1797,29 +1818,33 @@ impl Workspace {
                     .as_ref()
                     .map(|w| w.centered_layout)
                     .unwrap_or(false);
-                cx.open_window(options, {
-                    let app_state = app_state.clone();
-                    let project_handle = project_handle.clone();
-                    move |window, cx| {
-                        cx.new(|cx| {
-                            let mut workspace = Workspace::new(
-                                Some(workspace_id),
-                                project_handle,
-                                app_state,
-                                window,
-                                cx,
-                            );
-                            workspace.centered_layout = centered_layout;
+                {
+                    let _timer = zlog::time!("Workspace::new_local cx.open_window")
+                        .warn_if_gt(std::time::Duration::from_millis(5));
+                    cx.open_window(options, {
+                        let app_state = app_state.clone();
+                        let project_handle = project_handle.clone();
+                        move |window, cx| {
+                            cx.new(|cx| {
+                                let mut workspace = Workspace::new(
+                                    Some(workspace_id),
+                                    project_handle,
+                                    app_state,
+                                    window,
+                                    cx,
+                                );
+                                workspace.centered_layout = centered_layout;
 
-                            // Call init callback to add items before window renders
-                            if let Some(init) = init {
-                                init(&mut workspace, window, cx);
-                            }
+                                // Call init callback to add items before window renders
+                                if let Some(init) = init {
+                                    init(&mut workspace, window, cx);
+                                }
 
-                            workspace
-                        })
-                    }
-                })?
+                                workspace
+                            })
+                        }
+                    })?
+                }
             };
 
             notify_if_database_failed(window, cx);

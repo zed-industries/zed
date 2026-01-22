@@ -371,19 +371,28 @@ impl Worktree {
         cx: &mut AsyncApp,
     ) -> Result<Entity<Self>> {
         let abs_path = path.into();
-        let metadata = fs
-            .metadata(&abs_path)
-            .await
-            .context("failed to stat worktree path")?;
+        let metadata = {
+            let _timer = zlog::time!("Worktree::local fs.metadata")
+                .warn_if_gt(Duration::from_millis(5));
+            fs.metadata(&abs_path)
+                .await
+                .context("failed to stat worktree path")?
+        };
 
-        let fs_case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
-            log::error!(
-                "Failed to determine whether filesystem is case sensitive (falling back to true) due to error: {e:#}"
-            );
-            true
-        });
+        let fs_case_sensitive = {
+            let _timer = zlog::time!("Worktree::local fs.is_case_sensitive")
+                .warn_if_gt(Duration::from_millis(5));
+            fs.is_case_sensitive().await.unwrap_or_else(|e| {
+                log::error!(
+                    "Failed to determine whether filesystem is case sensitive (falling back to true) due to error: {e:#}"
+                );
+                true
+            })
+        };
 
         let root_file_handle = if metadata.as_ref().is_some() {
+            let _timer = zlog::time!("Worktree::local fs.open_handle")
+                .warn_if_gt(Duration::from_millis(5));
             fs.open_handle(&abs_path)
                 .await
                 .with_context(|| {
@@ -397,6 +406,8 @@ impl Worktree {
             None
         };
 
+        let _timer = zlog::time!("Worktree::local cx.new")
+            .warn_if_gt(Duration::from_millis(5));
         Ok(cx.new(move |cx: &mut Context<Worktree>| {
             let mut snapshot = LocalSnapshot {
                 ignores_by_parent_abs_path: Default::default(),
