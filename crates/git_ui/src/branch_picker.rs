@@ -61,7 +61,33 @@ pub fn open(
     cx: &mut Context<Workspace>,
 ) {
     let workspace_handle = workspace.weak_handle();
-    let repository = workspace.project().read(cx).active_repository(cx);
+    let project = workspace.project().clone();
+
+    // Check if there's a worktree override from the project dropdown.
+    // This ensures the branch picker shows branches for the project the user
+    // explicitly selected in the title bar, not just the focused file's project.
+    // This is only relevant if for multi-projects workspaces.
+    let repository = workspace
+        .active_worktree_override()
+        .and_then(|override_id| {
+            let project_ref = project.read(cx);
+            project_ref
+                .worktree_for_id(override_id, cx)
+                .and_then(|worktree| {
+                    let worktree_abs_path = worktree.read(cx).abs_path();
+                    let git_store = project_ref.git_store().read(cx);
+                    git_store
+                        .repositories()
+                        .values()
+                        .find(|repo| {
+                            let repo_path = &repo.read(cx).work_directory_abs_path;
+                            *repo_path == worktree_abs_path
+                                || worktree_abs_path.starts_with(repo_path.as_ref())
+                        })
+                        .cloned()
+                })
+        })
+        .or_else(|| project.read(cx).active_repository(cx));
 
     workspace.toggle_modal(window, cx, |window, cx| {
         BranchList::new(
@@ -206,7 +232,11 @@ impl BranchList {
         .detach_and_log_err(cx);
 
         let delegate = BranchListDelegate::new(workspace, repository, style, cx);
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(!embedded));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .show_scrollbar(true)
+                .modal(!embedded)
+        });
         let picker_focus_handle = picker.focus_handle(cx);
 
         picker.update(cx, |picker, _| {

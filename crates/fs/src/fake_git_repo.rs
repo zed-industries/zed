@@ -14,20 +14,14 @@ use git::{
         UnmergedStatus,
     },
 };
-use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task, TaskLabel};
+use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
 use smol::future::FutureExt as _;
-use std::{
-    path::PathBuf,
-    sync::{Arc, LazyLock},
-};
+use std::{path::PathBuf, sync::Arc};
 use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
-
-pub static LOAD_INDEX_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
-pub static LOAD_HEAD_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 
 #[derive(Clone)]
 pub struct FakeGitRepository {
@@ -104,9 +98,7 @@ impl GitRepository for FakeGitRepository {
                 .context("not present in index")
                 .cloned()
         });
-        self.executor
-            .spawn_labeled(*LOAD_INDEX_TEXT_TASK, async move { fut.await.ok() })
-            .boxed()
+        self.executor.spawn(async move { fut.await.ok() }).boxed()
     }
 
     fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
@@ -117,9 +109,7 @@ impl GitRepository for FakeGitRepository {
                 .context("not present in HEAD")
                 .cloned()
         });
-        self.executor
-            .spawn_labeled(*LOAD_HEAD_TEXT_TASK, async move { fut.await.ok() })
-            .boxed()
+        self.executor.spawn(async move { fut.await.ok() }).boxed()
     }
 
     fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {
@@ -665,7 +655,7 @@ impl GitRepository for FakeGitRepository {
         let repository_dir_path = self.repository_dir_path.parent().unwrap().to_path_buf();
         async move {
             executor.simulate_random_delay().await;
-            let oid = git::Oid::random(&mut executor.rng());
+            let oid = git::Oid::random(&mut *executor.rng().lock());
             let entry = fs.entry(&repository_dir_path)?;
             checkpoints.lock().insert(oid, entry);
             Ok(GitRepositoryCheckpoint { commit_sha: oid })
@@ -746,67 +736,5 @@ impl GitRepository for FakeGitRepository {
             state.remotes.remove(&name);
             Ok(())
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{FakeFs, Fs};
-    use gpui::BackgroundExecutor;
-    use serde_json::json;
-    use std::path::Path;
-    use util::path;
-
-    #[gpui::test]
-    async fn test_checkpoints(executor: BackgroundExecutor) {
-        let fs = FakeFs::new(executor);
-        fs.insert_tree(
-            path!("/"),
-            json!({
-                "bar": {
-                    "baz": "qux"
-                },
-                "foo": {
-                    ".git": {},
-                    "a": "lorem",
-                    "b": "ipsum",
-                },
-            }),
-        )
-        .await;
-        fs.with_git_state(Path::new("/foo/.git"), true, |_git| {})
-            .unwrap();
-        let repository = fs
-            .open_repo(Path::new("/foo/.git"), Some("git".as_ref()))
-            .unwrap();
-
-        let checkpoint_1 = repository.checkpoint().await.unwrap();
-        fs.write(Path::new("/foo/b"), b"IPSUM").await.unwrap();
-        fs.write(Path::new("/foo/c"), b"dolor").await.unwrap();
-        let checkpoint_2 = repository.checkpoint().await.unwrap();
-        let checkpoint_3 = repository.checkpoint().await.unwrap();
-
-        assert!(
-            repository
-                .compare_checkpoints(checkpoint_2.clone(), checkpoint_3.clone())
-                .await
-                .unwrap()
-        );
-        assert!(
-            !repository
-                .compare_checkpoints(checkpoint_1.clone(), checkpoint_2.clone())
-                .await
-                .unwrap()
-        );
-
-        repository.restore_checkpoint(checkpoint_1).await.unwrap();
-        assert_eq!(
-            fs.files_with_contents(Path::new("")),
-            [
-                (Path::new(path!("/bar/baz")).into(), b"qux".into()),
-                (Path::new(path!("/foo/a")).into(), b"lorem".into()),
-                (Path::new(path!("/foo/b")).into(), b"ipsum".into())
-            ]
-        );
     }
 }

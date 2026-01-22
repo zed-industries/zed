@@ -26,9 +26,6 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
-      run: ./script/clippy
-      shell: bash -euxo pipefail {0}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
       shell: bash -euxo pipefail {0}
@@ -71,9 +68,6 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
-      run: ./script/clippy
-      shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
@@ -105,9 +99,6 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
-      run: ./script/clippy.ps1
-      shell: pwsh
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
@@ -118,6 +109,70 @@ jobs:
       if: always()
       run: |
         Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
+      shell: pwsh
+    timeout-minutes: 60
+  clippy_mac:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: self-mini-macos
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::clippy
+      run: ./script/clippy
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+  clippy_linux:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+    - name: steps::setup_linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: steps::install_mold
+      run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+      shell: bash -euxo pipefail {0}
+    - name: steps::clippy
+      run: ./script/clippy
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+  clippy_windows:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: self-32vcpu-windows-2022
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        New-Item -ItemType Directory -Path "./../.cargo" -Force
+        Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
+      shell: pwsh
+    - name: steps::clippy
+      run: ./script/clippy.ps1
       shell: pwsh
     timeout-minutes: 60
   check_scripts:
@@ -177,6 +232,7 @@ jobs:
   bundle_linux_aarch64:
     needs:
     - run_tests_linux
+    - clippy_linux
     - check_scripts
     runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
     env:
@@ -220,6 +276,7 @@ jobs:
   bundle_linux_x86_64:
     needs:
     - run_tests_linux
+    - clippy_linux
     - check_scripts
     runs-on: namespace-profile-32x64-ubuntu-2004
     env:
@@ -263,6 +320,7 @@ jobs:
   bundle_mac_aarch64:
     needs:
     - run_tests_mac
+    - clippy_mac
     - check_scripts
     runs-on: self-mini-macos
     env:
@@ -309,6 +367,7 @@ jobs:
   bundle_mac_x86_64:
     needs:
     - run_tests_mac
+    - clippy_mac
     - check_scripts
     runs-on: self-mini-macos
     env:
@@ -355,6 +414,7 @@ jobs:
   bundle_windows_aarch64:
     needs:
     - run_tests_windows
+    - clippy_windows
     - check_scripts
     runs-on: self-32vcpu-windows-2022
     env:
@@ -393,6 +453,7 @@ jobs:
   bundle_windows_x86_64:
     needs:
     - run_tests_windows
+    - clippy_windows
     - check_scripts
     runs-on: self-32vcpu-windows-2022
     env:
