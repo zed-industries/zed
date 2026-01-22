@@ -83,6 +83,12 @@ pub struct ExamplePrediction {
 pub struct ExampleScore {
     pub delta_chr_f: f32,
     pub braces_disbalance: usize,
+    #[serde(default)]
+    pub exact_lines_tp: usize,
+    #[serde(default)]
+    pub exact_lines_fp: usize,
+    #[serde(default)]
+    pub exact_lines_fn: usize,
 }
 
 impl Example {
