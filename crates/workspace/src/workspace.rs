@@ -120,7 +120,7 @@ use task::{DebugScenario, SpawnInTerminal, TaskContext};
 use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
-use ui::{CollabOverlay, CollabOverlayControls, CollabOverlayHeader, ParticipantItem, Window, prelude::*};
+use ui::{Window, prelude::*};
 use util::{
     ResultExt, TryFutureExt,
     paths::{PathStyle, SanitizedPath},
@@ -1203,6 +1203,7 @@ pub struct Workspace {
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
     utility_panes: UtilityPaneState,
+    collab_overlay_panel: Option<AnyView>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1608,6 +1609,7 @@ impl Workspace {
             last_open_dock_positions: Vec::new(),
             removing: false,
             utility_panes: UtilityPaneState::default(),
+            collab_overlay_panel: None,
         }
     }
 
@@ -2213,6 +2215,16 @@ impl Workspace {
 
     pub fn set_titlebar_item(&mut self, item: AnyView, _: &mut Window, cx: &mut Context<Self>) {
         self.titlebar_item = Some(item);
+        cx.notify();
+    }
+
+    pub fn set_collab_overlay_panel(
+        &mut self,
+        panel: AnyView,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.collab_overlay_panel = Some(panel);
         cx.notify();
     }
 
@@ -6436,33 +6448,22 @@ impl Workspace {
                         .child(dock.clone())
                         .children(leader_border),
                 )
-                .when(has_collab_panel, |this| {
-                    this.child(
-                        border_side(
-                            div()
-                                .flex_none()
-                                .w_full()
-                                .border_t_1()
-                                .border_color(cx.theme().colors().border)
-                                .bg(cx.theme().colors().panel_background)
+                .when_some(
+                    has_collab_panel.then(|| self.collab_overlay_panel.clone()).flatten(),
+                    |this, panel| {
+                        this.child(
+                            border_side(
+                                div()
+                                    .flex_none()
+                                    .w_full()
+                                    .border_t_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(cx.theme().colors().panel_background),
+                            )
+                            .child(panel),
                         )
-                        .child(
-                            CollabOverlay::new()
-                                .header(CollabOverlayHeader::new("Admin Dashboard v2").is_open(true))
-                                .children(vec![
-                                    ParticipantItem::new("Alice").into_any_element(),
-                                    ParticipantItem::new("Bob").into_any_element(),
-                                    ParticipantItem::new("Charlie").into_any_element(),
-                                ])
-                                .controls(
-                                    CollabOverlayControls::new(
-                                        "https://avatars.githubusercontent.com/u/67129314?v=4",
-                                    )
-                                    .is_open(true),
-                                ),
-                        ),
-                    )
-                }),
+                    },
+                ),
         )
     }
 
