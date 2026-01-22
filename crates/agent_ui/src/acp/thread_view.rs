@@ -413,7 +413,6 @@ impl AcpThreadView {
         thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
         history: Entity<AcpThreadHistory>,
-        track_load_event: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -559,7 +558,6 @@ impl AcpThreadView {
                 resume_thread.clone(),
                 workspace.clone(),
                 project.clone(),
-                track_load_event,
                 window,
                 cx,
             ),
@@ -570,7 +568,7 @@ impl AcpThreadView {
             profile_selector: None,
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
-            list_state: list_state,
+            list_state,
             thread_retry_status: None,
             thread_error: None,
             thread_error_markdown: None,
@@ -630,7 +628,6 @@ impl AcpThreadView {
             self.resume_thread_metadata.clone(),
             self.workspace.clone(),
             self.project.clone(),
-            true,
             window,
             cx,
         );
@@ -651,7 +648,6 @@ impl AcpThreadView {
         resume_thread: Option<AgentSessionInfo>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        track_load_event: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadState {
@@ -713,9 +709,7 @@ impl AcpThreadView {
                 }
             };
 
-            if track_load_event {
-                telemetry::event!("Agent Thread Started", agent = connection.telemetry_id());
-            }
+            telemetry::event!("Agent Thread Started", agent = connection.telemetry_id());
 
             let result = if let Some(resume) = resume_thread.clone() {
                 cx.update(|_, cx| {
@@ -8703,7 +8697,6 @@ pub(crate) mod tests {
                     Some(thread_store),
                     None,
                     history.clone(),
-                    false,
                     window,
                     cx,
                 )
@@ -8995,7 +8988,6 @@ pub(crate) mod tests {
                     Some(thread_store),
                     None,
                     history,
-                    false,
                     window,
                     cx,
                 )
@@ -9288,7 +9280,6 @@ pub(crate) mod tests {
                     Some(thread_store.clone()),
                     None,
                     history,
-                    false,
                     window,
                     cx,
                 )
