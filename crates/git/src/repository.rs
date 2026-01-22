@@ -1596,7 +1596,11 @@ impl GitRepository for RealGitRepository {
                     commit_delimiter
                 );
 
-                let mut args = vec!["--no-optional-locks", "log", "--follow", &format_string];
+                let mut args = vec!["--no-optional-locks", "log"];
+                if !path.is_empty() {
+                    args.push("--follow");
+                }
+                args.push(&format_string);
 
                 let skip_str;
                 let limit_str;
@@ -1616,7 +1620,11 @@ impl GitRepository for RealGitRepository {
                 let output = new_smol_command(&git_binary_path)
                     .current_dir(&working_directory)
                     .args(&args)
-                    .arg(path.as_unix_str())
+                    .arg(if path.is_empty() {
+                        "."
+                    } else {
+                        path.as_unix_str()
+                    })
                     .output()
                     .await?;
 
