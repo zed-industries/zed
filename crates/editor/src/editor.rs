@@ -73,7 +73,7 @@ pub use multi_buffer::{
     MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
     ToPoint,
 };
-pub use split::{SplittableEditor, ToggleSplitDiff};
+pub use split::{SplittableEditor, ToggleLockedCursors, ToggleSplitDiff};
 pub use text::Bias;
 
 use ::git::{Restore, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
@@ -1313,6 +1313,8 @@ pub struct Editor {
     select_next_is_case_sensitive: Option<bool>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
     scroll_companion: Option<WeakEntity<Editor>>,
+    on_local_selections_changed: Option<Box<dyn Fn(Point, &mut Window, &mut Context<Self>) + 'static>>,
+    suppress_selection_callback: bool,
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
     accent_data: Option<AccentData>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
@@ -2519,6 +2521,8 @@ impl Editor {
             lookup_key: None,
             select_next_is_case_sensitive: None,
             scroll_companion: None,
+            on_local_selections_changed: None,
+            suppress_selection_callback: false,
             applicable_language_settings: HashMap::default(),
             accent_data: None,
             fetched_tree_sitter_chunks: HashMap::default(),
@@ -3526,6 +3530,14 @@ impl Editor {
         }
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
+
+        if local && !self.suppress_selection_callback {
+            if let Some(callback) = self.on_local_selections_changed.as_ref() {
+                let cursor_position = self.selections.newest::<Point>(&display_map).head();
+                callback(cursor_position, window, cx);
+            }
+        }
+
         cx.emit(EditorEvent::SelectionsChanged { local });
 
         let selections = &self.selections.disjoint_anchors_arc();
@@ -21032,6 +21044,17 @@ impl Editor {
 
     pub fn scroll_companion(&self) -> Option<&WeakEntity<Editor>> {
         self.scroll_companion.as_ref()
+    }
+
+    pub fn set_on_local_selections_changed(
+        &mut self,
+        callback: Option<Box<dyn Fn(Point, &mut Window, &mut Context<Self>) + 'static>>,
+    ) {
+        self.on_local_selections_changed = callback;
+    }
+
+    pub fn set_suppress_selection_callback(&mut self, suppress: bool) {
+        self.suppress_selection_callback = suppress;
     }
 
     pub fn set_show_git_diff_gutter(&mut self, show_git_diff_gutter: bool, cx: &mut Context<Self>) {

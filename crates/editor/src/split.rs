@@ -259,6 +259,12 @@ pub struct ToggleSplitDiff;
 #[action(namespace = editor)]
 struct JumpToCorrespondingRow;
 
+/// When locked cursors mode is enabled, cursor movements in one editor will
+/// update the cursor position in the other editor to the corresponding row.
+#[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
+#[action(namespace = editor)]
+pub struct ToggleLockedCursors;
+
 pub struct SplittableEditor {
     primary_multibuffer: Entity<MultiBuffer>,
     primary_editor: Entity<Editor>,
@@ -266,6 +272,7 @@ pub struct SplittableEditor {
     panes: PaneGroup,
     workspace: WeakEntity<Workspace>,
     split_state: Entity<SplitEditorState>,
+    locked_cursors: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -375,6 +382,7 @@ impl SplittableEditor {
             panes,
             workspace: workspace.downgrade(),
             split_state,
+            locked_cursors: false,
             _subscriptions: subscriptions,
         }
     }
@@ -527,11 +535,32 @@ impl SplittableEditor {
         let primary_weak = self.primary_editor.downgrade();
         let secondary_weak = secondary.editor.downgrade();
 
+        let this = cx.entity().downgrade();
         self.primary_editor.update(cx, |editor, _cx| {
             editor.set_scroll_companion(Some(secondary_weak));
+            let this = this.clone();
+            editor.set_on_local_selections_changed(Some(Box::new(move |cursor_position, window, cx| {
+                if let Some(this) = this.upgrade() {
+                    this.update(cx, |this, cx| {
+                        if this.locked_cursors {
+                            this.sync_cursor_to_other_side(true, cursor_position, window, cx);
+                        }
+                    });
+                }
+            })));
         });
         secondary.editor.update(cx, |editor, _cx| {
             editor.set_scroll_companion(Some(primary_weak));
+            let this = this.clone();
+            editor.set_on_local_selections_changed(Some(Box::new(move |cursor_position, window, cx| {
+                if let Some(this) = this.upgrade() {
+                    this.update(cx, |this, cx| {
+                        if this.locked_cursors {
+                            this.sync_cursor_to_other_side(false, cursor_position, window, cx);
+                        }
+                    });
+                }
+            })));
         });
 
         let primary_scroll_position = self
@@ -761,6 +790,166 @@ impl SplittableEditor {
         cx.notify();
     }
 
+    fn toggle_locked_cursors(
+        &mut self,
+        _: &ToggleLockedCursors,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.locked_cursors = !self.locked_cursors;
+        cx.notify();
+    }
+
+    pub fn locked_cursors(&self) -> bool {
+        self.locked_cursors
+    }
+
+    fn sync_cursor_to_other_side(
+        &mut self,
+        from_primary: bool,
+        source_point: Point,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(secondary) = &self.secondary else {
+            return;
+        };
+
+        let target_editor = if from_primary {
+            &secondary.editor
+        } else {
+            &self.primary_editor
+        };
+
+        let (source_multibuffer, target_multibuffer) = if from_primary {
+            (&self.primary_multibuffer, &secondary.multibuffer)
+        } else {
+            (&secondary.multibuffer, &self.primary_multibuffer)
+        };
+
+        let is_on_left = !from_primary;
+
+        let source_snapshot = source_multibuffer.read(cx).snapshot(cx);
+        let target_snapshot = target_multibuffer.read(cx).snapshot(cx);
+
+        let Some(source_excerpt) = source_snapshot.excerpt_containing(source_point..source_point)
+        else {
+            return;
+        };
+
+        let source_excerpt_id = source_excerpt.id();
+        let source_buffer = source_excerpt.buffer();
+
+        let Some(source_context_range) =
+            source_snapshot.context_range_for_excerpt(source_excerpt_id)
+        else {
+            return;
+        };
+
+        let source_context_start =
+            language::ToPoint::to_point(&source_context_range.start, source_buffer);
+
+        let source_excerpt_start_row = source_excerpt.start_anchor().to_point(&source_snapshot).row;
+
+        let row_within_excerpt = source_point.row.saturating_sub(source_excerpt_start_row);
+        let local_buffer_row = source_context_start.row + row_within_excerpt;
+
+        let Some(diff_snapshot) = source_snapshot.diff_for_buffer_id(source_buffer.remote_id())
+        else {
+            return;
+        };
+
+        let target_row_range = if is_on_left {
+            let Some(main_buffer) =
+                source_snapshot.inverted_diff_main_buffer(source_buffer.remote_id())
+            else {
+                return;
+            };
+            diff_snapshot
+                .base_text_rows_to_rows(local_buffer_row..local_buffer_row, main_buffer)
+                .next()
+        } else {
+            diff_snapshot
+                .rows_to_base_text_rows(local_buffer_row..local_buffer_row, source_buffer)
+                .next()
+        };
+
+        let Some(target_row_range) = target_row_range else {
+            return;
+        };
+
+        let target_local_row = target_row_range.start;
+
+        let Some(target_path) = source_multibuffer.read(cx).path_for_excerpt(source_excerpt_id)
+        else {
+            return;
+        };
+
+        let target_excerpt_id = target_multibuffer
+            .read(cx)
+            .excerpts_for_path(&target_path)
+            .find(|excerpt_id| {
+                if let Some(context_range) = target_snapshot.context_range_for_excerpt(*excerpt_id)
+                {
+                    if let Some(buffer) = target_snapshot.buffer_for_excerpt(*excerpt_id) {
+                        let start =
+                            language::ToPoint::to_point(&context_range.start, buffer).row;
+                        let end = language::ToPoint::to_point(&context_range.end, buffer).row;
+                        return target_local_row >= start && target_local_row <= end;
+                    }
+                }
+                false
+            });
+
+        let Some(target_excerpt_id) = target_excerpt_id else {
+            return;
+        };
+
+        let Some(target_buffer) = target_snapshot.buffer_for_excerpt(target_excerpt_id) else {
+            return;
+        };
+
+        let Some(target_context_range) =
+            target_snapshot.context_range_for_excerpt(target_excerpt_id)
+        else {
+            return;
+        };
+
+        let target_context_start =
+            language::ToPoint::to_point(&target_context_range.start, target_buffer);
+
+        let Some(target_anchor) =
+            target_snapshot.anchor_in_excerpt(target_excerpt_id, text::Anchor::MIN)
+        else {
+            return;
+        };
+        let Some(target_excerpt) = target_snapshot.excerpt_containing(target_anchor..target_anchor)
+        else {
+            return;
+        };
+        let target_excerpt_start_row = target_excerpt.start_anchor().to_point(&target_snapshot).row;
+
+        let row_within_target_excerpt = target_local_row.saturating_sub(target_context_start.row);
+        let target_multibuffer_row = target_excerpt_start_row + row_within_target_excerpt;
+
+        let target_column = if target_row_range.start == target_row_range.end {
+            let target_line_len = target_buffer.line_len(target_local_row);
+            source_point.column.min(target_line_len)
+        } else {
+            0
+        };
+
+        let target_point = Point::new(target_multibuffer_row, target_column);
+
+        target_editor.update(cx, |editor, cx| {
+            editor.set_suppress_selection_callback(true);
+            editor.change_selections(crate::SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([target_point..target_point]);
+            });
+            editor.set_suppress_selection_callback(false);
+        });
+    }
+
     fn toggle_split(&mut self, _: &ToggleSplitDiff, window: &mut Window, cx: &mut Context<Self>) {
         if self.secondary.is_some() {
             self.unsplit(&UnsplitDiff, window, cx);
@@ -906,6 +1095,7 @@ impl SplittableEditor {
         };
         self.panes.remove(&secondary.pane, cx).unwrap();
         self.primary_editor.update(cx, |primary, cx| {
+            primary.set_on_local_selections_changed(None);
             primary.set_scroll_companion(None);
             primary.set_delegate_expand_excerpts(false);
             primary.buffer().update(cx, |buffer, cx| {
@@ -917,6 +1107,7 @@ impl SplittableEditor {
             });
         });
         secondary.editor.update(cx, |editor, _cx| {
+            editor.set_on_local_selections_changed(None);
             editor.set_scroll_companion(None);
         });
         cx.notify();
@@ -1569,7 +1760,7 @@ impl Focusable for SplittableEditor {
 impl Render for SplittableEditor {
     fn render(
         &mut self,
-        _window: &mut ui::Window,
+        window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
         let inner = if self.secondary.is_some() {
@@ -1587,6 +1778,7 @@ impl Render for SplittableEditor {
             .on_action(cx.listener(Self::activate_pane_left))
             .on_action(cx.listener(Self::activate_pane_right))
             .on_action(cx.listener(Self::jump_to_corresponding_row))
+            .on_action(cx.listener(Self::toggle_locked_cursors))
             .on_action(cx.listener(Self::intercept_toggle_code_actions))
             .on_action(cx.listener(Self::intercept_toggle_breakpoint))
             .on_action(cx.listener(Self::intercept_enable_breakpoint))
