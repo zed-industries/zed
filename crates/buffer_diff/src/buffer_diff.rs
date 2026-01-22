@@ -1565,6 +1565,7 @@ impl BufferDiff {
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut Context<Self>,
     ) {
+        log::trace!("language_changed");
         let fut = self.inner.base_text.update(cx, |base_text, cx| {
             if let Some(language_registry) = language_registry {
                 base_text.set_language_registry(language_registry);
