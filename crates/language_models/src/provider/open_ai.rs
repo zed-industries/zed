@@ -214,6 +214,7 @@ impl OpenAiLanguageModel {
     fn stream_completion(
         &self,
         request: open_ai::Request,
+        bypass_rate_limit: bool,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
     {
@@ -224,21 +225,24 @@ impl OpenAiLanguageModel {
             (state.api_key_state.key(&api_url), api_url)
         });
 
-        let future = self.request_limiter.stream(async move {
-            let provider = PROVIDER_NAME;
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey { provider });
-            };
-            let request = stream_completion(
-                http_client.as_ref(),
-                provider.0.as_str(),
-                &api_url,
-                &api_key,
-                request,
-            );
-            let response = request.await?;
-            Ok(response)
-        });
+        let future = self.request_limiter.stream_with_bypass(
+            async move {
+                let provider = PROVIDER_NAME;
+                let Some(api_key) = api_key else {
+                    return Err(LanguageModelCompletionError::NoApiKey { provider });
+                };
+                let request = stream_completion(
+                    http_client.as_ref(),
+                    provider.0.as_str(),
+                    &api_url,
+                    &api_key,
+                    request,
+                );
+                let response = request.await?;
+                Ok(response)
+            },
+            bypass_rate_limit,
+        );
 
         async move { Ok(future.await?.boxed()) }.boxed()
     }
@@ -246,6 +250,7 @@ impl OpenAiLanguageModel {
     fn stream_response(
         &self,
         request: ResponseRequest,
+        bypass_rate_limit: bool,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>>>
     {
@@ -257,20 +262,23 @@ impl OpenAiLanguageModel {
         });
 
         let provider = PROVIDER_NAME;
-        let future = self.request_limiter.stream(async move {
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey { provider });
-            };
-            let request = stream_response(
-                http_client.as_ref(),
-                provider.0.as_str(),
-                &api_url,
-                &api_key,
-                request,
-            );
-            let response = request.await?;
-            Ok(response)
-        });
+        let future = self.request_limiter.stream_with_bypass(
+            async move {
+                let Some(api_key) = api_key else {
+                    return Err(LanguageModelCompletionError::NoApiKey { provider });
+                };
+                let request = stream_response(
+                    http_client.as_ref(),
+                    provider.0.as_str(),
+                    &api_url,
+                    &api_key,
+                    request,
+                );
+                let response = request.await?;
+                Ok(response)
+            },
+            bypass_rate_limit,
+        );
 
         async move { Ok(future.await?.boxed()) }.boxed()
     }
@@ -369,6 +377,7 @@ impl LanguageModel for OpenAiLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let bypass_rate_limit = request.bypass_rate_limit;
         if self.model.supports_chat_completions() {
             let request = into_open_ai(
                 request,
@@ -379,7 +388,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 self.model.reasoning_effort(),
                 ThinkingMode::default(),
             );
-            let completions = self.stream_completion(request, cx);
+            let completions = self.stream_completion(request, bypass_rate_limit, cx);
             async move {
                 let mapper = OpenAiEventMapper::new();
                 Ok(mapper.map_stream(completions.await?).boxed())
@@ -395,7 +404,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 self.model.reasoning_effort(),
                 ThinkingMode::default(),
             );
-            let completions = self.stream_response(request, cx);
+            let completions = self.stream_response(request, bypass_rate_limit, cx);
             async move {
                 let mapper = OpenAiResponseEventMapper::new();
                 Ok(mapper.map_stream(completions.await?).boxed())
@@ -481,8 +490,15 @@ pub fn into_open_ai(
 
         for content in message.content {
             match content {
-                MessageContent::Text(text) => {
-                    if !text.trim().is_empty() {
+                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                    let should_add = if message.role == Role::User {
+                        // Including whitespace-only user messages can cause error with OpenAI compatible APIs
+                        // See https://github.com/zed-industries/zed/issues/40097
+                        !text.trim().is_empty()
+                    } else {
+                        !text.is_empty()
+                    };
+                    if should_add {
                         add_message_content_part(
                             open_ai::MessagePart::Text { text },
                             message.role,
@@ -653,6 +669,7 @@ pub fn into_open_ai_response(
         stop: _,
         temperature,
         thinking_allowed: _,
+        bypass_rate_limit: _,
     } = request;
 
     let mut input_items = Vec::new();
@@ -926,15 +943,18 @@ impl OpenAiEventMapper {
         };
 
         if let Some(delta) = choice.delta.as_ref() {
-            if let Some(content) = delta.content.clone() {
-                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
-            }
-
             if let Some(reasoning_content) = delta.reasoning_content.clone() {
-                events.push(Ok(LanguageModelCompletionEvent::Thinking {
-                    text: reasoning_content,
-                    signature: None,
-                }));
+                if !reasoning_content.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                        text: reasoning_content,
+                        signature: None,
+                    }));
+                }
+            }
+            if let Some(content) = delta.content.clone() {
+                                if !content.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                }
             }
 
             if let Some(tool_calls) = delta.tool_calls.as_ref() {
@@ -1626,6 +1646,7 @@ mod tests {
             stop: vec![],
             temperature: None,
             thinking_allowed: true,
+            bypass_rate_limit: false,
         };
 
         // Validate that all models are supported by tiktoken-rs
@@ -1762,6 +1783,7 @@ mod tests {
             stop: vec!["<STOP>".into()],
             temperature: None,
             thinking_allowed: false,
+            bypass_rate_limit: false,
         };
 
         let response = into_open_ai_response(

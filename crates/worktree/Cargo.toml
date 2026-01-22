@@ -48,7 +48,9 @@ smallvec.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true
+tracing.workspace = true
 util.workspace = true
+ztracing.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
@@ -63,3 +65,6 @@ rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]

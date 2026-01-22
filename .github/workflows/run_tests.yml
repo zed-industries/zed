@@ -91,6 +91,76 @@ jobs:
       with:
         config: ./typos.toml
     timeout-minutes: 60
+  clippy_windows:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: self-32vcpu-windows-2022
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        New-Item -ItemType Directory -Path "./../.cargo" -Force
+        Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
+      shell: pwsh
+    - name: steps::clippy
+      run: ./script/clippy.ps1
+      shell: pwsh
+    timeout-minutes: 60
+  clippy_linux:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+    - name: steps::setup_linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: steps::install_mold
+      run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+      shell: bash -euxo pipefail {0}
+    - name: steps::clippy
+      run: ./script/clippy
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
+  clippy_mac:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: self-mini-macos
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      shell: bash -euxo pipefail {0}
+    - name: steps::clippy
+      run: ./script/clippy
+      shell: bash -euxo pipefail {0}
+    timeout-minutes: 60
   run_tests_windows:
     needs:
     - orchestrate
@@ -110,9 +180,6 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
-      run: ./script/clippy.ps1
-      shell: pwsh
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
@@ -157,9 +224,6 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
-      run: ./script/clippy
-      shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
@@ -193,9 +257,6 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
-      run: ./script/clippy
-      shell: bash -euxo pipefail {0}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
       shell: bash -euxo pipefail {0}
@@ -536,6 +597,9 @@ jobs:
     needs:
     - orchestrate
     - check_style
+    - clippy_windows
+    - clippy_linux
+    - clippy_mac
     - run_tests_windows
     - run_tests_linux
     - run_tests_mac
@@ -562,6 +626,9 @@ jobs:
 
         check_result "orchestrate" "${{ needs.orchestrate.result }}"
         check_result "check_style" "${{ needs.check_style.result }}"
+        check_result "clippy_windows" "${{ needs.clippy_windows.result }}"
+        check_result "clippy_linux" "${{ needs.clippy_linux.result }}"
+        check_result "clippy_mac" "${{ needs.clippy_mac.result }}"
         check_result "run_tests_windows" "${{ needs.run_tests_windows.result }}"
         check_result "run_tests_linux" "${{ needs.run_tests_linux.result }}"
         check_result "run_tests_mac" "${{ needs.run_tests_mac.result }}"

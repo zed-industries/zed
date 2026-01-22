@@ -370,6 +370,7 @@ impl LmStudioLanguageModel {
     fn stream_completion(
         &self,
         request: lmstudio::ChatCompletionRequest,
+        bypass_rate_limit: bool,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -381,11 +382,15 @@ impl LmStudioLanguageModel {
             settings.api_url.clone()
         });
 
-        let future = self.request_limiter.stream(async move {
-            let request = lmstudio::stream_chat_completion(http_client.as_ref(), &api_url, request);
-            let response = request.await?;
-            Ok(response)
-        });
+        let future = self.request_limiter.stream_with_bypass(
+            async move {
+                let request =
+                    lmstudio::stream_chat_completion(http_client.as_ref(), &api_url, request);
+                let response = request.await?;
+                Ok(response)
+            },
+            bypass_rate_limit,
+        );
 
         async move { Ok(future.await?.boxed()) }.boxed()
     }
@@ -460,8 +465,9 @@ impl LanguageModel for LmStudioLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let bypass_rate_limit = request.bypass_rate_limit;
         let request = self.to_lmstudio_request(request);
-        let completions = self.stream_completion(request, cx);
+        let completions = self.stream_completion(request, bypass_rate_limit, cx);
         async move {
             let mapper = LmStudioEventMapper::new();
             Ok(mapper.map_stream(completions.await?).boxed())
