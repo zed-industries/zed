@@ -21,9 +21,9 @@ use crate::{
     Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext,
     KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent,
     MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
-    Overflow, ParentElement, Pinch, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size,
-    Style, StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point,
-    px, size,
+    Overflow, ParentElement, PinchEvent, Pixels, Point, Render, ScrollWheelEvent, SharedString,
+    Size, Style, StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea,
+    point, px, size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -383,6 +383,8 @@ impl Interactivity {
                     cx.propagate();
                 }
             }));
+    }
+
     /// Bind the given callback to an action dispatch during the capture phase.
     /// The imperative API equivalent to [`InteractiveElement::capture_action`].
     ///
