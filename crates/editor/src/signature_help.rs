@@ -171,6 +171,8 @@ impl Editor {
             return;
         }
 
+        // If there's an already running signature
+        // help task, this will drop it.
         self.signature_help_state.task = None;
 
         let position = self.selections.newest_anchor().head();
@@ -182,24 +184,23 @@ impl Editor {
         let Some(lsp_store) = self.project().map(|p| p.read(cx).lsp_store()) else {
             return;
         };
-        let task = lsp_store.update(cx, |lsp_store, cx| {
+        let lsp_task = lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.signature_help(&buffer, buffer_position, cx)
         });
         let language = self.language_at(position, cx);
 
-        // respect hover_popover_delay
         let signature_help_delay_ms = EditorSettings::get_global(cx).hover_popover_delay.0;
 
         self.signature_help_state
             .set_task(cx.spawn_in(window, async move |editor, cx| {
-                // wait for debounce delay
                 if signature_help_delay_ms > 0 {
                     cx.background_executor()
                         .timer(Duration::from_millis(signature_help_delay_ms))
                         .await;
                 }
-                // wait for lsp
-                let signature_help = task.await;
+
+                let signature_help = lsp_task.await;
+
                 editor
                     .update(cx, |editor, cx| {
                         let Some(mut signature_help) =
