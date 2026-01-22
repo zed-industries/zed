@@ -88,6 +88,11 @@ use crate::{
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
 const TOKEN_THRESHOLD: u64 = 250;
 
+pub struct QueuedMessage {
+    pub content: Vec<acp::ContentBlock>,
+    pub tracked_buffers: Vec<Entity<Buffer>>,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ThreadFeedback {
     Positive,
@@ -352,6 +357,7 @@ pub struct AcpThreadView {
     editor_expanded: bool,
     should_be_following: bool,
     editing_message: Option<usize>,
+    local_queued_messages: Vec<QueuedMessage>,
     queued_message_editors: Vec<Entity<MessageEditor>>,
     queued_message_editor_subscriptions: Vec<Subscription>,
     last_synced_queue_length: usize,
@@ -584,6 +590,7 @@ impl AcpThreadView {
             expanded_subagents: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             editing_message: None,
+            local_queued_messages: Vec::new(),
             queued_message_editors: Vec::new(),
             queued_message_editor_subscriptions: Vec::new(),
             last_synced_queue_length: 0,
@@ -1387,9 +1394,7 @@ impl AcpThreadView {
         let is_editor_empty = self.message_editor.read(cx).is_empty(cx);
         let is_generating = thread.read(cx).status() != ThreadStatus::Idle;
 
-        let has_queued = self
-            .as_native_thread(cx)
-            .is_some_and(|t| !t.read(cx).queued_messages().is_empty());
+        let has_queued = self.has_queued_messages();
         if is_editor_empty && self.can_fast_track_queue && has_queued {
             self.can_fast_track_queue = false;
             self.send_queued_message_at_index(0, true, window, cx);
@@ -1725,11 +1730,7 @@ impl AcpThreadView {
             }
 
             this.update_in(cx, |this, window, cx| {
-                if let Some(thread) = this.as_native_thread(cx) {
-                    thread.update(cx, |thread, _| {
-                        thread.queue_message(content, tracked_buffers);
-                    });
-                }
+                this.add_to_queue(content, tracked_buffers, cx);
                 // Enable fast-track: user can press Enter again to send this queued message immediately
                 this.can_fast_track_queue = true;
                 message_editor.update(cx, |message_editor, cx| {
@@ -1749,13 +1750,7 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(native_thread) = self.as_native_thread(cx) else {
-            return;
-        };
-
-        let Some(queued) =
-            native_thread.update(cx, |thread, _| thread.remove_queued_message(index))
-        else {
+        let Some(queued) = self.remove_from_queue(index, cx) else {
             return;
         };
         let content = queued.content;
@@ -2001,9 +1996,7 @@ impl AcpThreadView {
                     // Reset the flag so future completions can process normally.
                     self.user_interrupted_generation = false;
                 } else {
-                    let has_queued = self
-                        .as_native_thread(cx)
-                        .is_some_and(|t| !t.read(cx).queued_messages().is_empty());
+                    let has_queued = self.has_queued_messages();
                     // Don't auto-send if the first message editor is currently focused
                     let is_first_editor_focused = self
                         .queued_message_editors
@@ -5134,9 +5127,7 @@ impl AcpThreadView {
         let telemetry = ActionLogTelemetry::from(thread);
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
         let plan = thread.plan();
-        let queue_is_empty = self
-            .as_native_thread(cx)
-            .map_or(true, |t| t.read(cx).queued_messages().is_empty());
+        let queue_is_empty = !self.has_queued_messages();
 
         if changed_buffers.is_empty() && plan.is_empty() && queue_is_empty {
             return None;
@@ -5813,9 +5804,7 @@ impl AcpThreadView {
         _window: &mut Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let queue_count = self
-            .as_native_thread(cx)
-            .map_or(0, |t| t.read(cx).queued_messages().len());
+        let queue_count = self.queued_messages_len();
         let title: SharedString = if queue_count == 1 {
             "1 Queued Message".into()
         } else {
@@ -5846,9 +5835,7 @@ impl AcpThreadView {
                     .label_size(LabelSize::Small)
                     .key_binding(KeyBinding::for_action(&ClearMessageQueue, cx))
                     .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(thread) = this.as_native_thread(cx) {
-                            thread.update(cx, |thread, _| thread.clear_queued_messages());
-                        }
+                        this.clear_queue(cx);
                         this.can_fast_track_queue = false;
                         cx.notify();
                     })),
@@ -6023,11 +6010,7 @@ impl AcpThreadView {
                                                 }
                                             })
                                             .on_click(cx.listener(move |this, _, _, cx| {
-                                                if let Some(thread) = this.as_native_thread(cx) {
-                                                    thread.update(cx, |thread, _| {
-                                                        thread.remove_queued_message(index);
-                                                    });
-                                                }
+                                                this.remove_from_queue(index, cx);
                                                 cx.notify();
                                             })),
                                     )
@@ -6181,12 +6164,80 @@ impl AcpThreadView {
             .thread(acp_thread.session_id(), cx)
     }
 
+    fn queued_messages_len(&self) -> usize {
+        self.local_queued_messages.len()
+    }
+
+    fn has_queued_messages(&self) -> bool {
+        !self.local_queued_messages.is_empty()
+    }
+
+    /// Syncs the has_queued_message flag to the native thread (if applicable).
+    /// This flag tells the native thread to end its turn at the next message boundary.
+    fn sync_queue_flag_to_native_thread(&self, cx: &mut Context<Self>) {
+        if let Some(native_thread) = self.as_native_thread(cx) {
+            let has_queued = !self.local_queued_messages.is_empty();
+            native_thread.update(cx, |thread, _| {
+                thread.set_has_queued_message(has_queued);
+            });
+        }
+    }
+
+    fn add_to_queue(
+        &mut self,
+        content: Vec<acp::ContentBlock>,
+        tracked_buffers: Vec<Entity<Buffer>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.local_queued_messages.push(QueuedMessage {
+            content,
+            tracked_buffers,
+        });
+        self.sync_queue_flag_to_native_thread(cx);
+    }
+
+    fn remove_from_queue(&mut self, index: usize, cx: &mut Context<Self>) -> Option<QueuedMessage> {
+        if index < self.local_queued_messages.len() {
+            let removed = self.local_queued_messages.remove(index);
+            self.sync_queue_flag_to_native_thread(cx);
+            Some(removed)
+        } else {
+            None
+        }
+    }
+
+    fn update_queued_message(
+        &mut self,
+        index: usize,
+        content: Vec<acp::ContentBlock>,
+        tracked_buffers: Vec<Entity<Buffer>>,
+        _cx: &mut Context<Self>,
+    ) -> bool {
+        if index < self.local_queued_messages.len() {
+            self.local_queued_messages[index] = QueuedMessage {
+                content,
+                tracked_buffers,
+            };
+            true
+        } else {
+            false
+        }
+    }
+
+    fn clear_queue(&mut self, cx: &mut Context<Self>) {
+        self.local_queued_messages.clear();
+        self.sync_queue_flag_to_native_thread(cx);
+    }
+
+    fn queued_message_contents(&self) -> Vec<Vec<acp::ContentBlock>> {
+        self.local_queued_messages
+            .iter()
+            .map(|q| q.content.clone())
+            .collect()
+    }
+
     fn save_queued_message_at_index(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(editor) = self.queued_message_editors.get(index) else {
-            return;
-        };
-
-        let Some(_native_thread) = self.as_native_thread(cx) else {
             return;
         };
 
@@ -6198,11 +6249,7 @@ impl AcpThreadView {
             };
 
             this.update(cx, |this, cx| {
-                if let Some(native_thread) = this.as_native_thread(cx) {
-                    native_thread.update(cx, |thread, _| {
-                        thread.update_queued_message(index, content, tracked_buffers);
-                    });
-                }
+                this.update_queued_message(index, content, tracked_buffers, cx);
                 cx.notify();
             })?;
 
@@ -6212,26 +6259,14 @@ impl AcpThreadView {
     }
 
     fn sync_queued_message_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(native_thread) = self.as_native_thread(cx) else {
-            self.queued_message_editors.clear();
-            self.queued_message_editor_subscriptions.clear();
-            self.last_synced_queue_length = 0;
-            return;
-        };
-
-        let thread = native_thread.read(cx);
-        let needed_count = thread.queued_messages().len();
+        let needed_count = self.queued_messages_len();
         let current_count = self.queued_message_editors.len();
 
         if current_count == needed_count && needed_count == self.last_synced_queue_length {
             return;
         }
 
-        let queued_messages: Vec<_> = thread
-            .queued_messages()
-            .iter()
-            .map(|q| q.content.clone())
-            .collect();
+        let queued_messages = self.queued_message_contents();
 
         if current_count > needed_count {
             self.queued_message_editors.truncate(needed_count);
@@ -8246,12 +8281,8 @@ impl Render for AcpThreadView {
                 this.send_queued_message_at_index(0, true, window, cx);
             }))
             .on_action(cx.listener(|this, _: &RemoveFirstQueuedMessage, _, cx| {
-                if let Some(thread) = this.as_native_thread(cx) {
-                    thread.update(cx, |thread, _| {
-                        thread.remove_queued_message(0);
-                    });
-                    cx.notify();
-                }
+                this.remove_from_queue(0, cx);
+                cx.notify();
             }))
             .on_action(cx.listener(|this, _: &EditFirstQueuedMessage, window, cx| {
                 if let Some(editor) = this.queued_message_editors.first() {
@@ -8259,9 +8290,7 @@ impl Render for AcpThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
-                if let Some(thread) = this.as_native_thread(cx) {
-                    thread.update(cx, |thread, _| thread.clear_queued_messages());
-                }
+                this.clear_queue(cx);
                 this.can_fast_track_queue = false;
                 cx.notify();
             }))
