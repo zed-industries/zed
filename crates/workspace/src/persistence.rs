@@ -281,6 +281,25 @@ impl From<WindowBoundsJson> for WindowBounds {
     }
 }
 
+const DEFAULT_DOCK_STATE_KEY: &str = "default_dock_state";
+
+pub fn read_default_dock_state() -> Option<DockStructure> {
+    let json_str = KEY_VALUE_STORE
+        .read_kvp(DEFAULT_DOCK_STATE_KEY)
+        .log_err()
+        .flatten()?;
+
+    serde_json::from_str::<DockStructure>(&json_str).ok()
+}
+
+pub async fn write_default_dock_state(docks: DockStructure) -> anyhow::Result<()> {
+    let json_str = serde_json::to_string(&docks)?;
+    KEY_VALUE_STORE
+        .write_kvp(DEFAULT_DOCK_STATE_KEY.to_string(), json_str)
+        .await?;
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct Breakpoint {
     pub position: u32,

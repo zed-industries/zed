@@ -9,6 +9,7 @@ use cloud_llm_client::{
     ListModelsResponse, Plan, PlanV2, SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME,
     ZED_VERSION_HEADER_NAME,
 };
+use feature_flags::{CloudThinkingToggleFeatureFlag, FeatureFlagAppExt as _};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
 };
@@ -164,20 +165,27 @@ impl State {
             state.update(cx, |_, cx| cx.notify())
         })
     }
+
     fn update_models(&mut self, response: ListModelsResponse, cx: &mut Context<Self>) {
+        let is_thinking_toggle_enabled = cx.has_flag::<CloudThinkingToggleFeatureFlag>();
+
         let mut models = Vec::new();
 
         for model in response.models {
             models.push(Arc::new(model.clone()));
 
-            // Right now we represent thinking variants of models as separate models on the client,
-            // so we need to insert variants for any model that supports thinking.
-            if model.supports_thinking {
-                models.push(Arc::new(cloud_llm_client::LanguageModel {
-                    id: cloud_llm_client::LanguageModelId(format!("{}-thinking", model.id).into()),
-                    display_name: format!("{} Thinking", model.display_name),
-                    ..model
-                }));
+            if !is_thinking_toggle_enabled {
+                // Right now we represent thinking variants of models as separate models on the client,
+                // so we need to insert variants for any model that supports thinking.
+                if model.supports_thinking {
+                    models.push(Arc::new(cloud_llm_client::LanguageModel {
+                        id: cloud_llm_client::LanguageModelId(
+                            format!("{}-thinking", model.id).into(),
+                        ),
+                        display_name: format!("{} Thinking", model.display_name),
+                        ..model
+                    }));
+                }
             }
         }
 
@@ -570,6 +578,10 @@ impl LanguageModel for CloudLanguageModel {
         self.model.supports_images
     }
 
+    fn supports_thinking(&self) -> bool {
+        self.model.supports_thinking
+    }
+
     fn supports_streaming_tools(&self) -> bool {
         self.model.supports_streaming_tools
     }
@@ -721,6 +733,13 @@ impl LanguageModel for CloudLanguageModel {
         let bypass_rate_limit = request.bypass_rate_limit;
         let app_version = Some(cx.update(|cx| AppVersion::global(cx)));
         let thinking_allowed = request.thinking_allowed;
+        let is_thinking_toggle_enabled =
+            cx.update(|cx| cx.has_flag::<CloudThinkingToggleFeatureFlag>());
+        let enable_thinking = if is_thinking_toggle_enabled {
+            thinking_allowed && self.model.supports_thinking
+        } else {
+            thinking_allowed && self.model.id.0.ends_with("-thinking")
+        };
         let provider_name = provider_name(&self.model.provider);
         match self.model.provider {
             cloud_llm_client::LanguageModelProvider::Anthropic => {
@@ -729,7 +748,7 @@ impl LanguageModel for CloudLanguageModel {
                     self.model.id.to_string(),
                     1.0,
                     self.model.max_output_tokens as u64,
-                    if thinking_allowed && self.model.id.0.ends_with("-thinking") {
+                    if enable_thinking {
                         AnthropicModelMode::Thinking {
                             budget_tokens: Some(4_096),
                         }

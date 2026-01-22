@@ -146,7 +146,7 @@ enum Command {
     /// predicted outputs and removing actual outputs and prompts.
     Distill,
     /// Print aggregated scores
-    Eval(PredictArgs),
+    Eval(EvalArgs),
     /// Generate eval examples by analyzing git commits from a repository
     Synthesize(SynthesizeArgs),
     /// Remove git repositories and worktrees
@@ -180,7 +180,7 @@ impl Display for Command {
                 None => write!(f, "score"),
             },
             Command::Distill => write!(f, "distill"),
-            Command::Eval(args) => match &args.provider {
+            Command::Eval(args) => match &args.predict.provider {
                 Some(provider) => write!(f, "eval --provider={}", provider),
                 None => write!(f, "eval"),
             },
@@ -210,6 +210,15 @@ struct PredictArgs {
     provider: Option<PredictionProvider>,
     #[clap(long, default_value_t = 1)]
     repetitions: usize,
+}
+
+#[derive(Debug, Args, Clone)]
+struct EvalArgs {
+    #[clap(flatten)]
+    predict: PredictArgs,
+    /// Path to write summary scores as JSON
+    #[clap(long)]
+    summary_json: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -570,8 +579,11 @@ fn main() {
                 .await?;
 
                 match &command {
-                    Command::Predict(args) | Command::Score(args) | Command::Eval(args) => {
+                    Command::Predict(args) | Command::Score(args) => {
                         predict::sync_batches(args.provider.as_ref()).await?;
+                    }
+                    Command::Eval(args) => {
+                        predict::sync_batches(args.predict.provider.as_ref()).await?;
                     }
                     _ => (),
                 }
@@ -687,10 +699,20 @@ fn main() {
                                         Command::Distill => {
                                             run_distill(example).await?;
                                         }
-                                        Command::Score(args) | Command::Eval(args) => {
+                                        Command::Score(args) => {
                                             run_scoring(
                                                 example,
-                                                &args,
+                                                args,
+                                                app_state.clone(),
+                                                &example_progress,
+                                                cx.clone(),
+                                            )
+                                            .await?;
+                                        }
+                                        Command::Eval(args) => {
+                                            run_scoring(
+                                                example,
+                                                &args.predict,
                                                 app_state.clone(),
                                                 &example_progress,
                                                 cx.clone(),
@@ -786,14 +808,23 @@ fn main() {
                 Progress::global().finalize();
 
                 match &command {
-                    Command::Predict(args) | Command::Score(args) | Command::Eval(args) => {
+                    Command::Predict(args) | Command::Score(args) => {
                         predict::sync_batches(args.provider.as_ref()).await?;
+                    }
+                    Command::Eval(args) => {
+                        predict::sync_batches(args.predict.provider.as_ref()).await?;
                     }
                     _ => (),
                 }
 
                 match &command {
-                    Command::Eval(_) => score::print_report(&finished_examples.lock().unwrap()),
+                    Command::Eval(args) => {
+                        let examples = finished_examples.lock().unwrap();
+                        score::print_report(&examples);
+                        if let Some(summary_path) = &args.summary_json {
+                            score::write_summary_json(&examples, summary_path)?;
+                        }
+                    }
                     _ => (),
                 };
 

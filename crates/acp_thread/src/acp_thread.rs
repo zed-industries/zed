@@ -2633,6 +2633,7 @@ mod tests {
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
+                cx.background_executor(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -2706,6 +2707,7 @@ mod tests {
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
+                cx.background_executor(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -4080,6 +4082,7 @@ mod tests {
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
+                cx.background_executor(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -4125,6 +4128,7 @@ mod tests {
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
+                cx.background_executor(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -4184,6 +4188,7 @@ mod tests {
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
+                cx.background_executor(),
             )
             .unwrap();
             builder.subscribe(cx)
