@@ -36,6 +36,7 @@ pub struct FileDiffView {
 const RECALCULATE_DIFF_DEBOUNCE: Duration = Duration::from_millis(250);
 
 impl FileDiffView {
+    #[ztracing::instrument(skip_all)]
     pub fn open(
         old_path: PathBuf,
         new_path: PathBuf,
@@ -43,6 +44,11 @@ impl FileDiffView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
+        log::trace!(
+            "FileDiffView::open({}=>{})",
+            old_path.display(),
+            new_path.display()
+        );
         let workspace = workspace.weak_handle();
         window.spawn(cx, async move |cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
@@ -162,12 +168,14 @@ impl FileDiffView {
     }
 }
 
+#[ztracing::instrument(skip_all)]
 async fn build_buffer_diff(
     old_buffer: &Entity<Buffer>,
     new_buffer: &Entity<Buffer>,
     language_registry: Arc<LanguageRegistry>,
     cx: &mut AsyncApp,
 ) -> Result<Entity<BufferDiff>> {
+    log::trace!("build_buffer_diff");
     let old_buffer_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.snapshot());
     let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
