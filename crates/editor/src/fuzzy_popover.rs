@@ -343,56 +343,48 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
 
         Popover::new()
             .child(
-                WithRemSize::new(ui_font_size)
-                    .min_w_40()
-                    .child(
-                        v_flex()
-                            .on_mouse_down_out(cx.listener(
-                                |editor, _: &MouseDownEvent, window, cx| {
-                                    editor.hide_context_menu(window, cx);
-                                },
-                            ))
-                            .on_action(cx.listener(|editor, _: &menu::Cancel, window, cx| {
-                                editor.hide_context_menu(window, cx);
-                            }))
-                            .on_action(cx.listener(|editor, _: &MoveUp, _window, cx| {
-                                if let Some(menu) = editor.context_menu.borrow_mut().as_mut() {
-                                    if let CodeContextMenu::CodeActions(popover) = menu {
-                                        popover.select_prev(cx);
-                                    }
+                WithRemSize::new(ui_font_size).min_w_40().child(
+                    v_flex()
+                        .on_mouse_down_out(cx.listener(|editor, _: &MouseDownEvent, window, cx| {
+                            editor.hide_context_menu(window, cx);
+                        }))
+                        .on_action(cx.listener(|editor, _: &menu::Cancel, window, cx| {
+                            editor.hide_context_menu(window, cx);
+                        }))
+                        .on_action(cx.listener(|editor, _: &MoveUp, _window, cx| {
+                            if let Some(menu) = editor.context_menu.borrow_mut().as_mut() {
+                                if let CodeContextMenu::CodeActions(popover) = menu {
+                                    popover.select_prev(cx);
                                 }
-                            }))
-                            .on_action(cx.listener(|editor, _: &MoveDown, _window, cx| {
-                                if let Some(menu) = editor.context_menu.borrow_mut().as_mut() {
-                                    if let CodeContextMenu::CodeActions(popover) = menu {
-                                        popover.select_next(cx);
-                                    }
+                            }
+                        }))
+                        .on_action(cx.listener(|editor, _: &MoveDown, _window, cx| {
+                            if let Some(menu) = editor.context_menu.borrow_mut().as_mut() {
+                                if let CodeContextMenu::CodeActions(popover) = menu {
+                                    popover.select_next(cx);
                                 }
-                            }))
-                            .gap_1()
-                            .child(
+                            }
+                        }))
+                        .gap_1()
+                        .child(
+                            h_flex()
+                                .pb_1()
+                                .px_2p5()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .flex_none()
+                                .overflow_hidden()
+                                .child(self.search_editor.clone()),
+                        )
+                        .when(self.visible_len() > 0, |this| this.child(list))
+                        .when(self.visible_len() == 0, |this| {
+                            this.child(
                                 h_flex()
-                                    .pb_1()
-                                    .px_2p5()
-                                    .border_b_1()
-                                    .border_color(cx.theme().colors().border_variant)
-                                    .flex_none()
-                                    .overflow_hidden()
-                                    .child(self.search_editor.clone()),
+                                    .p_2()
+                                    .child(Label::new("No matches").color(Color::Muted)),
                             )
-                            .when(self.visible_len() > 0, |this| {
-                                this.child(list)
-                            })
-                            .when(self.visible_len() == 0, |this| {
-                                this.child(
-                                    h_flex().p_2().child(
-                                        Label::new("No matches")
-                                            .color(Color::Muted)
-                                            .size(LabelSize::Small),
-                                    ),
-                                )
-                            }),
-                    ),
+                        }),
+                ),
             )
             .into_any_element()
     }
@@ -428,7 +420,7 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
                     div()
                         .child(label)
                         .id("fuzzy_popover_extended")
-                        .px(px(8.0)) // MENU_ASIDE_X_PADDING / 2
+                        .px_2()
                         .max_w(max_size.width)
                         .max_h(max_size.height)
                         .occlude(),
