@@ -126,16 +126,13 @@ pub fn selections_creases(
 ) -> Vec<(String, String)> {
     let mut creases = Vec::new();
     for range in selection_ranges {
-        // Split the range into per-excerpt ranges to handle selections spanning multiple excerpts
         let buffer_ranges = snapshot.range_to_buffer_ranges(range.clone());
 
         if buffer_ranges.is_empty() {
-            // Fallback to original behavior if no buffer ranges found
             creases.extend(crease_for_range(range, &snapshot, cx));
             continue;
         }
 
-        // Create a separate crease for each excerpt's portion
         for (buffer_snapshot, buffer_range, _excerpt_id) in buffer_ranges {
             creases.extend(crease_for_buffer_range(buffer_snapshot, buffer_range, cx));
         }
@@ -147,25 +144,18 @@ pub fn selections_creases(
 /// This is used when we know the exact buffer and range within it.
 fn crease_for_buffer_range(
     buffer: &BufferSnapshot,
-    buffer_range: Range<BufferOffset>,
+    Range { start, end }: Range<BufferOffset>,
     cx: &App,
 ) -> Option<(String, String)> {
-    // Convert buffer offsets to points for line numbers
-    let start_offset = buffer_range.start.0;
-    let end_offset = buffer_range.end.0;
-
-    // Get the text for this range
-    let selected_text: String = buffer
-        .text_for_range(start_offset..end_offset)
-        .collect();
+    let selected_text: String = buffer.text_for_range(start.0..end.0).collect();
 
     if selected_text.is_empty() {
         return None;
     }
 
     // Convert offsets to points to get line numbers
-    let start_point = buffer.offset_to_point(start_offset);
-    let end_point = buffer.offset_to_point(end_offset);
+    let start_point = buffer.offset_to_point(start.0);
+    let end_point = buffer.offset_to_point(end.0);
     let start_buffer_row = start_point.row;
     let end_buffer_row = end_point.row;
 
@@ -204,10 +194,8 @@ fn crease_for_buffer_range(
         let line_comment_prefix =
             language.and_then(|l| l.default_scope().line_comment_prefixes().first().cloned());
 
-        let fence = codeblock_fence_for_path(
-            filename.as_deref(),
-            Some(start_buffer_row..=end_buffer_row),
-        );
+        let fence =
+            codeblock_fence_for_path(filename.as_deref(), Some(start_buffer_row..=end_buffer_row));
 
         if let Some((line_comment_prefix, outline_text)) = line_comment_prefix.zip(outline_text) {
             let breadcrumb = format!("{line_comment_prefix}Excerpt from: {outline_text}\n");
@@ -280,28 +268,26 @@ fn crease_for_range(
             .symbols_containing(range.end, None)
             .map(|(_, symbols)| symbols);
 
-        let outline_text = if let Some((start_symbols, end_symbols)) = start_symbols.zip(end_symbols)
-        {
-            Some(
-                start_symbols
-                    .into_iter()
-                    .zip(end_symbols)
-                    .take_while(|(a, b)| a == b)
-                    .map(|(a, _)| a.text)
-                    .collect::<Vec<_>>()
-                    .join(" > "),
-            )
-        } else {
-            None
-        };
+        let outline_text =
+            if let Some((start_symbols, end_symbols)) = start_symbols.zip(end_symbols) {
+                Some(
+                    start_symbols
+                        .into_iter()
+                        .zip(end_symbols)
+                        .take_while(|(a, b)| a == b)
+                        .map(|(a, _)| a.text)
+                        .collect::<Vec<_>>()
+                        .join(" > "),
+                )
+            } else {
+                None
+            };
 
         let line_comment_prefix =
             start_language.and_then(|l| l.default_scope().line_comment_prefixes().first().cloned());
 
-        let fence = codeblock_fence_for_path(
-            filename.as_deref(),
-            Some(start_buffer_row..=end_buffer_row),
-        );
+        let fence =
+            codeblock_fence_for_path(filename.as_deref(), Some(start_buffer_row..=end_buffer_row));
 
         if let Some((line_comment_prefix, outline_text)) = line_comment_prefix.zip(outline_text) {
             let breadcrumb = format!("{line_comment_prefix}Excerpt from: {outline_text}\n");
@@ -335,7 +321,13 @@ mod tests {
     #[gpui::test]
     fn test_selections_creases_single_excerpt(cx: &mut TestAppContext) {
         let multi_buffer = cx.update(|cx| {
-            MultiBuffer::build_multi([("line1\nline2\nline3\n", vec![Point::new(0, 0)..Point::new(3, 0)])], cx)
+            MultiBuffer::build_multi(
+                [(
+                    "line1\nline2\nline3\n",
+                    vec![Point::new(0, 0)..Point::new(3, 0)],
+                )],
+                cx,
+            )
         });
 
         let creases = cx.update(|cx| {
@@ -358,8 +350,14 @@ mod tests {
         let multi_buffer = cx.update(|cx| {
             MultiBuffer::build_multi(
                 [
-                    ("file1_line1\nfile1_line2\nfile1_line3\n", vec![Point::new(0, 0)..Point::new(3, 0)]),
-                    ("file2_line1\nfile2_line2\nfile2_line3\n", vec![Point::new(0, 0)..Point::new(3, 0)]),
+                    (
+                        "file1_line1\nfile1_line2\nfile1_line3\n",
+                        vec![Point::new(0, 0)..Point::new(3, 0)],
+                    ),
+                    (
+                        "file2_line1\nfile2_line2\nfile2_line3\n",
+                        vec![Point::new(0, 0)..Point::new(3, 0)],
+                    ),
                 ],
                 cx,
             )
@@ -372,16 +370,32 @@ mod tests {
             selections_creases(vec![range], snapshot, cx)
         });
 
-        assert_eq!(creases.len(), 2, "Should create separate creases for each excerpt");
+        assert_eq!(
+            creases.len(),
+            2,
+            "Should create separate creases for each excerpt"
+        );
 
         let (text1, _title1) = &creases[0];
         let (text2, _title2) = &creases[1];
 
-        assert!(text1.contains("file1_line1"), "First crease should contain first file content");
-        assert!(!text1.contains("file2_line1"), "First crease should NOT contain second file content");
+        assert!(
+            text1.contains("file1_line1"),
+            "First crease should contain first file content"
+        );
+        assert!(
+            !text1.contains("file2_line1"),
+            "First crease should NOT contain second file content"
+        );
 
-        assert!(text2.contains("file2_line1"), "Second crease should contain second file content");
-        assert!(!text2.contains("file1_line1"), "Second crease should NOT contain first file content");
+        assert!(
+            text2.contains("file2_line1"),
+            "Second crease should contain second file content"
+        );
+        assert!(
+            !text2.contains("file1_line1"),
+            "Second crease should NOT contain first file content"
+        );
     }
 
     #[gpui::test]
@@ -389,8 +403,14 @@ mod tests {
         let multi_buffer = cx.update(|cx| {
             MultiBuffer::build_multi(
                 [
-                    ("aaa\nbbb\nccc\nddd\n", vec![Point::new(0, 0)..Point::new(4, 0)]),
-                    ("111\n222\n333\n444\n", vec![Point::new(0, 0)..Point::new(4, 0)]),
+                    (
+                        "aaa\nbbb\nccc\nddd\n",
+                        vec![Point::new(0, 0)..Point::new(4, 0)],
+                    ),
+                    (
+                        "111\n222\n333\n444\n",
+                        vec![Point::new(0, 0)..Point::new(4, 0)],
+                    ),
                 ],
                 cx,
             )
@@ -407,14 +427,20 @@ mod tests {
         let (text1, title1) = &creases[0];
         assert!(text1.contains("ccc"), "First crease should contain 'ccc'");
         assert!(text1.contains("ddd"), "First crease should contain 'ddd'");
-        assert!(!text1.contains("aaa"), "First crease should NOT contain 'aaa' (before selection)");
+        assert!(
+            !text1.contains("aaa"),
+            "First crease should NOT contain 'aaa' (before selection)"
+        );
         // Untitled buffers produce "Quoted selection" as title
         assert_eq!(title1, "Quoted selection");
 
         let (text2, title2) = &creases[1];
         assert!(text2.contains("111"), "Second crease should contain '111'");
         assert!(text2.contains("222"), "Second crease should contain '222'");
-        assert!(!text2.contains("333"), "Second crease should NOT contain '333' (after selection)");
+        assert!(
+            !text2.contains("333"),
+            "Second crease should NOT contain '333' (after selection)"
+        );
         // Untitled buffers produce "Quoted selection" as title
         assert_eq!(title2, "Quoted selection");
     }

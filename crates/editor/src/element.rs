@@ -9701,27 +9701,12 @@ impl Element for EditorElement {
                         }
                     }
 
-                    let mut highlighted_gutter_ranges =
+                    let highlighted_gutter_ranges =
                         self.editor.read(cx).gutter_highlights_in_range(
                             start_anchor..end_anchor,
                             &snapshot.display_snapshot,
                             cx,
                         );
-
-                    // Add diff review drag selection highlight
-                    if let Some(drag_state) = self.editor.read(cx).diff_review_drag_state {
-                        let range = drag_state.row_range();
-                        let start_display_row = *range.start();
-                        let end_display_row = *range.end();
-                        let drag_highlight_color = cx.theme().colors().editor_active_line_background;
-                        highlighted_gutter_ranges.push((
-                            Range {
-                                start: DisplayPoint::new(start_display_row, 0),
-                                end: DisplayPoint::new(end_display_row, 0),
-                            },
-                            drag_highlight_color,
-                        ));
-                    }
 
                     let document_colors = self
                         .editor

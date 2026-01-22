@@ -30916,13 +30916,7 @@ fn test_orphaned_comments_are_cleaned_up(cx: &mut TestAppContext) {
                 file_path: Arc::from(util::rel_path::RelPath::empty()),
                 hunk_start_anchor: anchor,
             };
-            editor.add_review_comment(
-                key,
-                "Comment on line 2".to_string(),
-                1,
-                anchor..anchor,
-                cx,
-            );
+            editor.add_review_comment(key, "Comment on line 2".to_string(), 1, anchor..anchor, cx);
             assert_eq!(editor.total_review_comment_count(), 1);
         })
         .unwrap();
@@ -30965,13 +30959,7 @@ fn test_orphaned_comments_cleanup_called_on_buffer_edit(cx: &mut TestAppContext)
                 file_path: Arc::from(util::rel_path::RelPath::empty()),
                 hunk_start_anchor: anchor,
             };
-            editor.add_review_comment(
-                key,
-                "Comment on line 2".to_string(),
-                1,
-                anchor..anchor,
-                cx,
-            );
+            editor.add_review_comment(key, "Comment on line 2".to_string(), 1, anchor..anchor, cx);
             assert_eq!(editor.total_review_comment_count(), 1);
         })
         .unwrap();
@@ -31094,13 +31082,7 @@ fn test_same_hunk_detected_by_matching_keys(cx: &mut TestAppContext) {
         };
 
         // Add comment to first key
-        editor.add_review_comment(
-            key1,
-            "Test comment".to_string(),
-            0,
-            anchor..anchor,
-            cx,
-        );
+        editor.add_review_comment(key1, "Test comment".to_string(), 0, anchor..anchor, cx);
 
         // Verify second key (same hunk) finds the comment
         let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -31272,7 +31254,9 @@ fn test_diff_review_drag_state(cx: &mut TestAppContext) {
     // Verify drag state is set
     editor
         .update(cx, |editor, _window, _cx| {
-            let drag_state = editor.diff_review_drag_state.expect("Drag state should be set");
+            let drag_state = editor
+                .diff_review_drag_state
+                .expect("Drag state should be set");
             assert_eq!(drag_state.start_row, DisplayRow(1));
             assert_eq!(drag_state.current_row, DisplayRow(1));
         })
@@ -31288,7 +31272,9 @@ fn test_diff_review_drag_state(cx: &mut TestAppContext) {
     // Verify drag state is updated
     editor
         .update(cx, |editor, _window, _cx| {
-            let drag_state = editor.diff_review_drag_state.expect("Drag state should still be set");
+            let drag_state = editor
+                .diff_review_drag_state
+                .expect("Drag state should still be set");
             assert_eq!(drag_state.start_row, DisplayRow(1));
             assert_eq!(drag_state.current_row, DisplayRow(3));
             // Verify row_range returns sorted range
@@ -31377,13 +31363,7 @@ fn test_calculate_overlay_height(cx: &mut TestAppContext) {
         );
 
         // Add one comment
-        editor.add_review_comment(
-            key.clone(),
-            "Comment 1".to_string(),
-            0,
-            anchor..anchor,
-            cx,
-        );
+        editor.add_review_comment(key.clone(), "Comment 1".to_string(), 0, anchor..anchor, cx);
 
         let snapshot = editor.buffer().read(cx).snapshot(cx);
 
@@ -31404,20 +31384,8 @@ fn test_calculate_overlay_height(cx: &mut TestAppContext) {
         );
 
         // Add more comments
-        editor.add_review_comment(
-            key.clone(),
-            "Comment 2".to_string(),
-            0,
-            anchor..anchor,
-            cx,
-        );
-        editor.add_review_comment(
-            key.clone(),
-            "Comment 3".to_string(),
-            0,
-            anchor..anchor,
-            cx,
-        );
+        editor.add_review_comment(key.clone(), "Comment 2".to_string(), 0, anchor..anchor, cx);
+        editor.add_review_comment(key.clone(), "Comment 3".to_string(), 0, anchor..anchor, cx);
 
         let snapshot = editor.buffer().read(cx).snapshot(cx);
 
