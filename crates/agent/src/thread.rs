@@ -749,6 +749,7 @@ pub struct Thread {
     templates: Arc<Templates>,
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
+    thinking_enabled: bool,
     prompt_capabilities_tx: watch::Sender<acp::PromptCapabilities>,
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
@@ -811,6 +812,7 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
+            thinking_enabled: true,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -872,6 +874,7 @@ impl Thread {
             templates,
             model: Some(model),
             summarization_model: None,
+            thinking_enabled: true,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -1069,6 +1072,8 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
+            // TODO: Persist this on the `DbThread`.
+            thinking_enabled: true,
             project,
             action_log,
             updated_at: db_thread.updated_at,
@@ -1165,6 +1170,15 @@ impl Thread {
     ) {
         self.summarization_model = model;
         cx.notify()
+    }
+
+    pub fn thinking_enabled(&self) -> bool {
+        self.thinking_enabled
+    }
+
+    pub fn set_thinking_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.thinking_enabled = enabled;
+        cx.notify();
     }
 
     pub fn last_message(&self) -> Option<Message> {
@@ -2292,7 +2306,7 @@ impl Thread {
             tool_choice: None,
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
-            thinking_allowed: true,
+            thinking_allowed: self.thinking_enabled,
             bypass_rate_limit: false,
         };
 

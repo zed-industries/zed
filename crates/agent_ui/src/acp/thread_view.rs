@@ -6425,7 +6425,10 @@ impl AcpThreadView {
     }
 
     fn render_thinking_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let thinking = false;
+        let thinking = self
+            .as_native_thread(cx)
+            .map(|thread| thread.read(cx).thinking_enabled())
+            .unwrap_or(false);
 
         let tooltip_label = if thinking {
             "Disable Thinking Mode".to_string()
@@ -6440,8 +6443,12 @@ impl AcpThreadView {
             .toggle_state(thinking)
             .selected_icon_color(Some(Color::Custom(cx.theme().players().agent().cursor)))
             .tooltip(Tooltip::text(tooltip_label))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                // TODO: Toggle thinking.
+            .on_click(cx.listener(move |this, _, _window, cx| {
+                if let Some(thread) = this.as_native_thread(cx) {
+                    thread.update(cx, |thread, cx| {
+                        thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
+                    });
+                }
             }))
             .into_any_element()
     }
