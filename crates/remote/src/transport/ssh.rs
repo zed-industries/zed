@@ -32,8 +32,7 @@ use tempfile::TempDir;
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
-    shell::{Shell, ShellKind},
-    shell_builder::ShellBuilder,
+    shell::ShellKind,
 };
 
 pub(crate) struct SshRemoteConnection {
@@ -883,9 +882,21 @@ impl SshRemoteConnection {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         delegate.set_status(Some("Extracting remote development server"), cx);
-        let server_mode = 0o755;
 
-        let shell_kind = ShellKind::Cmd;
+        if self.ssh_platform.os.is_windows() {
+            self.extract_server_binary_windows(dst_path, tmp_path).await
+        } else {
+            self.extract_server_binary_posix(dst_path, tmp_path).await
+        }
+    }
+
+    async fn extract_server_binary_posix(
+        &self,
+        dst_path: &RelPath,
+        tmp_path: &RelPath,
+    ) -> Result<()> {
+        let shell_kind = ShellKind::Posix;
+        let server_mode = 0o755;
         let orig_tmp_path = tmp_path.display(self.path_style());
         let server_mode = format!("{:o}", server_mode);
         let server_mode = shell_kind
@@ -893,20 +904,56 @@ impl SshRemoteConnection {
             .context("shell quoting")?;
         let dst_path = dst_path.display(self.path_style());
         let dst_path = shell_kind.try_quote(&dst_path).context("shell quoting")?;
-        let (program, args) = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".gz") {
-            unreachable!()
-        } else {
-            (
-                // TODO: We need a ShellBuilder API to do this correctly.
-                "cmd.exe",
-                &[
-                    "/c".to_owned(),
-                    format!("move /y {} {}", &orig_tmp_path, &dst_path),
-                ],
+        let script = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".gz") {
+            let orig_tmp_path = shell_kind
+                .try_quote(&orig_tmp_path)
+                .context("shell quoting")?;
+            let tmp_path = shell_kind.try_quote(&tmp_path).context("shell quoting")?;
+            format!(
+                "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
             )
+        } else {
+            let orig_tmp_path = shell_kind
+                .try_quote(&orig_tmp_path)
+                .context("shell quoting")?;
+            format!("chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}",)
         };
+        let args = shell_kind.args_for_shell(false, script.to_string());
         self.socket
-            .run_command(self.ssh_shell_kind, program, args, true)
+            .run_command(self.ssh_shell_kind, "sh", &args, true)
+            .await?;
+        Ok(())
+    }
+
+    async fn extract_server_binary_windows(
+        &self,
+        dst_path: &RelPath,
+        tmp_path: &RelPath,
+    ) -> Result<()> {
+        let shell_kind = ShellKind::Pwsh;
+        let orig_tmp_path = tmp_path.display(self.path_style());
+        let dst_path = dst_path.display(self.path_style());
+        let dst_path = shell_kind.try_quote(&dst_path).context("shell quoting")?;
+
+        let script = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".zip") {
+            let orig_tmp_path = shell_kind
+                .try_quote(&orig_tmp_path)
+                .context("shell quoting")?;
+            let tmp_path = shell_kind.try_quote(tmp_path).context("shell quoting")?;
+            format!(
+                "Expand-Archive -Force -Path {orig_tmp_path} -DestinationPath {tmp_path} -ErrorAction Stop;
+                 Move-Item -Force {tmp_path} {dst_path}",
+            )
+        } else {
+            let orig_tmp_path = shell_kind
+                .try_quote(&orig_tmp_path)
+                .context("shell quoting")?;
+            format!("Move-Item -Force {orig_tmp_path} {dst_path}")
+        };
+
+        let args = shell_kind.args_for_shell(false, script);
+        self.socket
+            .run_command(self.ssh_shell_kind, "powershell", &args, true)
             .await?;
         Ok(())
     }
@@ -1073,9 +1120,6 @@ impl SshSocket {
             to_run.push(' ');
             to_run.push_str(&shell_kind.try_quote(arg.as_ref()).expect("shell quoting"));
         }
-        // On Unix, we prefix with `cd` to ensure we start in the user's home directory,
-        // which triggers tools like direnv/asdf/mise. On Windows, `cd` prints the current
-        // directory, so we skip this.
         let to_run = if cfg!(windows) {
             to_run
         } else {
@@ -1252,10 +1296,31 @@ impl SshSocket {
     }
 
     async fn shell_windows(&self) -> String {
-        // powershell is always the default, and cannot really be removed from the system
-        // so we can rely on that fact and reasonably assume that we will be running in a
-        // powershell environment
-        "cmd.exe".to_owned()
+        const DEFAULT_SHELL: &str = "cmd.exe";
+
+        // We detect the shell used by the SSH session by running the following command in PowerShell:
+        // (Get-CimInstance Win32_Process -Filter "ProcessId = $((Get-CimInstance Win32_Process -Filter ProcessId=$PID).ParentProcessId)").Name
+        // This prints the name of PowerShell's parent process (which will be the shell that SSH launched).
+        // We pass it as a Base64 encoded string since we don't yet know how to correctly quote that command.
+        // (We'd need to know what the shell is to do that...)
+        match self
+            .run_command(
+                ShellKind::Cmd,
+                "powershell",
+                &[
+                    "-E",
+                    "KABHAGUAdAAtAEMAaQBtAEkAbgBzAHQAYQBuAGMAZQAgAFcAaQBuADMAMgBfAFAAcgBvAGMAZQBzAHMAIAAtAEYAaQBsAHQAZQByACAAIgBQAHIAbwBjAGUAcwBzAEkAZAAgAD0AIAAkACgAKABHAGUAdAAtAEMAaQBtAEkAbgBzAHQAYQBuAGMAZQAgAFcAaQBuADMAMgBfAFAAcgBvAGMAZQBzAHMAIAAtAEYAaQBsAHQAZQByACAAUAByAG8AYwBlAHMAcwBJAGQAPQAkAFAASQBEACkALgBQAGEAcgBlAG4AdABQAHIAbwBjAGUAcwBzAEkAZAApACIAKQAuAE4AYQBtAGUA",
+                ],
+                false,
+            )
+            .await
+        {
+            Ok(output) => parse_shell(&output, DEFAULT_SHELL),
+            Err(e) => {
+                log::error!("Failed to detect remote shell: {e}");
+                DEFAULT_SHELL.to_owned()
+            }
+        }
     }
 }
 
