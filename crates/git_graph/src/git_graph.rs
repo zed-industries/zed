@@ -130,7 +130,6 @@ pub struct GitGraph {
     selected_commit_diff: Option<CommitDiff>,
     _commit_diff_task: Option<Task<()>>,
     _load_task: Option<Task<()>>,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl GitGraph {
@@ -152,39 +151,28 @@ impl GitGraph {
         let log_order = LogOrder::default();
 
         cx.subscribe(&git_store, |this, _, event, cx| match event {
-            GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::BranchChanged, true) => {
-                // todo! only call load data from render, we should set a bool here
-                // todo! We should check that the repo actually has a change that would affect the graph
-                this.graph_data.clear();
-                cx.notify();
-            }
-            GitStoreEvent::ActiveRepositoryChanged(repo_id) => {
-                this.graph_data.clear();
-                this._subscriptions.clear();
-                cx.notify();
-
-                if let Some(repository) = this.project.read(cx).active_repository(cx) {
-                    // todo! we can merge the repository event handler with the git store events
-                    this._subscriptions =
-                        vec![cx.subscribe(&repository, Self::on_repository_event)];
+            GitStoreEvent::RepositoryUpdated(_, repo_event, is_active) => {
+                if *is_active {
+                    if let Some(repository) = this.project.read(cx).active_repository(cx) {
+                        this.on_repository_event(repository, repo_event, cx);
+                    }
                 }
             }
-            // todo! active repository has changed we should invalidate the graph state and reset our repo subscription
+            GitStoreEvent::ActiveRepositoryChanged(_) => {
+                this.graph_data.clear();
+                cx.notify();
+            }
             _ => {}
         })
         .detach();
 
-        let mut _subscriptions = if let Some(repository) = project.read(cx).active_repository(cx) {
+        if let Some(repository) = project.read(cx).active_repository(cx) {
             repository.update(cx, |repository, cx| {
                 let commits =
                     repository.graph_data(log_source.clone(), log_order, 0..usize::MAX, cx);
                 graph.add_commits(commits);
             });
-
-            vec![cx.subscribe(&repository, Self::on_repository_event)]
-        } else {
-            vec![]
-        };
+        }
 
         let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
         let mut row_height = Self::row_height(cx);
@@ -219,7 +207,6 @@ impl GitGraph {
             selected_commit_diff: None,
             log_source,
             log_order,
-            _subscriptions,
         }
     }
 
@@ -244,6 +231,10 @@ impl GitGraph {
                 });
 
                 self.graph_data.max_commit_count = AllCommitCount::Loaded(*commit_count);
+            }
+            RepositoryEvent::BranchChanged => {
+                self.graph_data.clear();
+                cx.notify();
             }
             _ => {}
         }
