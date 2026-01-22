@@ -2433,25 +2433,42 @@ impl Project {
     pub fn delete_file(
         &mut self,
         path: ProjectPath,
-        trash: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
+    ) -> Option<Task<Result<()>>> {
         let entry = self.entry_for_path(&path, cx)?;
-        self.delete_entry(entry.id, trash, cx)
+        self.delete_entry(entry.id, cx)
+    }
+
+    #[inline]
+    pub fn trash_file(
+        &mut self,
+        path: ProjectPath,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<TrashedEntry>>> {
+        let entry = self.entry_for_path(&path, cx)?;
+        self.trash_entry(entry.id, cx)
     }
 
     #[inline]
     pub fn delete_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        trash: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
+    ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
         cx.emit(Event::DeletedEntry(worktree.read(cx).id(), entry_id));
-        worktree.update(cx, |worktree, cx| {
-            worktree.delete_entry(entry_id, trash, cx)
-        })
+        worktree.update(cx, |worktree, cx| worktree.delete_entry(entry_id, cx))
+    }
+
+    #[inline]
+    pub fn trash_entry(
+        &mut self,
+        entry_id: ProjectEntryId,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<TrashedEntry>>> {
+        let worktree = self.worktree_for_entry(entry_id, cx)?;
+        cx.emit(Event::DeletedEntry(worktree.read(cx).id(), entry_id));
+        worktree.update(cx, |worktree, cx| worktree.trash_entry(entry_id, cx))
     }
 
     #[inline]
@@ -2462,7 +2479,9 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_id(worktree_id, cx)?;
-        cx.emit(Event::RestoredEntry((worktree_id, entry.path.clone()).into()));
+        cx.emit(Event::RestoredEntry(
+            (worktree_id, entry.path.clone()).into(),
+        ));
         worktree.update(cx, |worktree, cx| worktree.restore_entry(entry, cx))
     }
 

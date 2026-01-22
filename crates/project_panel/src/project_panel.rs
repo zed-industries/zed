@@ -2130,12 +2130,12 @@ impl ProjectPanel {
                 };
                 let Some(task) = self
                     .project
-                    .update(cx, |project, cx| project.delete_entry(entry_id, true, cx))
+                    .update(cx, |project, cx| project.trash_entry(entry_id, cx))
                 else {
-                    return Task::ready(Err(anyhow!("failed to delete entry")));
+                    return Task::ready(Err(anyhow!("failed to trash entry")));
                 };
                 cx.spawn(async move |_, _cx| {
-                    let entry = task.await?.ok_or_else(|| anyhow!("expected trash item"))?;
+                    let entry = task.await?;
                     Ok(ProjectPanelOperation::Trash {
                         worktree_id: project_path.worktree_id,
                         entry,
@@ -2451,22 +2451,31 @@ impl ProjectPanel {
                     return anyhow::Ok(());
                 }
                 for (entry_id, project_path, _, _is_dir) in file_paths {
-                    let trashed_entry = panel
-                        .update(cx, |panel, cx| {
-                            panel
-                                .project
-                                .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
-                                .context("no such entry")
-                        })??
-                        .await?;
+                    if trash {
+                        let trashed_entry = panel
+                            .update(cx, |panel, cx| {
+                                panel
+                                    .project
+                                    .update(cx, |project, cx| project.trash_entry(entry_id, cx))
+                                    .context("no such entry")
+                            })??
+                            .await?;
 
-                    if let Some(entry) = trashed_entry {
                         panel.update(cx, |panel, _| {
                             panel.record_operation(ProjectPanelOperation::Trash {
                                 worktree_id: project_path.worktree_id,
-                                entry,
+                                entry: trashed_entry,
                             });
                         })?;
+                    } else {
+                        panel
+                            .update(cx, |panel, cx| {
+                                panel
+                                    .project
+                                    .update(cx, |project, cx| project.delete_entry(entry_id, cx))
+                                    .context("no such entry")
+                            })??
+                            .await?;
                     }
                 }
                 panel.update_in(cx, |panel, window, cx| {

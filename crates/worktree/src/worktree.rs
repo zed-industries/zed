@@ -816,12 +816,37 @@ impl Worktree {
     pub fn delete_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        trash: bool,
         cx: &mut Context<Worktree>,
-    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
+    ) -> Option<Task<Result<()>>> {
         let task = match self {
-            Worktree::Local(this) => this.delete_entry(entry_id, trash, cx),
-            Worktree::Remote(this) => this.delete_entry(entry_id, trash, cx),
+            Worktree::Local(this) => this.delete_entry(entry_id, cx),
+            Worktree::Remote(this) => this.delete_entry(entry_id, cx),
+        }?;
+
+        let entry = match &*self {
+            Worktree::Local(this) => this.entry_for_id(entry_id),
+            Worktree::Remote(this) => this.entry_for_id(entry_id),
+        }?;
+
+        let mut ids = vec![entry_id];
+        let path = &*entry.path;
+
+        self.get_children_ids_recursive(path, &mut ids);
+
+        for id in ids {
+            cx.emit(Event::DeletedEntry(id));
+        }
+        Some(task)
+    }
+
+    pub fn trash_entry(
+        &mut self,
+        entry_id: ProjectEntryId,
+        cx: &mut Context<Worktree>,
+    ) -> Option<Task<Result<TrashedEntry>>> {
+        let task = match self {
+            Worktree::Local(this) => this.trash_entry(entry_id, cx),
+            Worktree::Remote(this) => this.trash_entry(entry_id, cx),
         }?;
 
         let entry = match &*self {
@@ -971,18 +996,32 @@ impl Worktree {
         let (scan_id, task) = this.update(&mut cx, |this, cx| {
             (
                 this.scan_id(),
-                this.delete_entry(
-                    ProjectEntryId::from_proto(request.entry_id),
-                    request.use_trash,
-                    cx,
-                ),
+                this.delete_entry(ProjectEntryId::from_proto(request.entry_id), cx),
+            )
+        });
+        task.ok_or_else(|| anyhow::anyhow!("invalid entry"))?
+            .await?;
+        Ok(proto::DeleteProjectEntryResponse {
+            worktree_scan_id: scan_id as u64,
+        })
+    }
+
+    pub async fn handle_trash_entry(
+        this: Entity<Self>,
+        request: proto::TrashProjectEntry,
+        mut cx: AsyncApp,
+    ) -> Result<proto::TrashProjectEntryResponse> {
+        let (scan_id, task) = this.update(&mut cx, |this, cx| {
+            (
+                this.scan_id(),
+                this.trash_entry(ProjectEntryId::from_proto(request.entry_id), cx),
             )
         });
         let trashed_entry = task
             .ok_or_else(|| anyhow::anyhow!("invalid entry"))?
             .await?;
-        Ok(proto::DeleteProjectEntryResponse {
-            entry: trashed_entry.as_ref().map(proto::TrashedEntry::from),
+        Ok(proto::TrashProjectEntryResponse {
+            entry: Some(proto::TrashedEntry::from(&trashed_entry)),
             worktree_scan_id: scan_id as u64,
         })
     }
@@ -1635,24 +1674,16 @@ impl LocalWorktree {
     pub fn delete_entry(
         &self,
         entry_id: ProjectEntryId,
-        trash: bool,
         cx: &Context<Worktree>,
-    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
+    ) -> Option<Task<Result<()>>> {
         let entry = self.entry_for_id(entry_id)?.clone();
         let entry_path = entry.path.clone();
         let abs_path = self.absolutize(&entry.path);
         let fs = self.fs.clone();
 
         let delete = cx.background_spawn(async move {
-            let trash_item = if entry.is_file() {
-                if trash {
-                    Some(fs.trash_file(&abs_path).await?)
-                } else {
-                    fs.remove_file(&abs_path, Default::default()).await?;
-                    None
-                }
-            } else if trash {
-                Some(fs.trash_dir(&abs_path).await?)
+            if entry.is_file() {
+                fs.remove_file(&abs_path, Default::default()).await?;
             } else {
                 fs.remove_dir(
                     &abs_path,
@@ -1662,7 +1693,38 @@ impl LocalWorktree {
                     },
                 )
                 .await?;
-                None
+            };
+            anyhow::Ok(())
+        });
+
+        Some(cx.spawn(async move |this, cx| {
+            delete.await?;
+            this.update(cx, |this, _| {
+                this.as_local_mut()
+                    .unwrap()
+                    .refresh_entries_for_paths(vec![entry_path.clone()])
+            })?
+            .recv()
+            .await;
+            Ok(())
+        }))
+    }
+
+    pub fn trash_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        cx: &Context<Worktree>,
+    ) -> Option<Task<Result<TrashedEntry>>> {
+        let entry = self.entry_for_id(entry_id)?.clone();
+        let entry_path = entry.path.clone();
+        let abs_path = self.absolutize(&entry.path);
+        let fs = self.fs.clone();
+
+        let delete = cx.background_spawn(async move {
+            let trash_item = if entry.is_file() {
+                fs.trash_file(&abs_path).await?
+            } else {
+                fs.trash_dir(&abs_path).await?
             };
             anyhow::Ok(trash_item)
         });
@@ -1676,10 +1738,10 @@ impl LocalWorktree {
             })?
             .recv()
             .await;
-            Ok(trash_item.map(|trash_item| TrashedEntry {
+            Ok(TrashedEntry {
                 trash_item,
                 path: entry_path,
-            }))
+            })
         }))
     }
 
@@ -2073,13 +2135,11 @@ impl RemoteWorktree {
     fn delete_entry(
         &self,
         entry_id: ProjectEntryId,
-        trash: bool,
         cx: &Context<Worktree>,
-    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
+    ) -> Option<Task<Result<()>>> {
         let response = self.client.request(proto::DeleteProjectEntry {
             project_id: self.project_id,
             entry_id: entry_id.to_proto(),
-            use_trash: trash,
         });
         Some(cx.spawn(async move |this, cx| {
             let response = response.await?;
@@ -2097,7 +2157,39 @@ impl RemoteWorktree {
                 this.snapshot = snapshot.clone();
             })?;
 
-            response.entry.map(TrashedEntry::try_from).transpose()
+            Ok(())
+        }))
+    }
+
+    fn trash_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        cx: &Context<Worktree>,
+    ) -> Option<Task<Result<TrashedEntry>>> {
+        let response = self.client.request(proto::TrashProjectEntry {
+            project_id: self.project_id,
+            entry_id: entry_id.to_proto(),
+        });
+        Some(cx.spawn(async move |this, cx| {
+            let response = response.await?;
+            let scan_id = response.worktree_scan_id as usize;
+
+            this.update(cx, move |this, _| {
+                this.as_remote_mut().unwrap().wait_for_snapshot(scan_id)
+            })?
+            .await?;
+
+            this.update(cx, |this, _| {
+                let this = this.as_remote_mut().unwrap();
+                let snapshot = &mut this.background_snapshot.lock().0;
+                snapshot.delete_entry(entry_id);
+                this.snapshot = snapshot.clone();
+            })?;
+
+            let entry = response
+                .entry
+                .ok_or_else(|| anyhow::anyhow!("missing trashed entry data"))?;
+            TrashedEntry::try_from(entry)
         }))
     }
 
