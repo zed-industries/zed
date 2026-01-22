@@ -1355,16 +1355,16 @@ impl AcpThreadView {
         matches!(self.thread_state, ThreadState::Loading { .. })
     }
 
-    fn resume_chat(&mut self, cx: &mut Context<Self>) {
+    fn retry_generation(&mut self, cx: &mut Context<Self>) {
         self.thread_error.take();
         let Some(thread) = self.thread() else {
             return;
         };
-        if !thread.read(cx).can_resume(cx) {
+        if !thread.read(cx).can_retry(cx) {
             return;
         }
 
-        let task = thread.update(cx, |thread, cx| thread.resume(cx));
+        let task = thread.update(cx, |thread, cx| thread.retry(cx));
         cx.spawn(async move |this, cx| {
             let result = task.await;
 
@@ -7943,7 +7943,7 @@ impl AcpThreadView {
     ) -> Callout {
         let can_resume = self
             .thread()
-            .map_or(false, |thread| thread.read(cx).can_resume(cx));
+            .map_or(false, |thread| thread.read(cx).can_retry(cx));
 
         let markdown = if let Some(markdown) = &self.thread_error_markdown {
             markdown.clone()
@@ -7972,7 +7972,7 @@ impl AcpThreadView {
                                 .icon_size(IconSize::Small)
                                 .tooltip(Tooltip::text("Retry Generation"))
                                 .on_click(cx.listener(|this, _, _window, cx| {
-                                    this.resume_chat(cx);
+                                    this.retry_generation(cx);
                                 })),
                         )
                     })
