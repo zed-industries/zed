@@ -21498,7 +21498,7 @@ impl Editor {
     pub fn all_review_comments(
         &self,
     ) -> impl Iterator<Item = (&DiffHunkKey, &Vec<StoredReviewComment>)> {
-        self.stored_review_comments.iter()
+        self.stored_review_comments.iter().map(|(k, v)| (k, v))
     }
 
     /// Returns the count of comments for a specific hunk.
