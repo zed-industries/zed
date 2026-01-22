@@ -670,7 +670,7 @@ impl KeymapFile {
         generator.definitions_mut().insert(
             KeymapAction::schema_name().to_string(),
             json!({
-                "oneOf": keymap_action_alternatives
+                "anyOf": keymap_action_alternatives
             }),
         );
 

@@ -24,6 +24,12 @@ impl FeatureFlag for AcpBetaFeatureFlag {
     const NAME: &'static str = "acp-beta";
 }
 
+pub struct UserSlashCommandsFeatureFlag;
+
+impl FeatureFlag for UserSlashCommandsFeatureFlag {
+    const NAME: &'static str = "slash-commands";
+}
+
 pub struct ToolPermissionsFeatureFlag;
 
 impl FeatureFlag for ToolPermissionsFeatureFlag {
@@ -56,18 +62,6 @@ impl FeatureFlag for DiffReviewFeatureFlag {
     const NAME: &'static str = "diff-review";
 
     fn enabled_for_staff() -> bool {
-        false
-    }
-}
-
-/// Whether to use the OpenAI Responses API format when sending requests to Cloud.
-pub struct OpenAiResponsesApiFeatureFlag;
-
-impl FeatureFlag for OpenAiResponsesApiFeatureFlag {
-    const NAME: &'static str = "open-ai-responses-api";
-
-    fn enabled_for_staff() -> bool {
-        // Add yourself to the flag manually to test it out.
         false
     }
 }

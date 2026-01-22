@@ -139,6 +139,19 @@ impl Progress {
         inner.total_examples = total;
     }
 
+    pub fn set_max_example_name_len(&self, example_names: impl Iterator<Item = impl AsRef<str>>) {
+        let mut inner = self.inner.lock().unwrap();
+        let max_name_width = inner
+            .terminal_width
+            .saturating_sub(MARGIN * 2)
+            .saturating_div(3)
+            .max(1);
+        inner.max_example_name_len = example_names
+            .map(|name| name.as_ref().len().min(max_name_width))
+            .max()
+            .unwrap_or(0);
+    }
+
     pub fn increment_failed(&self) {
         let mut inner = self.inner.lock().unwrap();
         inner.failed_examples += 1;
@@ -176,14 +189,15 @@ impl Progress {
 
         Self::clear_status_lines(&mut inner);
 
-        let max_name_width = inner
-            .terminal_width
-            .saturating_sub(MARGIN * 2)
-            .saturating_div(3)
-            .max(1);
-        inner.max_example_name_len = inner
-            .max_example_name_len
-            .max(example_name.len().min(max_name_width));
+        // Update max_example_name_len if not already set via set_max_example_name_len
+        if inner.max_example_name_len == 0 {
+            let max_name_width = inner
+                .terminal_width
+                .saturating_sub(MARGIN * 2)
+                .saturating_div(3)
+                .max(1);
+            inner.max_example_name_len = example_name.len().min(max_name_width);
+        }
         inner.in_progress.insert(
             example_name.to_string(),
             InProgressTask {
@@ -228,17 +242,24 @@ impl Progress {
         };
 
         if task.step == step {
+            let duration = task.started_at.elapsed();
+
+            // Skip logging for tasks that complete quickly (under 500ms)
+            let should_print = duration >= Duration::from_millis(500);
+
             inner.completed.push(CompletedTask {
                 step: task.step,
                 example_name: example_name.to_string(),
-                duration: task.started_at.elapsed(),
+                duration,
                 info: task.info,
             });
 
             Self::clear_status_lines(&mut inner);
-            Self::print_logging_closing_divider(&mut inner);
-            if let Some(last_completed) = inner.completed.last() {
-                Self::print_completed(&inner, last_completed);
+            if should_print {
+                Self::print_logging_closing_divider(&mut inner);
+                if let Some(last_completed) = inner.completed.last() {
+                    Self::print_completed(&inner, last_completed);
+                }
             }
             Self::print_status_lines(&mut inner);
         } else {
