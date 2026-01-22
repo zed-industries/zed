@@ -268,12 +268,18 @@ impl FileHistoryView {
 
         if let Some(repo) = self.repository.upgrade() {
             let sha_str = entry.sha.to_string();
+            let file_filter = if self.history.path.is_empty() {
+                None
+            } else {
+                Some(self.history.path.clone())
+            };
+
             CommitView::open(
                 sha_str,
                 repo.downgrade(),
                 self.workspace.clone(),
                 None,
-                Some(self.history.path.clone()),
+                file_filter,
                 window,
                 cx,
             );
@@ -545,6 +551,10 @@ impl Item for FileHistoryView {
     }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        if self.history.path.is_empty() {
+            return "Recent Commits".into();
+        }
+
         let file_name = self
             .history
             .path
@@ -555,11 +565,19 @@ impl Item for FileHistoryView {
     }
 
     fn tab_tooltip_text(&self, _cx: &App) -> Option<SharedString> {
-        Some(format!("Git history for {}", self.history.path.as_unix_str()).into())
+        if self.history.path.is_empty() {
+            Some("Recent Commits".into())
+        } else {
+            Some(format!("Git history for {}", self.history.path.as_unix_str()).into())
+        }
     }
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
-        Some(Icon::new(IconName::GitBranch))
+        if self.history.path.is_empty() {
+            Some(Icon::new(IconName::HistoryRerun))
+        } else {
+            Some(Icon::new(IconName::GitBranch))
+        }
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
