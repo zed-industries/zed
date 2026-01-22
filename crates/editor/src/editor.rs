@@ -1034,36 +1034,20 @@ pub(crate) struct PhantomDiffReviewIndicator {
     pub is_active: bool,
 }
 
-impl PhantomDiffReviewIndicator {
-    /// Returns the display row range in sorted order (min..=max).
-    pub fn row_range(&self) -> std::ops::RangeInclusive<DisplayRow> {
-        let (start, end) = if self.start_row <= self.end_row {
-            (self.start_row, self.end_row)
-        } else {
-            (self.end_row, self.start_row)
-        };
-        start..=end
-    }
-}
-
-/// Tracks the state of a drag operation for selecting multiple lines for diff review.
-#[derive(Clone, Copy, Debug)]
+/// Drag state when selecting multiple lines
+#[derive(Clone, Debug)]
 pub(crate) struct DiffReviewDragState {
-    /// The row where the drag started.
-    pub start_row: DisplayRow,
-    /// The current row during the drag.
-    pub current_row: DisplayRow,
+    pub start_anchor: Anchor,
+    pub current_anchor: Anchor,
 }
 
 impl DiffReviewDragState {
     /// Returns the display row range in sorted order (min..=max).
-    pub fn row_range(&self) -> std::ops::RangeInclusive<DisplayRow> {
-        let (start, end) = if self.start_row <= self.current_row {
-            (self.start_row, self.current_row)
-        } else {
-            (self.current_row, self.start_row)
-        };
-        start..=end
+    pub fn row_range(&self, snapshot: &DisplaySnapshot) -> std::ops::RangeInclusive<DisplayRow> {
+        let start = self.start_anchor.to_display_point(snapshot).row();
+        let current = self.current_anchor.to_display_point(snapshot).row();
+        
+        (start..=current).sorted()
     }
 }
 
@@ -1084,8 +1068,6 @@ pub struct StoredReviewComment {
     pub id: usize,
     /// The comment text entered by the user.
     pub comment: String,
-    /// The buffer row where this comment was added (physical line number in the underlying file).
-    pub buffer_row: u32,
     /// Anchors for the code range being reviewed.
     pub anchor_range: Range<Anchor>,
     /// Timestamp when the comment was created (for chronological ordering).
@@ -1095,16 +1077,10 @@ pub struct StoredReviewComment {
 }
 
 impl StoredReviewComment {
-    pub fn new(
-        id: usize,
-        comment: String,
-        buffer_row: u32,
-        anchor_range: Range<Anchor>,
-    ) -> Self {
+    pub fn new(id: usize, comment: String, anchor_range: Range<Anchor>) -> Self {
         Self {
             id,
             comment,
-            buffer_row,
             anchor_range,
             created_at: Instant::now(),
             is_editing: false,
@@ -1114,16 +1090,7 @@ impl StoredReviewComment {
 
 /// Represents an active diff review overlay that appears when clicking the "Add Review" button.
 pub(crate) struct DiffReviewOverlay {
-    /// The starting row of the line range being reviewed (physical line number in the underlying file).
-    /// Used for display purposes (e.g., "Lines 5-10").
-    pub start_row: u32,
-    /// The ending row of the line range being reviewed (physical line number in the underlying file).
-    /// Used for display purposes (e.g., "Lines 5-10").
-    pub end_row: u32,
-    /// The starting row in multibuffer coordinates. Used for creating anchors.
-    pub start_multi_buffer_row: MultiBufferRow,
-    /// The ending row in multibuffer coordinates. Used for creating anchors.
-    pub end_multi_buffer_row: MultiBufferRow,
+    pub anchor_range: Range<Anchor>,
     /// The block ID for the overlay.
     pub block_id: CustomBlockId,
     /// The editor entity for the review input.
@@ -21125,25 +21092,46 @@ impl Editor {
             .tooltip(Tooltip::text("Add Review (drag to select multiple lines)"))
             .on_mouse_down(
                 gpui::MouseButton::Left,
-                cx.listener(move |editor, _event: &gpui::MouseDownEvent, _window, cx| {
-                    editor.start_diff_review_drag(display_row, cx);
+                cx.listener(move |editor, _event: &gpui::MouseDownEvent, window, cx| {
+                    editor.start_diff_review_drag(display_row, window, cx);
                 }),
             )
     }
 
-    /// Starts a drag operation for selecting multiple lines for diff review.
-    pub fn start_diff_review_drag(&mut self, display_row: DisplayRow, cx: &mut Context<Self>) {
+    pub fn start_diff_review_drag(
+        &mut self,
+        display_row: DisplayRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.snapshot(window, cx);
+        let point = snapshot
+            .display_snapshot
+            .display_point_to_point(DisplayPoint::new(display_row, 0), Bias::Left);
+        let anchor = snapshot.buffer_snapshot().anchor_before(point);
         self.diff_review_drag_state = Some(DiffReviewDragState {
-            start_row: display_row,
-            current_row: display_row,
+            start_anchor: anchor,
+            current_anchor: anchor,
         });
         cx.notify();
     }
 
-    /// Updates the current row during a diff review drag operation.
-    pub fn update_diff_review_drag(&mut self, display_row: DisplayRow, cx: &mut Context<Self>) {
+    pub fn update_diff_review_drag(
+        &mut self,
+        display_row: DisplayRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.diff_review_drag_state.is_none() {
+            return;
+        }
+        let snapshot = self.snapshot(window, cx);
+        let point = snapshot
+            .display_snapshot
+            .display_point_to_point(DisplayPoint::new(display_row, 0), Bias::Left);
+        let anchor = snapshot.buffer_snapshot().anchor_before(point);
         if let Some(drag_state) = &mut self.diff_review_drag_state {
-            drag_state.current_row = display_row;
+            drag_state.current_anchor = anchor;
             cx.notify();
         }
     }
@@ -21151,8 +21139,9 @@ impl Editor {
     /// Ends a diff review drag operation and shows the overlay for the selected range.
     pub fn end_diff_review_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(drag_state) = self.diff_review_drag_state.take() {
-            let range = drag_state.row_range();
-            self.show_diff_review_overlay(*range.start(), *range.end(), window, cx);
+            let snapshot = self.snapshot(window, cx);
+            let range = drag_state.row_range(&snapshot.display_snapshot);
+            self.show_diff_review_overlay(*range.start()..*range.end(), window, cx);
         }
         cx.notify();
     }
@@ -21188,63 +21177,36 @@ impl Editor {
 
     pub fn show_diff_review_overlay(
         &mut self,
-        start_display_row: DisplayRow,
-        end_display_row: DisplayRow,
+        display_range: Range<DisplayRow>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Ensure start <= end for display rows
-        let (start_display_row, end_display_row) = if start_display_row <= end_display_row {
-            (start_display_row, end_display_row)
-        } else {
-            (end_display_row, start_display_row)
-        };
+        let Range { start, end } = display_range.sorted();
 
-        // Check if there's already an overlay for the same hunk - if so, just focus it
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let editor_snapshot = self.snapshot(window, cx);
 
         // Convert display rows to multibuffer points
-        let start_display_point = DisplayPoint::new(start_display_row, 0);
-        let start_multi_buffer_point = editor_snapshot
+        let start_point = editor_snapshot
             .display_snapshot
-            .display_point_to_point(start_display_point, Bias::Left);
-
-        let end_display_point = DisplayPoint::new(end_display_row, 0);
-        let end_multi_buffer_point = editor_snapshot
+            .display_point_to_point(DisplayPoint::new(start, 0), Bias::Left);
+        let end_display_point = DisplayPoint::new(end, 0);
+        let end_point = editor_snapshot
             .display_snapshot
             .display_point_to_point(end_display_point, Bias::Left);
+        let end_multi_buffer_row = MultiBufferRow(end_point.row);
 
-        // Get the actual file line numbers for display purposes using point_to_buffer_point
-        let start_file_row = buffer_snapshot
-            .point_to_buffer_point(start_multi_buffer_point)
-            .map(|(_, point, _)| point.row)
-            .unwrap_or(start_multi_buffer_point.row);
-
-        let end_file_row = buffer_snapshot
-            .point_to_buffer_point(end_multi_buffer_point)
-            .map(|(_, point, _)| point.row)
-            .unwrap_or(end_multi_buffer_point.row);
-
-        // Ensure start <= end for file rows
-        let (start_row, end_row) = if start_file_row <= end_file_row {
-            (start_file_row, end_file_row)
-        } else {
-            (end_file_row, start_file_row)
-        };
-
-        // Keep multibuffer row for anchor creation
-        let start_multi_buffer_row = MultiBufferRow(start_multi_buffer_point.row);
-        let end_multi_buffer_row = MultiBufferRow(end_multi_buffer_point.row);
-
-        let buffer_point = start_multi_buffer_point;
+        // Create anchor range for the selected lines (start of first line to end of last line)
+        let line_end = Point::new(end_point.row, buffer_snapshot.line_len(end_multi_buffer_row));
+        let anchor_range =
+            buffer_snapshot.anchor_after(start_point)..buffer_snapshot.anchor_before(line_end);
 
         // Compute the hunk key for this display row
         let file_path = buffer_snapshot
-            .file_at(Point::new(buffer_point.row, 0))
+            .file_at(start_point)
             .map(|file: &Arc<dyn language::File>| file.path().clone())
             .unwrap_or_else(|| Arc::from(util::rel_path::RelPath::empty()));
-        let hunk_start_anchor = buffer_snapshot.anchor_before(Point::new(buffer_point.row, 0));
+        let hunk_start_anchor = buffer_snapshot.anchor_before(start_point);
         let new_hunk_key = DiffHunkKey {
             file_path,
             hunk_start_anchor,
@@ -21331,10 +21293,7 @@ impl Editor {
         };
 
         self.diff_review_overlays.push(DiffReviewOverlay {
-            start_row,
-            end_row,
-            start_multi_buffer_row,
-            end_multi_buffer_row,
+            anchor_range,
             block_id,
             prompt_editor: prompt_editor.clone(),
             hunk_key,
@@ -21472,44 +21431,15 @@ impl Editor {
         };
         let overlay = &self.diff_review_overlays[overlay_index];
 
-        // Get the comment text from the prompt editor
         let comment_text = overlay.prompt_editor.read(cx).text(cx).trim().to_string();
-
-        // Don't submit if the comment is empty
         if comment_text.is_empty() {
             return;
         }
 
-        // Get the file row (for display) and multibuffer rows (for anchors)
-        let start_file_row = overlay.start_row;
-        let start_multi_buffer_row = overlay.start_multi_buffer_row;
-        let end_multi_buffer_row = overlay.end_multi_buffer_row;
+        let anchor_range = overlay.anchor_range.clone();
         let hunk_key = overlay.hunk_key.clone();
 
-        // Get buffer snapshot for creating anchors
-        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-
-        // Get start position (beginning of start_multi_buffer_row) for anchor
-        let line_start = Point::new(start_multi_buffer_row.0, 0);
-
-        // Get end position (end of end_multi_buffer_row) for anchor
-        let line_end = Point::new(
-            end_multi_buffer_row.0,
-            buffer_snapshot.line_len(end_multi_buffer_row),
-        );
-
-        // Create anchors for the full line range selection (using multibuffer coordinates)
-        let anchor_start = buffer_snapshot.anchor_after(line_start);
-        let anchor_end = buffer_snapshot.anchor_before(line_end);
-
-        // Store the comment locally (use file row for display purposes)
-        self.add_review_comment(
-            hunk_key.clone(),
-            comment_text,
-            start_file_row,
-            anchor_start..anchor_end,
-            cx,
-        );
+        self.add_review_comment(hunk_key.clone(), comment_text, anchor_range, cx);
 
         // Clear the prompt editor but keep the overlay open
         if let Some(overlay) = self.diff_review_overlays.get(overlay_index) {
@@ -21532,20 +21462,22 @@ impl Editor {
             .map(|overlay| &overlay.prompt_editor)
     }
 
-    /// Returns the file row for the first diff review overlay, if one is active.
-    /// This is the physical line number in the underlying file.
-    pub fn diff_review_buffer_row(&self) -> Option<u32> {
-        self.diff_review_overlays
-            .first()
-            .map(|overlay| overlay.start_row)
-    }
-
-    /// Returns the line range (start_row, end_row) for the first diff review overlay, if one is active.
-    /// These are physical line numbers in the underlying file.
-    pub fn diff_review_line_range(&self) -> Option<(u32, u32)> {
-        self.diff_review_overlays
-            .first()
-            .map(|overlay| (overlay.start_row, overlay.end_row))
+    /// Returns the line range for the first diff review overlay, if one is active.
+    /// Returns (start_row, end_row) as physical line numbers in the underlying file.
+    pub fn diff_review_line_range(&self, cx: &App) -> Option<(u32, u32)> {
+        let overlay = self.diff_review_overlays.first()?;
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let start_point = overlay.anchor_range.start.to_point(&snapshot);
+        let end_point = overlay.anchor_range.end.to_point(&snapshot);
+        let start_row = snapshot
+            .point_to_buffer_point(start_point)
+            .map(|(_, p, _)| p.row)
+            .unwrap_or(start_point.row);
+        let end_row = snapshot
+            .point_to_buffer_point(end_point)
+            .map(|(_, p, _)| p.row)
+            .unwrap_or(end_point.row);
+        Some((start_row, end_row))
     }
 
     /// Sets whether the comments section is expanded in the diff review overlay.
@@ -21604,14 +21536,13 @@ impl Editor {
         &mut self,
         hunk_key: DiffHunkKey,
         comment: String,
-        buffer_row: u32,
         anchor_range: Range<Anchor>,
         cx: &mut Context<Self>,
     ) -> usize {
         let id = self.next_review_comment_id;
         self.next_review_comment_id += 1;
 
-        let stored_comment = StoredReviewComment::new(id, comment, buffer_row, anchor_range);
+        let stored_comment = StoredReviewComment::new(id, comment, anchor_range);
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let key_point = hunk_key.hunk_start_anchor.to_point(&snapshot);
@@ -21998,32 +21929,64 @@ impl Editor {
         editor_handle: &WeakEntity<Editor>,
         cx: &mut BlockContext,
     ) -> AnyElement {
+        fn format_line_ranges(ranges: &[(u32, u32)]) -> Option<String> {
+            if ranges.is_empty() {
+                return None;
+            }
+            let formatted: Vec<String> = ranges
+                .iter()
+                .map(|(start, end)| {
+                    let start_line = start + 1;
+                    let end_line = end + 1;
+                    if start_line == end_line {
+                        format!("Line {start_line}")
+                    } else {
+                        format!("Lines {start_line}-{end_line}")
+                    }
+                })
+                .collect();
+            // Don't show label for single line in single excerpt
+            if ranges.len() == 1 && ranges[0].0 == ranges[0].1 {
+                return None;
+            }
+            Some(formatted.join(" ⋯ "))
+        }
+
         let theme = cx.theme();
         let colors = theme.colors();
 
-        // Get stored comments, expanded state, inline editors, user avatar, and line range from the editor
-        let (comments, comments_expanded, inline_editors, user_avatar_uri, line_range) = editor_handle
+        let (comments, comments_expanded, inline_editors, user_avatar_uri, line_ranges) = editor_handle
             .upgrade()
             .map(|editor| {
                 let editor = editor.read(cx);
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 let comments = editor.comments_for_hunk(hunk_key, &snapshot).to_vec();
-                let snapshot = editor.buffer.read(cx).snapshot(cx);
-                let (expanded, editors, avatar_uri, line_range) = editor
+                let (expanded, editors, avatar_uri, line_ranges) = editor
                     .diff_review_overlays
                     .iter()
                     .find(|overlay| Editor::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot))
-                    .as_ref()
                     .map(|o| {
+                        let start_point = o.anchor_range.start.to_point(&snapshot);
+                        let end_point = o.anchor_range.end.to_point(&snapshot);
+                        // Get line ranges per excerpt to detect discontinuities
+                        let buffer_ranges = snapshot.range_to_buffer_ranges(start_point..end_point);
+                        let ranges: Vec<(u32, u32)> = buffer_ranges
+                            .iter()
+                            .map(|(buffer, range, _)| {
+                                let start = buffer.offset_to_point(range.start.0).row;
+                                let end = buffer.offset_to_point(range.end.0).row;
+                                (start, end)
+                            })
+                            .collect();
                         (
                             o.comments_expanded,
                             o.inline_edit_editors.clone(),
                             o.user_avatar_uri.clone(),
-                            Some((o.start_row, o.end_row)),
+                            if ranges.is_empty() { None } else { Some(ranges) },
                         )
                     })
                     .unwrap_or((true, HashMap::default(), None, None));
-                (comments, expanded, editors, avatar_uri, line_range)
+                (comments, expanded, editors, avatar_uri, line_ranges)
             })
             .unwrap_or((Vec::new(), true, HashMap::default(), None, None));
 
@@ -22039,21 +22002,15 @@ impl Editor {
             .px_2()
             .pb_2()
             .gap_2()
-            // Line range indicator (only shown for multi-line selections)
-            .when_some(line_range, |el, (start_row, end_row)| {
-                if start_row != end_row {
-                    // Display 1-based line numbers for user readability
-                    let start_line = start_row + 1;
-                    let end_line = end_row + 1;
+            // Line range indicator (only shown for multi-line selections or multiple excerpts)
+            .when_some(line_ranges, |el, ranges| {
+                let label = format_line_ranges(&ranges);
+                if let Some(label) = label {
                     el.child(
                         h_flex()
                             .w_full()
                             .px_2()
-                            .child(
-                                Label::new(format!("Lines {}-{}", start_line, end_line))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            ),
+                            .child(Label::new(label).size(LabelSize::Small).color(Color::Muted)),
                     )
                 } else {
                     el

@@ -1224,7 +1224,7 @@ impl EditorElement {
 
         // Update diff review drag state if we're dragging
         if editor.diff_review_drag_state.is_some() {
-            editor.update_diff_review_drag(valid_point.row(), cx);
+            editor.update_diff_review_drag(valid_point.row(), window, cx);
         }
 
         let hovered_diff_control = position_map
@@ -9685,8 +9685,8 @@ impl Element for EditorElement {
                     }
 
                     // Add diff review drag selection highlight to text area
-                    if let Some(drag_state) = self.editor.read(cx).diff_review_drag_state {
-                        let range = drag_state.row_range();
+                    if let Some(drag_state) = &self.editor.read(cx).diff_review_drag_state {
+                        let range = drag_state.row_range(&snapshot.display_snapshot);
                         let start_row = range.start().0;
                         let end_row = range.end().0;
                         let drag_highlight_color = cx.theme().colors().editor_active_line_background;
