@@ -5,6 +5,9 @@ use gpui::{AnyElement, ImageSource, IntoElement};
 pub struct CollabOverlayControls {
     avatar: ImageSource,
     is_open: bool,
+    is_muted: bool,
+    is_deafened: bool,
+    is_screen_sharing: bool,
 }
 
 impl CollabOverlayControls {
@@ -12,6 +15,9 @@ impl CollabOverlayControls {
         Self {
             avatar: avatar.into(),
             is_open: false,
+            is_muted: false,
+            is_deafened: false,
+            is_screen_sharing: false,
         }
     }
 
@@ -19,10 +25,39 @@ impl CollabOverlayControls {
         self.is_open = is_open;
         self
     }
+
+    pub fn is_muted(mut self, is_muted: bool) -> Self {
+        self.is_muted = is_muted;
+        self
+    }
+
+    pub fn is_deafened(mut self, is_deafened: bool) -> Self {
+        self.is_deafened = is_deafened;
+        self
+    }
+
+    pub fn is_screen_sharing(mut self, is_screen_sharing: bool) -> Self {
+        self.is_screen_sharing = is_screen_sharing;
+        self
+    }
 }
 
 impl RenderOnce for CollabOverlayControls {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let mic_icon = if self.is_muted {
+            IconName::MicMute
+        } else {
+            IconName::Mic
+        };
+
+        let audio_icon = if self.is_deafened {
+            IconName::AudioOff
+        } else {
+            IconName::AudioOn
+        };
+
+        let screen_icon = IconName::Screen;
+
         h_flex()
             .py_1()
             .px_2()
@@ -35,12 +70,22 @@ impl RenderOnce for CollabOverlayControls {
             .child(
                 h_flex().gap_1().child(Avatar::new(self.avatar)).child(
                     h_flex()
-                        .child(IconButton::new("mic", IconName::Mic).icon_size(IconSize::Small))
                         .child(
-                            IconButton::new("audio", IconName::AudioOn).icon_size(IconSize::Small),
+                            IconButton::new("mic", mic_icon)
+                                .icon_size(IconSize::Small)
+                                .when(self.is_muted, |this| this.icon_color(Color::Muted)),
                         )
                         .child(
-                            IconButton::new("screen", IconName::Screen).icon_size(IconSize::Small),
+                            IconButton::new("audio", audio_icon)
+                                .icon_size(IconSize::Small)
+                                .when(self.is_deafened, |this| this.icon_color(Color::Muted)),
+                        )
+                        .child(
+                            IconButton::new("screen", screen_icon)
+                                .icon_size(IconSize::Small)
+                                .when(self.is_screen_sharing, |this| {
+                                    this.icon_color(Color::Accent)
+                                }),
                         ),
                 ),
             )

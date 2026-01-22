@@ -110,10 +110,14 @@ impl RenderOnce for ParticipantItem {
                         h_flex()
                             .gap_2()
                             .child(
-                                Avatar::new("https://avatars.githubusercontent.com/u/67129314?v=4")
-                                    .when(self.is_following, |this| {
-                                        this.border_color(cx.theme().players().agent().cursor)
-                                    }),
+                                Avatar::new(
+                                    self.avatar_src
+                                        .clone()
+                                        .unwrap_or_else(|| "https://avatars.githubusercontent.com/u/1?v=4".into()),
+                                )
+                                .when(self.is_following, |this| {
+                                    this.border_color(cx.theme().players().agent().cursor)
+                                }),
                             )
                             .child(Label::new(self.display_name).size(LabelSize::Small)),
                     )
