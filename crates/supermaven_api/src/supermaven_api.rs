@@ -1,48 +1,18 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use futures::AsyncReadExt;
 use futures::io::BufReader;
 use http_client::{AsyncBody, HttpClient, Request as HttpRequest};
 use paths::supermaven_dir;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use smol::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use util::fs::{make_file_executable, remove_matching};
 
-#[derive(Serialize)]
-pub struct GetExternalUserRequest {
-    pub id: String,
-}
-
-#[derive(Serialize)]
-pub struct CreateExternalUserRequest {
-    pub id: String,
-    pub email: String,
-}
-
-#[derive(Serialize)]
-pub struct DeleteExternalUserRequest {
-    pub id: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateExternalUserResponse {
-    pub api_key: String,
-}
-
 #[derive(Deserialize)]
 pub struct SupermavenApiError {
     pub message: String,
-}
-
-pub struct SupermavenBinary {}
-
-pub struct SupermavenAdminApi {
-    admin_api_key: String,
-    api_url: String,
-    http_client: Arc<dyn HttpClient>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,142 +21,6 @@ pub struct SupermavenDownloadResponse {
     pub download_url: String,
     pub version: u64,
     pub sha256_hash: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SupermavenUser {
-    #[expect(
-        unused,
-        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
-    )]
-    id: String,
-    #[expect(
-        unused,
-        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
-    )]
-    email: String,
-    api_key: String,
-}
-
-impl SupermavenAdminApi {
-    pub fn new(admin_api_key: String, http_client: Arc<dyn HttpClient>) -> Self {
-        Self {
-            admin_api_key,
-            api_url: "https://supermaven.com/api/".to_string(),
-            http_client,
-        }
-    }
-
-    pub async fn try_get_user(
-        &self,
-        request: GetExternalUserRequest,
-    ) -> Result<Option<SupermavenUser>> {
-        let uri = format!("{}external-user/{}", &self.api_url, &request.id);
-
-        let request = HttpRequest::get(&uri).header("Authorization", self.admin_api_key.clone());
-
-        let mut response = self
-            .http_client
-            .send(request.body(AsyncBody::default())?)
-            .await
-            .with_context(|| "Unable to get Supermaven API Key".to_string())?;
-
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
-
-        if response.status().is_client_error() {
-            let error: SupermavenApiError = serde_json::from_slice(&body)?;
-            if error.message == "User not found" {
-                return Ok(None);
-            } else {
-                anyhow::bail!("Supermaven API error: {}", error.message);
-            }
-        } else if response.status().is_server_error() {
-            let error: SupermavenApiError = serde_json::from_slice(&body)?;
-            return Err(anyhow!("Supermaven API server error").context(error.message));
-        }
-
-        let body_str = std::str::from_utf8(&body)?;
-
-        Ok(Some(
-            serde_json::from_str::<SupermavenUser>(body_str)
-                .with_context(|| "Unable to parse Supermaven user response".to_string())?,
-        ))
-    }
-
-    pub async fn try_create_user(
-        &self,
-        request: CreateExternalUserRequest,
-    ) -> Result<CreateExternalUserResponse> {
-        let uri = format!("{}external-user", &self.api_url);
-
-        let request = HttpRequest::post(&uri)
-            .header("Authorization", self.admin_api_key.clone())
-            .body(AsyncBody::from(serde_json::to_vec(&request)?))?;
-
-        let mut response = self
-            .http_client
-            .send(request)
-            .await
-            .with_context(|| "Unable to create Supermaven API Key".to_string())?;
-
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
-
-        let body_str = std::str::from_utf8(&body)?;
-
-        if !response.status().is_success() {
-            let error: SupermavenApiError = serde_json::from_slice(&body)?;
-            return Err(anyhow!("Supermaven API server error").context(error.message));
-        }
-
-        serde_json::from_str::<CreateExternalUserResponse>(body_str)
-            .with_context(|| "Unable to parse Supermaven API Key response".to_string())
-    }
-
-    pub async fn try_delete_user(&self, request: DeleteExternalUserRequest) -> Result<()> {
-        let uri = format!("{}external-user/{}", &self.api_url, &request.id);
-
-        let request = HttpRequest::delete(&uri).header("Authorization", self.admin_api_key.clone());
-
-        let mut response = self
-            .http_client
-            .send(request.body(AsyncBody::default())?)
-            .await
-            .with_context(|| "Unable to delete Supermaven User".to_string())?;
-
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
-
-        if response.status().is_client_error() {
-            let error: SupermavenApiError = serde_json::from_slice(&body)?;
-            if error.message == "User not found" {
-                return Ok(());
-            } else {
-                anyhow::bail!("Supermaven API error: {}", error.message);
-            }
-        } else if response.status().is_server_error() {
-            let error: SupermavenApiError = serde_json::from_slice(&body)?;
-            return Err(anyhow!("Supermaven API server error").context(error.message));
-        }
-
-        Ok(())
-    }
-
-    pub async fn try_get_or_create_user(
-        &self,
-        request: CreateExternalUserRequest,
-    ) -> Result<CreateExternalUserResponse> {
-        let get_user_request = GetExternalUserRequest {
-            id: request.id.clone(),
-        };
-
-        match self.try_get_user(get_user_request).await? {
-            None => self.try_create_user(request).await,
-            Some(SupermavenUser { api_key, .. }) => Ok(CreateExternalUserResponse { api_key }),
-        }
-    }
 }
 
 pub async fn latest_release(

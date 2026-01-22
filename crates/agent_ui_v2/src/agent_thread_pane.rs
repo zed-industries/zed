@@ -1,7 +1,9 @@
-use agent::{HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
+use acp_thread::AgentSessionInfo;
+use agent::{NativeAgentServer, ThreadStore};
+use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use agent_settings::AgentSettings;
-use agent_ui::acp::AcpThreadView;
+use agent_ui::acp::{AcpThreadHistory, AcpThreadView};
 use fs::Fs;
 use gpui::{
     Entity, EventEmitter, Focusable, Pixels, SharedString, Subscription, WeakEntity, prelude::*,
@@ -25,19 +27,11 @@ pub const DEFAULT_UTILITY_PANE_WIDTH: Pixels = gpui::px(400.0);
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum SerializedHistoryEntryId {
     AcpThread(String),
-    TextThread(String),
 }
 
-impl From<HistoryEntryId> for SerializedHistoryEntryId {
-    fn from(id: HistoryEntryId) -> Self {
-        match id {
-            HistoryEntryId::AcpThread(session_id) => {
-                SerializedHistoryEntryId::AcpThread(session_id.0.to_string())
-            }
-            HistoryEntryId::TextThread(path) => {
-                SerializedHistoryEntryId::TextThread(path.to_string_lossy().to_string())
-            }
-        }
+impl From<acp::SessionId> for SerializedHistoryEntryId {
+    fn from(id: acp::SessionId) -> Self {
+        SerializedHistoryEntryId::AcpThread(id.0.to_string())
     }
 }
 
@@ -58,7 +52,7 @@ impl EventEmitter<ClosePane> for AgentThreadPane {}
 
 struct ActiveThreadView {
     view: Entity<AcpThreadView>,
-    thread_id: HistoryEntryId,
+    thread_id: acp::SessionId,
     _notify: Subscription,
 }
 
@@ -68,10 +62,15 @@ pub struct AgentThreadPane {
     width: Option<Pixels>,
     thread_view: Option<ActiveThreadView>,
     workspace: WeakEntity<Workspace>,
+    history: Entity<AcpThreadHistory>,
 }
 
 impl AgentThreadPane {
-    pub fn new(workspace: WeakEntity<Workspace>, cx: &mut ui::Context<Self>) -> Self {
+    pub fn new(
+        workspace: WeakEntity<Workspace>,
+        history: Entity<AcpThreadHistory>,
+        cx: &mut ui::Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
         Self {
             focus_handle,
@@ -79,10 +78,11 @@ impl AgentThreadPane {
             width: None,
             thread_view: None,
             workspace,
+            history,
         }
     }
 
-    pub fn thread_id(&self) -> Option<HistoryEntryId> {
+    pub fn thread_id(&self) -> Option<acp::SessionId> {
         self.thread_view.as_ref().map(|tv| tv.thread_id.clone())
     }
 
@@ -96,24 +96,21 @@ impl AgentThreadPane {
 
     pub fn open_thread(
         &mut self,
-        entry: HistoryEntry,
+        entry: AgentSessionInfo,
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        history_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let thread_id = entry.id();
+        let thread_id = entry.session_id.clone();
+        let resume_thread = Some(entry);
 
-        let resume_thread = match &entry {
-            HistoryEntry::AcpThread(thread) => Some(thread.clone()),
-            HistoryEntry::TextThread(_) => None,
-        };
+        let agent: Rc<dyn AgentServer> = Rc::new(NativeAgentServer::new(fs, thread_store.clone()));
 
-        let agent: Rc<dyn AgentServer> = Rc::new(NativeAgentServer::new(fs, history_store.clone()));
-
+        let history = self.history.clone();
         let thread_view = cx.new(|cx| {
             AcpThreadView::new(
                 agent,
@@ -121,9 +118,9 @@ impl AgentThreadPane {
                 None,
                 workspace,
                 project,
-                history_store,
+                Some(thread_store),
                 prompt_store,
-                true,
+                history,
                 window,
                 cx,
             )

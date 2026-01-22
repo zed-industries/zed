@@ -304,8 +304,19 @@ fn load_shell_from_passwd() -> Result<()> {
 
 /// Returns a shell escaped path for the current zed executable
 pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<String> {
-    let zed_path =
+    let mut zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
+    if cfg!(target_os = "linux")
+        && !zed_path.is_file()
+        && let Some(truncated) = zed_path
+            .clone()
+            .file_name()
+            .and_then(|s| s.to_str())
+            .and_then(|n| n.strip_suffix(" (deleted)"))
+    {
+        // Might have been deleted during update; let's use the new binary if there is one.
+        zed_path.set_file_name(truncated);
+    }
 
     zed_path
         .try_shell_safe(shell_kind)
@@ -365,6 +376,13 @@ pub async fn load_login_shell_environment() -> Result<()> {
         .await
         .with_context(|| format!("capturing environment with {:?}", get_system_shell()))?
     {
+        // Skip SHLVL to prevent it from polluting Zed's process environment.
+        // The login shell used for env capture increments SHLVL, and if we propagate it,
+        // terminals spawned by Zed will inherit it and increment again, causing SHLVL
+        // to start at 2 instead of 1 (and increase by 2 on each reload).
+        if name == "SHLVL" {
+            continue;
+        }
         unsafe { env::set_var(&name, &value) };
     }
 

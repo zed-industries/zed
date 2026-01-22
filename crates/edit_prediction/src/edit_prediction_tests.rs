@@ -6,6 +6,7 @@ use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, PredictEditsBody, PredictEditsResponse,
     RejectEditPredictionsBody,
+    predict_edits_v3::{PredictEditsV3Request, PredictEditsV3Response},
 };
 use futures::{
     AsyncReadExt, StreamExt,
@@ -16,9 +17,8 @@ use gpui::{
     http_client::{FakeHttpClient, Response},
 };
 use indoc::indoc;
-use language::{Point, ToOffset as _};
+use language::Point;
 use lsp::LanguageServerId;
-use open_ai::Usage;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_matches};
 use project::{FakeFs, Project};
@@ -70,7 +70,7 @@ async fn test_current_state(cx: &mut TestAppContext) {
 
     respond_tx
         .send(model_response(
-            request,
+            &request,
             indoc! {r"
                 --- a/root/1.txt
                 +++ b/root/1.txt
@@ -127,7 +127,7 @@ async fn test_current_state(cx: &mut TestAppContext) {
     let (request, respond_tx) = requests.predict.next().await.unwrap();
     respond_tx
         .send(model_response(
-            request,
+            &request,
             indoc! {r#"
                 --- a/root/2.txt
                 +++ b/root/2.txt
@@ -211,7 +211,7 @@ async fn test_simple_request(cx: &mut TestAppContext) {
 
     respond_tx
         .send(model_response(
-            request,
+            &request,
             indoc! { r"
                 --- a/root/foo.md
                 +++ b/root/foo.md
@@ -288,7 +288,7 @@ async fn test_request_events(cx: &mut TestAppContext) {
 
     respond_tx
         .send(model_response(
-            request,
+            &request,
             indoc! {r#"
                 --- a/root/foo.md
                 +++ b/root/foo.md
@@ -403,6 +403,196 @@ async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+async fn test_event_grouping_line_span_coalescing(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    // Create a file with 30 lines to test line-based coalescing
+    let content = (1..=30)
+        .map(|i| format!("Line {}\n", i))
+        .collect::<String>();
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md": content
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    // First edit: multi-line edit spanning rows 10-12 (replacing lines 11-13)
+    buffer.update(cx, |buffer, cx| {
+        let start = Point::new(10, 0).to_offset(buffer);
+        let end = Point::new(13, 0).to_offset(buffer);
+        buffer.edit(vec![(start..end, "Middle A\nMiddle B\n")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events(&events),
+        indoc! {"
+            @@ -8,9 +8,8 @@
+             Line 8
+             Line 9
+             Line 10
+            -Line 11
+            -Line 12
+            -Line 13
+            +Middle A
+            +Middle B
+             Line 14
+             Line 15
+             Line 16
+        "},
+        "After first edit"
+    );
+
+    // Second edit: insert ABOVE the first edit's range (row 5, within 8 lines of row 10)
+    // This tests that coalescing considers the START of the existing range
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(5, 0).to_offset(buffer);
+        buffer.edit(vec![(offset..offset, "Above\n")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events(&events),
+        indoc! {"
+            @@ -3,14 +3,14 @@
+             Line 3
+             Line 4
+             Line 5
+            +Above
+             Line 6
+             Line 7
+             Line 8
+             Line 9
+             Line 10
+            -Line 11
+            -Line 12
+            -Line 13
+            +Middle A
+            +Middle B
+             Line 14
+             Line 15
+             Line 16
+        "},
+        "After inserting above (should coalesce)"
+    );
+
+    // Third edit: insert BELOW the first edit's range (row 14 in current buffer, within 8 lines of row 12)
+    // This tests that coalescing considers the END of the existing range
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(14, 0).to_offset(buffer);
+        buffer.edit(vec![(offset..offset, "Below\n")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events(&events),
+        indoc! {"
+            @@ -3,15 +3,16 @@
+             Line 3
+             Line 4
+             Line 5
+            +Above
+             Line 6
+             Line 7
+             Line 8
+             Line 9
+             Line 10
+            -Line 11
+            -Line 12
+            -Line 13
+            +Middle A
+            +Middle B
+             Line 14
+            +Below
+             Line 15
+             Line 16
+             Line 17
+        "},
+        "After inserting below (should coalesce)"
+    );
+
+    // Fourth edit: insert FAR BELOW (row 25, beyond 8 lines from the current range end ~row 15)
+    // This should NOT coalesce - creates a new event
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(25, 0).to_offset(buffer);
+        buffer.edit(vec![(offset..offset, "Far below\n")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        render_events(&events),
+        indoc! {"
+            @@ -3,15 +3,16 @@
+             Line 3
+             Line 4
+             Line 5
+            +Above
+             Line 6
+             Line 7
+             Line 8
+             Line 9
+             Line 10
+            -Line 11
+            -Line 12
+            -Line 13
+            +Middle A
+            +Middle B
+             Line 14
+            +Below
+             Line 15
+             Line 16
+             Line 17
+
+            ---
+            @@ -23,6 +23,7 @@
+             Line 22
+             Line 23
+             Line 24
+            +Far below
+             Line 25
+             Line 26
+             Line 27
+        "},
+        "After inserting far below (should NOT coalesce)"
+    );
+}
+
+fn render_events(events: &[StoredEvent]) -> String {
+    events
+        .iter()
+        .map(|e| {
+            let zeta_prompt::Event::BufferChange { diff, .. } = e.event.as_ref();
+            diff.as_str()
+        })
+        .collect::<Vec<_>>()
+        .join("\n---\n")
+}
+
+#[gpui::test]
 async fn test_empty_prediction(cx: &mut TestAppContext) {
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
@@ -430,8 +620,8 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
     });
 
     let (request, respond_tx) = requests.predict.next().await.unwrap();
-    let response = model_response(request, "");
-    let id = response.id.clone();
+    let response = model_response(&request, "");
+    let id = response.request_id.clone();
     respond_tx.send(response).unwrap();
 
     cx.run_until_parked();
@@ -490,8 +680,8 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
         buffer.set_text("Hello!\nHow are you?\nBye", cx);
     });
 
-    let response = model_response(request, SIMPLE_DIFF);
-    let id = response.id.clone();
+    let response = model_response(&request, SIMPLE_DIFF);
+    let id = response.request_id.clone();
     respond_tx.send(response).unwrap();
 
     cx.run_until_parked();
@@ -555,8 +745,8 @@ async fn test_replace_current(cx: &mut TestAppContext) {
     });
 
     let (request, respond_tx) = requests.predict.next().await.unwrap();
-    let first_response = model_response(request, SIMPLE_DIFF);
-    let first_id = first_response.id.clone();
+    let first_response = model_response(&request, SIMPLE_DIFF);
+    let first_id = first_response.request_id.clone();
     respond_tx.send(first_response).unwrap();
 
     cx.run_until_parked();
@@ -578,8 +768,8 @@ async fn test_replace_current(cx: &mut TestAppContext) {
     });
 
     let (request, respond_tx) = requests.predict.next().await.unwrap();
-    let second_response = model_response(request, SIMPLE_DIFF);
-    let second_id = second_response.id.clone();
+    let second_response = model_response(&request, SIMPLE_DIFF);
+    let second_id = second_response.request_id.clone();
     respond_tx.send(second_response).unwrap();
 
     cx.run_until_parked();
@@ -637,8 +827,8 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
     });
 
     let (request, respond_tx) = requests.predict.next().await.unwrap();
-    let first_response = model_response(request, SIMPLE_DIFF);
-    let first_id = first_response.id.clone();
+    let first_response = model_response(&request, SIMPLE_DIFF);
+    let first_id = first_response.request_id.clone();
     respond_tx.send(first_response).unwrap();
 
     cx.run_until_parked();
@@ -662,7 +852,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
     let (request, respond_tx) = requests.predict.next().await.unwrap();
     // worse than current prediction
     let second_response = model_response(
-        request,
+        &request,
         indoc! { r"
             --- a/root/foo.md
             +++ b/root/foo.md
@@ -673,7 +863,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
              Bye
         "},
     );
-    let second_id = second_response.id.clone();
+    let second_id = second_response.request_id.clone();
     respond_tx.send(second_response).unwrap();
 
     cx.run_until_parked();
@@ -743,8 +933,8 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     // second responds first
-    let second_response = model_response(request, SIMPLE_DIFF);
-    let second_id = second_response.id.clone();
+    let second_response = model_response(&request, SIMPLE_DIFF);
+    let second_id = second_response.request_id.clone();
     respond_second.send(second_response).unwrap();
 
     cx.run_until_parked();
@@ -761,8 +951,8 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
         );
     });
 
-    let first_response = model_response(request1, SIMPLE_DIFF);
-    let first_id = first_response.id.clone();
+    let first_response = model_response(&request1, SIMPLE_DIFF);
+    let first_id = first_response.request_id.clone();
     respond_first.send(first_response).unwrap();
 
     cx.run_until_parked();
@@ -854,8 +1044,8 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 
     let (request3, respond_third) = requests.predict.next().await.unwrap();
 
-    let first_response = model_response(request1, SIMPLE_DIFF);
-    let first_id = first_response.id.clone();
+    let first_response = model_response(&request1, SIMPLE_DIFF);
+    let first_id = first_response.request_id.clone();
     respond_first.send(first_response).unwrap();
 
     cx.run_until_parked();
@@ -872,8 +1062,8 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
         );
     });
 
-    let cancelled_response = model_response(request2, SIMPLE_DIFF);
-    let cancelled_id = cancelled_response.id.clone();
+    let cancelled_response = model_response(&request2, SIMPLE_DIFF);
+    let cancelled_id = cancelled_response.request_id.clone();
     respond_second.send(cancelled_response).unwrap();
 
     cx.run_until_parked();
@@ -890,8 +1080,8 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
         );
     });
 
-    let third_response = model_response(request3, SIMPLE_DIFF);
-    let third_response_id = third_response.id.clone();
+    let third_response = model_response(&request3, SIMPLE_DIFF);
+    let third_response_id = third_response.request_id.clone();
     respond_third.send(third_response).unwrap();
 
     cx.run_until_parked();
@@ -1135,61 +1325,26 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
 // }
 
 // Generate a model response that would apply the given diff to the active file.
-fn model_response(request: open_ai::Request, diff_to_apply: &str) -> open_ai::Response {
-    let prompt = match &request.messages[0] {
-        open_ai::RequestMessage::User {
-            content: open_ai::MessageContent::Plain(content),
-        } => content,
-        _ => panic!("unexpected request {request:?}"),
-    };
-
-    let open = "<editable_region>\n";
-    let close = "</editable_region>";
-    let cursor = "<|user_cursor|>";
-
-    let start_ix = open.len() + prompt.find(open).unwrap();
-    let end_ix = start_ix + &prompt[start_ix..].find(close).unwrap();
-    let excerpt = prompt[start_ix..end_ix].replace(cursor, "");
+fn model_response(request: &PredictEditsV3Request, diff_to_apply: &str) -> PredictEditsV3Response {
+    let excerpt =
+        request.input.cursor_excerpt[request.input.editable_range_in_excerpt.clone()].to_string();
     let new_excerpt = apply_diff_to_string(diff_to_apply, &excerpt).unwrap();
 
-    open_ai::Response {
-        id: Uuid::new_v4().to_string(),
-        object: "response".into(),
-        created: 0,
-        model: "model".into(),
-        choices: vec![open_ai::Choice {
-            index: 0,
-            message: open_ai::RequestMessage::Assistant {
-                content: Some(open_ai::MessageContent::Plain(new_excerpt)),
-                tool_calls: vec![],
-            },
-            finish_reason: None,
-        }],
-        usage: Usage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        },
+    PredictEditsV3Response {
+        request_id: Uuid::new_v4().to_string(),
+        output: new_excerpt,
     }
 }
 
-fn prompt_from_request(request: &open_ai::Request) -> &str {
-    assert_eq!(request.messages.len(), 1);
-    let open_ai::RequestMessage::User {
-        content: open_ai::MessageContent::Plain(content),
-        ..
-    } = &request.messages[0]
-    else {
-        panic!(
-            "Request does not have single user message of type Plain. {:#?}",
-            request
-        );
-    };
-    content
+fn prompt_from_request(request: &PredictEditsV3Request) -> String {
+    zeta_prompt::format_zeta_prompt(&request.input, request.prompt_version)
 }
 
 struct RequestChannels {
-    predict: mpsc::UnboundedReceiver<(open_ai::Request, oneshot::Sender<open_ai::Response>)>,
+    predict: mpsc::UnboundedReceiver<(
+        PredictEditsV3Request,
+        oneshot::Sender<PredictEditsV3Response>,
+    )>,
     reject: mpsc::UnboundedReceiver<(RejectEditPredictionsBody, oneshot::Sender<()>)>,
 }
 
@@ -1216,7 +1371,7 @@ fn init_test_with_fake_client(
                             "token": "test"
                         }))
                         .unwrap(),
-                        "/predict_edits/raw" => {
+                        "/predict_edits/v3" => {
                             let mut buf = Vec::new();
                             body.read_to_end(&mut buf).await.ok();
                             let req = serde_json::from_slice(&buf).unwrap();
@@ -1454,6 +1609,71 @@ async fn test_edit_prediction_end_of_buffer(cx: &mut TestAppContext) {
         apply_edit_prediction(buffer_content, completion_response, cx).await,
         "lorem\nipsum"
     );
+}
+
+#[gpui::test]
+async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppContext) {
+    // Test that zeta2's newline normalization logic doesn't insert spurious newlines.
+    // When the buffer ends without a trailing newline, but the model returns output
+    // with a trailing newline, zeta2 should normalize both sides before diffing
+    // so no spurious newline is inserted.
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    // Single line buffer with no trailing newline
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.txt": "hello"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("root/foo.txt"), cx)
+                .unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(0, 5));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    });
+
+    let (_request, respond_tx) = requests.predict.next().await.unwrap();
+
+    // Model returns output WITH a trailing newline, even though the buffer doesn't have one.
+    // Zeta2 should normalize both sides before diffing, so no spurious newline is inserted.
+    let response = PredictEditsV3Response {
+        request_id: Uuid::new_v4().to_string(),
+        output: "hello world\n".to_string(),
+    };
+    respond_tx.send(response).unwrap();
+
+    cx.run_until_parked();
+
+    // The prediction should insert " world" without adding a newline
+    ep_store.update(cx, |ep_store, cx| {
+        let prediction = ep_store
+            .prediction_at(&buffer, None, &project, cx)
+            .expect("should have prediction");
+        let edits: Vec<_> = prediction
+            .edits
+            .iter()
+            .map(|(range, text)| {
+                let snapshot = buffer.read(cx).snapshot();
+                (range.to_offset(&snapshot), text.clone())
+            })
+            .collect();
+        assert_eq!(edits, vec![(5..5, " world".into())]);
+    });
 }
 
 #[gpui::test]

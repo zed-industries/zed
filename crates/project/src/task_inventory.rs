@@ -892,17 +892,13 @@ mod test_inventory {
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
 
             let id_base = task_source_kind.to_id_base();
-            inventory
-                .update(&mut cx, |inventory, _| {
-                    inventory.task_scheduled(
-                        task_source_kind.clone(),
-                        task.resolve_task(&id_base, &TaskContext::default())
-                            .unwrap_or_else(|| {
-                                panic!("Failed to resolve task with name {task_name}")
-                            }),
-                    )
-                })
-                .unwrap();
+            inventory.update(&mut cx, |inventory, _| {
+                inventory.task_scheduled(
+                    task_source_kind.clone(),
+                    task.resolve_task(&id_base, &TaskContext::default())
+                        .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}")),
+                )
+            });
         })
     }
 
@@ -925,17 +921,13 @@ mod test_inventory {
                 .find(|(_, task)| task.label == task_name)
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
             let id_base = task_source_kind.to_id_base();
-            inventory
-                .update(&mut cx, |inventory, _| {
-                    inventory.task_scheduled(
-                        task_source_kind.clone(),
-                        task.resolve_task(&id_base, &TaskContext::default())
-                            .unwrap_or_else(|| {
-                                panic!("Failed to resolve task with name {task_name}")
-                            }),
-                    );
-                })
-                .unwrap();
+            inventory.update(&mut cx, |inventory, _| {
+                inventory.task_scheduled(
+                    task_source_kind.clone(),
+                    task.resolve_task(&id_base, &TaskContext::default())
+                        .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}")),
+                );
+            });
         })
     }
 

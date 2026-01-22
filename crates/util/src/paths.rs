@@ -361,6 +361,19 @@ impl PathStyle {
         }
     }
 
+    pub fn is_absolute(&self, path_like: &str) -> bool {
+        path_like.starts_with('/')
+            || *self == PathStyle::Windows
+                && (path_like.starts_with('\\')
+                    || path_like
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_alphabetic())
+                        && path_like[1..]
+                            .strip_prefix(':')
+                            .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
+    }
+
     pub fn is_windows(&self) -> bool {
         *self == PathStyle::Windows
     }
@@ -786,11 +799,20 @@ impl PathWithPosition {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PathMatcher {
     sources: Vec<(String, RelPathBuf, /*trailing separator*/ bool)>,
     glob: GlobSet,
     path_style: PathStyle,
+}
+
+impl std::fmt::Debug for PathMatcher {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PathMatcher")
+            .field("sources", &self.sources)
+            .field("path_style", &self.path_style)
+            .finish()
+    }
 }
 
 impl PartialEq for PathMatcher {
@@ -844,12 +866,15 @@ impl PathMatcher {
     }
 
     pub fn is_match<P: AsRef<RelPath>>(&self, other: P) -> bool {
-        if self.sources.iter().any(|(_, source, _)| {
-            other.as_ref().starts_with(source) || other.as_ref().ends_with(source)
-        }) {
+        let other = other.as_ref();
+        if self
+            .sources
+            .iter()
+            .any(|(_, source, _)| other.starts_with(source) || other.ends_with(source))
+        {
             return true;
         }
-        let other_path = other.as_ref().display(self.path_style);
+        let other_path = other.display(self.path_style);
 
         if self.glob.is_match(&*other_path) {
             return true;
@@ -857,6 +882,16 @@ impl PathMatcher {
 
         self.glob
             .is_match(other_path.into_owned() + self.path_style.primary_separator())
+    }
+
+    pub fn is_match_std_path<P: AsRef<Path>>(&self, other: P) -> bool {
+        let other = other.as_ref();
+        if self.sources.iter().any(|(_, source, _)| {
+            other.starts_with(source.as_std_path()) || other.ends_with(source.as_std_path())
+        }) {
+            return true;
+        }
+        self.glob.is_match(other)
     }
 }
 

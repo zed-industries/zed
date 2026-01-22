@@ -9,12 +9,13 @@ use std::{ops::Range, sync::Arc};
 use agent::ContextServerRegistry;
 use anyhow::Result;
 use client::zed_urls;
-use cloud_llm_client::{Plan, PlanV1, PlanV2};
+use cloud_llm_client::{Plan, PlanV2};
 use collections::HashMap;
 use context_server::ContextServerId;
 use editor::{Editor, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
 use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
+use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
 use gpui::{
     Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
@@ -29,7 +30,8 @@ use language_models::AllLanguageModelSettings;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
     agent_server_store::{
-        AgentServerStore, CLAUDE_CODE_NAME, CODEX_NAME, ExternalAgentServerName, GEMINI_NAME,
+        AgentServerStore, CLAUDE_CODE_NAME, CODEX_NAME, ExternalAgentServerName,
+        ExternalAgentSource, GEMINI_NAME,
     },
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
@@ -497,15 +499,9 @@ impl AgentConfiguration {
                 .blend(cx.theme().colors().text_accent.opacity(0.2));
 
             let (plan_name, label_color, bg_color) = match plan {
-                Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree) => {
-                    ("Free", Color::Default, free_chip_bg)
-                }
-                Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial) => {
-                    ("Pro Trial", Color::Accent, pro_chip_bg)
-                }
-                Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro) => {
-                    ("Pro", Color::Accent, pro_chip_bg)
-                }
+                Plan::V2(PlanV2::ZedFree) => ("Free", Color::Default, free_chip_bg),
+                Plan::V2(PlanV2::ZedProTrial) => ("Pro Trial", Color::Accent, pro_chip_bg),
+                Plan::V2(PlanV2::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
             };
 
             Chip::new(plan_name.to_string())
@@ -821,7 +817,8 @@ impl AgentConfiguration {
                                                     }
                                                 },
                                             )
-                                        })
+                                        });
+                                        anyhow::Ok(())
                                     }
                                 })
                                 .detach_and_log_err(cx);
@@ -919,6 +916,7 @@ impl AgentConfiguration {
                                                     .or_insert_with(|| {
                                                         settings::ContextServerSettingsContent::Extension {
                                                             enabled: is_enabled,
+                                                            remote: false,
                                                             settings: serde_json::json!({}),
                                                         }
                                                     })
@@ -984,7 +982,8 @@ impl AgentConfiguration {
                 let display_name = agent_server_store
                     .agent_display_name(&name)
                     .unwrap_or_else(|| name.0.clone());
-                (name, icon, display_name)
+                let source = agent_server_store.agent_source(&name).unwrap_or_default();
+                (name, icon, display_name, source)
             })
             .collect();
 
@@ -1000,7 +999,14 @@ impl AgentConfiguration {
             )
             .menu({
                 move |window, cx| {
-                    Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                    Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                        if _cx.has_flag::<AcpBetaFeatureFlag>() {
+                            menu = menu.entry("Install from Registry", None, {
+                                |window, cx| {
+                                    window.dispatch_action(Box::new(zed_actions::AgentRegistry), cx)
+                                }
+                            });
+                        }
                         menu.entry("Install from Extensions", None, {
                             |window, cx| {
                                 window.dispatch_action(
@@ -1092,7 +1098,7 @@ impl AgentConfiguration {
                                 AgentIcon::Name(IconName::AiClaude),
                                 "Claude Code",
                                 "Claude Code",
-                                false,
+                                ExternalAgentSource::Builtin,
                                 cx,
                             ))
                             .child(Divider::horizontal().color(DividerColor::BorderFaded))
@@ -1100,7 +1106,7 @@ impl AgentConfiguration {
                                 AgentIcon::Name(IconName::AiOpenAi),
                                 "Codex CLI",
                                 "Codex CLI",
-                                false,
+                                ExternalAgentSource::Builtin,
                                 cx,
                             ))
                             .child(Divider::horizontal().color(DividerColor::BorderFaded))
@@ -1108,11 +1114,11 @@ impl AgentConfiguration {
                                 AgentIcon::Name(IconName::AiGemini),
                                 "Gemini CLI",
                                 "Gemini CLI",
-                                false,
+                                ExternalAgentSource::Builtin,
                                 cx,
                             ))
                             .map(|mut parent| {
-                                for (name, icon, display_name) in user_defined_agents {
+                                for (name, icon, display_name, source) in user_defined_agents {
                                     parent = parent
                                         .child(
                                             Divider::horizontal().color(DividerColor::BorderFaded),
@@ -1121,7 +1127,7 @@ impl AgentConfiguration {
                                             icon,
                                             name,
                                             display_name,
-                                            true,
+                                            source,
                                             cx,
                                         ));
                                 }
@@ -1136,7 +1142,7 @@ impl AgentConfiguration {
         icon: AgentIcon,
         id: impl Into<SharedString>,
         display_name: impl Into<SharedString>,
-        external: bool,
+        source: ExternalAgentSource,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let id = id.into();
@@ -1151,30 +1157,79 @@ impl AgentConfiguration {
                 .color(Color::Muted),
         };
 
-        let tooltip_id = SharedString::new(format!("agent-source-{}", id));
-        let tooltip_message = format!(
-            "The {} agent was installed from an extension.",
-            display_name
-        );
+        let source_badge = match source {
+            ExternalAgentSource::Extension => Some((
+                SharedString::new(format!("agent-source-{}", id)),
+                SharedString::from(format!(
+                    "The {} agent was installed from an extension.",
+                    display_name
+                )),
+                IconName::ZedSrcExtension,
+            )),
+            ExternalAgentSource::Registry => Some((
+                SharedString::new(format!("agent-source-{}", id)),
+                SharedString::from(format!(
+                    "The {} agent was installed from the ACP registry.",
+                    display_name
+                )),
+                IconName::AcpRegistry,
+            )),
+            ExternalAgentSource::Builtin | ExternalAgentSource::Custom => None,
+        };
 
         let agent_server_name = ExternalAgentServerName(id.clone());
 
-        let uninstall_btn_id = SharedString::from(format!("uninstall-{}", id));
-        let uninstall_button = IconButton::new(uninstall_btn_id, IconName::Trash)
-            .icon_color(Color::Muted)
-            .icon_size(IconSize::Small)
-            .tooltip(Tooltip::text("Uninstall Agent Extension"))
-            .on_click(cx.listener(move |this, _, _window, cx| {
-                let agent_name = agent_server_name.clone();
+        let uninstall_button = match source {
+            ExternalAgentSource::Extension => Some(
+                IconButton::new(
+                    SharedString::from(format!("uninstall-{}", id)),
+                    IconName::Trash,
+                )
+                .icon_color(Color::Muted)
+                .icon_size(IconSize::Small)
+                .tooltip(Tooltip::text("Uninstall Agent Extension"))
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    let agent_name = agent_server_name.clone();
 
-                if let Some(ext_id) = this.agent_server_store.update(cx, |store, _cx| {
-                    store.get_extension_id_for_agent(&agent_name)
-                }) {
-                    ExtensionStore::global(cx)
-                        .update(cx, |store, cx| store.uninstall_extension(ext_id, cx))
-                        .detach_and_log_err(cx);
-                }
-            }));
+                    if let Some(ext_id) = this.agent_server_store.update(cx, |store, _cx| {
+                        store.get_extension_id_for_agent(&agent_name)
+                    }) {
+                        ExtensionStore::global(cx)
+                            .update(cx, |store, cx| store.uninstall_extension(ext_id, cx))
+                            .detach_and_log_err(cx);
+                    }
+                })),
+            ),
+            ExternalAgentSource::Registry => {
+                let fs = self.fs.clone();
+                Some(
+                    IconButton::new(
+                        SharedString::from(format!("uninstall-{}", id)),
+                        IconName::Trash,
+                    )
+                    .icon_color(Color::Muted)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::text("Remove Registry Agent"))
+                    .on_click(cx.listener(move |_, _, _window, cx| {
+                        let agent_name = agent_server_name.clone();
+                        update_settings_file(fs.clone(), cx, move |settings, _| {
+                            let Some(agent_servers) = settings.agent_servers.as_mut() else {
+                                return;
+                            };
+                            if let Some(entry) = agent_servers.custom.get(agent_name.0.as_ref())
+                                && matches!(
+                                    entry,
+                                    settings::CustomAgentServerSettings::Registry { .. }
+                                )
+                            {
+                                agent_servers.custom.remove(agent_name.0.as_ref());
+                            }
+                        });
+                    })),
+                )
+            }
+            ExternalAgentSource::Builtin | ExternalAgentSource::Custom => None,
+        };
 
         h_flex()
             .gap_1()
@@ -1184,17 +1239,13 @@ impl AgentConfiguration {
                     .gap_1p5()
                     .child(icon)
                     .child(Label::new(display_name))
-                    .when(external, |this| {
+                    .when_some(source_badge, |this, (tooltip_id, tooltip_message, icon)| {
                         this.child(
                             div()
                                 .id(tooltip_id)
                                 .flex_none()
                                 .tooltip(Tooltip::text(tooltip_message))
-                                .child(
-                                    Icon::new(IconName::ZedSrcExtension)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted),
-                                ),
+                                .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted)),
                         )
                     })
                     .child(
@@ -1203,7 +1254,9 @@ impl AgentConfiguration {
                             .size(IconSize::Small),
                     ),
             )
-            .when(external, |this| this.child(uninstall_button))
+            .when_some(uninstall_button, |this, uninstall_button| {
+                this.child(uninstall_button)
+            })
     }
 }
 
@@ -1304,7 +1357,7 @@ fn show_unable_to_uninstall_extension_with_context_server(
                                                     .context_servers
                                                     .remove(&context_server_id.0);
                                             });
-                                        })?;
+                                        });
                                         anyhow::Ok(())
                                     }
                                 })
@@ -1342,22 +1395,24 @@ async fn open_new_agent_servers_entry_in_settings_editor(
 
             let mut unique_server_name = None;
             let edits = settings.edits_for_update(&text, |settings| {
-                let server_name: Option<SharedString> = (0..u8::MAX)
+                let server_name: Option<String> = (0..u8::MAX)
                     .map(|i| {
                         if i == 0 {
-                            "your_agent".into()
+                            "your_agent".to_string()
                         } else {
-                            format!("your_agent_{}", i).into()
+                            format!("your_agent_{}", i)
                         }
                     })
                     .find(|name| {
                         !settings
                             .agent_servers
                             .as_ref()
-                            .is_some_and(|agent_servers| agent_servers.custom.contains_key(name))
+                            .is_some_and(|agent_servers| {
+                                agent_servers.custom.contains_key(name.as_str())
+                            })
                     });
                 if let Some(server_name) = server_name {
-                    unique_server_name = Some(server_name.clone());
+                    unique_server_name = Some(SharedString::from(server_name.clone()));
                     settings
                         .agent_servers
                         .get_or_insert_default()
@@ -1367,7 +1422,7 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                             settings::CustomAgentServerSettings::Custom {
                                 path: "path_to_executable".into(),
                                 args: vec![],
-                                env: Some(HashMap::default()),
+                                env: HashMap::default(),
                                 default_mode: None,
                                 default_model: None,
                                 favorite_models: vec![],
