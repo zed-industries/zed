@@ -6153,6 +6153,7 @@ impl AcpThreadView {
                         h_flex()
                             .gap_1()
                             .children(self.render_token_usage(cx))
+                            .child(self.render_thinking_toggle(cx))
                             .children(self.profile_selector.clone())
                             // Either config_options_view OR (mode_selector + model_selector)
                             .children(self.config_options_view.clone())
@@ -6421,6 +6422,28 @@ impl AcpThreadView {
                     .child(Label::new(max).size(LabelSize::Small).color(Color::Muted)),
             )
         }
+    }
+
+    fn render_thinking_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let thinking = false;
+
+        let tooltip_label = if thinking {
+            "Disable Thinking Mode".to_string()
+        } else {
+            "Enable Thinking Mode".to_string()
+        };
+
+        // TODO: Pick a better icon (or use text).
+        IconButton::new("thinking-mode", IconName::MagnifyingGlass)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .toggle_state(thinking)
+            .selected_icon_color(Some(Color::Custom(cx.theme().players().agent().cursor)))
+            .tooltip(Tooltip::text(tooltip_label))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                // TODO: Toggle thinking.
+            }))
+            .into_any_element()
     }
 
     fn keep_all(&mut self, _: &KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
