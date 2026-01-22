@@ -8,12 +8,12 @@ use crate::{
     progress::{ExampleProgress, Step},
 };
 use anyhow::Context as _;
+use edit_prediction::udiff::apply_diff_to_string;
+use gpui::AsyncApp;
 use serde::Serialize;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
-use edit_prediction::udiff::apply_diff_to_string;
-use gpui::AsyncApp;
 use std::sync::Arc;
 
 pub async fn run_scoring(
