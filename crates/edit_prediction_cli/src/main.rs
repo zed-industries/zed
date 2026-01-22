@@ -403,7 +403,9 @@ async fn load_examples(
         examples.truncate(limit);
     }
 
-    Progress::global().set_total_examples(examples.len());
+    let progress = Progress::global();
+    progress.set_total_examples(examples.len());
+    progress.set_max_example_name_len(examples.iter().map(|e| &e.spec.name));
 
     Ok(examples)
 }
