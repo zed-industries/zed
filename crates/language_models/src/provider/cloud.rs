@@ -731,7 +731,6 @@ impl LanguageModel for CloudLanguageModel {
                         AnthropicModelMode::Default
                     },
                 );
-                dbg!(&request.thinking);
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream_with_bypass(
