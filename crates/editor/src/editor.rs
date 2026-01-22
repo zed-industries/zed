@@ -37,6 +37,7 @@ mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
 mod split;
+pub mod split_editor_view;
 pub mod tasks;
 
 #[cfg(test)]
@@ -57,8 +58,8 @@ pub use editor_settings::{
     HideMouseMode, ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
 };
 pub use element::{
-    CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
-    render_breadcrumb_text,
+    CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, OverlayPainter,
+    OverlayPainterData, PointForPosition, render_breadcrumb_text,
 };
 pub use git::blame::BlameRenderer;
 pub use hover_popover::hover_markdown_style;
@@ -71,7 +72,8 @@ pub use multi_buffer::{
     MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
     ToPoint,
 };
-pub use split::SplittableEditor;
+pub use split::{SplittableEditor, ToggleLockedCursors, ToggleSplitDiff};
+pub use split_editor_view::SplitEditorView;
 pub use text::Bias;
 
 use ::git::{Restore, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
@@ -1310,6 +1312,10 @@ pub struct Editor {
     folding_newlines: Task<()>,
     select_next_is_case_sensitive: Option<bool>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
+    scroll_companion: Option<WeakEntity<Editor>>,
+    on_local_selections_changed:
+        Option<Box<dyn Fn(Point, &mut Window, &mut Context<Self>) + 'static>>,
+    suppress_selection_callback: bool,
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
     accent_data: Option<AccentData>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
@@ -1808,7 +1814,7 @@ pub(crate) struct FocusedBlock {
 }
 
 #[derive(Clone, Debug)]
-enum JumpData {
+pub enum JumpData {
     MultiBufferRow {
         row: MultiBufferRow,
         line_offset_from_top: u32,
@@ -2515,6 +2521,9 @@ impl Editor {
             folding_newlines: Task::ready(()),
             lookup_key: None,
             select_next_is_case_sensitive: None,
+            scroll_companion: None,
+            on_local_selections_changed: None,
+            suppress_selection_callback: false,
             applicable_language_settings: HashMap::default(),
             accent_data: None,
             fetched_tree_sitter_chunks: HashMap::default(),
@@ -3522,6 +3531,14 @@ impl Editor {
         }
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
+
+        if local && !self.suppress_selection_callback {
+            if let Some(callback) = self.on_local_selections_changed.as_ref() {
+                let cursor_position = self.selections.newest::<Point>(&display_map).head();
+                callback(cursor_position, window, cx);
+            }
+        }
+
         cx.emit(EditorEvent::SelectionsChanged { local });
 
         let selections = &self.selections.disjoint_anchors_arc();
@@ -5544,7 +5561,7 @@ impl Editor {
             Bias::Left,
         );
         multi_buffer_snapshot
-            .range_to_buffer_ranges(multi_buffer_visible_start..multi_buffer_visible_end)
+            .range_to_buffer_ranges(multi_buffer_visible_start..=multi_buffer_visible_end)
             .into_iter()
             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
             .filter_map(|(buffer, excerpt_visible_range, excerpt_id)| {
@@ -7346,7 +7363,9 @@ impl Editor {
             }
             let match_task = cx.background_spawn(async move {
                 let buffer_ranges = multi_buffer_snapshot
-                    .range_to_buffer_ranges(multi_buffer_range_to_query)
+                    .range_to_buffer_ranges(
+                        multi_buffer_range_to_query.start..=multi_buffer_range_to_query.end,
+                    )
                     .into_iter()
                     .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty());
                 let mut match_ranges = Vec::new();
@@ -8522,7 +8541,7 @@ impl Editor {
             ..snapshot.display_point_to_point(DisplayPoint::new(range.end, 0), Bias::Right);
 
         for (buffer_snapshot, range, excerpt_id) in
-            multi_buffer_snapshot.range_to_buffer_ranges(range)
+            multi_buffer_snapshot.range_to_buffer_ranges(range.start..=range.end)
         {
             let Some(buffer) = project
                 .read(cx)
@@ -18743,7 +18762,7 @@ impl Editor {
                     BTreeMap::new();
                 for selection_range in selection_ranges {
                     for (buffer, buffer_range, _) in
-                        snapshot.range_to_buffer_ranges(selection_range)
+                        snapshot.range_to_buffer_ranges(selection_range.start..=selection_range.end)
                     {
                         let buffer_id = buffer.remote_id();
                         let start = buffer.anchor_before(buffer_range.start);
@@ -20779,7 +20798,6 @@ impl Editor {
     pub fn set_soft_wrap_mode(
         &mut self,
         mode: language_settings::SoftWrap,
-
         cx: &mut Context<Self>,
     ) {
         self.soft_wrap_mode_override = Some(mode);
@@ -21019,6 +21037,25 @@ impl Editor {
 
     pub fn set_delegate_expand_excerpts(&mut self, delegate: bool) {
         self.delegate_expand_excerpts = delegate;
+    }
+
+    pub fn set_scroll_companion(&mut self, companion: Option<WeakEntity<Editor>>) {
+        self.scroll_companion = companion;
+    }
+
+    pub fn scroll_companion(&self) -> Option<&WeakEntity<Editor>> {
+        self.scroll_companion.as_ref()
+    }
+
+    pub fn set_on_local_selections_changed(
+        &mut self,
+        callback: Option<Box<dyn Fn(Point, &mut Window, &mut Context<Self>) + 'static>>,
+    ) {
+        self.on_local_selections_changed = callback;
+    }
+
+    pub fn set_suppress_selection_callback(&mut self, suppress: bool) {
+        self.suppress_selection_callback = suppress;
     }
 
     pub fn set_show_git_diff_gutter(&mut self, show_git_diff_gutter: bool, cx: &mut Context<Self>) {
@@ -22524,7 +22561,8 @@ impl Editor {
 
             let multi_buffer = self.buffer().read(cx);
             let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-            let buffer_ranges = multi_buffer_snapshot.range_to_buffer_ranges(selection_range);
+            let buffer_ranges = multi_buffer_snapshot
+                .range_to_buffer_ranges(selection_range.start..=selection_range.end);
 
             let (buffer, range, _) = if selection.reversed {
                 buffer_ranges.first()
@@ -22542,15 +22580,19 @@ impl Editor {
             };
 
             let buffer_diff_snapshot = buffer_diff.read(cx).snapshot(cx);
+            let (mut translated, _, _) = buffer_diff_snapshot.points_to_base_text_points(
+                [
+                    Point::new(start_row_in_buffer, 0),
+                    Point::new(end_row_in_buffer, 0),
+                ],
+                buffer,
+            );
+            let start_row = translated.next().unwrap().start.row;
+            let end_row = translated.next().unwrap().end.row;
 
             Some((
                 multi_buffer.buffer(buffer.remote_id()).unwrap(),
-                buffer_diff_snapshot.row_to_base_text_row(start_row_in_buffer, Bias::Left, buffer)
-                    ..buffer_diff_snapshot.row_to_base_text_row(
-                        end_row_in_buffer,
-                        Bias::Left,
-                        buffer,
-                    ),
+                start_row..end_row,
             ))
         });
 
@@ -23839,7 +23881,7 @@ impl Editor {
         self.open_excerpts_common(None, false, window, cx)
     }
 
-    fn open_excerpts_common(
+    pub(crate) fn open_excerpts_common(
         &mut self,
         jump_data: Option<JumpData>,
         split: bool,
@@ -24331,6 +24373,7 @@ impl Editor {
                         modifiers: window.modifiers(),
                     },
                     &position_map,
+                    None,
                     window,
                     cx,
                 );
@@ -24794,7 +24837,7 @@ impl Editor {
         self.active_diagnostics == ActiveDiagnostic::All || !self.mode().is_full()
     }
 
-    fn create_style(&self, cx: &App) -> EditorStyle {
+    pub(crate) fn create_style(&self, cx: &App) -> EditorStyle {
         let settings = ThemeSettings::get_global(cx);
 
         let mut text_style = match self.mode {
@@ -25480,7 +25523,10 @@ impl NewlineConfig {
         buffer: &MultiBufferSnapshot,
         range: Range<MultiBufferOffset>,
     ) -> bool {
-        let (buffer, range) = match buffer.range_to_buffer_ranges(range).as_slice() {
+        let (buffer, range) = match buffer
+            .range_to_buffer_ranges(range.start..=range.end)
+            .as_slice()
+        {
             [(buffer, range, _)] => (*buffer, range.clone()),
             _ => return false,
         };
