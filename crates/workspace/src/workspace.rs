@@ -6425,6 +6425,7 @@ impl Workspace {
         });
 
         let has_collab_panel = self.collab_panel_dock_position(cx) == Some(position);
+        let dock_is_open = dock.read(cx).is_open();
 
         let border_side: fn(Div) -> Div = match position {
             DockPosition::Left => |d: Div| d.border_r_1(),
@@ -6449,7 +6450,7 @@ impl Workspace {
                         .children(leader_border),
                 )
                 .when_some(
-                    has_collab_panel.then(|| self.collab_overlay_panel.clone()).flatten(),
+                    (has_collab_panel && dock_is_open).then(|| self.collab_overlay_panel.clone()).flatten(),
                     |this, panel| {
                         this.child(
                             border_side(

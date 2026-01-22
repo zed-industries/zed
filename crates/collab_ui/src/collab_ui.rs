@@ -1,5 +1,6 @@
 pub mod channel_view;
 pub mod collab_overlay_panel;
+pub mod collab_overlay_status_item;
 pub mod collab_panel;
 pub mod notification_panel;
 pub mod notifications;
@@ -8,6 +9,7 @@ mod panel_settings;
 use std::{rc::Rc, sync::Arc};
 
 pub use collab_overlay_panel::CollabOverlayPanel;
+pub use collab_overlay_status_item::CollabOverlayStatusItem;
 pub use collab_panel::CollabPanel;
 use gpui::{
     App, Pixels, PlatformDisplay, Size, WindowBackgroundAppearance, WindowBounds,

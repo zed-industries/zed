@@ -113,7 +113,7 @@ impl RenderOnce for CollabOverlayControls {
                                 } else {
                                     "Mute"
                                 }))
-                                .when(self.is_muted, |this| this.icon_color(Color::Muted))
+                                .when(self.is_muted, |this| this.icon_color(Color::Error))
                                 .when_some(self.on_toggle_mute, |this, handler| {
                                     this.on_click(handler)
                                 }),
@@ -126,7 +126,7 @@ impl RenderOnce for CollabOverlayControls {
                                 } else {
                                     "Deafen"
                                 }))
-                                .when(self.is_deafened, |this| this.icon_color(Color::Muted))
+                                .when(self.is_deafened, |this| this.icon_color(Color::Error))
                                 .when_some(self.on_toggle_deafen, |this, handler| {
                                     this.on_click(handler)
                                 }),
@@ -140,7 +140,7 @@ impl RenderOnce for CollabOverlayControls {
                     .icon(IconName::Exit)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
+                    .icon_color(Color::Error)
                     .tooltip(Tooltip::text("Leave Call"))
                     .when_some(self.on_leave, |this, handler| this.on_click(handler)),
             )

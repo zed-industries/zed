@@ -450,7 +450,10 @@ pub fn initialize_workspace(
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         let line_ending_indicator =
             cx.new(|_| line_ending_selector::LineEndingIndicator::default());
+        let collab_status_item =
+            collab_ui::CollabOverlayStatusItem::new(workspace, cx);
         workspace.status_bar().update(cx, |status_bar, cx| {
+            status_bar.prepend_left_item(collab_status_item, window, cx);
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(lsp_button, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);

@@ -2,19 +2,18 @@ use crate::channel_view::ChannelView;
 use call::room::Room;
 use call::ActiveCall;
 use channel::ChannelStore;
-use client::User;
 use gpui::{
     AnyElement, App, Context, Corner, Entity, EventEmitter, Render, SharedString, Subscription,
     WeakEntity, Window,
 };
 use rpc::proto;
-use std::sync::Arc;
 use title_bar::collab::{toggle_deafen, toggle_mute, toggle_screen_sharing};
 use ui::{
     CollabOverlay, CollabOverlayControls, CollabOverlayHeader, ContextMenu, ContextMenuItem, Icon,
-    IconButton, IconName, IconSize, Label, LabelSize, ParticipantItem, PopoverMenu,
-    PopoverMenuHandle, Tooltip, prelude::*,
+    IconButton, IconName, IconSize, Label, LabelSize, ParticipantItem, ParticipantProject,
+    ParticipantScreen, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
+use workspace::notifications::DetachAndPromptErr;
 use workspace::Workspace;
 
 pub struct CollabOverlayPanel {
@@ -113,55 +112,165 @@ impl CollabOverlayPanel {
         "Call".into()
     }
 
-    fn render_participant(
-        user: &Arc<User>,
-        is_current_user: bool,
-        is_muted: bool,
-        is_speaking: bool,
-        is_deafened: bool,
-        is_guest: bool,
+    fn render_remote_participant(
+        &self,
+        participant: &call::participant::RemoteParticipant,
+        cx: &App,
     ) -> AnyElement {
-        ParticipantItem::new(user.github_login.clone())
-            .avatar(user.avatar_uri.to_string())
-            .current_user(is_current_user)
-            .muted(is_muted)
-            .speaking(is_speaking)
-            .deafened(is_deafened)
+        let peer_id = participant.peer_id;
+        let user_id = participant.user.id;
+        let is_guest = participant.role == proto::ChannelRole::Guest;
+        let participant_index = participant.participant_index.0;
+
+        let is_following = self
+            .workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).is_being_followed(peer_id))
+            .unwrap_or(false);
+
+        let player_color = cx
+            .theme()
+            .players()
+            .color_for_participant(participant_index)
+            .cursor;
+
+        let projects_data: Vec<(u64, SharedString)> = participant
+            .projects
+            .iter()
+            .map(|project| {
+                let name: SharedString = if project.worktree_root_names.is_empty() {
+                    "untitled".into()
+                } else {
+                    project.worktree_root_names.join(", ").into()
+                };
+                (project.id, name)
+            })
+            .collect();
+
+        let has_screen = participant.has_video_tracks();
+        let projects: Vec<ParticipantProject> = projects_data
+            .iter()
+            .enumerate()
+            .map(|(index, (_, name))| {
+                let is_last = index == projects_data.len() - 1 && !has_screen;
+                ParticipantProject {
+                    name: name.clone(),
+                    is_last,
+                }
+            })
+            .collect();
+
+        let screen = if has_screen {
+            Some(ParticipantScreen { is_last: true })
+        } else {
+            None
+        };
+
+        let workspace = self.workspace.clone();
+        let workspace_for_project = self.workspace.clone();
+        let workspace_for_screen = self.workspace.clone();
+
+        let project_ids: Vec<u64> = projects_data.iter().map(|(id, _)| *id).collect();
+
+        ParticipantItem::new(participant.user.github_login.clone())
+            .avatar(participant.user.avatar_uri.to_string())
+            .current_user(false)
+            .muted(participant.muted)
+            .speaking(participant.speaking)
+            .deafened(false)
             .guest(is_guest)
+            .following(is_following)
+            .player_color(player_color)
+            .projects(projects)
+            .when_some(screen, |this, screen| this.screen(screen))
+            .on_click(move |_, window, cx| {
+                if let Some(workspace) = workspace.upgrade() {
+                    let is_currently_following = workspace.read(cx).is_being_followed(peer_id);
+                    workspace.update(cx, |workspace, cx| {
+                        if is_currently_following {
+                            workspace.unfollow(peer_id, window, cx);
+                        } else {
+                            workspace.follow(peer_id, window, cx);
+                        }
+                    });
+                }
+            })
+            .on_project_click(move |index, _, window, cx| {
+                if let Some(project_id) = project_ids.get(index) {
+                    if let Some(workspace) = workspace_for_project.upgrade() {
+                        let project_id = *project_id;
+                        workspace.update(cx, |workspace, cx| {
+                            let app_state = workspace.app_state().clone();
+                            workspace::join_in_room_project(project_id, user_id, app_state, cx)
+                                .detach_and_prompt_err(
+                                    "Failed to join project",
+                                    window,
+                                    cx,
+                                    |_, _, _| None,
+                                );
+                        });
+                    }
+                }
+            })
+            .on_screen_click(move |_, window, cx| {
+                if let Some(workspace) = workspace_for_screen.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.open_shared_screen(peer_id, window, cx);
+                    });
+                }
+            })
             .into_any_element()
     }
 
     fn render_participants(&self, room: &Entity<Room>, cx: &App) -> Vec<AnyElement> {
-        let room = room.read(cx);
+        let room_read = room.read(cx);
         let mut participants = Vec::new();
 
-        if let Some(current_user) = room.local_participant_user(cx) {
-            let is_muted = room.is_muted();
-            let is_speaking = room.is_speaking();
-            let is_deafened = room.is_deafened().unwrap_or(false);
-            let is_guest = room.local_participant_is_guest();
+        if let Some(current_user) = room_read.local_participant_user(cx) {
+            let is_muted = room_read.is_muted();
+            let is_speaking = room_read.is_speaking();
+            let is_deafened = room_read.is_deafened().unwrap_or(false);
+            let is_guest = room_read.local_participant_is_guest();
 
-            participants.push(Self::render_participant(
-                &current_user,
-                true,
-                is_muted,
-                is_speaking,
-                is_deafened,
-                is_guest,
-            ));
+            let local_projects = room_read.local_participant().projects.clone();
+            let has_screen = room_read.is_sharing_screen();
+
+            let projects: Vec<ParticipantProject> = local_projects
+                .iter()
+                .enumerate()
+                .map(|(index, project)| {
+                    let name: SharedString = if project.worktree_root_names.is_empty() {
+                        "untitled".into()
+                    } else {
+                        project.worktree_root_names.join(", ").into()
+                    };
+                    let is_last = index == local_projects.len() - 1 && !has_screen;
+                    ParticipantProject { name, is_last }
+                })
+                .collect();
+
+            let screen = if has_screen {
+                Some(ParticipantScreen { is_last: true })
+            } else {
+                None
+            };
+
+            participants.push(
+                ParticipantItem::new(current_user.github_login.clone())
+                    .avatar(current_user.avatar_uri.to_string())
+                    .current_user(true)
+                    .muted(is_muted)
+                    .speaking(is_speaking)
+                    .deafened(is_deafened)
+                    .guest(is_guest)
+                    .projects(projects)
+                    .when_some(screen, |this, screen| this.screen(screen))
+                    .into_any_element(),
+            );
         }
 
-        for (_, remote_participant) in room.remote_participants() {
-            let is_guest = remote_participant.role == proto::ChannelRole::Guest;
-
-            participants.push(Self::render_participant(
-                &remote_participant.user,
-                false,
-                remote_participant.muted,
-                remote_participant.speaking,
-                false,
-                is_guest,
-            ));
+        for (_, remote_participant) in room_read.remote_participants() {
+            participants.push(self.render_remote_participant(remote_participant, cx));
         }
 
         participants
