@@ -1,8 +1,8 @@
 use crate::{
     Capslock, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
-    NavigationDirection, Pixels, PlatformInput, PressureStage, ScrollDelta, ScrollWheelEvent,
-    TouchPhase,
+    NavigationDirection, Pinch, Pixels, PlatformInput, PressureStage, ScrollDelta,
+    ScrollWheelEvent, TouchPhase,
     platform::mac::{
         LMGetKbdType, NSStringExt, TISCopyCurrentKeyboardLayoutInputSource,
         TISGetInputSourceProperty, UCKeyTranslate, kTISPropertyUnicodeKeyLayoutData,
@@ -263,6 +263,29 @@ impl PlatformInput {
                         delta,
                         touch_phase: phase,
                         modifiers: read_modifiers(native_event),
+                    })
+                }),
+                NSEventType::NSEventTypeMagnify => window_height.map(|window_height| {
+                    let phase = match native_event.phase() {
+                        NSEventPhase::NSEventPhaseMayBegin | NSEventPhase::NSEventPhaseBegan => {
+                            TouchPhase::Started
+                        }
+                        NSEventPhase::NSEventPhaseEnded => TouchPhase::Ended,
+                        _ => TouchPhase::Moved,
+                    };
+
+                    // The magnification value represents the zoom delta
+                    // Positive values zoom in, negative values zoom out
+                    let magnification = unsafe { native_event.magnification() } as f32;
+
+                    Self::Pinch(PinchEvent {
+                        position: point(
+                            px(native_event.locationInWindow().x as f32),
+                            window_height - px(native_event.locationInWindow().y as f32),
+                        ),
+                        delta: magnification,
+                        modifiers: read_modifiers(native_event),
+                        phase,
                     })
                 }),
                 NSEventType::NSLeftMouseDragged

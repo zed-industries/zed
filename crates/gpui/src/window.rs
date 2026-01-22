@@ -3904,6 +3904,11 @@ impl Window {
                 self.modifiers = scroll_wheel.modifiers;
                 PlatformInput::ScrollWheel(scroll_wheel)
             }
+            PlatformInput::Pinch(pinch) => {
+                self.mouse_position = pinch.position;
+                self.modifiers = pinch.modifiers;
+                PlatformInput::Pinch(pinch)
+            }
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.
             PlatformInput::FileDrop(file_drop) => match file_drop {
