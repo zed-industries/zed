@@ -226,6 +226,15 @@ impl AgentSessionInfo {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum SessionListUpdate {
+    Refresh,
+    SessionInfo {
+        session_id: acp::SessionId,
+        update: acp::SessionInfoUpdate,
+    },
+}
+
 pub trait AgentSessionList {
     fn list_sessions(
         &self,
@@ -245,7 +254,7 @@ pub trait AgentSessionList {
         Task::ready(Err(anyhow::anyhow!("delete_sessions not supported")))
     }
 
-    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+    fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
         None
     }
 

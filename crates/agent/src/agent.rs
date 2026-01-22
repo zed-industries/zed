@@ -1399,15 +1399,15 @@ impl acp_thread::AgentTelemetry for NativeAgentConnection {
 
 pub struct NativeAgentSessionList {
     thread_store: Entity<ThreadStore>,
-    updates_rx: watch::Receiver<()>,
+    updates_rx: smol::channel::Receiver<acp_thread::SessionListUpdate>,
     _subscription: Subscription,
 }
 
 impl NativeAgentSessionList {
     fn new(thread_store: Entity<ThreadStore>, cx: &mut App) -> Self {
-        let (mut tx, rx) = watch::channel(());
+        let (tx, rx) = smol::channel::unbounded();
         let subscription = cx.observe(&thread_store, move |_, _| {
-            tx.send(()).ok();
+            tx.try_send(acp_thread::SessionListUpdate::Refresh).ok();
         });
         Self {
             thread_store,
@@ -1460,7 +1460,10 @@ impl AgentSessionList for NativeAgentSessionList {
             .update(cx, |store, cx| store.delete_threads(cx))
     }
 
-    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+    fn watch(
+        &self,
+        _cx: &mut App,
+    ) -> Option<smol::channel::Receiver<acp_thread::SessionListUpdate>> {
         Some(self.updates_rx.clone())
     }
 

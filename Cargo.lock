@@ -292,6 +292,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smol",
  "task",
  "tempfile",
  "terminal",
