@@ -2512,6 +2512,15 @@ mod tests {
     use smol::channel::Receiver;
     use task::{Shell, ShellBuilder};
 
+    #[cfg(target_os = "macos")]
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+        });
+    }
+
     /// Helper to build a test terminal running a shell command.
     /// Returns the terminal entity and a receiver for the completion signal.
     async fn build_test_terminal(
@@ -2666,6 +2675,8 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[gpui::test(iterations = 10)]
     async fn test_terminal_eof(cx: &mut TestAppContext) {
+        init_test(cx);
+
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
