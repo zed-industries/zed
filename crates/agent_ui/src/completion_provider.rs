@@ -181,8 +181,6 @@ pub struct AvailableCommand {
     pub name: Arc<str>,
     pub description: Arc<str>,
     pub requires_argument: bool,
-    /// The source of the command - kept for future use to differentiate UI behavior
-    #[allow(dead_code)]
     pub source: CommandSource,
 }
 
