@@ -1,10 +1,12 @@
-use crate::prelude::*;
-use gpui::{AnyElement, IntoElement, ParentElement, Styled};
+use crate::{Tooltip, prelude::*};
+use gpui::{AnyElement, ClickEvent, IntoElement, ParentElement, Styled};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct CollabOverlayHeader {
     channel_name: SharedString,
     is_open: bool,
+    on_toggle: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_channel_notes: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
 impl CollabOverlayHeader {
@@ -12,11 +14,29 @@ impl CollabOverlayHeader {
         Self {
             channel_name: channel_name.into(),
             is_open: false,
+            on_toggle: None,
+            on_channel_notes: None,
         }
     }
 
     pub fn is_open(mut self, is_open: bool) -> Self {
         self.is_open = is_open;
+        self
+    }
+
+    pub fn on_toggle(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_toggle = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_channel_notes(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_channel_notes = Some(Box::new(handler));
         self
     }
 }
@@ -30,6 +50,7 @@ impl RenderOnce for CollabOverlayHeader {
         };
 
         h_flex()
+            .id("collab-overlay-header")
             .py_1()
             .px_2()
             .w_full()
@@ -38,17 +59,38 @@ impl RenderOnce for CollabOverlayHeader {
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
             .bg(cx.theme().colors().surface_background)
+            .cursor_pointer()
+            .hover(|style| style.bg(cx.theme().colors().element_hover))
+            .tooltip(Tooltip::text("Open Channel Notes"))
+            .when_some(self.on_channel_notes, |this, handler| {
+                this.on_click(handler)
+            })
             .child(
                 h_flex()
                     .gap_2()
                     .child(
-                        Icon::new(IconName::AudioOn)
+                        Icon::new(IconName::FileDoc)
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
                     .child(Label::new(self.channel_name)),
             )
-            .child(Icon::new(chevron).size(IconSize::Small).color(Color::Muted))
+            .child(
+                IconButton::new("collapse-toggle", chevron)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .tooltip(Tooltip::text(if self.is_open {
+                        "Collapse"
+                    } else {
+                        "Expand"
+                    }))
+                    .when_some(self.on_toggle, |this, handler| {
+                        this.on_click(move |event, window, cx| {
+                            cx.stop_propagation();
+                            handler(event, window, cx);
+                        })
+                    }),
+            )
     }
 }
 

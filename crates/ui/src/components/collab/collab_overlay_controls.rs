@@ -10,7 +10,7 @@ pub struct CollabOverlayControls {
     is_screen_sharing: bool,
     on_toggle_mute: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_toggle_deafen: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
-    on_toggle_screen_share: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    screen_share_menu: Option<AnyElement>,
     on_leave: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
@@ -24,7 +24,7 @@ impl CollabOverlayControls {
             is_screen_sharing: false,
             on_toggle_mute: None,
             on_toggle_deafen: None,
-            on_toggle_screen_share: None,
+            screen_share_menu: None,
             on_leave: None,
         }
     }
@@ -65,11 +65,8 @@ impl CollabOverlayControls {
         self
     }
 
-    pub fn on_toggle_screen_share(
-        mut self,
-        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.on_toggle_screen_share = Some(Box::new(handler));
+    pub fn screen_share_menu(mut self, menu: impl IntoElement) -> Self {
+        self.screen_share_menu = Some(menu.into_any_element());
         self
     }
 
@@ -95,8 +92,6 @@ impl RenderOnce for CollabOverlayControls {
         } else {
             IconName::AudioOn
         };
-
-        let screen_icon = IconName::Screen;
 
         h_flex()
             .py_1()
@@ -136,21 +131,7 @@ impl RenderOnce for CollabOverlayControls {
                                     this.on_click(handler)
                                 }),
                         )
-                        .child(
-                            IconButton::new("screen", screen_icon)
-                                .icon_size(IconSize::Small)
-                                .tooltip(Tooltip::text(if self.is_screen_sharing {
-                                    "Stop Sharing Screen"
-                                } else {
-                                    "Share Screen"
-                                }))
-                                .when(self.is_screen_sharing, |this| {
-                                    this.icon_color(Color::Accent)
-                                })
-                                .when_some(self.on_toggle_screen_share, |this, handler| {
-                                    this.on_click(handler)
-                                }),
-                        ),
+                        .when_some(self.screen_share_menu, |this, menu| this.child(menu)),
                 ),
             )
             .child(

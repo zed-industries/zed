@@ -89,12 +89,6 @@ impl ParticipantItem {
 
 impl RenderOnce for ParticipantItem {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let (mic_icon, mic_icon_color) = if self.is_muted {
-            (IconName::MicMute, Color::Muted)
-        } else {
-            (IconName::Mic, Color::Default)
-        };
-
         v_flex()
             .bg(cx.theme().colors().surface_background)
             .child(
@@ -121,11 +115,13 @@ impl RenderOnce for ParticipantItem {
                             )
                             .child(Label::new(self.display_name).size(LabelSize::Small)),
                     )
-                    .child(
-                        Icon::new(mic_icon)
-                            .size(IconSize::Small)
-                            .color(mic_icon_color),
-                    ),
+                    .when(self.is_muted, |this| {
+                        this.child(
+                            Icon::new(IconName::MicMute)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                    }),
             )
             .child(
                 h_flex()
