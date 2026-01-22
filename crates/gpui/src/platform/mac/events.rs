@@ -276,7 +276,7 @@ impl PlatformInput {
 
                     // The magnification value represents the zoom delta
                     // Positive values zoom in, negative values zoom out
-                    let magnification = unsafe { native_event.magnification() } as f32;
+                    let magnification = native_event.magnification() as f32;
 
                     Self::Pinch(PinchEvent {
                         position: point(
