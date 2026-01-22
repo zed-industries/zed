@@ -44,21 +44,21 @@ use std::{
 use tempfile::TempDir;
 use text::LineEnding;
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 mod fake_git_repo;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 use collections::{BTreeMap, btree_map};
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 use fake_git_repo::FakeGitRepositoryState;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 use git::{
     repository::{RepoPath, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 use smol::io::AsyncReadExt;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 use std::ffi::OsStr;
 
 pub trait Watcher: Send + Sync {
@@ -147,7 +147,7 @@ pub trait Fs: Send + Sync {
     async fn is_case_sensitive(&self) -> Result<bool>;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     fn as_fake(&self) -> Arc<FakeFs> {
         panic!("called as_fake on a real fs");
     }
@@ -1144,7 +1144,7 @@ impl Watcher for RealWatcher {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 pub struct FakeFs {
     this: std::sync::Weak<Self>,
     // Use an unfair lock to ensure tests are deterministic.
@@ -1152,7 +1152,7 @@ pub struct FakeFs {
     executor: gpui::BackgroundExecutor,
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 struct FakeFsState {
     root: FakeFsEntry,
     next_inode: u64,
@@ -1168,7 +1168,7 @@ struct FakeFsState {
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 #[derive(Clone, Debug)]
 enum FakeFsEntry {
     File {
@@ -1191,7 +1191,7 @@ enum FakeFsEntry {
     },
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 impl PartialEq for FakeFsEntry {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -1252,7 +1252,7 @@ impl PartialEq for FakeFsEntry {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 impl FakeFsState {
     fn get_and_increment_mtime(&mut self) -> MTime {
         let mtime = self.next_mtime;
@@ -1416,11 +1416,11 @@ impl FakeFsState {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 pub static FS_DOT_GIT: std::sync::LazyLock<&'static OsStr> =
     std::sync::LazyLock::new(|| OsStr::new(".git"));
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 impl FakeFs {
     /// We need to use something large enough for Windows and Unix to consider this a new file.
     /// https://doc.rust-lang.org/nightly/std/time/struct.SystemTime.html#platform-specific-behavior
@@ -1538,50 +1538,58 @@ impl FakeFs {
         new_content: Vec<u8>,
         recreate_inode: bool,
     ) -> Result<()> {
-        let mut state = self.state.lock();
-        let path_buf = path.as_ref().to_path_buf();
-        *state.path_write_counts.entry(path_buf).or_insert(0) += 1;
-        let new_inode = state.get_and_increment_inode();
-        let new_mtime = state.get_and_increment_mtime();
-        let new_len = new_content.len() as u64;
-        let mut kind = None;
-        state.write_path(path.as_ref(), |entry| {
-            match entry {
-                btree_map::Entry::Vacant(e) => {
-                    kind = Some(PathEventKind::Created);
-                    e.insert(FakeFsEntry::File {
-                        inode: new_inode,
-                        mtime: new_mtime,
-                        len: new_len,
-                        content: new_content,
-                        git_dir_path: None,
-                    });
-                }
-                btree_map::Entry::Occupied(mut e) => {
-                    kind = Some(PathEventKind::Changed);
-                    if let FakeFsEntry::File {
-                        inode,
-                        mtime,
-                        len,
-                        content,
-                        ..
-                    } = e.get_mut()
-                    {
-                        *mtime = new_mtime;
-                        *content = new_content;
-                        *len = new_len;
-                        if recreate_inode {
-                            *inode = new_inode;
+        fn inner(
+            this: &FakeFs,
+            path: &Path,
+            new_content: Vec<u8>,
+            recreate_inode: bool,
+        ) -> Result<()> {
+            let mut state = this.state.lock();
+            let path_buf = path.to_path_buf();
+            *state.path_write_counts.entry(path_buf).or_insert(0) += 1;
+            let new_inode = state.get_and_increment_inode();
+            let new_mtime = state.get_and_increment_mtime();
+            let new_len = new_content.len() as u64;
+            let mut kind = None;
+            state.write_path(path, |entry| {
+                match entry {
+                    btree_map::Entry::Vacant(e) => {
+                        kind = Some(PathEventKind::Created);
+                        e.insert(FakeFsEntry::File {
+                            inode: new_inode,
+                            mtime: new_mtime,
+                            len: new_len,
+                            content: new_content,
+                            git_dir_path: None,
+                        });
+                    }
+                    btree_map::Entry::Occupied(mut e) => {
+                        kind = Some(PathEventKind::Changed);
+                        if let FakeFsEntry::File {
+                            inode,
+                            mtime,
+                            len,
+                            content,
+                            ..
+                        } = e.get_mut()
+                        {
+                            *mtime = new_mtime;
+                            *content = new_content;
+                            *len = new_len;
+                            if recreate_inode {
+                                *inode = new_inode;
+                            }
+                        } else {
+                            anyhow::bail!("not a file")
                         }
-                    } else {
-                        anyhow::bail!("not a file")
                     }
                 }
-            }
+                Ok(())
+            })?;
+            state.emit_event([(path, kind)]);
             Ok(())
-        })?;
-        state.emit_event([(path.as_ref(), kind)]);
-        Ok(())
+        }
+        inner(self, path.as_ref(), new_content, recreate_inode)
     }
 
     pub fn read_file_sync(&self, path: impl AsRef<Path>) -> Result<Vec<u8>> {
@@ -1646,30 +1654,35 @@ impl FakeFs {
         use futures::FutureExt as _;
         use serde_json::Value::*;
 
-        async move {
-            let path = path.as_ref();
-
-            match tree {
-                Object(map) => {
-                    self.create_dir(path).await.unwrap();
-                    for (name, contents) in map {
-                        let mut path = PathBuf::from(path);
-                        path.push(name);
-                        self.insert_tree(&path, contents).await;
+        fn inner<'a>(
+            this: &'a FakeFs,
+            path: Arc<Path>,
+            tree: serde_json::Value,
+        ) -> futures::future::BoxFuture<'a, ()> {
+            async move {
+                match tree {
+                    Object(map) => {
+                        this.create_dir(&path).await.unwrap();
+                        for (name, contents) in map {
+                            let mut path = PathBuf::from(path.as_ref());
+                            path.push(name);
+                            this.insert_tree(&path, contents).await;
+                        }
+                    }
+                    Null => {
+                        this.create_dir(&path).await.unwrap();
+                    }
+                    String(contents) => {
+                        this.insert_file(&path, contents.into_bytes()).await;
+                    }
+                    _ => {
+                        panic!("JSON object must contain only objects, strings, or null");
                     }
                 }
-                Null => {
-                    self.create_dir(path).await.unwrap();
-                }
-                String(contents) => {
-                    self.insert_file(&path, contents.into_bytes()).await;
-                }
-                _ => {
-                    panic!("JSON object must contain only objects, strings, or null");
-                }
             }
+            .boxed()
         }
-        .boxed()
+        inner(self, Arc::from(path.as_ref()), tree)
     }
 
     pub fn insert_tree_from_real_fs<'a>(
@@ -2126,7 +2139,7 @@ impl FakeFs {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 impl FakeFsEntry {
     fn is_file(&self) -> bool {
         matches!(self, Self::File { .. })
@@ -2153,7 +2166,7 @@ impl FakeFsEntry {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 struct FakeWatcher {
     tx: smol::channel::Sender<Vec<PathEvent>>,
     original_path: PathBuf,
@@ -2161,7 +2174,7 @@ struct FakeWatcher {
     prefixes: Mutex<Vec<PathBuf>>,
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 impl Watcher for FakeWatcher {
     fn add(&self, path: &Path) -> Result<()> {
         if path.starts_with(&self.original_path) {
@@ -2181,13 +2194,13 @@ impl Watcher for FakeWatcher {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 #[derive(Debug)]
 struct FakeHandle {
     inode: u64,
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 impl FileHandle for FakeHandle {
     fn current_path(&self, fs: &Arc<dyn Fs>) -> Result<PathBuf> {
         let fs = fs.as_fake();
@@ -2203,7 +2216,7 @@ impl FileHandle for FakeHandle {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 #[async_trait::async_trait]
 impl Fs for FakeFs {
     async fn create_dir(&self, path: &Path) -> Result<()> {
@@ -2804,7 +2817,7 @@ impl Fs for FakeFs {
         receiver
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     fn as_fake(&self) -> Arc<FakeFs> {
         self.this.upgrade().unwrap()
     }

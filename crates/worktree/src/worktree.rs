@@ -1,7 +1,5 @@
 mod ignore;
 mod worktree_settings;
-#[cfg(test)]
-mod worktree_tests;
 
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{Context as _, Result, anyhow};
@@ -723,7 +721,7 @@ impl Worktree {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub fn has_update_observer(&self) -> bool {
         match self {
             Worktree::Local(this) => this.update_observer.is_some(),
@@ -1383,6 +1381,7 @@ impl LocalWorktree {
         })
     }
 
+    #[ztracing::instrument(skip_all)]
     fn load_file(&self, path: &RelPath, cx: &Context<Worktree>) -> Task<Result<LoadedFile>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
@@ -1456,7 +1455,7 @@ impl LocalWorktree {
         lowest_ancestor.unwrap_or_else(|| RelPath::empty().into())
     }
 
-    fn create_entry(
+    pub fn create_entry(
         &self,
         path: Arc<RelPath>,
         is_dir: bool,
@@ -1517,7 +1516,7 @@ impl LocalWorktree {
         })
     }
 
-    fn write_file(
+    pub fn write_file(
         &self,
         path: Arc<RelPath>,
         text: Rope,
@@ -1633,7 +1632,7 @@ impl LocalWorktree {
         })
     }
 
-    fn delete_entry(
+    pub fn delete_entry(
         &self,
         entry_id: ProjectEntryId,
         trash: bool,
@@ -1880,7 +1879,7 @@ impl LocalWorktree {
         })
     }
 
-    fn observe_updates<F, Fut>(&mut self, project_id: u64, cx: &Context<Worktree>, callback: F)
+    pub fn observe_updates<F, Fut>(&mut self, project_id: u64, cx: &Context<Worktree>, callback: F)
     where
         F: 'static + Send + Fn(proto::UpdateWorktree) -> Fut,
         Fut: 'static + Send + Future<Output = bool>,
@@ -1954,6 +1953,13 @@ impl LocalWorktree {
             });
         self.snapshot.update_abs_path(new_path, root_name);
         self.restart_background_scanners(cx);
+    }
+    #[cfg(feature = "test-support")]
+    pub fn repositories(&self) -> Vec<Arc<Path>> {
+        self.git_repositories
+            .values()
+            .map(|entry| entry.work_directory_abs_path.clone())
+            .collect::<Vec<_>>()
     }
 }
 
@@ -2368,7 +2374,7 @@ impl Snapshot {
         }
     }
 
-    fn apply_remote_update(
+    pub fn apply_remote_update(
         &mut self,
         update: proto::UpdateWorktree,
         always_included_paths: &PathMatcher,
@@ -2769,14 +2775,14 @@ impl LocalSnapshot {
         ignore_stack
     }
 
-    #[cfg(test)]
-    fn expanded_entries(&self) -> impl Iterator<Item = &Entry> {
+    #[cfg(feature = "test-support")]
+    pub fn expanded_entries(&self) -> impl Iterator<Item = &Entry> {
         self.entries_by_path
             .cursor::<()>(())
             .filter(|entry| entry.kind == EntryKind::Dir && (entry.is_external || entry.is_ignored))
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub fn check_invariants(&self, git_state: bool) {
         use pretty_assertions::assert_eq;
 
@@ -2856,7 +2862,7 @@ impl LocalSnapshot {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub fn entries_without_ids(&self, include_ignored: bool) -> Vec<(&RelPath, u64, bool)> {
         let mut paths = Vec::new();
         for entry in self.entries_by_path.cursor::<()>(()) {
@@ -2964,7 +2970,7 @@ impl BackgroundScannerState {
                 .await;
         }
 
-        #[cfg(test)]
+        #[cfg(feature = "test-support")]
         self.snapshot.check_invariants(false);
 
         entry
@@ -3032,7 +3038,7 @@ impl BackgroundScannerState {
             self.changed_paths.insert(ix, parent_path.clone());
         }
 
-        #[cfg(test)]
+        #[cfg(feature = "test-support")]
         self.snapshot.check_invariants(false);
     }
 
@@ -3088,7 +3094,7 @@ impl BackgroundScannerState {
             .git_repositories
             .retain(|id, _| removed_ids.binary_search(id).is_err());
 
-        #[cfg(test)]
+        #[cfg(feature = "test-support")]
         self.snapshot.check_invariants(false);
     }
 
@@ -5219,7 +5225,7 @@ impl BackgroundScanner {
             return futures::future::pending().await;
         }
 
-        #[cfg(any(test, feature = "test-support"))]
+        #[cfg(feature = "test-support")]
         if self.fs.is_fake() {
             return self.executor.simulate_random_delay().await;
         }
@@ -5450,13 +5456,13 @@ struct UpdateIgnoreStatusJob {
 }
 
 pub trait WorktreeModelHandle {
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     fn flush_fs_events<'a>(
         &self,
         cx: &'a mut gpui::TestAppContext,
     ) -> futures::future::LocalBoxFuture<'a, ()>;
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     fn flush_fs_events_in_root_git_repository<'a>(
         &self,
         cx: &'a mut gpui::TestAppContext,
@@ -5470,7 +5476,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
     //
     // This function mutates the worktree's directory and waits for those mutations to be picked up,
     // to ensure that all redundant FS events have already been processed.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     fn flush_fs_events<'a>(
         &self,
         cx: &'a mut gpui::TestAppContext,
@@ -5540,7 +5546,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
     // worktree and thus its FS events might go through a different path.
     // In order to flush those, we need to create artificial events in the .git folder and wait
     // for the repository to be reloaded.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     fn flush_fs_events_in_root_git_repository<'a>(
         &self,
         cx: &'a mut gpui::TestAppContext,
@@ -5989,7 +5995,7 @@ impl ProjectEntryId {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 impl CreatedEntry {
     pub fn into_included(self) -> Option<Entry> {
         match self {

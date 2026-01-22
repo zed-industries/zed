@@ -1120,7 +1120,7 @@ impl Element for MarkdownElement {
                                     .when(!self.style.table_columns_min_size, |this| {
                                         this.grid_cols(column_count as u16)
                                     })
-                                    .size_full()
+                                    .w_full()
                                     .mb_2()
                                     .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
@@ -1451,7 +1451,7 @@ fn render_copy_code_block_button(
 ) -> impl IntoElement {
     let id = ElementId::named_usize("copy-markdown-code", id);
 
-    CopyButton::new(code.clone()).custom_on_click({
+    CopyButton::new(id.clone(), code.clone()).custom_on_click({
         let markdown = markdown;
         move |_window, cx| {
             let id = id.clone();

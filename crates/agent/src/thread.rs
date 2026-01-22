@@ -2,13 +2,13 @@ use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SubagentTool, SystemPromptTemplate, Template, Templates,
-    TerminalTool, ThinkingTool, ToolPermissionDecision, WebSearchTool,
-    decide_permission_from_settings,
+    RestoreFileFromDiskTool, SaveFileTool, StreamingEditFileTool, SubagentTool,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, ToolPermissionDecision,
+    WebSearchTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _, SubagentsFeatureFlag};
 
 use agent_client_protocol as acp;
 use agent_settings::{
@@ -223,6 +223,7 @@ impl UserMessage {
         const OPEN_FETCH_TAG: &str = "<fetched_urls>";
         const OPEN_RULES_TAG: &str =
             "<rules>\nThe user has specified the following rules that should be applied:\n";
+        const OPEN_DIAGNOSTICS_TAG: &str = "<diagnostics>";
 
         let mut file_context = OPEN_FILES_TAG.to_string();
         let mut directory_context = OPEN_DIRECTORIES_TAG.to_string();
@@ -231,6 +232,7 @@ impl UserMessage {
         let mut thread_context = OPEN_THREADS_TAG.to_string();
         let mut fetch_context = OPEN_FETCH_TAG.to_string();
         let mut rules_context = OPEN_RULES_TAG.to_string();
+        let mut diagnostics_context = OPEN_DIAGNOSTICS_TAG.to_string();
 
         for chunk in &self.content {
             let chunk = match chunk {
@@ -312,6 +314,9 @@ impl UserMessage {
                         MentionUri::Fetch { url } => {
                             write!(&mut fetch_context, "\nFetch: {}\n\n{}", url, content).ok();
                         }
+                        MentionUri::Diagnostics { .. } => {
+                            write!(&mut diagnostics_context, "\n{}\n", content).ok();
+                        }
                     }
 
                     language_model::MessageContent::Text(uri.as_link().to_string())
@@ -370,6 +375,13 @@ impl UserMessage {
             message
                 .content
                 .push(language_model::MessageContent::Text(rules_context));
+        }
+
+        if diagnostics_context.len() > OPEN_DIAGNOSTICS_TAG.len() {
+            diagnostics_context.push_str("</diagnostics>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(diagnostics_context));
         }
 
         if message.content.len() > len_before_context {
@@ -612,7 +624,7 @@ impl ToolPermissionContext {
     ///
     /// This is the canonical source for permission option generation.
     /// Tests should use this function rather than manually constructing options.
-    pub fn build_permission_options(&self) -> Vec<acp::PermissionOption> {
+    pub fn build_permission_options(&self) -> acp_thread::PermissionOptions {
         use crate::pattern_extraction::*;
 
         let tool_name = &self.tool_name;
@@ -634,11 +646,30 @@ impl ToolPermissionContext {
             _ => (None, None),
         };
 
-        let mut options = vec![acp::PermissionOption::new(
-            acp::PermissionOptionId::new(format!("always:{}", tool_name)),
+        let mut choices = Vec::new();
+
+        let mut push_choice = |label: String, allow_id, deny_id, allow_kind, deny_kind| {
+            choices.push(acp_thread::PermissionOptionChoice {
+                allow: acp::PermissionOption::new(
+                    acp::PermissionOptionId::new(allow_id),
+                    label.clone(),
+                    allow_kind,
+                ),
+                deny: acp::PermissionOption::new(
+                    acp::PermissionOptionId::new(deny_id),
+                    label,
+                    deny_kind,
+                ),
+            });
+        };
+
+        push_choice(
             format!("Always for {}", tool_name.replace('_', " ")),
+            format!("always_allow:{}", tool_name),
+            format!("always_deny:{}", tool_name),
             acp::PermissionOptionKind::AllowAlways,
-        )];
+            acp::PermissionOptionKind::RejectAlways,
+        );
 
         if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
             let button_text = match tool_name.as_str() {
@@ -646,27 +677,31 @@ impl ToolPermissionContext {
                 "fetch" => format!("Always for `{}`", display),
                 _ => format!("Always for `{}`", display),
             };
-            options.push(acp::PermissionOption::new(
-                acp::PermissionOptionId::new(format!("always_pattern:{}:{}", tool_name, pattern)),
+            push_choice(
                 button_text,
+                format!("always_allow_pattern:{}:{}", tool_name, pattern),
+                format!("always_deny_pattern:{}:{}", tool_name, pattern),
                 acp::PermissionOptionKind::AllowAlways,
-            ));
+                acp::PermissionOptionKind::RejectAlways,
+            );
         }
 
-        options.push(acp::PermissionOption::new(
-            acp::PermissionOptionId::new("once"),
-            "Only this time",
+        push_choice(
+            "Only this time".to_string(),
+            "allow".to_string(),
+            "deny".to_string(),
             acp::PermissionOptionKind::AllowOnce,
-        ));
+            acp::PermissionOptionKind::RejectOnce,
+        );
 
-        options
+        acp_thread::PermissionOptions::Dropdown(choices)
     }
 }
 
 #[derive(Debug)]
 pub struct ToolCallAuthorization {
     pub tool_call: acp::ToolCallUpdate,
-    pub options: Vec<acp::PermissionOption>,
+    pub options: acp_thread::PermissionOptions,
     pub response: oneshot::Sender<acp::PermissionOptionId>,
     pub context: Option<ToolPermissionContext>,
 }
@@ -801,6 +836,19 @@ impl Thread {
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(Some(model.as_ref())));
+
+        // Rebind tools that hold thread references to use this subagent's thread
+        // instead of the parent's thread. This is critical for tools like EditFileTool
+        // that make model requests using the thread's ID.
+        let weak_self = cx.weak_entity();
+        let tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>> = parent_tools
+            .into_iter()
+            .map(|(name, tool)| {
+                let rebound = tool.rebind_thread(weak_self.clone()).unwrap_or(tool);
+                (name, rebound)
+            })
+            .collect();
+
         Self {
             id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
             prompt_id: PromptId::new(),
@@ -814,7 +862,7 @@ impl Thread {
             running_turn: None,
             queued_messages: Vec::new(),
             pending_message: None,
-            tools: parent_tools,
+            tools,
             request_token_usage: HashMap::default(),
             cumulative_token_usage: TokenUsage::default(),
             initial_project_snapshot: Task::ready(None).shared(),
@@ -1143,6 +1191,12 @@ impl Thread {
         self.add_tool(EditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
+            language_registry.clone(),
+            Templates::new(),
+        ));
+        self.add_tool(StreamingEditFileTool::new(
+            self.project.clone(),
+            cx.weak_entity(),
             language_registry,
             Templates::new(),
         ));
@@ -1250,6 +1304,23 @@ impl Thread {
             Some(self.queued_messages.remove(index))
         } else {
             None
+        }
+    }
+
+    pub fn update_queued_message(
+        &mut self,
+        index: usize,
+        content: Vec<acp::ContentBlock>,
+        tracked_buffers: Vec<Entity<Buffer>>,
+    ) -> bool {
+        if index < self.queued_messages.len() {
+            self.queued_messages[index] = QueuedMessage {
+                content,
+                tracked_buffers,
+            };
+            true
+        } else {
+            false
         }
     }
 
@@ -2222,6 +2293,7 @@ impl Thread {
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: true,
+            bypass_rate_limit: false,
         };
 
         log::debug!("Completion request built successfully");
@@ -2244,14 +2316,31 @@ impl Thread {
             }
         }
 
+        let use_streaming_edit_tool =
+            cx.has_flag::<AgentV2FeatureFlag>() && model.supports_streaming_tools();
+
         let mut tools = self
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
+                // For streaming_edit_file, check profile against "edit_file" since that's what users configure
+                let profile_tool_name = if tool_name == "streaming_edit_file" {
+                    "edit_file"
+                } else {
+                    tool_name.as_ref()
+                };
+
                 if tool.supports_provider(&model.provider_id())
-                    && profile.is_tool_enabled(tool_name)
+                    && profile.is_tool_enabled(profile_tool_name)
                 {
-                    Some((truncate(tool_name), tool.clone()))
+                    match (tool_name.as_ref(), use_streaming_edit_tool) {
+                        ("streaming_edit_file", true) => {
+                            // Expose streaming tool as "edit_file"
+                            Some((SharedString::from("edit_file"), tool.clone()))
+                        }
+                        ("edit_file", true) => None,
+                        _ => Some((truncate(tool_name), tool.clone())),
+                    }
                 } else {
                     None
                 }
@@ -2638,6 +2727,15 @@ where
     fn erase(self) -> Arc<dyn AnyAgentTool> {
         Arc::new(Erased(Arc::new(self)))
     }
+
+    /// Create a new instance of this tool bound to a different thread.
+    /// This is used when creating subagents, so that tools like EditFileTool
+    /// that hold a thread reference will use the subagent's thread instead
+    /// of the parent's thread.
+    /// Returns None if the tool doesn't need rebinding (most tools).
+    fn rebind_thread(&self, _new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
+        None
+    }
 }
 
 pub struct Erased<T>(T);
@@ -2669,6 +2767,14 @@ pub trait AnyAgentTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Result<()>;
+    /// Create a new instance of this tool bound to a different thread.
+    /// This is used when creating subagents, so that tools like EditFileTool
+    /// that hold a thread reference will use the subagent's thread instead
+    /// of the parent's thread.
+    /// Returns None if the tool doesn't need rebinding (most tools).
+    fn rebind_thread(&self, _new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
+        None
+    }
 }
 
 impl<T> AnyAgentTool for Erased<Arc<T>>
@@ -2731,6 +2837,10 @@ where
         let input = serde_json::from_value(input)?;
         let output = serde_json::from_value(output)?;
         self.0.replay(input, output, event_stream, cx)
+    }
+
+    fn rebind_thread(&self, new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
+        self.0.rebind_thread(new_thread)
     }
 }
 
@@ -2937,10 +3047,9 @@ impl ToolCallEventStream {
     /// Unlike built-in tools, third-party tools don't support pattern-based permissions.
     /// They only support `default_mode` (allow/deny/confirm) per tool.
     ///
-    /// Shows 3 buttons:
-    /// - "Always allow <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"`
-    /// - "Allow" → approve once
-    /// - "Deny" → reject once
+    /// Uses the dropdown authorization flow with two granularities:
+    /// - "Always for <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"` or "deny"
+    /// - "Only this time" → allow/deny once
     pub fn authorize_third_party_tool(
         &self,
         title: impl Into<String>,
@@ -2967,23 +3076,38 @@ impl ToolCallEventStream {
                         self.tool_use_id.to_string(),
                         acp::ToolCallUpdateFields::new().title(title.into()),
                     ),
-                    options: vec![
-                        acp::PermissionOption::new(
-                            acp::PermissionOptionId::new(format!("always_allow_mcp:{}", tool_id)),
-                            format!("Always allow {} MCP tool", display_name),
-                            acp::PermissionOptionKind::AllowAlways,
-                        ),
-                        acp::PermissionOption::new(
-                            acp::PermissionOptionId::new("allow"),
-                            "Allow once",
-                            acp::PermissionOptionKind::AllowOnce,
-                        ),
-                        acp::PermissionOption::new(
-                            acp::PermissionOptionId::new("deny"),
-                            "Deny",
-                            acp::PermissionOptionKind::RejectOnce,
-                        ),
-                    ],
+                    options: acp_thread::PermissionOptions::Dropdown(vec![
+                        acp_thread::PermissionOptionChoice {
+                            allow: acp::PermissionOption::new(
+                                acp::PermissionOptionId::new(format!(
+                                    "always_allow_mcp:{}",
+                                    tool_id
+                                )),
+                                format!("Always for {} MCP tool", display_name),
+                                acp::PermissionOptionKind::AllowAlways,
+                            ),
+                            deny: acp::PermissionOption::new(
+                                acp::PermissionOptionId::new(format!(
+                                    "always_deny_mcp:{}",
+                                    tool_id
+                                )),
+                                format!("Always for {} MCP tool", display_name),
+                                acp::PermissionOptionKind::RejectAlways,
+                            ),
+                        },
+                        acp_thread::PermissionOptionChoice {
+                            allow: acp::PermissionOption::new(
+                                acp::PermissionOptionId::new("allow"),
+                                "Only this time",
+                                acp::PermissionOptionKind::AllowOnce,
+                            ),
+                            deny: acp::PermissionOption::new(
+                                acp::PermissionOptionId::new("deny"),
+                                "Only this time",
+                                acp::PermissionOptionKind::RejectOnce,
+                            ),
+                        },
+                    ]),
                     response: response_tx,
                     context: None,
                 },
@@ -3006,6 +3130,19 @@ impl ToolCallEventStream {
                     });
                 }
                 return Ok(());
+            }
+            if response_str == format!("always_deny_mcp:{}", tool_id) {
+                if let Some(fs) = fs.clone() {
+                    cx.update(|cx| {
+                        update_settings_file(fs, cx, move |settings, _| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Deny);
+                        });
+                    });
+                }
+                return Err(anyhow!("Permission to run tool denied by user"));
             }
 
             if response_str == "allow" {

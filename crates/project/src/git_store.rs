@@ -738,6 +738,7 @@ impl GitStore {
         })
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn open_uncommitted_diff(
         &mut self,
         buffer: Entity<Buffer>,
@@ -790,6 +791,7 @@ impl GitStore {
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
+    #[ztracing::instrument(skip_all)]
     async fn open_diff_internal(
         this: WeakEntity<Self>,
         kind: DiffKind,
@@ -2924,6 +2926,7 @@ impl BufferGitState {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.language = buffer.read(cx).language().cloned();
         self.language_changed = true;
@@ -3080,6 +3083,7 @@ impl BufferGitState {
         self.recalculate_diffs(buffer, cx)
     }
 
+    #[ztracing::instrument(skip_all)]
     fn recalculate_diffs(&mut self, buffer: text::BufferSnapshot, cx: &mut Context<Self>) {
         *self.recalculating_tx.borrow_mut() = true;
 
@@ -3111,7 +3115,7 @@ impl BufferGitState {
                         unstaged_diff.read(cx).update_diff(
                             buffer.clone(),
                             index,
-                            index_changed,
+                            index_changed.then_some(false),
                             language.clone(),
                             cx,
                         )
@@ -3134,7 +3138,7 @@ impl BufferGitState {
                             uncommitted_diff.read(cx).update_diff(
                                 buffer.clone(),
                                 head,
-                                head_changed,
+                                head_changed.then_some(true),
                                 language.clone(),
                                 cx,
                             )

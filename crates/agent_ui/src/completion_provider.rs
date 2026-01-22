@@ -5,11 +5,14 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use crate::acp::AcpThreadHistory;
+use crate::user_slash_command::{self, CommandLoadError, UserSlashCommand};
 use acp_thread::{AgentSessionInfo, MentionUri};
 use anyhow::Result;
+use collections::{HashMap, HashSet};
 use editor::{
     CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
 };
+use feature_flags::{FeatureFlagAppExt as _, UserSlashCommandsFeatureFlag};
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
 use gpui::{App, BackgroundExecutor, Entity, SharedString, Task, WeakEntity};
 use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
@@ -17,12 +20,13 @@ use lsp::CompletionContext;
 use ordered_float::OrderedFloat;
 use project::lsp_store::{CompletionDocumentation, SymbolLocation};
 use project::{
-    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse,
+    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, DiagnosticSummary,
     PathMatchCandidateSet, Project, ProjectPath, Symbol, WorktreeId,
 };
 use prompt_store::{PromptStore, UserPromptId};
 use rope::Point;
 use text::{Anchor, ToPoint as _};
+use ui::IconName;
 use ui::prelude::*;
 use util::ResultExt as _;
 use util::paths::PathStyle;
@@ -55,6 +59,7 @@ pub(crate) enum PromptContextType {
     Fetch,
     Thread,
     Rules,
+    Diagnostics,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +97,7 @@ impl TryFrom<&str> for PromptContextType {
             "fetch" => Ok(Self::Fetch),
             "thread" => Ok(Self::Thread),
             "rule" => Ok(Self::Rules),
+            "diagnostics" => Ok(Self::Diagnostics),
             _ => Err(format!("Invalid context picker mode: {}", value)),
         }
     }
@@ -105,6 +111,7 @@ impl PromptContextType {
             Self::Fetch => "fetch",
             Self::Thread => "thread",
             Self::Rules => "rule",
+            Self::Diagnostics => "diagnostics",
         }
     }
 
@@ -115,6 +122,7 @@ impl PromptContextType {
             Self::Fetch => "Fetch",
             Self::Thread => "Threads",
             Self::Rules => "Rules",
+            Self::Diagnostics => "Diagnostics",
         }
     }
 
@@ -125,6 +133,7 @@ impl PromptContextType {
             Self::Fetch => IconName::ToolWeb,
             Self::Thread => IconName::Thread,
             Self::Rules => IconName::Reader,
+            Self::Diagnostics => IconName::Warning,
         }
     }
 }
@@ -177,6 +186,18 @@ pub struct AvailableCommand {
     pub name: Arc<str>,
     pub description: Arc<str>,
     pub requires_argument: bool,
+    pub source: CommandSource,
+}
+
+/// The source of a slash command, used to differentiate UI behavior.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CommandSource {
+    /// Command provided by the ACP server
+    Server,
+    /// User-defined command from a markdown file
+    UserDefined { template: Arc<str> },
+    /// User-defined command that failed to load
+    UserDefinedError { error_message: Arc<str> },
 }
 
 pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
@@ -188,6 +209,18 @@ pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
 
     fn available_commands(&self, cx: &App) -> Vec<AvailableCommand>;
     fn confirm_command(&self, cx: &mut App);
+
+    /// Returns cached user-defined slash commands, if available.
+    /// Default implementation returns None, meaning commands will be loaded from disk.
+    fn cached_user_commands(&self, _cx: &App) -> Option<HashMap<String, UserSlashCommand>> {
+        None
+    }
+
+    /// Returns cached errors from loading user-defined slash commands, if available.
+    /// Default implementation returns None.
+    fn cached_user_command_errors(&self, _cx: &App) -> Option<Vec<CommandLoadError>> {
+        None
+    }
 }
 
 pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
@@ -583,13 +616,210 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         })
     }
 
-    fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<AvailableCommand>> {
-        let commands = self.source.available_commands(cx);
-        if commands.is_empty() {
-            return Task::ready(Vec::new());
+    fn completion_for_diagnostics(
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Vec<Completion> {
+        let summary = workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .diagnostic_summary(false, cx);
+        if summary.error_count == 0 && summary.warning_count == 0 {
+            return Vec::new();
+        }
+        let icon_path = MentionUri::Diagnostics {
+            include_errors: true,
+            include_warnings: false,
+        }
+        .icon_path(cx);
+
+        let mut completions = Vec::new();
+
+        let cases = [
+            (summary.error_count > 0, true, false),
+            (summary.warning_count > 0, false, true),
+            (
+                summary.error_count > 0 && summary.warning_count > 0,
+                true,
+                true,
+            ),
+        ];
+
+        for (condition, include_errors, include_warnings) in cases {
+            if condition {
+                completions.push(Self::build_diagnostics_completion(
+                    diagnostics_submenu_label(summary, include_errors, include_warnings),
+                    source_range.clone(),
+                    source.clone(),
+                    editor.clone(),
+                    mention_set.clone(),
+                    workspace.clone(),
+                    icon_path.clone(),
+                    include_errors,
+                    include_warnings,
+                    summary,
+                ));
+            }
         }
 
+        completions
+    }
+
+    fn build_diagnostics_completion(
+        menu_label: String,
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        icon_path: SharedString,
+        include_errors: bool,
+        include_warnings: bool,
+        summary: DiagnosticSummary,
+    ) -> Completion {
+        let uri = MentionUri::Diagnostics {
+            include_errors,
+            include_warnings,
+        };
+        let crease_text = diagnostics_crease_label(summary, include_errors, include_warnings);
+        let display_text = format!("@{}", crease_text);
+        let new_text = format!("[{}]({}) ", display_text, uri.to_uri());
+        let new_text_len = new_text.len();
+        Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label: CodeLabel::plain(menu_label, None),
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
+            insert_text_mode: None,
+            confirm: Some(confirm_completion_callback(
+                crease_text,
+                source_range.start,
+                new_text_len - 1,
+                uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
+            )),
+        }
+    }
+
+    fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<AvailableCommand>> {
+        let commands = self.source.available_commands(cx);
+        let server_command_names = commands
+            .iter()
+            .map(|command| command.name.as_ref().to_string())
+            .collect::<HashSet<_>>();
+
+        // Try to use cached user commands and errors first
+        let cached_user_commands = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+            self.source.cached_user_commands(cx)
+        } else {
+            None
+        };
+
+        let cached_user_command_errors = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+            self.source.cached_user_command_errors(cx)
+        } else {
+            None
+        };
+
+        // Get fs and worktree roots for async command loading (only if not cached)
+        let (fs, worktree_roots) =
+            if cached_user_commands.is_none() && cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+                let workspace = self.workspace.upgrade();
+                let fs = workspace
+                    .as_ref()
+                    .map(|w| w.read(cx).project().read(cx).fs().clone());
+                let roots: Vec<std::path::PathBuf> = workspace
+                    .map(|workspace| {
+                        workspace
+                            .read(cx)
+                            .visible_worktrees(cx)
+                            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (fs, roots)
+            } else {
+                (None, Vec::new())
+            };
+
         cx.spawn(async move |cx| {
+            let mut commands = commands;
+
+            // Use cached commands/errors if available, otherwise load from disk
+            let (mut user_commands, mut user_command_errors): (
+                Vec<UserSlashCommand>,
+                Vec<CommandLoadError>,
+            ) = if let Some(cached) = cached_user_commands {
+                let errors = cached_user_command_errors.unwrap_or_default();
+                (cached.into_values().collect(), errors)
+            } else if let Some(fs) = fs {
+                let load_result =
+                    crate::user_slash_command::load_all_commands_async(&fs, &worktree_roots).await;
+
+                (load_result.commands, load_result.errors)
+            } else {
+                (Vec::new(), Vec::new())
+            };
+
+            user_slash_command::apply_server_command_conflicts(
+                &mut user_commands,
+                &mut user_command_errors,
+                &server_command_names,
+            );
+
+            let conflicting_names: HashSet<String> = user_command_errors
+                .iter()
+                .filter_map(|error| error.command_name())
+                .filter(|name| server_command_names.contains(name))
+                .collect();
+
+            if !conflicting_names.is_empty() {
+                commands.retain(|command| !conflicting_names.contains(command.name.as_ref()));
+            }
+
+            for cmd in user_commands {
+                commands.push(AvailableCommand {
+                    name: cmd.name.clone(),
+                    description: cmd.description().into(),
+                    requires_argument: cmd.requires_arguments(),
+                    source: CommandSource::UserDefined {
+                        template: cmd.template.clone(),
+                    },
+                });
+            }
+
+            // Add errored commands so they show up in autocomplete with error indication.
+            // Errors for commands that don't match the query will be silently ignored here
+            // since the user will see them via the error callout in the thread view.
+            for error in user_command_errors {
+                if let Some(name) = error.command_name() {
+                    commands.push(AvailableCommand {
+                        name: name.into(),
+                        description: "".into(),
+                        requires_argument: false,
+                        source: CommandSource::UserDefinedError {
+                            error_message: error.message.into(),
+                        },
+                    });
+                }
+            }
+
+            if commands.is_empty() {
+                return Vec::new();
+            }
+
             let candidates = commands
                 .iter()
                 .enumerate()
@@ -683,6 +913,8 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     Task::ready(Vec::new())
                 }
             }
+
+            Some(PromptContextType::Diagnostics) => Task::ready(Vec::new()),
 
             None if query.is_empty() => {
                 let recent_task = self.recent_context_picker_entries(&workspace, cx);
@@ -879,6 +1111,20 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             entries.push(PromptContextEntry::Mode(PromptContextType::Fetch));
         }
 
+        if self
+            .source
+            .supports_context(PromptContextType::Diagnostics, cx)
+        {
+            let summary = workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .diagnostic_summary(false, cx);
+            if summary.error_count > 0 || summary.warning_count > 0 {
+                entries.push(PromptContextEntry::Mode(PromptContextType::Diagnostics));
+            }
+        }
+
         entries
     }
 }
@@ -927,7 +1173,20 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                         .await
                         .into_iter()
                         .map(|command| {
-                            let new_text = if let Some(argument) = argument.as_ref() {
+                            let is_error =
+                                matches!(command.source, CommandSource::UserDefinedError { .. });
+
+                            // For errored commands, show the name with "(load error)" suffix
+                            let label_text = if is_error {
+                                format!("{} (load error)", command.name)
+                            } else {
+                                command.name.to_string()
+                            };
+
+                            // For errored commands, we don't want to insert anything useful
+                            let new_text = if is_error {
+                                format!("/{}", command.name)
+                            } else if let Some(argument) = argument.as_ref() {
                                 format!("/{} {}", command.name, argument)
                             } else {
                                 format!("/{} ", command.name)
@@ -935,21 +1194,73 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
 
                             let is_missing_argument =
                                 command.requires_argument && argument.is_none();
+
+                            // For errored commands, use a deprecated-style label to indicate the error
+                            let label = if is_error {
+                                // Create a label where the command name portion has a highlight
+                                // that will be rendered with strikethrough by the completion menu
+                                // (similar to deprecated LSP completions)
+                                CodeLabel::plain(label_text, None)
+                            } else {
+                                CodeLabel::plain(label_text, None)
+                            };
+
+                            // For errored commands, show the error message in documentation
+                            let documentation =
+                                if let CommandSource::UserDefinedError { error_message } =
+                                    &command.source
+                                {
+                                    Some(CompletionDocumentation::MultiLinePlainText(
+                                        error_message.to_string().into(),
+                                    ))
+                                } else if !command.description.is_empty() {
+                                    Some(CompletionDocumentation::MultiLinePlainText(
+                                        command.description.to_string().into(),
+                                    ))
+                                } else {
+                                    None
+                                };
+
+                            // For errored commands, use a red X icon
+                            let icon_path = if is_error {
+                                Some(IconName::XCircle.path().into())
+                            } else {
+                                None
+                            };
+
                             Completion {
                                 replace_range: source_range.clone(),
                                 new_text,
-                                label: CodeLabel::plain(command.name.to_string(), None),
-                                documentation: Some(CompletionDocumentation::MultiLinePlainText(
-                                    command.description.into(),
-                                )),
-                                source: project::CompletionSource::Custom,
-                                icon_path: None,
+                                label,
+                                documentation,
+                                source: if is_error {
+                                    // Use a custom source that marks this as deprecated/errored
+                                    // so the completion menu renders it with strikethrough
+                                    project::CompletionSource::Lsp {
+                                        insert_range: None,
+                                        server_id: language::LanguageServerId(0),
+                                        lsp_completion: Box::new(lsp::CompletionItem {
+                                            label: command.name.to_string(),
+                                            deprecated: Some(true),
+                                            ..Default::default()
+                                        }),
+                                        lsp_defaults: None,
+                                        resolved: true,
+                                    }
+                                } else {
+                                    project::CompletionSource::Custom
+                                },
+                                icon_path,
                                 match_start: None,
                                 snippet_deduplication_key: None,
                                 insert_text_mode: None,
                                 confirm: Some(Arc::new({
                                     let source = source.clone();
                                     move |intent, _window, cx| {
+                                        // Don't confirm errored commands
+                                        if is_error {
+                                            return false;
+                                        }
                                         if !is_missing_argument {
                                             cx.defer({
                                                 let source = source.clone();
@@ -982,6 +1293,28 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                 })
             }
             PromptCompletion::Mention(MentionCompletion { mode, argument, .. }) => {
+                if let Some(PromptContextType::Diagnostics) = mode {
+                    if argument.is_some() {
+                        return Task::ready(Ok(Vec::new()));
+                    }
+
+                    let completions = Self::completion_for_diagnostics(
+                        source_range.clone(),
+                        source.clone(),
+                        editor.clone(),
+                        mention_set.clone(),
+                        workspace.clone(),
+                        cx,
+                    );
+                    if !completions.is_empty() {
+                        return Task::ready(Ok(vec![CompletionResponse {
+                            completions,
+                            display_options: CompletionDisplayOptions::default(),
+                            is_incomplete: false,
+                        }]));
+                    }
+                }
+
                 let query = argument.unwrap_or_default();
                 let search_task =
                     self.search_mentions(mode, query, Arc::<AtomicBool>::default(), cx);
@@ -1051,7 +1384,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         cx,
                                     )
                                 }
-
                                 Match::Symbol(SymbolMatch { symbol, .. }) => {
                                     Self::completion_for_symbol(
                                         symbol,
@@ -1064,7 +1396,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         cx,
                                     )
                                 }
-
                                 Match::Thread(thread) => Some(Self::completion_for_thread(
                                     thread,
                                     source_range.clone(),
@@ -1075,7 +1406,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     workspace.clone(),
                                     cx,
                                 )),
-
                                 Match::RecentThread(thread) => Some(Self::completion_for_thread(
                                     thread,
                                     source_range.clone(),
@@ -1086,7 +1416,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     workspace.clone(),
                                     cx,
                                 )),
-
                                 Match::Rules(user_rules) => Some(Self::completion_for_rules(
                                     user_rules,
                                     source_range.clone(),
@@ -1096,7 +1425,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     workspace.clone(),
                                     cx,
                                 )),
-
                                 Match::Fetch(url) => Self::completion_for_fetch(
                                     source_range.clone(),
                                     url,
@@ -1106,7 +1434,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     workspace.clone(),
                                     cx,
                                 ),
-
                                 Match::Entry(EntryMatch { entry, .. }) => {
                                     Self::completion_for_entry(
                                         entry,
@@ -1377,6 +1704,87 @@ impl MentionCompletion {
             mode,
             argument,
         })
+    }
+}
+
+fn diagnostics_label(
+    summary: DiagnosticSummary,
+    include_errors: bool,
+    include_warnings: bool,
+) -> String {
+    let mut parts = Vec::new();
+
+    if include_errors && summary.error_count > 0 {
+        parts.push(format!(
+            "{} {}",
+            summary.error_count,
+            pluralize("error", summary.error_count)
+        ));
+    }
+
+    if include_warnings && summary.warning_count > 0 {
+        parts.push(format!(
+            "{} {}",
+            summary.warning_count,
+            pluralize("warning", summary.warning_count)
+        ));
+    }
+
+    if parts.is_empty() {
+        return "Diagnostics".into();
+    }
+
+    let body = if parts.len() == 2 {
+        format!("{} and {}", parts[0], parts[1])
+    } else {
+        parts
+            .pop()
+            .expect("at least one part present after non-empty check")
+    };
+
+    format!("Diagnostics: {body}")
+}
+
+fn diagnostics_submenu_label(
+    summary: DiagnosticSummary,
+    include_errors: bool,
+    include_warnings: bool,
+) -> String {
+    match (include_errors, include_warnings) {
+        (true, true) => format!(
+            "{} {} & {} {}",
+            summary.error_count,
+            pluralize("error", summary.error_count),
+            summary.warning_count,
+            pluralize("warning", summary.warning_count)
+        ),
+        (true, _) => format!(
+            "{} {}",
+            summary.error_count,
+            pluralize("error", summary.error_count)
+        ),
+        (_, true) => format!(
+            "{} {}",
+            summary.warning_count,
+            pluralize("warning", summary.warning_count)
+        ),
+        _ => "Diagnostics".into(),
+    }
+}
+
+fn diagnostics_crease_label(
+    summary: DiagnosticSummary,
+    include_errors: bool,
+    include_warnings: bool,
+) -> SharedString {
+    diagnostics_label(summary, include_errors, include_warnings).into()
+}
+
+fn pluralize(noun: &str, count: usize) -> String {
+    if count == 1 {
+        noun.to_string()
+    } else {
+        format!("{noun}s")
     }
 }
 
@@ -1833,6 +2241,11 @@ mod tests {
     #[test]
     fn test_mention_completion_parse() {
         let supported_modes = vec![PromptContextType::File, PromptContextType::Symbol];
+        let supported_modes_with_diagnostics = vec![
+            PromptContextType::File,
+            PromptContextType::Symbol,
+            PromptContextType::Diagnostics,
+        ];
 
         assert_eq!(
             MentionCompletion::try_parse("Lorem Ipsum", 0, &supported_modes),
@@ -1942,6 +2355,19 @@ mod tests {
                 source_range: 6..43,
                 mode: Some(PromptContextType::Symbol),
                 argument: Some("agent_ui::completion_provider".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "Lorem @diagnostics",
+                0,
+                &supported_modes_with_diagnostics
+            ),
+            Some(MentionCompletion {
+                source_range: 6..18,
+                mode: Some(PromptContextType::Diagnostics),
+                argument: None,
             })
         );
 

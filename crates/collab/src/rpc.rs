@@ -1556,6 +1556,7 @@ fn notify_rejoined_projects(
                         path: settings_file.path,
                         content: Some(settings_file.content),
                         kind: Some(settings_file.kind.to_proto().into()),
+                        outside_worktree: Some(settings_file.outside_worktree),
                     },
                 )?;
             }
@@ -1988,6 +1989,7 @@ async fn join_project(
                     path: settings_file.path,
                     content: Some(settings_file.content),
                     kind: Some(settings_file.kind.to_proto() as i32),
+                    outside_worktree: Some(settings_file.outside_worktree),
                 },
             )?;
         }
