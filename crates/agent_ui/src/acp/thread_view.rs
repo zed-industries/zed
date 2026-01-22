@@ -363,6 +363,7 @@ pub struct AcpThreadView {
     is_loading_contents: bool,
     new_server_version_available: Option<SharedString>,
     resume_thread_metadata: Option<AgentSessionInfo>,
+    resumed_without_history: bool,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 5],
     show_codex_windows_warning: bool,
@@ -607,6 +608,7 @@ impl AcpThreadView {
             focus_handle: cx.focus_handle(),
             new_server_version_available: None,
             resume_thread_metadata: resume_thread,
+            resumed_without_history: false,
             show_codex_windows_warning,
             in_flight_prompt: None,
             skip_queue_processing_count: 0,
@@ -640,6 +642,7 @@ impl AcpThreadView {
         self.turn_started_at = None;
         self.last_turn_duration = None;
         self._turn_timer_task = None;
+        self.resumed_without_history = false;
         cx.notify();
     }
 
@@ -711,14 +714,23 @@ impl AcpThreadView {
 
             telemetry::event!("Agent Thread Started", agent = connection.telemetry_id());
 
+            let mut resumed_without_history = false;
             let result = if let Some(resume) = resume_thread.clone() {
                 cx.update(|_, cx| {
+                    let session_cwd = resume
+                        .cwd
+                        .clone()
+                        .unwrap_or_else(|| fallback_cwd.as_ref().to_path_buf());
                     if connection.supports_load_session(cx) {
-                        let session_cwd = resume
-                            .cwd
-                            .clone()
-                            .unwrap_or_else(|| fallback_cwd.as_ref().to_path_buf());
                         connection.clone().load_session(
+                            resume,
+                            project.clone(),
+                            session_cwd.as_path(),
+                            cx,
+                        )
+                    } else if connection.supports_resume_session(cx) {
+                        resumed_without_history = true;
+                        connection.clone().resume_session(
                             resume,
                             project.clone(),
                             session_cwd.as_path(),
@@ -726,7 +738,7 @@ impl AcpThreadView {
                         )
                     } else {
                         Task::ready(Err(anyhow!(LoadError::Other(
-                            "Loading sessions is not supported by this agent.".into()
+                            "Loading or resuming sessions is not supported by this agent.".into()
                         ))))
                     }
                 })
@@ -763,6 +775,7 @@ impl AcpThreadView {
                     Ok(thread) => {
                         let action_log = thread.read(cx).action_log().clone();
 
+                        this.resumed_without_history = resumed_without_history;
                         this.prompt_capabilities
                             .replace(thread.read(cx).prompt_capabilities());
 
@@ -781,7 +794,7 @@ impl AcpThreadView {
 
                         let connection = thread.read(cx).connection().clone();
                         let session_id = thread.read(cx).session_id().clone();
-                        let session_list = if connection.supports_load_session(cx) {
+                        let session_list = if connection.supports_session_history(cx) {
                             connection.session_list(cx)
                         } else {
                             None
@@ -4837,6 +4850,24 @@ impl AcpThreadView {
         )
     }
 
+    fn render_resume_notice(&self, _cx: &Context<Self>) -> AnyElement {
+        let description = "This agent does not support viewing previous messages. However, your session will still continue from where you last left off.";
+
+        div()
+            .px_2()
+            .pt_2()
+            .pb_3()
+            .w_full()
+            .child(
+                Callout::new()
+                    .severity(Severity::Info)
+                    .icon(IconName::Info)
+                    .title("Resumed Session")
+                    .description(description),
+            )
+            .into_any_element()
+    }
+
     fn update_recent_history_from_cache(
         &mut self,
         history: &Entity<AcpThreadHistory>,
@@ -8382,6 +8413,9 @@ impl Render for AcpThreadView {
                     .child(self.render_load_error(e, window, cx))
                     .into_any(),
                 ThreadState::Ready { .. } => v_flex().flex_1().map(|this| {
+                    let this = this.when(self.resumed_without_history, |this| {
+                        this.child(self.render_resume_notice(cx))
+                    });
                     if has_messages {
                         this.child(
                             list(
@@ -8745,6 +8779,44 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_resume_without_history_adds_notice(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session = AgentSessionInfo::new(SessionId::new("resume-session"));
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
+
+        let thread_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                AcpThreadView::new(
+                    Rc::new(StubAgentServer::new(ResumeOnlyAgentConnection)),
+                    Some(session),
+                    None,
+                    workspace.downgrade(),
+                    project,
+                    Some(thread_store),
+                    None,
+                    history,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |view, _cx| {
+            assert!(view.resumed_without_history);
+            assert_eq!(view.list_state.item_count(), 0);
+        });
+    }
+
+    #[gpui::test]
     async fn test_refusal_handling(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -9080,6 +9152,99 @@ pub(crate) mod tests {
         ) -> Task<anyhow::Result<AgentSessionListResponse>> {
             Task::ready(Ok(AgentSessionListResponse::new(self.sessions.clone())))
         }
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    #[derive(Clone)]
+    struct ResumeOnlyAgentConnection;
+
+    impl AgentConnection for ResumeOnlyAgentConnection {
+        fn telemetry_id(&self) -> SharedString {
+            "resume-only".into()
+        }
+
+        fn new_thread(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            _cwd: &Path,
+            cx: &mut gpui::App,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let thread = cx.new(|cx| {
+                AcpThread::new(
+                    "ResumeOnlyAgentConnection",
+                    self.clone(),
+                    project,
+                    action_log,
+                    SessionId::new("new-session"),
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
+                    cx,
+                )
+            });
+            Task::ready(Ok(thread))
+        }
+
+        fn supports_resume_session(&self, _cx: &App) -> bool {
+            true
+        }
+
+        fn resume_session(
+            self: Rc<Self>,
+            session: AgentSessionInfo,
+            project: Entity<Project>,
+            _cwd: &Path,
+            cx: &mut App,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let thread = cx.new(|cx| {
+                AcpThread::new(
+                    "ResumeOnlyAgentConnection",
+                    self.clone(),
+                    project,
+                    action_log,
+                    session.session_id,
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
+                    cx,
+                )
+            });
+            Task::ready(Ok(thread))
+        }
+
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
+
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
+            Task::ready(Ok(()))
+        }
+
+        fn prompt(
+            &self,
+            _id: Option<acp_thread::UserMessageId>,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
         }
