@@ -9693,7 +9693,7 @@ impl Element for EditorElement {
                         let drag_highlight = LineHighlight {
                             background: solid_background(drag_highlight_color),
                             border: Some(cx.theme().colors().border_focused),
-                            include_gutter: false,
+                            include_gutter: true,
                             type_id: None,
                         };
                         for row_num in start_row..=end_row {
