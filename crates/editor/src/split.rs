@@ -202,7 +202,7 @@ where
         start..end
     });
 
-    let prev_boundary = prev_boundary.and_then(|(source_buffer_point, target_range)| {
+    let prev_boundary = prev_boundary.map(|(source_buffer_point, target_range)| {
         let source_multibuffer_point = source_excerpt_start_in_multibuffer
             + (source_buffer_point - source_excerpt_start_in_buffer.min(source_buffer_point));
 
@@ -220,10 +220,10 @@ where
         let target_multibuffer_end = target_excerpt_start_in_multibuffer
             + (clamped_target_end - target_excerpt_start_in_buffer);
 
-        Some((
+        (
             source_multibuffer_point,
             target_multibuffer_start..target_multibuffer_end,
-        ))
+        )
     });
 
     Some(MultiBufferRowMapping {
@@ -580,7 +580,7 @@ impl SplittableEditor {
 
         // Copy soft wrap state from primary (source of truth) to secondary
         let primary_soft_wrap_override =
-            self.primary_editor.read(cx).soft_wrap_mode_override.clone();
+            self.primary_editor.read(cx).soft_wrap_mode_override;
         secondary.editor.update(cx, |editor, cx| {
             editor.soft_wrap_mode_override = primary_soft_wrap_override;
             cx.notify();
@@ -841,7 +841,7 @@ impl SplittableEditor {
             });
 
             // Copy the soft wrap state from the focused editor to the other editor
-            let soft_wrap_override = focused_editor.read(cx).soft_wrap_mode_override.clone();
+            let soft_wrap_override = focused_editor.read(cx).soft_wrap_mode_override;
             other_editor.update(cx, |editor, cx| {
                 editor.soft_wrap_mode_override = soft_wrap_override;
                 cx.notify();
@@ -1500,7 +1500,7 @@ impl Render for SplittableEditor {
     ) -> impl ui::IntoElement {
         let inner = if self.secondary.is_some() {
             let style = self.primary_editor.read(cx).create_style(cx);
-            SplitEditorView::new(cx.entity().clone(), style, self.split_state.clone())
+            SplitEditorView::new(cx.entity(), style, self.split_state.clone())
                 .into_any_element()
         } else {
             self.primary_editor.clone().into_any_element()

@@ -2755,7 +2755,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_6 = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text.clone(), cx);
+        let diff_6 = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text, cx);
         let DiffChanged {
             changed_range,
             base_text_changed_range,
@@ -3049,7 +3049,7 @@ mod tests {
         let diff_a = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
 
         buffer.edit([(Point::new(1, 3)..Point::new(1, 3), "\n")]);
-        let diff_b = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
+        let diff_b = BufferDiffSnapshot::new_sync(buffer.clone(), base_text, cx);
 
         let DiffChanged {
             changed_range,
@@ -3110,7 +3110,7 @@ mod tests {
         let diff_2a = BufferDiffSnapshot::new_sync(buffer_2.clone(), base_text_2.clone(), cx);
 
         buffer_2.edit([(Point::new(4, 0)..Point::new(4, 4), "FIVE_CHANGED")]);
-        let diff_2b = BufferDiffSnapshot::new_sync(buffer_2.clone(), base_text_2.clone(), cx);
+        let diff_2b = BufferDiffSnapshot::new_sync(buffer_2.clone(), base_text_2, cx);
 
         let DiffChanged {
             changed_range,
@@ -4401,7 +4401,7 @@ mod tests {
             Point::new(3, 0),
         ];
         let base_rows: Vec<_> = diff_snapshot
-            .points_to_base_text_points(points.clone(), &buffer_snapshot)
+            .points_to_base_text_points(points, &buffer_snapshot)
             .0
             .collect();
 

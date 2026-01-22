@@ -1075,7 +1075,7 @@ impl InlineAssistant {
                     let multibuffer = editor.read(cx).buffer().read(cx);
                     let snapshot = multibuffer.snapshot(cx);
                     let ranges = snapshot.range_to_buffer_ranges(
-                        assist.range.start.clone()..=assist.range.end.clone(),
+                        assist.range.start..=assist.range.end,
                     );
                     ranges
                         .first()

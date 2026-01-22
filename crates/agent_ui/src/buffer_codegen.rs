@@ -302,7 +302,7 @@ impl CodegenAlternative {
         let snapshot = buffer.read(cx).snapshot(cx);
 
         let (old_buffer, _, _) = snapshot
-            .range_to_buffer_ranges(range.start.clone()..=range.end.clone())
+            .range_to_buffer_ranges(range.start..=range.end)
             .pop()
             .unwrap();
         let old_buffer = cx.new(|cx| {
@@ -680,7 +680,7 @@ impl CodegenAlternative {
             let multibuffer = self.buffer.read(cx);
             let snapshot = multibuffer.snapshot(cx);
             let ranges =
-                snapshot.range_to_buffer_ranges(self.range.start.clone()..=self.range.end.clone());
+                snapshot.range_to_buffer_ranges(self.range.start..=self.range.end);
             ranges
                 .first()
                 .and_then(|(buffer, _, _)| buffer.language())
