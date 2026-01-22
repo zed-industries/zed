@@ -1598,7 +1598,12 @@ While other options may be changed at a runtime and should be placed under `sett
 ```json [settings]
 {
   "global_lsp_settings": {
-    "button": true
+    "button": true,
+    "notifications": {
+      // Timeout in milliseconds for automatically dismissing language server notifications.
+      // Set to 0 to disable auto-dismiss.
+      "dismiss_timeout_ms": 5000
+    }
   }
 }
 ```
@@ -1606,6 +1611,8 @@ While other options may be changed at a runtime and should be placed under `sett
 **Options**
 
 - `button`: Whether to show the LSP status button in the status bar
+- `notifications`: Notification-related settings.
+  - `dismiss_timeout_ms`: Timeout in milliseconds for automatically dismissing language server notifications. Set to 0 to disable auto-dismiss.
 
 ## LSP Highlight Debounce
 

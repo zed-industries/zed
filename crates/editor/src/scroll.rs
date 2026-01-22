@@ -453,6 +453,10 @@ impl ScrollManager {
         self.show_scrollbars
     }
 
+    pub fn has_autoscroll_request(&self) -> bool {
+        self.autoscroll_request.is_some()
+    }
+
     pub fn take_autoscroll_request(&mut self) -> Option<(Autoscroll, bool)> {
         self.autoscroll_request.take()
     }
@@ -742,14 +746,30 @@ impl Editor {
         self.scroll_manager.cancel_animation();
 
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        self.set_scroll_position_taking_display_map(
+        let was_scrolled = self.set_scroll_position_taking_display_map(
             scroll_position,
             local,
             autoscroll,
             map,
             window,
             cx,
-        )
+        );
+
+        if local && was_scrolled.0 {
+            if let Some(companion) = self.scroll_companion.as_ref().and_then(|c| c.upgrade()) {
+                companion.update(cx, |companion_editor, cx| {
+                    companion_editor.set_scroll_position_internal(
+                        scroll_position,
+                        false,
+                        false,
+                        window,
+                        cx,
+                    );
+                });
+            }
+        }
+
+        was_scrolled
     }
 
     fn set_scroll_position_taking_display_map(

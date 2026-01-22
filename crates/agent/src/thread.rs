@@ -2,13 +2,13 @@ use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SubagentTool, SystemPromptTemplate, Template, Templates,
-    TerminalTool, ThinkingTool, ToolPermissionDecision, WebSearchTool,
-    decide_permission_from_settings,
+    RestoreFileFromDiskTool, SaveFileTool, StreamingEditFileTool, SubagentTool,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, ToolPermissionDecision,
+    WebSearchTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _, SubagentsFeatureFlag};
 
 use agent_client_protocol as acp;
 use agent_settings::{
@@ -749,6 +749,7 @@ pub struct Thread {
     templates: Arc<Templates>,
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
+    thinking_enabled: bool,
     prompt_capabilities_tx: watch::Sender<acp::PromptCapabilities>,
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
@@ -811,6 +812,7 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
+            thinking_enabled: true,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -872,6 +874,7 @@ impl Thread {
             templates,
             model: Some(model),
             summarization_model: None,
+            thinking_enabled: true,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -1069,6 +1072,8 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
+            // TODO: Persist this on the `DbThread`.
+            thinking_enabled: true,
             project,
             action_log,
             updated_at: db_thread.updated_at,
@@ -1167,6 +1172,15 @@ impl Thread {
         cx.notify()
     }
 
+    pub fn thinking_enabled(&self) -> bool {
+        self.thinking_enabled
+    }
+
+    pub fn set_thinking_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.thinking_enabled = enabled;
+        cx.notify();
+    }
+
     pub fn last_message(&self) -> Option<Message> {
         if let Some(message) = self.pending_message.clone() {
             Some(Message::Agent(message))
@@ -1189,6 +1203,12 @@ impl Thread {
         ));
         self.add_tool(DiagnosticsTool::new(self.project.clone()));
         self.add_tool(EditFileTool::new(
+            self.project.clone(),
+            cx.weak_entity(),
+            language_registry.clone(),
+            Templates::new(),
+        ));
+        self.add_tool(StreamingEditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
             language_registry,
@@ -2286,7 +2306,7 @@ impl Thread {
             tool_choice: None,
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
-            thinking_allowed: true,
+            thinking_allowed: self.thinking_enabled,
             bypass_rate_limit: false,
         };
 
@@ -2310,14 +2330,31 @@ impl Thread {
             }
         }
 
+        let use_streaming_edit_tool =
+            cx.has_flag::<AgentV2FeatureFlag>() && model.supports_streaming_tools();
+
         let mut tools = self
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
+                // For streaming_edit_file, check profile against "edit_file" since that's what users configure
+                let profile_tool_name = if tool_name == "streaming_edit_file" {
+                    "edit_file"
+                } else {
+                    tool_name.as_ref()
+                };
+
                 if tool.supports_provider(&model.provider_id())
-                    && profile.is_tool_enabled(tool_name)
+                    && profile.is_tool_enabled(profile_tool_name)
                 {
-                    Some((truncate(tool_name), tool.clone()))
+                    match (tool_name.as_ref(), use_streaming_edit_tool) {
+                        ("streaming_edit_file", true) => {
+                            // Expose streaming tool as "edit_file"
+                            Some((SharedString::from("edit_file"), tool.clone()))
+                        }
+                        ("edit_file", true) => None,
+                        _ => Some((truncate(tool_name), tool.clone())),
+                    }
                 } else {
                     None
                 }

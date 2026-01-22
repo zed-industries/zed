@@ -579,6 +579,22 @@ async fn windows_path_to_wsl_path_impl(
     run_wsl_command_with_output_impl(options, "wslpath", &["-u", &source]).await
 }
 
+/// Converts a WSL/POSIX path to a Windows path using `wslpath -w`.
+///
+/// For example, `/home/user/project` becomes `\\wsl.localhost\Ubuntu\home\user\project`
+#[cfg(target_os = "windows")]
+pub fn wsl_path_to_windows_path(
+    options: &WslConnectionOptions,
+    wsl_path: &Path,
+) -> impl Future<Output = Result<PathBuf>> + use<> {
+    let wsl_path_str = wsl_path.to_string_lossy().to_string();
+    let command = wsl_command_impl(options, "wslpath", &["-w", &wsl_path_str], true);
+    async move {
+        let windows_path = run_wsl_command_impl(command).await?;
+        Ok(PathBuf::from(windows_path))
+    }
+}
+
 fn run_wsl_command_impl(mut command: process::Command) -> impl Future<Output = Result<String>> {
     async move {
         let output = command

@@ -1,4 +1,5 @@
-use crate::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
+mod worktree_settings;
+
 use anyhow::Result;
 use encoding_rs;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
@@ -8,6 +9,7 @@ use parking_lot::Mutex;
 use postage::stream::Stream;
 use pretty_assertions::assert_eq;
 use rand::prelude::*;
+use worktree::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
 
 use serde_json::json;
 use settings::SettingsStore;
@@ -2022,7 +2024,7 @@ fn randomly_mutate_worktree(
 
     match rng.random_range(0_u32..100) {
         0..=33 if entry.path.as_ref() != RelPath::empty() => {
-            log::info!("deleting entry {:?} ({})", entry.path, entry.id.0);
+            log::info!("deleting entry {:?} ({})", entry.path, entry.id.to_usize());
             worktree.delete_entry(entry.id, false, cx).unwrap()
         }
         _ => {
@@ -2040,7 +2042,11 @@ fn randomly_mutate_worktree(
                     Ok(())
                 })
             } else {
-                log::info!("overwriting file {:?} ({})", &entry.path, entry.id.0);
+                log::info!(
+                    "overwriting file {:?} ({})",
+                    &entry.path,
+                    entry.id.to_usize()
+                );
                 let task = worktree.write_file(
                     entry.path.clone(),
                     "".into(),
@@ -2282,13 +2288,7 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
         .await;
     cx.run_until_parked();
     let repos = worktree.update(cx, |worktree, _| {
-        worktree
-            .as_local()
-            .unwrap()
-            .git_repositories
-            .values()
-            .map(|entry| entry.work_directory_abs_path.clone())
-            .collect::<Vec<_>>()
+        worktree.as_local().unwrap().repositories()
     });
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
 
@@ -2301,13 +2301,7 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
     cx.run_until_parked();
 
     let repos = worktree.update(cx, |worktree, _| {
-        worktree
-            .as_local()
-            .unwrap()
-            .git_repositories
-            .values()
-            .map(|entry| entry.work_directory_abs_path.clone())
-            .collect::<Vec<_>>()
+        worktree.as_local().unwrap().repositories()
     });
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
 }
