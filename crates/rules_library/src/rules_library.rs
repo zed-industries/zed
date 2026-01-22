@@ -1089,7 +1089,6 @@ impl RulesLibrary {
                                     thread_id: None,
                                     prompt_id: None,
                                     intent: None,
-                                    mode: None,
                                     messages: vec![LanguageModelRequestMessage {
                                         role: Role::System,
                                         content: vec![body.to_string().into()],
@@ -1101,6 +1100,7 @@ impl RulesLibrary {
                                     stop: Vec::new(),
                                     temperature: None,
                                     thinking_allowed: true,
+                                    bypass_rate_limit: false,
                                 },
                                 cx,
                             )

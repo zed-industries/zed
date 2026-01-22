@@ -13,6 +13,7 @@ use std::{collections::hash_map, fmt::Write as _, ops::Range, path::Path, sync::
 use text::{BufferSnapshot as TextBufferSnapshot, Point};
 
 pub(crate) const DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS: u16 = 10;
+pub(crate) const DEFAULT_STAFF_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS: u16 = 100;
 
 pub fn capture_example(
     project: Entity<Project>,
@@ -77,6 +78,7 @@ pub fn capture_example(
         // Initialize an empty patch with context lines, to make it easy
         // to write the expected patch by hand.
         let mut expected_patches = Vec::new();
+        let mut rejected_patch = None;
         if populate_expected_patch {
             let mut empty_patch = String::new();
             let start_row = cursor_excerpt_range.start.row + 1;
@@ -92,7 +94,9 @@ pub fn capture_example(
             for line in cursor_excerpt.lines() {
                 writeln!(&mut empty_patch, " {}", line).ok();
             }
-            expected_patches.push(empty_patch);
+
+            expected_patches.push(empty_patch.clone());
+            rejected_patch = Some(empty_patch);
         }
 
         let mut spec = ExampleSpec {
@@ -106,6 +110,7 @@ pub fn capture_example(
             cursor_position: String::new(),
             edit_history,
             expected_patches,
+            rejected_patch,
         };
         spec.set_cursor_excerpt(&cursor_excerpt, cursor_offset, &line_comment_prefix);
         Ok(spec)
@@ -232,10 +237,15 @@ fn generate_timestamp_name() -> String {
 }
 
 pub(crate) fn should_sample_edit_prediction_example_capture(cx: &App) -> bool {
+    let default_rate = if cx.is_staff() {
+        DEFAULT_STAFF_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS
+    } else {
+        DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS
+    };
     let capture_rate = language::language_settings::all_language_settings(None, cx)
         .edit_predictions
         .example_capture_rate
-        .unwrap_or(DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS);
+        .unwrap_or(default_rate);
     cx.has_flag::<EditPredictionExampleCaptureFeatureFlag>()
         && rand::random::<u16>() % 10_000 < capture_rate
 }
@@ -477,27 +487,50 @@ mod tests {
                 .to_string(),
                 expected_patches: vec![
                     indoc! {"
-                    --- a/src/main.rs
-                    +++ b/src/main.rs
-                    @@ -1,16 +1,16 @@
-                     fn main() {
-                         // comment 1
-                         one();
-                         two();
-                         // comment 4
-                         three();
-                         four();
-                         // comment 3
-                         five();
-                         six();
-                         seven();
-                         eight();
-                         // comment 2
-                         nine();
-                     }
-                "}
+                        --- a/src/main.rs
+                        +++ b/src/main.rs
+                        @@ -1,16 +1,16 @@
+                         fn main() {
+                             // comment 1
+                             one();
+                             two();
+                             // comment 4
+                             three();
+                             four();
+                             // comment 3
+                             five();
+                             six();
+                             seven();
+                             eight();
+                             // comment 2
+                             nine();
+                         }
+                    "}
                     .to_string()
-                ]
+                ],
+                rejected_patch: Some(
+                    indoc! {"
+                        --- a/src/main.rs
+                        +++ b/src/main.rs
+                        @@ -1,16 +1,16 @@
+                         fn main() {
+                             // comment 1
+                             one();
+                             two();
+                             // comment 4
+                             three();
+                             four();
+                             // comment 3
+                             five();
+                             six();
+                             seven();
+                             eight();
+                             // comment 2
+                             nine();
+                         }
+                    "}
+                    .to_string()
+                )
             }
         );
     }

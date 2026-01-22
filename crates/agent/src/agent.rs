@@ -3,6 +3,7 @@ mod edit_agent;
 mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
+mod pattern_extraction;
 mod templates;
 #[cfg(test)]
 mod tests;
@@ -14,13 +15,17 @@ mod tools;
 use context_server::ContextServerId;
 pub use db::*;
 pub use native_agent_server::NativeAgentServer;
+pub use pattern_extraction::*;
 pub use templates::*;
 pub use thread::*;
 pub use thread_store::*;
 pub use tool_permissions::*;
 pub use tools::*;
 
-use acp_thread::{AcpThread, AgentModelSelector, UserMessageId};
+use acp_thread::{
+    AcpThread, AgentModelSelector, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
+    AgentSessionListResponse, UserMessageId,
+};
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -991,6 +996,7 @@ impl NativeAgentConnection {
                                 tool_call,
                                 options,
                                 response,
+                                context: _,
                             }) => {
                                 let outcome_task = acp_thread.update(cx, |thread, cx| {
                                     thread.request_tool_call_authorization(
@@ -1214,6 +1220,21 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         })
     }
 
+    fn supports_load_session(&self, _cx: &App) -> bool {
+        true
+    }
+
+    fn load_session(
+        self: Rc<Self>,
+        session: AgentSessionInfo,
+        _project: Entity<Project>,
+        _cwd: &Path,
+        cx: &mut App,
+    ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
+        self.0
+            .update(cx, |agent, cx| agent.open_thread(session.session_id, cx))
+    }
+
     fn auth_methods(&self) -> &[acp::AuthMethod] {
         &[] // No auth for in-process
     }
@@ -1296,12 +1317,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         })
     }
 
-    fn resume(
+    fn retry(
         &self,
         session_id: &acp::SessionId,
         _cx: &App,
-    ) -> Option<Rc<dyn acp_thread::AgentSessionResume>> {
-        Some(Rc::new(NativeAgentSessionResume {
+    ) -> Option<Rc<dyn acp_thread::AgentSessionRetry>> {
+        Some(Rc::new(NativeAgentSessionRetry {
             connection: self.clone(),
             session_id: session_id.clone(),
         }) as _)
@@ -1345,6 +1366,11 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         }) as _)
     }
 
+    fn session_list(&self, cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
+        let thread_store = self.0.read(cx).thread_store.clone();
+        Some(Rc::new(NativeAgentSessionList::new(thread_store, cx)) as _)
+    }
+
     fn telemetry(&self) -> Option<Rc<dyn acp_thread::AgentTelemetry>> {
         Some(Rc::new(self.clone()) as Rc<dyn acp_thread::AgentTelemetry>)
     }
@@ -1368,6 +1394,81 @@ impl acp_thread::AgentTelemetry for NativeAgentConnection {
         cx.background_spawn(async move {
             serde_json::to_value(task.await).context("Failed to serialize thread")
         })
+    }
+}
+
+pub struct NativeAgentSessionList {
+    thread_store: Entity<ThreadStore>,
+    updates_rx: smol::channel::Receiver<acp_thread::SessionListUpdate>,
+    _subscription: Subscription,
+}
+
+impl NativeAgentSessionList {
+    fn new(thread_store: Entity<ThreadStore>, cx: &mut App) -> Self {
+        let (tx, rx) = smol::channel::unbounded();
+        let subscription = cx.observe(&thread_store, move |_, _| {
+            tx.try_send(acp_thread::SessionListUpdate::Refresh).ok();
+        });
+        Self {
+            thread_store,
+            updates_rx: rx,
+            _subscription: subscription,
+        }
+    }
+
+    fn to_session_info(entry: DbThreadMetadata) -> AgentSessionInfo {
+        AgentSessionInfo {
+            session_id: entry.id,
+            cwd: None,
+            title: Some(entry.title),
+            updated_at: Some(entry.updated_at),
+            meta: None,
+        }
+    }
+
+    pub fn thread_store(&self) -> &Entity<ThreadStore> {
+        &self.thread_store
+    }
+}
+
+impl AgentSessionList for NativeAgentSessionList {
+    fn list_sessions(
+        &self,
+        _request: AgentSessionListRequest,
+        cx: &mut App,
+    ) -> Task<Result<AgentSessionListResponse>> {
+        let sessions = self
+            .thread_store
+            .read(cx)
+            .entries()
+            .map(Self::to_session_info)
+            .collect();
+        Task::ready(Ok(AgentSessionListResponse::new(sessions)))
+    }
+
+    fn supports_delete(&self) -> bool {
+        true
+    }
+
+    fn delete_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {
+        self.thread_store
+            .update(cx, |store, cx| store.delete_thread(session_id.clone(), cx))
+    }
+
+    fn delete_sessions(&self, cx: &mut App) -> Task<Result<()>> {
+        self.thread_store
+            .update(cx, |store, cx| store.delete_threads(cx))
+    }
+
+    fn watch(
+        &self,
+        _cx: &mut App,
+    ) -> Option<smol::channel::Receiver<acp_thread::SessionListUpdate>> {
+        Some(self.updates_rx.clone())
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }
 
@@ -1395,12 +1496,12 @@ impl acp_thread::AgentSessionTruncate for NativeAgentSessionTruncate {
     }
 }
 
-struct NativeAgentSessionResume {
+struct NativeAgentSessionRetry {
     connection: NativeAgentConnection,
     session_id: acp::SessionId,
 }
 
-impl acp_thread::AgentSessionResume for NativeAgentSessionResume {
+impl acp_thread::AgentSessionRetry for NativeAgentSessionRetry {
     fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>> {
         self.connection
             .run_turn(self.session_id.clone(), cx, |thread, cx| {

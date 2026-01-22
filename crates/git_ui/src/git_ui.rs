@@ -41,6 +41,7 @@ pub mod file_diff_view;
 pub mod file_history_view;
 pub mod git_panel;
 mod git_panel_settings;
+pub mod git_picker;
 pub mod onboarding;
 pub mod picker_prompt;
 pub mod project_diff;
@@ -73,9 +74,7 @@ pub fn init(cx: &mut App) {
         CommitModal::register(workspace);
         git_panel::register(workspace);
         repository_selector::register(workspace);
-        branch_picker::register(workspace);
-        worktree_picker::register(workspace);
-        stash_picker::register(workspace);
+        git_picker::register(workspace);
 
         let project = workspace.project().read(cx);
         if project.is_read_only(cx) {

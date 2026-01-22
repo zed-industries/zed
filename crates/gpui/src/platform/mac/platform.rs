@@ -617,6 +617,7 @@ impl Platform for MacPlatform {
             handle,
             options,
             self.foreground_executor(),
+            self.background_executor(),
             renderer_context,
         )))
     }

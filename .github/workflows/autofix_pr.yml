@@ -48,12 +48,6 @@ jobs:
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
         version: '9'
-    - name: autofix_pr::run_autofix::run_prettier_fix
-      run: ./script/prettier --write
-      shell: bash -euxo pipefail {0}
-    - name: autofix_pr::run_autofix::run_cargo_fmt
-      run: cargo fmt --all
-      shell: bash -euxo pipefail {0}
     - name: autofix_pr::run_autofix::install_cargo_machete
       if: ${{ inputs.run_clippy }}
       uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
@@ -71,6 +65,12 @@ jobs:
     - name: autofix_pr::run_autofix::run_clippy_fix
       if: ${{ inputs.run_clippy }}
       run: cargo clippy --workspace --release --all-targets --all-features --fix --allow-dirty --allow-staged
+      shell: bash -euxo pipefail {0}
+    - name: autofix_pr::run_autofix::run_prettier_fix
+      run: ./script/prettier --write
+      shell: bash -euxo pipefail {0}
+    - name: autofix_pr::run_autofix::run_cargo_fmt
+      run: cargo fmt --all
       shell: bash -euxo pipefail {0}
     - id: create-patch
       name: autofix_pr::run_autofix::create_patch
