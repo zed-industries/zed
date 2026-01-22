@@ -169,16 +169,6 @@ impl State {
 
         for model in response.models {
             models.push(Arc::new(model.clone()));
-
-            // Right now we represent thinking variants of models as separate models on the client,
-            // so we need to insert variants for any model that supports thinking.
-            if model.supports_thinking {
-                models.push(Arc::new(cloud_llm_client::LanguageModel {
-                    id: cloud_llm_client::LanguageModelId(format!("{}-thinking", model.id).into()),
-                    display_name: format!("{} Thinking", model.display_name),
-                    ..model
-                }));
-            }
         }
 
         self.default_model = models
@@ -729,7 +719,7 @@ impl LanguageModel for CloudLanguageModel {
                     self.model.id.to_string(),
                     1.0,
                     self.model.max_output_tokens as u64,
-                    if thinking_allowed && self.model.id.0.ends_with("-thinking") {
+                    if thinking_allowed && self.model.supports_thinking {
                         AnthropicModelMode::Thinking {
                             budget_tokens: Some(4_096),
                         }
