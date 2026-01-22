@@ -90,7 +90,7 @@ impl From<PathEvent> for PathBuf {
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;
-    async fn create_symlink(&self, path: &Path, target: PathBuf) -> Result<()>;
+    async fn create_symlink(&self, path: &Path, target: &Path) -> Result<()>;
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()>;
     async fn create_file_with(
         &self,
@@ -511,7 +511,7 @@ impl Fs for RealFs {
         Ok(smol::fs::create_dir_all(path).await?)
     }
 
-    async fn create_symlink(&self, path: &Path, target: PathBuf) -> Result<()> {
+    async fn create_symlink(&self, path: &Path, target: &Path) -> Result<()> {
         #[cfg(unix)]
         smol::fs::unix::symlink(target, path).await?;
 
@@ -2352,9 +2352,11 @@ impl Fs for FakeFs {
         Ok(())
     }
 
-    async fn create_symlink(&self, path: &Path, target: PathBuf) -> Result<()> {
+    async fn create_symlink(&self, path: &Path, target: &Path) -> Result<()> {
         let mut state = self.state.lock();
-        let file = FakeFsEntry::Symlink { target };
+        let file = FakeFsEntry::Symlink {
+            target: target.to_path_buf(),
+        };
         state
             .write_path(path.as_ref(), move |e| match e {
                 btree_map::Entry::Vacant(e) => {
@@ -3015,9 +3017,12 @@ mod tests {
             ]
         );
 
-        fs.create_symlink(path!("/root/dir2/link-to-dir3").as_ref(), "./dir3".into())
-            .await
-            .unwrap();
+        fs.create_symlink(
+            path!("/root/dir2/link-to-dir3").as_ref(),
+            &PathBuf::from("./dir3"),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             fs.canonicalize(path!("/root/dir2/link-to-dir3").as_ref())
@@ -3526,7 +3531,7 @@ mod tests {
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
         };
         let symlink_path = path.join("symlink");
-        smol::block_on(fs.create_symlink(&symlink_path, PathBuf::from("file_a.txt"))).unwrap();
+        smol::block_on(fs.create_symlink(&symlink_path, &PathBuf::from("file_a.txt"))).unwrap();
         let metadata = fs
             .metadata(&symlink_path)
             .await
@@ -3551,7 +3556,7 @@ mod tests {
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
         };
         let symlink_path = path.join("symlink");
-        smol::block_on(fs.create_symlink(&symlink_path, PathBuf::from("symlink"))).unwrap();
+        smol::block_on(fs.create_symlink(&symlink_path, &PathBuf::from("symlink"))).unwrap();
         let metadata = fs
             .metadata(&symlink_path)
             .await

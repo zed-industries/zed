@@ -99,10 +99,10 @@ async fn test_circular_symlinks(cx: &mut TestAppContext) {
         }),
     )
     .await;
-    fs.create_symlink("/root/lib/a/lib".as_ref(), "..".into())
+    fs.create_symlink("/root/lib/a/lib".as_ref(), &PathBuf::from(".."))
         .await
         .unwrap();
-    fs.create_symlink("/root/lib/b/lib".as_ref(), "..".into())
+    fs.create_symlink("/root/lib/b/lib".as_ref(), &PathBuf::from(".."))
         .await
         .unwrap();
 
@@ -199,12 +199,18 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     .await;
 
     // These symlinks point to directories outside of the worktree's root, dir1.
-    fs.create_symlink("/root/dir1/deps/dep-dir2".as_ref(), "../../dir2".into())
-        .await
-        .unwrap();
-    fs.create_symlink("/root/dir1/deps/dep-dir3".as_ref(), "../../dir3".into())
-        .await
-        .unwrap();
+    fs.create_symlink(
+        "/root/dir1/deps/dep-dir2".as_ref(),
+        &PathBuf::from("../../dir2"),
+    )
+    .await
+    .unwrap();
+    fs.create_symlink(
+        "/root/dir1/deps/dep-dir3".as_ref(),
+        &PathBuf::from("../../dir3"),
+    )
+    .await
+    .unwrap();
 
     let tree = Worktree::local(
         Path::new("/root/dir1"),

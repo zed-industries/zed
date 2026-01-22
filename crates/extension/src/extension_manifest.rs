@@ -124,6 +124,10 @@ impl ExtensionManifest {
             || !self.debug_adapters.is_empty()
             || !self.debug_locators.is_empty()
     }
+
+    pub fn has_repository(&self) -> bool {
+        self.repository.is_some()
+    }
 }
 
 pub fn build_debug_adapter_schema_path(

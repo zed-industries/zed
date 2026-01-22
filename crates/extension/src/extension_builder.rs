@@ -10,6 +10,7 @@ use http_client::{self, AsyncBody, HttpClient};
 use serde::Deserialize;
 use std::{
     env, fs, mem,
+    ops::Not,
     path::{Path, PathBuf},
     process::Stdio,
     str::FromStr,
@@ -635,6 +636,10 @@ async fn populate_defaults(
         manifest.snippets = Some("snippets.json".into());
     }
 
+    if manifest.repository.is_none() {
+        manifest.repository = parse_extension_git_remote(extension_path).await.ok();
+    }
+
     // For legacy extensions on the v0 schema (aka, using `extension.json`), we want to populate the grammars in
     // the manifest using the contents of the `grammars` directory.
     if manifest.schema_version.is_v0() {
@@ -702,6 +707,32 @@ fn file_newer_than_deps(target: &Path, dependencies: &[&Path]) -> Result<bool, s
         }
     }
     Ok(true)
+}
+
+async fn parse_extension_git_remote(extension_path: &Path) -> Result<String> {
+    let output = util::command::new_smol_command("git")
+        .args(["config", "--get", "remote.origin.url"])
+        .current_dir(extension_path)
+        .output()
+        .await
+        .context("Failed to spawn command")?;
+
+    if output.status.success() {
+        String::from_utf8(output.stdout)
+            .context("Failed to parse remote from output")
+            .and_then(|remote| {
+                let remote = remote.trim();
+                if remote.is_empty().not() {
+                    Ok(remote.to_owned())
+                } else {
+                    Err(anyhow::anyhow!("Did not find valid remote"))
+                }
+            })
+    } else {
+        Err(anyhow::anyhow!(
+            "git remote returned with non-zero exit code"
+        ))
+    }
 }
 
 #[cfg(test)]
