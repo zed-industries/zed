@@ -135,7 +135,6 @@ pub struct GitGraph {
     focus_handle: FocusHandle,
     graph_data: crate::graph::GraphData,
     project: Entity<Project>,
-    loading: bool,
     error: Option<SharedString>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     row_height: Pixels,
@@ -212,7 +211,6 @@ impl GitGraph {
             focus_handle,
             project,
             graph_data: graph,
-            loading: true,
             error: None,
             _load_task: None,
             _commit_diff_task: None,
@@ -1081,12 +1079,8 @@ impl Render for GitGraph {
             }
         };
 
-        let content = if self.loading && self.graph_data.commits.is_empty() && false {
-            let message = if self.loading {
-                "Loading commits..."
-            } else {
-                "No commits found"
-            };
+        let content = if self.graph_data.commits.is_empty() {
+            let message = "No commits found";
             div()
                 .size_full()
                 .flex()

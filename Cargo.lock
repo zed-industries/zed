@@ -7136,8 +7136,6 @@ dependencies = [
  "git",
  "git_ui",
  "gpui",
- "itertools 0.14.0",
- "menu",
  "project",
  "rand 0.9.2",
  "recent_projects",
@@ -7147,8 +7145,6 @@ dependencies = [
  "theme",
  "time",
  "ui",
- "ui_input",
- "util",
  "workspace",
 ]
 

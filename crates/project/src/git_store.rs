@@ -4371,7 +4371,7 @@ impl Repository {
             .ok();
         });
 
-        let request_tx_for_handler = request_tx.clone();
+        let request_tx_for_handler = request_tx;
 
         cx.background_spawn(async move {
             let backend = match state.await {
@@ -4403,7 +4403,7 @@ impl Repository {
                             break;
                         };
 
-                        match reader.read(sha.clone()).await {
+                        match reader.read(sha).await {
                             Ok(commit_data) => {
                                 if result_tx.send((sha, commit_data)).await.is_err() {
                                     break;

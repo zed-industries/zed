@@ -2717,7 +2717,7 @@ async fn read_single_commit_response(
     stdout.read_exact(&mut newline).await?;
 
     let content_str = String::from_utf8_lossy(&content);
-    parse_cat_file_commit(sha.clone(), &content_str)
+    parse_cat_file_commit(*sha, &content_str)
         .ok_or_else(|| anyhow!("failed to parse commit {}", sha))
 }
 
