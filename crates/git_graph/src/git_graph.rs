@@ -827,7 +827,6 @@ impl GitGraph {
                             continue;
                         };
 
-                        let line_color = accent_colors.color_for_index(line.color_idx as u32);
                         let line_x = lane_center_x(
                             bounds,
                             left_padding,

@@ -55,7 +55,9 @@ impl LaneState {
 
         match state {
             LaneState::Active {
+                #[cfg_attr(not(test), allow(unused_variables))]
                 parent,
+                #[cfg_attr(not(test), allow(unused_variables))]
                 child,
                 color,
                 starting_row,
@@ -67,7 +69,9 @@ impl LaneState {
                 let final_color = color.unwrap_or(parent_color);
 
                 Some(CommitLine {
+                    #[cfg(test)]
                     child,
+                    #[cfg(test)]
                     parent,
                     child_column: starting_col,
                     full_interval: starting_row..ending_row,
@@ -220,9 +224,11 @@ pub(crate) enum CommitLineSegment {
 
 #[derive(Debug)]
 pub struct CommitLine {
+    #[cfg(test)]
     pub child: Oid,
-    pub child_column: usize,
+    #[cfg(test)]
     pub parent: Oid,
+    pub child_column: usize,
     pub full_interval: Range<usize>,
     pub color_idx: usize,
     pub segments: SmallVec<[CommitLineSegment; 1]>,
