@@ -1,6 +1,7 @@
 use agent_client_protocol as acp;
 use anyhow::Result;
 use collections::FxHashSet;
+use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use language::Buffer;
 use project::Project;
@@ -61,7 +62,7 @@ impl AgentTool for RestoreFileFromDiskTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String>> {
         let project = self.project.clone();
@@ -74,49 +75,36 @@ impl AgentTool for RestoreFileFromDiskTool {
             let mut clean_paths: Vec<PathBuf> = Vec::new();
             let mut not_found_paths: Vec<PathBuf> = Vec::new();
             let mut open_errors: Vec<(PathBuf, String)> = Vec::new();
-            let mut dirty_check_errors: Vec<(PathBuf, String)> = Vec::new();
+            let dirty_check_errors: Vec<(PathBuf, String)> = Vec::new();
             let mut reload_errors: Vec<String> = Vec::new();
 
             for path in input_paths {
-                let project_path =
-                    project.read_with(cx, |project, cx| project.find_project_path(&path, cx));
-
-                let project_path = match project_path {
-                    Ok(Some(project_path)) => project_path,
-                    Ok(None) => {
-                        not_found_paths.push(path);
-                        continue;
-                    }
-                    Err(error) => {
-                        open_errors.push((path, error.to_string()));
-                        continue;
-                    }
+                let Some(project_path) =
+                    project.read_with(cx, |project, cx| project.find_project_path(&path, cx))
+                else {
+                    not_found_paths.push(path);
+                    continue;
                 };
 
                 let open_buffer_task =
                     project.update(cx, |project, cx| project.open_buffer(project_path, cx));
 
-                let buffer = match open_buffer_task {
-                    Ok(task) => match task.await {
-                        Ok(buffer) => buffer,
-                        Err(error) => {
-                            open_errors.push((path, error.to_string()));
-                            continue;
+                let buffer = futures::select! {
+                    result = open_buffer_task.fuse() => {
+                        match result {
+                            Ok(buffer) => buffer,
+                            Err(error) => {
+                                open_errors.push((path, error.to_string()));
+                                continue;
+                            }
                         }
-                    },
-                    Err(error) => {
-                        open_errors.push((path, error.to_string()));
-                        continue;
+                    }
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        anyhow::bail!("Restore cancelled by user");
                     }
                 };
 
-                let is_dirty = match buffer.read_with(cx, |buffer, _| buffer.is_dirty()) {
-                    Ok(is_dirty) => is_dirty,
-                    Err(error) => {
-                        dirty_check_errors.push((path, error.to_string()));
-                        continue;
-                    }
-                };
+                let is_dirty = buffer.read_with(cx, |buffer, _| buffer.is_dirty());
 
                 if is_dirty {
                     buffers_to_reload.insert(buffer);
@@ -131,15 +119,14 @@ impl AgentTool for RestoreFileFromDiskTool {
                     project.reload_buffers(buffers_to_reload, true, cx)
                 });
 
-                match reload_task {
-                    Ok(task) => {
-                        if let Err(error) = task.await {
-                            reload_errors.push(error.to_string());
-                        }
+                let result = futures::select! {
+                    result = reload_task.fuse() => result,
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        anyhow::bail!("Restore cancelled by user");
                     }
-                    Err(error) => {
-                        reload_errors.push(error.to_string());
-                    }
+                };
+                if let Err(error) = result {
+                    reload_errors.push(error.to_string());
                 }
             }
 

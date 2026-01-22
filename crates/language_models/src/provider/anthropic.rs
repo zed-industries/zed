@@ -2,9 +2,9 @@ use anthropic::{
     ANTHROPIC_API_URL, AnthropicError, AnthropicModelMode, ContentDelta, CountTokensRequest, Event,
     ResponseContent, ToolResultContent, ToolResultPart, Usage,
 };
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use collections::{BTreeMap, HashMap};
-use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture, stream::BoxStream};
+use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task};
 use http_client::HttpClient;
 use language_model::{
@@ -444,12 +444,10 @@ impl AnthropicModel {
     > {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = AnthropicLanguageModelProvider::api_url(cx);
             (state.api_key_state.key(&api_url), api_url)
-        }) else {
-            return future::ready(Err(anyhow!("App state dropped").into())).boxed();
-        };
+        });
 
         let beta_headers = self.model.beta_headers();
 
@@ -580,6 +578,7 @@ impl LanguageModel for AnthropicModel {
             LanguageModelCompletionError,
         >,
     > {
+        let bypass_rate_limit = request.bypass_rate_limit;
         let request = into_anthropic(
             request,
             self.model.request_id().into(),
@@ -588,10 +587,13 @@ impl LanguageModel for AnthropicModel {
             self.model.mode(),
         );
         let request = self.stream_completion(request, cx);
-        let future = self.request_limiter.stream(async move {
-            let response = request.await?;
-            Ok(AnthropicEventMapper::new().map_stream(response))
-        });
+        let future = self.request_limiter.stream_with_bypass(
+            async move {
+                let response = request.await?;
+                Ok(AnthropicEventMapper::new().map_stream(response))
+            },
+            bypass_rate_limit,
+        );
         async move { Ok(future.await?.boxed()) }.boxed()
     }
 
@@ -1020,13 +1022,9 @@ impl ConfigurationView {
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
-                    // We don't log an error, because "not signed in" is also an error.
-                    let _ = task.await;
-                }
+                let task = state.update(cx, |state, cx| state.authenticate(cx));
+                // We don't log an error, because "not signed in" is also an error.
+                let _ = task.await;
                 this.update(cx, |this, cx| {
                     this.load_credentials_task = None;
                     cx.notify();
@@ -1056,7 +1054,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -1069,7 +1067,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .update(cx, |state, cx| state.set_api_key(None, cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -1120,7 +1118,7 @@ impl Render for ConfigurationView {
                 .child(self.api_key_editor.clone())
                 .child(
                     Label::new(
-                        format!("You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
+                        format!("You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted)
@@ -1165,12 +1163,12 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
-            mode: None,
             stop: vec![],
             temperature: None,
             tools: vec![],
             tool_choice: None,
             thinking_allowed: true,
+            bypass_rate_limit: false,
         };
 
         let anthropic_request = into_anthropic(

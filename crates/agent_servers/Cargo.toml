@@ -24,6 +24,7 @@ agent-client-protocol.workspace = true
 feature_flags.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+chrono.workspace = true
 client.workspace = true
 collections.workspace = true
 env_logger = { workspace = true, optional = true }

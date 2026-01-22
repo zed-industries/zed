@@ -16,11 +16,10 @@ use db::{
     sqlez::{connection::Connection, domain::Domain},
     sqlez_macros::sql,
 };
-use gpui::{Axis, Bounds, Entity, Task, WindowBounds, WindowId, point, size};
+use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::{
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
-    trusted_worktrees::{PathTrust, RemoteHostLocation, find_worktree_in_store},
-    worktree_store::WorktreeStore,
+    trusted_worktrees::{DbTrustedPaths, RemoteHostLocation},
 };
 
 use language::{LanguageName, Toolchain, ToolchainScope};
@@ -882,6 +881,9 @@ impl Domain for WorkspaceDb {
             DROP TABLE user_toolchains;
             ALTER TABLE user_toolchains2 RENAME TO user_toolchains;
         ),
+        sql!(
+            ALTER TABLE remote_connections ADD COLUMN use_podman BOOLEAN;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1309,6 +1311,7 @@ impl WorkspaceDb {
         let mut distro = None;
         let mut name = None;
         let mut container_id = None;
+        let mut use_podman = None;
         match options {
             RemoteConnectionOptions::Ssh(options) => {
                 kind = RemoteConnectionKind::Ssh;
@@ -1325,6 +1328,12 @@ impl WorkspaceDb {
                 kind = RemoteConnectionKind::Docker;
                 container_id = Some(options.container_id);
                 name = Some(options.name);
+                use_podman = Some(options.use_podman)
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(options) => {
+                kind = RemoteConnectionKind::Ssh;
+                host = Some(format!("mock-{}", options.id));
             }
         }
         Self::get_or_create_remote_connection_query(
@@ -1336,6 +1345,7 @@ impl WorkspaceDb {
             distro,
             name,
             container_id,
+            use_podman,
         )
     }
 
@@ -1348,6 +1358,7 @@ impl WorkspaceDb {
         distro: Option<String>,
         name: Option<String>,
         container_id: Option<String>,
+        use_podman: Option<bool>,
     ) -> Result<RemoteConnectionId> {
         if let Some(id) = this.select_row_bound(sql!(
             SELECT id
@@ -1380,8 +1391,9 @@ impl WorkspaceDb {
                     user,
                     distro,
                     name,
-                    container_id
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                    container_id,
+                    use_podman
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                 RETURNING id
             ))?((
                 kind.serialize(),
@@ -1391,6 +1403,7 @@ impl WorkspaceDb {
                 distro,
                 name,
                 container_id,
+                use_podman,
             ))?
             .context("failed to insert remote project")?;
             Ok(RemoteConnectionId(id))
@@ -1474,25 +1487,28 @@ impl WorkspaceDb {
     fn remote_connections(&self) -> Result<HashMap<RemoteConnectionId, RemoteConnectionOptions>> {
         Ok(self.select(sql!(
             SELECT
-                id, kind, host, port, user, distro, container_id, name
+                id, kind, host, port, user, distro, container_id, name, use_podman
             FROM
                 remote_connections
         ))?()?
         .into_iter()
-        .filter_map(|(id, kind, host, port, user, distro, container_id, name)| {
-            Some((
-                RemoteConnectionId(id),
-                Self::remote_connection_from_row(
-                    kind,
-                    host,
-                    port,
-                    user,
-                    distro,
-                    container_id,
-                    name,
-                )?,
-            ))
-        })
+        .filter_map(
+            |(id, kind, host, port, user, distro, container_id, name, use_podman)| {
+                Some((
+                    RemoteConnectionId(id),
+                    Self::remote_connection_from_row(
+                        kind,
+                        host,
+                        port,
+                        user,
+                        distro,
+                        container_id,
+                        name,
+                        use_podman,
+                    )?,
+                ))
+            },
+        )
         .collect())
     }
 
@@ -1500,14 +1516,24 @@ impl WorkspaceDb {
         &self,
         id: RemoteConnectionId,
     ) -> Result<RemoteConnectionOptions> {
-        let (kind, host, port, user, distro, container_id, name) = self.select_row_bound(sql!(
-            SELECT kind, host, port, user, distro, container_id, name
-            FROM remote_connections
-            WHERE id = ?
-        ))?(id.0)?
-        .context("no such remote connection")?;
-        Self::remote_connection_from_row(kind, host, port, user, distro, container_id, name)
-            .context("invalid remote_connection row")
+        let (kind, host, port, user, distro, container_id, name, use_podman) =
+            self.select_row_bound(sql!(
+                SELECT kind, host, port, user, distro, container_id, name, use_podman
+                FROM remote_connections
+                WHERE id = ?
+            ))?(id.0)?
+            .context("no such remote connection")?;
+        Self::remote_connection_from_row(
+            kind,
+            host,
+            port,
+            user,
+            distro,
+            container_id,
+            name,
+            use_podman,
+        )
+        .context("invalid remote_connection row")
     }
 
     fn remote_connection_from_row(
@@ -1518,6 +1544,7 @@ impl WorkspaceDb {
         distro: Option<String>,
         container_id: Option<String>,
         name: Option<String>,
+        use_podman: Option<bool>,
     ) -> Option<RemoteConnectionOptions> {
         match RemoteConnectionKind::deserialize(&kind)? {
             RemoteConnectionKind::Wsl => Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
@@ -1535,6 +1562,7 @@ impl WorkspaceDb {
                     container_id: container_id?,
                     name: name?,
                     upload_binary_over_docker_exec: false,
+                    use_podman: use_podman?,
                 }))
             }
         }
@@ -2029,18 +2057,12 @@ VALUES {placeholders};"#
         Ok(())
     }
 
-    pub fn fetch_trusted_worktrees(
-        &self,
-        worktree_store: Option<Entity<WorktreeStore>>,
-        host: Option<RemoteHostLocation>,
-        cx: &App,
-    ) -> Result<HashMap<Option<RemoteHostLocation>, HashSet<PathTrust>>> {
+    pub fn fetch_trusted_worktrees(&self) -> Result<DbTrustedPaths> {
         let trusted_worktrees = DB.trusted_worktrees()?;
         Ok(trusted_worktrees
             .into_iter()
             .filter_map(|(abs_path, user_name, host_name)| {
                 let db_host = match (user_name, host_name) {
-                    (_, None) => None,
                     (None, Some(host_name)) => Some(RemoteHostLocation {
                         user_name: None,
                         host_identifier: SharedString::new(host_name),
@@ -2049,24 +2071,14 @@ VALUES {placeholders};"#
                         user_name: Some(SharedString::new(user_name)),
                         host_identifier: SharedString::new(host_name),
                     }),
+                    _ => None,
                 };
-
-                let abs_path = abs_path?;
-                Some(if db_host != host {
-                    (db_host, PathTrust::AbsPath(abs_path))
-                } else if let Some(worktree_store) = &worktree_store {
-                    find_worktree_in_store(worktree_store.read(cx), &abs_path, cx)
-                        .map(PathTrust::Worktree)
-                        .map(|trusted_worktree| (host.clone(), trusted_worktree))
-                        .unwrap_or_else(|| (db_host.clone(), PathTrust::AbsPath(abs_path)))
-                } else {
-                    (db_host, PathTrust::AbsPath(abs_path))
-                })
+                Some((db_host, abs_path?))
             })
-            .fold(HashMap::default(), |mut acc, (remote_host, path_trust)| {
+            .fold(HashMap::default(), |mut acc, (remote_host, abs_path)| {
                 acc.entry(remote_host)
                     .or_insert_with(HashSet::default)
-                    .insert(path_trust);
+                    .insert(abs_path);
                 acc
             }))
     }

@@ -47,7 +47,7 @@ impl AgentServer for Gemini {
             extra_env.insert("SURFACE".to_owned(), "zed".to_owned());
 
             if let Some(api_key) = cx
-                .update(GoogleLanguageModelProvider::api_key_for_gemini_cli)?
+                .update(GoogleLanguageModelProvider::api_key_for_gemini_cli)
                 .await
                 .ok()
             {
@@ -95,7 +95,7 @@ pub(crate) mod tests {
     use super::*;
     use std::path::Path;
 
-    crate::common_e2e_tests!(async |_, _, _| Gemini, allow_option_id = "proceed_once");
+    crate::common_e2e_tests!(async |_, _| Gemini, allow_option_id = "proceed_once");
 
     pub fn local_command() -> AgentServerCommand {
         let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))
