@@ -2818,7 +2818,7 @@ mod tests {
                 #[cfg(target_os = "windows")]
                 assert_eq!(exit_status.code(), Some(1));
                 #[cfg(not(target_os = "windows"))]
-                assert_eq!(exit_status.code(), None);
+                assert_eq!(exit_status.code(), Some(127)); // code 127 means "command not found" on Unix
             }
         });
 
