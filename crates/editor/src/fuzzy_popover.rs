@@ -1,7 +1,7 @@
 use crate::{
     Editor, EditorEvent,
     actions::{MoveDown, MoveUp},
-    code_context_menus::ContextMenuOrigin,
+    code_context_menus::{CodeContextMenu, ContextMenuOrigin},
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -14,7 +14,10 @@ use multi_buffer::Anchor;
 use settings::Settings;
 use std::ops::Range;
 use std::rc::Rc;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use task::TaskContext;
 use theme::ThemeSettings;
 use ui::{Popover, prelude::*, utils::WithRemSize};
@@ -150,7 +153,7 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
                         return;
                     };
 
-                    let crate::code_context_menus::CodeContextMenu::CodeActions(popover) = menu else {
+                    let CodeContextMenu::CodeActions(popover) = menu else {
                         return;
                     };
 
@@ -327,6 +330,7 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
             }),
         )
         .occlude()
+        .max_h(max_height)
         .with_width_from_item(
             items_for_width
                 .iter()
@@ -340,9 +344,7 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
         Popover::new()
             .child(
                 WithRemSize::new(ui_font_size)
-                    .max_h(max_height)
                     .min_w_40()
-                    .overflow_hidden()
                     .child(
                         v_flex()
                             .on_mouse_down_out(cx.listener(
@@ -355,25 +357,15 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
                             }))
                             .on_action(cx.listener(|editor, _: &MoveUp, _window, cx| {
                                 if let Some(menu) = editor.context_menu.borrow_mut().as_mut() {
-                                    match menu {
-                                        crate::code_context_menus::CodeContextMenu::CodeActions(
-                                            popover,
-                                        ) => {
-                                            popover.select_prev(cx);
-                                        }
-                                        _ => {}
+                                    if let CodeContextMenu::CodeActions(popover) = menu {
+                                        popover.select_prev(cx);
                                     }
                                 }
                             }))
                             .on_action(cx.listener(|editor, _: &MoveDown, _window, cx| {
                                 if let Some(menu) = editor.context_menu.borrow_mut().as_mut() {
-                                    match menu {
-                                        crate::code_context_menus::CodeContextMenu::CodeActions(
-                                            popover,
-                                        ) => {
-                                            popover.select_next(cx);
-                                        }
-                                        _ => {}
+                                    if let CodeContextMenu::CodeActions(popover) = menu {
+                                        popover.select_next(cx);
                                     }
                                 }
                             }))
@@ -389,7 +381,7 @@ impl<T: Clone + 'static> FuzzyPopover<T> {
                                     .child(self.search_editor.clone()),
                             )
                             .when(self.visible_len() > 0, |this| {
-                                this.child(v_flex().flex_grow().overflow_hidden().child(list))
+                                this.child(list)
                             })
                             .when(self.visible_len() == 0, |this| {
                                 this.child(
