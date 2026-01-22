@@ -104,9 +104,9 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     cmp,
-    collections::{VecDeque, hash_map::DefaultHasher},
+    collections::VecDeque,
     env,
-    hash::{Hash, Hasher},
+    hash::Hash,
     path::{Path, PathBuf},
     process::ExitStatus,
     rc::Rc,
@@ -1359,12 +1359,8 @@ impl Workspace {
                 project::Event::LanguageServerPrompt(request) => {
                     struct LanguageServerPrompt;
 
-                    let mut hasher = DefaultHasher::new();
-                    request.lsp_name.as_str().hash(&mut hasher);
-                    let id = hasher.finish();
-
                     this.show_notification(
-                        NotificationId::composite::<LanguageServerPrompt>(id as usize),
+                        NotificationId::composite::<LanguageServerPrompt>(request.id),
                         cx,
                         |cx| {
                             cx.new(|cx| {
