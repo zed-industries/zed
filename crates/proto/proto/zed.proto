@@ -459,7 +459,8 @@ message Envelope {
 
         DownloadFileByPath download_file_by_path = 412;
         DownloadFileResponse download_file_response = 413;
-        ContextServerCommand context_server_command = 414; // current max
+        CreateFileForPeer create_file_for_peer = 414;
+        ContextServerCommand context_server_command = 415; // current max
     }
 
     reserved 87 to 88;
