@@ -545,13 +545,15 @@ impl SplittableEditor {
             let this = this.clone();
             editor.set_on_local_selections_changed(Some(Box::new(
                 move |cursor_position, window, cx| {
-                    if let Some(this) = this.upgrade() {
+                    let this = this.clone();
+                    window.defer(cx, move |window, cx| {
                         this.update(cx, |this, cx| {
                             if this.locked_cursors {
                                 this.sync_cursor_to_other_side(true, cursor_position, window, cx);
                             }
-                        });
-                    }
+                        })
+                        .ok();
+                    })
                 },
             )));
         });
@@ -560,13 +562,15 @@ impl SplittableEditor {
             let this = this.clone();
             editor.set_on_local_selections_changed(Some(Box::new(
                 move |cursor_position, window, cx| {
-                    if let Some(this) = this.upgrade() {
+                    let this = this.clone();
+                    window.defer(cx, move |window, cx| {
                         this.update(cx, |this, cx| {
                             if this.locked_cursors {
                                 this.sync_cursor_to_other_side(false, cursor_position, window, cx);
                             }
-                        });
-                    }
+                        })
+                        .ok();
+                    })
                 },
             )));
         });
