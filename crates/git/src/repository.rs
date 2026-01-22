@@ -41,17 +41,12 @@ pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
 
-/// Format string used in graph log to get data for the git graph
+/// Format string used in graph log to get initial data for the git graph
 /// %H - Full commit hash
-/// %aN - Author name
-/// %aE - Author email
-/// %at - Author timestamp
-/// %ct - Commit timestamp
-/// %s - Commit summary
 /// %P - Parent hashes
 /// %D - Ref names
-/// %x1E - ASCII record separator, used to split up commit data
-static GRAPH_COMMIT_FORMAT: &str = "--format=%H%x1E%aN%x1E%aE%x1E%at%x1E%ct%x1E%s%x1E%P%x1E%D%x1E";
+/// %x00 - Null byte separator, used to split up commit data
+static GRAPH_COMMIT_FORMAT: &str = "--format=%H%x00%P%x00%D";
 
 /// Number of commits to load per chunk for the git graph.
 pub const GRAPH_CHUNK_SIZE: usize = 1000;
@@ -559,12 +554,13 @@ pub enum LogSource {
 }
 
 impl LogSource {
-    fn get_arg(&self) -> &str {
+    fn get_arg(&self) -> Result<&str> {
         match self {
-            LogSource::All => "--all",
-            LogSource::Branch(branch) => branch.as_str(),
-            // todo! We probably don't want a default here, but all well
-            LogSource::Sha(oid) => str::from_utf8(oid.as_bytes()).unwrap_or_default(),
+            LogSource::All => Ok("--all"),
+            LogSource::Branch(branch) => Ok(branch.as_str()),
+            LogSource::Sha(oid) => {
+                str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")
+            }
         }
     }
 }
@@ -2569,13 +2565,11 @@ impl GitRepository for RealGitRepository {
             let working_directory = working_directory?;
             let git = GitBinary::new(git_binary_path, working_directory, executor);
 
-            // Format: SHA PARENTS\x00REF_NAMES todo! make sure this is still true
-            // Using \x00 as separator since ref names can contain spaces
             let mut command = git.build_command([
                 "log",
-                "--format=%H %P%x00%D",
+                GRAPH_COMMIT_FORMAT,
                 log_order.as_arg(),
-                log_source.get_arg(),
+                log_source.get_arg()?,
             ]);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::null());
@@ -2734,13 +2728,17 @@ fn parse_initial_graph_output<'a>(
     lines
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
-            // Format: "SHA PARENT1 PARENT2...\x00REF1, REF2, ..."
-            let (sha_parents, ref_names_str) = line.split_once('\x00')?;
+            // Format: "SHA\x00PARENT1 PARENT2...\x00REF1, REF2, ..."
+            let mut parts = line.split('\x00');
 
-            let mut parts = sha_parents.split_whitespace();
             let sha = Oid::from_str(parts.next()?).ok()?;
-            let parents = parts.filter_map(|p| Oid::from_str(p).ok()).collect();
+            let parents_str = parts.next()?;
+            let parents = parents_str
+                .split_whitespace()
+                .filter_map(|p| Oid::from_str(p).ok())
+                .collect();
 
+            let ref_names_str = parts.next().unwrap_or("");
             let ref_names = if ref_names_str.is_empty() {
                 Vec::new()
             } else {
