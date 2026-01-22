@@ -28140,11 +28140,11 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
     editor
         .update(cx, |editor, _window, cx| {
             assert_eq!(
-                vec!["2".to_string()],
+                vec!["1".to_string()],
                 cached_hint_labels(editor, cx),
                 "With extended timeout (BASE * 4), hints should arrive successfully"
             );
-            assert_eq!(vec!["2".to_string()], visible_hint_labels(editor, cx));
+            assert_eq!(vec!["1".to_string()], visible_hint_labels(editor, cx));
         })
         .unwrap();
 }

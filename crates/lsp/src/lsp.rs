@@ -60,6 +60,7 @@ pub const DEFAULT_LSP_REQUEST_TIMEOUT: Duration =
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
+type PendingRespondTasks = Arc<Mutex<HashMap<RequestId, Task<()>>>>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>) -> Task<()>>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
@@ -111,6 +112,9 @@ pub struct LanguageServer {
     code_action_kinds: Option<Vec<CodeActionKind>>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+    /// Tasks spawned by `on_custom_request` to compute responses. Tracked so that
+    /// incoming `$/cancelRequest` notifications can cancel them by dropping the task.
+    pending_respond_tasks: PendingRespondTasks,
     io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
     executor: BackgroundExecutor,
     #[allow(clippy::type_complexity)]
@@ -422,6 +426,7 @@ impl LanguageServer {
             Arc::new(Mutex::new(HashMap::<_, NotificationHandler>::default()));
         let response_handlers =
             Arc::new(Mutex::new(Some(HashMap::<_, ResponseHandler>::default())));
+        let pending_respond_tasks = PendingRespondTasks::default();
         let io_handlers = Arc::new(Mutex::new(HashMap::default()));
 
         let stdout_input_task = cx.spawn({
@@ -449,12 +454,14 @@ impl LanguageServer {
             let notification_handlers = notification_handlers.clone();
             let response_handlers = response_handlers.clone();
             let io_handlers = io_handlers.clone();
+            let pending_respond_tasks = pending_respond_tasks.clone();
             async move |cx| {
                 Self::handle_incoming_messages(
                     stdout,
                     unhandled_notification_wrapper,
                     notification_handlers,
                     response_handlers,
+                    pending_respond_tasks,
                     io_handlers,
                     cx,
                 )
@@ -512,6 +519,7 @@ impl LanguageServer {
             notification_handlers,
             notification_tx,
             response_handlers,
+            pending_respond_tasks,
             io_handlers,
             name: server_name,
             version: None,
@@ -545,6 +553,7 @@ impl LanguageServer {
         on_unhandled_notification: impl AsyncFn(NotificationOrRequest) + 'static + Send,
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        pending_respond_tasks: PendingRespondTasks,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()>
@@ -567,6 +576,19 @@ impl LanguageServer {
         );
 
         while let Some(msg) = input_handler.incoming_messages.next().await {
+            if msg.method == <notification::Cancel as notification::Notification>::METHOD {
+                if let Some(params) = msg.params {
+                    if let Ok(cancel_params) = serde_json::from_value::<CancelParams>(params) {
+                        let id = match cancel_params.id {
+                            NumberOrString::Number(id) => RequestId::Int(id),
+                            NumberOrString::String(id) => RequestId::Str(id),
+                        };
+                        pending_respond_tasks.lock().remove(&id);
+                    }
+                }
+                continue;
+            }
+
             let unhandled_message = {
                 let mut notification_handlers = notification_handlers.lock();
                 if let Some(handler) = notification_handlers.get_mut(msg.method.as_str()) {
@@ -1099,6 +1121,7 @@ impl LanguageServer {
         Res: Serialize,
     {
         let outbound_tx = self.outbound_tx.clone();
+        let pending_respond_tasks = self.pending_respond_tasks.clone();
         let prev_handler = self.notification_handlers.lock().insert(
             method,
             Box::new(move |id, params, cx| {
@@ -1106,34 +1129,36 @@ impl LanguageServer {
                     match serde_json::from_value(params) {
                         Ok(params) => {
                             let response = f(params, cx);
-                            cx.foreground_executor()
-                                .spawn({
-                                    let outbound_tx = outbound_tx.clone();
-                                    async move {
-                                        let response = match response.await {
-                                            Ok(result) => Response {
-                                                jsonrpc: JSON_RPC_VERSION,
-                                                id,
-                                                value: LspResult::Ok(Some(result)),
-                                            },
-                                            Err(error) => Response {
-                                                jsonrpc: JSON_RPC_VERSION,
-                                                id,
-                                                value: LspResult::Error(Some(Error {
-                                                    code: lsp_types::error_codes::REQUEST_FAILED,
-                                                    message: error.to_string(),
-                                                    data: None,
-                                                })),
-                                            },
-                                        };
-                                        if let Some(response) =
-                                            serde_json::to_string(&response).log_err()
-                                        {
-                                            outbound_tx.try_send(response).ok();
-                                        }
+                            let task = cx.foreground_executor().spawn({
+                                let outbound_tx = outbound_tx.clone();
+                                let pending_respond_tasks = pending_respond_tasks.clone();
+                                let id = id.clone();
+                                async move {
+                                    let response = match response.await {
+                                        Ok(result) => Response {
+                                            jsonrpc: JSON_RPC_VERSION,
+                                            id: id.clone(),
+                                            value: LspResult::Ok(Some(result)),
+                                        },
+                                        Err(error) => Response {
+                                            jsonrpc: JSON_RPC_VERSION,
+                                            id: id.clone(),
+                                            value: LspResult::Error(Some(Error {
+                                                code: lsp_types::error_codes::REQUEST_FAILED,
+                                                message: error.to_string(),
+                                                data: None,
+                                            })),
+                                        },
+                                    };
+                                    if let Some(response) =
+                                        serde_json::to_string(&response).log_err()
+                                    {
+                                        outbound_tx.try_send(response).ok();
                                     }
-                                })
-                                .detach();
+                                    pending_respond_tasks.lock().remove(&id);
+                                }
+                            });
+                            pending_respond_tasks.lock().insert(id, task);
                         }
 
                         Err(error) => {
