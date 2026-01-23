@@ -944,7 +944,7 @@ impl EditPredictionButton {
         let next_edit_suggestions = all_language_settings
             .edit_predictions
             .copilot
-            .enabled_next_edit_suggestions
+            .enable_next_edit_suggestions
             .unwrap_or(true);
         let copilot_config = copilot_chat::CopilotChatConfiguration {
             enterprise_uri: all_language_settings
@@ -975,7 +975,7 @@ impl EditPredictionButton {
                                         .get_or_insert_default()
                                         .copilot
                                         .get_or_insert_default()
-                                        .enabled_next_edit_suggestions =
+                                        .enable_next_edit_suggestions =
                                         Some(!next_edit_suggestions);
                                 });
                             }
