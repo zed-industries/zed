@@ -2310,11 +2310,11 @@ impl Thread {
                     && profile.is_tool_enabled(profile_tool_name)
                 {
                     match (tool_name.as_ref(), use_streaming_edit_tool) {
+                        ("streaming_edit_file", false) | ("edit_file", true) => None,
                         ("streaming_edit_file", true) => {
                             // Expose streaming tool as "edit_file"
                             Some((SharedString::from("edit_file"), tool.clone()))
                         }
-                        ("edit_file", true) => None,
                         _ => Some((truncate(tool_name), tool.clone())),
                     }
                 } else {
