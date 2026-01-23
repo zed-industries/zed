@@ -7386,7 +7386,7 @@ impl AcpThreadView {
     }
 
     pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
-        if let Some(thread) = self.thread() {
+        if let Some(thread) = self.displayed_thread() {
             let entry_count = thread.read(cx).entries().len();
             self.list_state.reset(entry_count);
             cx.notify();
@@ -8608,18 +8608,6 @@ impl AcpThreadView {
 impl Render for AcpThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_queued_message_editors(window, cx);
-
-        // For subagents, ensure list_state is synced with the displayed thread's entries.
-        // This handles cases where we navigate to a completed subagent that already has entries
-        // but list_state wasn't properly synced (e.g., due to timing issues).
-        if self.is_viewing_subagent() {
-            if let Some(thread) = self.displayed_thread() {
-                let entry_count = thread.read(cx).entries().len();
-                if self.list_state.item_count() != entry_count {
-                    self.list_state.reset(entry_count);
-                }
-            }
-        }
 
         let has_messages = self.list_state.item_count() > 0;
 
