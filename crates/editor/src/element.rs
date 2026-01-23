@@ -43,21 +43,21 @@ use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
     DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, FontWeight,
-    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
-    KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
-    MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
-    Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
-    Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
-    TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop,
-    linear_gradient, outline, pattern_slash, point, px, quad, relative, rgba, size,
-    solid_background, transparent_black,
+    GlobalElementId, HighlightStyle, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement,
+    IsZero, KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad,
+    ParentElement, Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine,
+    SharedString, Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
+    TextStyleRefinement, UnderlineStyle, WeakEntity, Window, anchored, deferred, div, fill,
+    linear_color_stop, linear_gradient, outline, pattern_slash, point, px, quad, relative, rgba,
+    size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
 use markdown::Markdown;
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferOffset,
-    MultiBufferPoint, MultiBufferRow, RowInfo,
+    Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBuffer,
+    MultiBufferOffset, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset,
 };
 
 use edit_prediction_types::EditPredictionGranularity;
@@ -4867,16 +4867,100 @@ impl EditorElement {
                 offset,
             },
             point,
+            excerpt_id,
         ) in rows.into_iter().rev()
         {
+            // OOOOH keep in mind that multibuffer anchor has a text anchor and an excerpt id
             // let Some(&row_info) = row_infos.get(start_point.row as usize) else {
             //     continue;
             // };
             // TODO why is start point wrong then?
-            dbg!(item.text, start_point, point, sticky_row);
+            dbg!(&item.text, &start_point, &point, &sticky_row);
 
-            let line = layout_line(
-                DisplayRow(point.row), // TODO
+            let display_point = snapshot.point_to_display_point(point, Bias::Left);
+            let chars = snapshot.buffer_chars_at(point.to_offset(&snapshot.buffer));
+            dbg!(
+                display_point,
+                chars.collect::<Vec<(char, MultiBufferOffset)>>()
+            );
+
+            let Some(better_snapshot) = snapshot.buffer_for_excerpt(excerpt_id) else {
+                dbg!("no snapshot for excerpt");
+                continue;
+            };
+
+            // let text_size = item.text.clone().len();
+            // let better_end_point = Point::new(point.row, point.column + (text_size as u32));
+
+            let better_range = item.range.start.text_anchor..item.range.end.text_anchor;
+
+            // OOK so if I can figure out the style highligiting I think I am good here
+            let chunks = better_snapshot.chunks(better_range, true).map(|c| {
+                dbg!(&c);
+                // TODO definitely encaptulate this somewhere in display_map.rs
+                let highlight_style = c
+                    .syntax_highlight_id
+                    .and_then(|id| id.style(&self.style.syntax));
+
+                let chunk_highlight = c.highlight_style.map(|chunk_highlight| {
+                    HighlightStyle {
+                        // For color inlays, blend the color with the editor background
+                        // if the color has transparency (alpha < 1.0)
+                        color: chunk_highlight.color.map(|color| {
+                            if c.is_inlay && !color.is_opaque() {
+                                self.style.background.blend(color)
+                            } else {
+                                color
+                            }
+                        }),
+                        ..chunk_highlight
+                    }
+                });
+
+                let diagnostic_highlight = c
+                    .diagnostic_severity
+                    .filter(|severity| {
+                        snapshot
+                            .display_snapshot
+                            .diagnostics_max_severity
+                            .into_lsp()
+                            .is_some_and(|max_severity| severity <= &max_severity)
+                    })
+                    .map(|severity| HighlightStyle {
+                        fade_out: c.is_unnecessary.then_some(self.style.unnecessary_code_fade),
+                        underline: (c.underline
+                            && self.style.show_underlines
+                            && !(c.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
+                            .then(|| {
+                                let diagnostic_color =
+                                    super::diagnostic_style(severity, &self.style.status);
+                                UnderlineStyle {
+                                    color: Some(diagnostic_color),
+                                    thickness: 1.0.into(),
+                                    wavy: true,
+                                }
+                            }),
+                        ..Default::default()
+                    });
+
+                let style = [highlight_style, chunk_highlight, diagnostic_highlight]
+                    .into_iter()
+                    .flatten()
+                    .reduce(|acc, highlight| acc.highlight(highlight));
+
+                HighlightedChunk {
+                    text: c.text,
+                    style: style,
+                    is_tab: c.is_tab,
+                    is_inlay: c.is_inlay,
+                    replacement: None,
+                }
+            });
+
+            // let editor = Editor::for_buffer(better_snapshot, project, window, cx)
+
+            let line = layout_line_v2(
+                chunks,
                 snapshot,
                 &self.style,
                 editor_width,
@@ -4962,7 +5046,7 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
         cx: &App,
-    ) -> Vec<(StickyHeader, Point)> {
+    ) -> Vec<(StickyHeader, Point, ExcerptId)> {
         let mut scroll_top = snapshot.scroll_position().y;
         if !snapshot.is_singleton() {
             scroll_top = scroll_top + FILE_HEADER_HEIGHT as f64;
@@ -4970,7 +5054,7 @@ impl EditorElement {
         // dbg!(&scroll_top);
 
         let mut end_rows = Vec::<DisplayRow>::new();
-        let mut rows = Vec::<(StickyHeader, Point)>::new();
+        let mut rows = Vec::<(StickyHeader, Point, ExcerptId)>::new();
 
         let items = editor
             .sticky_headers(&snapshot.display_snapshot, style, cx)
@@ -4978,7 +5062,7 @@ impl EditorElement {
 
         // dbg!("Items: ", items.len());
 
-        for (item, point) in items {
+        for (item, point, excerpt_id) in items {
             let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
             let end_point = item.range.end.to_point(snapshot.buffer_snapshot());
 
@@ -5035,6 +5119,7 @@ impl EditorElement {
                     offset,
                 },
                 point,
+                excerpt_id,
             ));
         }
 
@@ -11761,6 +11846,31 @@ pub(crate) struct BlockLayout {
     pub(crate) is_buffer_header: bool,
 }
 
+pub fn layout_line_v2<'a>(
+    chunks: impl Iterator<Item = HighlightedChunk<'a>>,
+    snapshot: &EditorSnapshot,
+    style: &EditorStyle,
+    text_width: Pixels,
+    is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> LineWithInvisibles {
+    LineWithInvisibles::from_chunks(
+        chunks,
+        style,
+        MAX_LINE_LEN,
+        1,
+        &snapshot.mode,
+        text_width,
+        is_row_soft_wrapped,
+        &[],
+        window,
+        cx,
+    )
+    .pop()
+    .unwrap()
+}
+
 pub fn layout_line(
     row: DisplayRow,
     snapshot: &EditorSnapshot,
@@ -11770,13 +11880,6 @@ pub fn layout_line(
     window: &mut Window,
     cx: &mut App,
 ) -> LineWithInvisibles {
-    dbg!(&row);
-    // Experimentation on how we can layout lines outside of the visible context, in a multibuffer situation
-    // let other = snapshot.buffer_snapshot().chunks(
-    //     MultiBufferOffset(row.0 as usize)..MultiBufferOffset((row.0 + 1) as usize),
-    //     true,
-    // );
-    // dbg!(other);
     let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), true, style);
     LineWithInvisibles::from_chunks(
         chunks,

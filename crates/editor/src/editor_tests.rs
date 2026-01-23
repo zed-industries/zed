@@ -28877,6 +28877,7 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
                             ..
                         },
                         _,
+                        _,
                     )| { (start_point, offset) },
                 )
                 .collect::<Vec<_>>()

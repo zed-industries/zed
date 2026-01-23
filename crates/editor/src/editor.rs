@@ -1948,7 +1948,7 @@ impl Editor {
         snapshot: &DisplaySnapshot,
         style: &EditorStyle,
         cx: &App,
-    ) -> Option<Vec<(OutlineItem<Anchor>, Point)>> {
+    ) -> Option<Vec<(OutlineItem<Anchor>, Point, ExcerptId)>> {
         let selections = self.selections.all::<Point>(&snapshot);
         let multi_buffer = self.buffer().read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
@@ -2024,11 +2024,12 @@ impl Editor {
                                     .map(|range| Anchor::range_in_buffer(excerpt_id, range)),
                             },
                             buffer_point,
+                            excerpt_id,
                         )
                     });
                 outline_items
             })
-            .collect::<Vec<(OutlineItem<Anchor>, Point)>>();
+            .collect::<Vec<(OutlineItem<Anchor>, Point, ExcerptId)>>();
         Some(outline_items)
     }
 

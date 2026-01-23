@@ -1507,7 +1507,7 @@ pub struct DisplaySnapshot {
     inlay_highlights: InlayHighlights,
     clip_at_line_ends: bool,
     masked: bool,
-    diagnostics_max_severity: DiagnosticSeverity,
+    pub(crate) diagnostics_max_severity: DiagnosticSeverity, // TODO undo the pub if you can encapsulate what youve done in layout_sticky_headers
     pub(crate) fold_placeholder: FoldPlaceholder,
 }
 
@@ -1719,7 +1719,7 @@ impl DisplaySnapshot {
         language_aware: bool,
         highlight_styles: HighlightStyles,
     ) -> DisplayChunks<'_> {
-        dbg!(&display_rows);
+        // dbg!(&display_rows);
         self.block_snapshot.chunks(
             BlockRow(display_rows.start.0)..BlockRow(display_rows.end.0),
             language_aware,
@@ -1739,7 +1739,7 @@ impl DisplaySnapshot {
         language_aware: bool,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
-        dbg!(&display_rows);
+        // dbg!(&display_rows);
         self.chunks(
             display_rows,
             language_aware,
