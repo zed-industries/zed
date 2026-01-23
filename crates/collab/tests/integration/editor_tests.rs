@@ -4048,11 +4048,7 @@ async fn test_collaborating_with_external_editorconfig(
 
     // Verify client A sees external editorconfig settings
     cx_a.read(|cx| {
-        let file = buffer_a.read(cx).file();
-        let settings = language_settings(cx)
-            .language(Some("Rust".into()))
-            .file(file)
-            .get();
+        let settings = language_settings(cx).buffer(buffer_a.read(cx)).get();
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
     });
 
@@ -4069,11 +4065,7 @@ async fn test_collaborating_with_external_editorconfig(
 
     // Verify client B also sees external editorconfig settings
     cx_b.read(|cx| {
-        let file = buffer_b.read(cx).file();
-        let settings = language_settings(cx)
-            .language(Some("Rust".into()))
-            .file(file)
-            .get();
+        let settings = language_settings(cx).buffer(buffer_b.read(cx)).get();
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
     });
 
@@ -4092,21 +4084,13 @@ async fn test_collaborating_with_external_editorconfig(
 
     // Verify client A sees updated settings
     cx_a.read(|cx| {
-        let file = buffer_a.read(cx).file();
-        let settings = language_settings(cx)
-            .language(Some("Rust".into()))
-            .file(file)
-            .get();
+        let settings = language_settings(cx).buffer(buffer_a.read(cx)).get();
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(9));
     });
 
     // Verify client B also sees updated settings
     cx_b.read(|cx| {
-        let file = buffer_b.read(cx).file();
-        let settings = language_settings(cx)
-            .language(Some("Rust".into()))
-            .file(file)
-            .get();
+        let settings = language_settings(cx).buffer(buffer_b.read(cx)).get();
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(9));
     });
 }

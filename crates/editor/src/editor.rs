@@ -6053,8 +6053,7 @@ impl Editor {
             .language_at(buffer_position.text_anchor)
             .map(|language| language.name());
         let language_settings = language_settings(cx)
-            .language(language.clone())
-            .file(buffer_snapshot.file())
+            .buffer_snapshot_at(&buffer_snapshot, buffer_position.text_anchor)
             .get();
         let completion_settings = language_settings.completions.clone();
 

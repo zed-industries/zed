@@ -2,7 +2,7 @@ use futures::channel::oneshot;
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
 use language::{
-    Capability, Diff, DiffOptions, File, Language, LanguageName, LanguageRegistry,
+    Capability, Diff, DiffOptions, Language, LanguageName, LanguageRegistry,
     language_settings::language_settings, word_diff_ranges,
 };
 use rope::Rope;
@@ -1067,7 +1067,6 @@ impl BufferDiffInner<language::BufferSnapshot> {
 }
 
 fn build_diff_options(
-    file: Option<&Arc<dyn File>>,
     language: Option<LanguageName>,
     language_scope: Option<language::LanguageScope>,
     cx: &App,
@@ -1085,7 +1084,6 @@ fn build_diff_options(
 
     language_settings(cx)
         .language(language)
-        .file(file)
         .get()
         .word_diff_enabled
         .then_some(DiffOptions {
@@ -1659,7 +1657,6 @@ impl BufferDiff {
         let base_text_changed = base_text_change.is_some();
         let compute_base_text_edits = base_text_change == Some(true);
         let diff_options = build_diff_options(
-            None,
             language.as_ref().map(|l| l.name()),
             language.as_ref().map(|l| l.default_scope()),
             cx,

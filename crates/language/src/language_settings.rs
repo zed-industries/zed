@@ -37,11 +37,6 @@ impl<'a> LanguageSettingsBuilder<'a> {
         self
     }
 
-    pub fn file(mut self, file: Option<&'a Arc<dyn File>>) -> Self {
-        self.file = file;
-        self
-    }
-
     pub fn buffer(mut self, buffer: &'a Buffer) -> Self {
         self.language = buffer.language().map(|l| l.name());
         self.file = buffer.file();
@@ -59,11 +54,6 @@ impl<'a> LanguageSettingsBuilder<'a> {
         self.language = buffer.language().map(|l| l.name());
         self.file = buffer.file();
         self.modeline = buffer.modeline().map(|arc| arc.as_ref());
-        self
-    }
-
-    pub fn modeline(mut self, modeline: Option<&'a ModelineSettings>) -> Self {
-        self.modeline = modeline;
         self
     }
 
