@@ -10,7 +10,7 @@ use futures::future::join_all;
 use gpui::{App, Entity, Task};
 use language::{
     BufferRow,
-    language_settings::{InlayHintKind, InlayHintSettings, language_settings},
+    language_settings::{InlayHintKind, InlayHintSettings},
 };
 use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId, MultiBufferSnapshot};
@@ -36,9 +36,7 @@ pub fn inlay_hint_settings(
     snapshot: &MultiBufferSnapshot,
     cx: &mut Context<Editor>,
 ) -> InlayHintSettings {
-    let file = snapshot.file_at(location);
-    let language = snapshot.language_at(location).map(|l| l.name());
-    language_settings(language, file, cx).inlay_hints
+    snapshot.language_settings_at(location, cx).inlay_hints
 }
 
 #[derive(Debug)]

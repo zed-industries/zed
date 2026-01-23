@@ -952,6 +952,13 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        // Handle diff review drag completion
+        if editor.diff_review_drag_state.is_some() {
+            editor.end_diff_review_drag(window, cx);
+            cx.stop_propagation();
+            return;
+        }
+
         let text_hitbox = &position_map.text_hitbox;
         let end_selection = editor.has_pending_selection();
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
@@ -1251,6 +1258,11 @@ impl EditorElement {
         let point_for_position = position_map.point_for_position(event.position);
         let valid_point = point_for_position.previous_valid;
 
+        // Update diff review drag state if we're dragging
+        if editor.diff_review_drag_state.is_some() {
+            editor.update_diff_review_drag(valid_point.row(), window, cx);
+        }
+
         let hovered_diff_control = position_map
             .diff_hunk_control_bounds
             .iter()
@@ -1345,8 +1357,12 @@ impl EditorElement {
                     });
             }
 
+            let anchor = position_map
+                .snapshot
+                .display_point_to_anchor(valid_point, Bias::Left);
             Some(PhantomDiffReviewIndicator {
-                display_row: valid_point.row(),
+                start: anchor,
+                end: anchor,
                 is_active: is_visible,
             })
         } else {
@@ -1361,7 +1377,11 @@ impl EditorElement {
 
         // Don't show breakpoint indicator when diff review indicator is active on this row
         let is_on_diff_review_button_row = diff_review_indicator.is_some_and(|indicator| {
-            indicator.is_active && indicator.display_row == valid_point.row()
+            let start_row = indicator
+                .start
+                .to_display_point(&position_map.snapshot.display_snapshot)
+                .row();
+            indicator.is_active && start_row == valid_point.row()
         });
 
         let breakpoint_indicator = if gutter_hovered
@@ -3145,6 +3165,7 @@ impl EditorElement {
         &self,
         range: Range<DisplayRow>,
         row_infos: &[RowInfo],
+        snapshot: &EditorSnapshot,
         cx: &App,
     ) -> Option<(DisplayRow, Option<u32>)> {
         if !cx.has_flag::<DiffReviewFeatureFlag>() {
@@ -3161,7 +3182,10 @@ impl EditorElement {
             return None;
         }
 
-        let display_row = indicator.display_row;
+        let display_row = indicator
+            .start
+            .to_display_point(&snapshot.display_snapshot)
+            .row();
         let row_index = (display_row.0.saturating_sub(range.start.0)) as usize;
 
         let row_info = row_infos.get(row_index);
@@ -9777,6 +9801,26 @@ impl Element for EditorElement {
                             .or_insert(background);
                     }
 
+                    // Add diff review drag selection highlight to text area
+                    if let Some(drag_state) = &self.editor.read(cx).diff_review_drag_state {
+                        let range = drag_state.row_range(&snapshot.display_snapshot);
+                        let start_row = range.start().0;
+                        let end_row = range.end().0;
+                        let drag_highlight_color =
+                            cx.theme().colors().editor_active_line_background;
+                        let drag_highlight = LineHighlight {
+                            background: solid_background(drag_highlight_color),
+                            border: Some(cx.theme().colors().border_focused),
+                            include_gutter: true,
+                            type_id: None,
+                        };
+                        for row_num in start_row..=end_row {
+                            highlighted_rows
+                                .entry(DisplayRow(row_num))
+                                .or_insert(drag_highlight);
+                        }
+                    }
+
                     let highlighted_gutter_ranges =
                         self.editor.read(cx).gutter_highlights_in_range(
                             start_anchor..end_anchor,
@@ -10549,7 +10593,12 @@ impl Element for EditorElement {
                         + 1;
 
                     let diff_review_button = self
-                        .should_render_diff_review_button(start_row..end_row, &row_infos, cx)
+                        .should_render_diff_review_button(
+                            start_row..end_row,
+                            &row_infos,
+                            &snapshot,
+                            cx,
+                        )
                         .map(|(display_row, buffer_row)| {
                             let is_wide = max_line_number_length
                                 >= EditorSettings::get_global(cx).gutter.min_line_number_digits

@@ -4913,13 +4913,15 @@ impl Project {
             })
             .collect();
         this.update(&mut cx, |_, cx| {
-            cx.emit(Event::LanguageServerPrompt(LanguageServerPromptRequest {
-                level: proto_to_prompt(envelope.payload.level.context("Invalid prompt level")?),
-                message: envelope.payload.message,
-                actions: actions.clone(),
-                lsp_name: envelope.payload.lsp_name,
-                response_channel: tx,
-            }));
+            cx.emit(Event::LanguageServerPrompt(
+                LanguageServerPromptRequest::new(
+                    proto_to_prompt(envelope.payload.level.context("Invalid prompt level")?),
+                    envelope.payload.message,
+                    actions.clone(),
+                    envelope.payload.lsp_name,
+                    tx,
+                ),
+            ));
 
             anyhow::Ok(())
         })?;
