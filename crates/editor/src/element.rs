@@ -1706,14 +1706,10 @@ impl EditorElement {
                     if block_width == Pixels::ZERO {
                         block_width = em_advance;
                     }
-                    // Don't show block cursor text if cursor is in a redacted range
-                    let is_in_redacted_range = redacted_ranges
-                        .iter()
-                        .any(|range| range.start <= cursor_position && cursor_position < range.end);
-
-                    let block_text = if let CursorShape::Block = selection.cursor_shape
-                        && !is_in_redacted_range
-                    {
+                    let block_text = if selection.cursor_shape == CursorShape::Block
+                        && !redacted_ranges.iter().any(|range| {
+                            range.start <= cursor_position && cursor_position < range.end
+                        }) {
                         snapshot
                             .grapheme_at(cursor_position)
                             .or_else(|| {
