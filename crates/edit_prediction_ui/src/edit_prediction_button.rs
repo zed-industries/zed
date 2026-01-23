@@ -2,7 +2,7 @@ use anyhow::Result;
 use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
 use codestral::CodestralEditPredictionDelegate;
-use copilot::{Copilot, Status};
+use copilot::Status;
 use edit_prediction::{
     EditPredictionStore, MercuryFeatureFlag, SweepFeatureFlag, Zeta2FeatureFlag,
 };
@@ -124,6 +124,7 @@ impl Render for EditPredictionButton {
                             .on_click(cx.listener(move |_, _, window, cx| {
                                 if let Some(workspace) = window.root::<Workspace>().flatten() {
                                     workspace.update(cx, |workspace, cx| {
+                                        let copilot = copilot.clone();
                                         workspace.show_toast(
                                             Toast::new(
                                                 NotificationId::unique::<CopilotErrorToast>(),
@@ -131,8 +132,12 @@ impl Render for EditPredictionButton {
                                             )
                                             .on_click(
                                                 "Reinstall Copilot",
-                                                |window, cx| {
-                                                    copilot_ui::reinstall_and_sign_in(window, cx)
+                                                move |window, cx| {
+                                                    copilot_ui::reinstall_and_sign_in(
+                                                        copilot.clone(),
+                                                        window,
+                                                        cx,
+                                                    )
                                                 },
                                             ),
                                             cx,
@@ -489,7 +494,10 @@ impl EditPredictionButton {
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Self {
-        if let Some(copilot) = Copilot::global(cx) {
+        let copilot = EditPredictionStore::try_global(cx).and_then(|store| {
+            store.update(cx, |this, cx| this.start_copilot_for_project(&project, cx))
+        });
+        if let Some(copilot) = copilot {
             cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
         }
 
@@ -638,19 +646,28 @@ impl EditPredictionButton {
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
         let fs = self.fs.clone();
+        let project = self.project.clone();
         ContextMenu::build(window, cx, |menu, _, _| {
-            menu.entry("Sign In to Copilot", None, copilot_ui::initiate_sign_in)
-                .entry("Disable Copilot", None, {
-                    let fs = fs.clone();
-                    move |_window, cx| hide_copilot(fs.clone(), cx)
-                })
-                .separator()
-                .entry("Use Zed AI", None, {
-                    let fs = fs.clone();
-                    move |_window, cx| {
-                        set_completion_provider(fs.clone(), cx, EditPredictionProvider::Zed)
-                    }
-                })
+            menu.entry("Sign In to Copilot", None, move |window, cx| {
+                if let Some(copilot) = EditPredictionStore::try_global(cx).and_then(|store| {
+                    store.update(cx, |this, cx| {
+                        this.start_copilot_for_project(&project.upgrade()?, cx)
+                    })
+                }) {
+                    copilot_ui::initiate_sign_in(copilot, window, cx);
+                }
+            })
+            .entry("Disable Copilot", None, {
+                let fs = fs.clone();
+                move |_window, cx| hide_copilot(fs.clone(), cx)
+            })
+            .separator()
+            .entry("Use Zed AI", None, {
+                let fs = fs.clone();
+                move |_window, cx| {
+                    set_completion_provider(fs.clone(), cx, EditPredictionProvider::Zed)
+                }
+            })
         })
     }
 
