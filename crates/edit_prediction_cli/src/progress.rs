@@ -6,6 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::paths::RUN_DIR;
+
 use log::{Level, Log, Metadata, Record};
 
 pub struct Progress {
@@ -20,6 +22,7 @@ struct ProgressInner {
     max_example_name_len: usize,
     status_lines_displayed: usize,
     total_examples: usize,
+    completed_examples: usize,
     failed_examples: usize,
     last_line_is_logging: bool,
     ticker: Option<std::thread::JoinHandle<()>>,
@@ -99,12 +102,14 @@ impl Progress {
                     inner: Mutex::new(ProgressInner {
                         completed: Vec::new(),
                         in_progress: HashMap::new(),
-                        is_tty: std::env::var("NO_COLOR").is_err()
-                            && std::io::stderr().is_terminal(),
+                        is_tty: std::env::var("COLOR").is_ok()
+                            || (std::env::var("NO_COLOR").is_err()
+                                && std::io::stderr().is_terminal()),
                         terminal_width: get_terminal_width(),
                         max_example_name_len: 0,
                         status_lines_displayed: 0,
                         total_examples: 0,
+                        completed_examples: 0,
                         failed_examples: 0,
                         last_line_is_logging: false,
                         ticker: None,
@@ -117,9 +122,34 @@ impl Progress {
             .clone()
     }
 
+    pub fn start_group(self: &Arc<Self>, example_name: &str) -> ExampleProgress {
+        ExampleProgress {
+            progress: self.clone(),
+            example_name: example_name.to_string(),
+        }
+    }
+
+    fn increment_completed(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.completed_examples += 1;
+    }
+
     pub fn set_total_examples(&self, total: usize) {
         let mut inner = self.inner.lock().unwrap();
         inner.total_examples = total;
+    }
+
+    pub fn set_max_example_name_len(&self, example_names: impl Iterator<Item = impl AsRef<str>>) {
+        let mut inner = self.inner.lock().unwrap();
+        let max_name_width = inner
+            .terminal_width
+            .saturating_sub(MARGIN * 2)
+            .saturating_div(3)
+            .max(1);
+        inner.max_example_name_len = example_names
+            .map(|name| name.as_ref().len().min(max_name_width))
+            .max()
+            .unwrap_or(0);
     }
 
     pub fn increment_failed(&self) {
@@ -141,7 +171,17 @@ impl Progress {
             inner.last_line_is_logging = true;
         }
 
-        eprintln!("{}", message);
+        let max_width = inner.terminal_width.saturating_sub(MARGIN);
+        for line in message.lines() {
+            let truncated = truncate_to_visible_width(line, max_width);
+            if truncated.len() < line.len() {
+                eprintln!("{}…", truncated);
+            } else {
+                eprintln!("{}", truncated);
+            }
+        }
+
+        Self::print_status_lines(&mut inner);
     }
 
     pub fn start(self: &Arc<Self>, step: Step, example_name: &str) -> StepProgress {
@@ -149,14 +189,15 @@ impl Progress {
 
         Self::clear_status_lines(&mut inner);
 
-        let max_name_width = inner
-            .terminal_width
-            .saturating_sub(MARGIN * 2)
-            .saturating_div(3)
-            .max(1);
-        inner.max_example_name_len = inner
-            .max_example_name_len
-            .max(example_name.len().min(max_name_width));
+        // Update max_example_name_len if not already set via set_max_example_name_len
+        if inner.max_example_name_len == 0 {
+            let max_name_width = inner
+                .terminal_width
+                .saturating_sub(MARGIN * 2)
+                .saturating_div(3)
+                .max(1);
+            inner.max_example_name_len = example_name.len().min(max_name_width);
+        }
         inner.in_progress.insert(
             example_name.to_string(),
             InProgressTask {
@@ -201,17 +242,24 @@ impl Progress {
         };
 
         if task.step == step {
+            let duration = task.started_at.elapsed();
+
+            // Skip logging for tasks that complete quickly (under 500ms)
+            let should_print = duration >= Duration::from_millis(500);
+
             inner.completed.push(CompletedTask {
                 step: task.step,
                 example_name: example_name.to_string(),
-                duration: task.started_at.elapsed(),
+                duration,
                 info: task.info,
             });
 
             Self::clear_status_lines(&mut inner);
-            Self::print_logging_closing_divider(&mut inner);
-            if let Some(last_completed) = inner.completed.last() {
-                Self::print_completed(&inner, last_completed);
+            if should_print {
+                Self::print_logging_closing_divider(&mut inner);
+                if let Some(last_completed) = inner.completed.last() {
+                    Self::print_completed(&inner, last_completed);
+                }
             }
             Self::print_status_lines(&mut inner);
         } else {
@@ -235,7 +283,6 @@ impl Progress {
             for _ in 0..inner.status_lines_displayed {
                 eprint!("\x1b[A\x1b[K");
             }
-            let _ = std::io::stderr().flush();
             inner.status_lines_displayed = 0;
         }
     }
@@ -305,7 +352,7 @@ impl Progress {
         let dim = "\x1b[2m";
 
         // Build the done/in-progress/total label
-        let done_count = inner.completed.len();
+        let done_count = inner.completed_examples;
         let in_progress_count = inner.in_progress.len();
         let failed_count = inner.failed_examples;
 
@@ -403,11 +450,32 @@ impl Progress {
             } else {
                 0.0
             };
+            let failed_jsonl_path = RUN_DIR.join("failed.jsonl");
             eprintln!(
-                "\n{} of {} examples failed ({:.1}%)",
-                inner.failed_examples, total_examples, percentage
+                "\n{} of {} examples failed ({:.1}%)\nFailed examples: {}",
+                inner.failed_examples,
+                total_examples,
+                percentage,
+                failed_jsonl_path.display()
             );
         }
+    }
+}
+
+pub struct ExampleProgress {
+    progress: Arc<Progress>,
+    example_name: String,
+}
+
+impl ExampleProgress {
+    pub fn start(&self, step: Step) -> StepProgress {
+        self.progress.start(step, &self.example_name)
+    }
+}
+
+impl Drop for ExampleProgress {
+    fn drop(&mut self) {
+        self.progress.increment_completed();
     }
 }
 
@@ -533,12 +601,34 @@ fn strip_ansi_len(s: &str) -> usize {
     len
 }
 
-fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {
+fn truncate_with_ellipsis(s: &str, max_len: usize) -> Cow<'_, str> {
     if s.len() <= max_len {
-        s.to_string()
+        Cow::Borrowed(s)
     } else {
-        format!("{}…", &s[..max_len.saturating_sub(1)])
+        Cow::Owned(format!("{}…", &s[..max_len.saturating_sub(1)]))
     }
+}
+
+fn truncate_to_visible_width(s: &str, max_visible_len: usize) -> &str {
+    let mut visible_len = 0;
+    let mut in_escape = false;
+    let mut last_byte_index = 0;
+    for (byte_index, c) in s.char_indices() {
+        if c == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if c == 'm' {
+                in_escape = false;
+            }
+        } else {
+            if visible_len >= max_visible_len {
+                return &s[..last_byte_index];
+            }
+            visible_len += 1;
+        }
+        last_byte_index = byte_index + c.len_utf8();
+    }
+    s
 }
 
 fn format_duration(duration: Duration) -> String {

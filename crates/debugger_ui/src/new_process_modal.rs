@@ -16,16 +16,16 @@ use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Render, Subscription, Task, WeakEntity,
+    KeyContext, Render, Subscription, Task, WeakEntity, actions,
 };
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{DebugScenarioContext, Project, TaskContexts, TaskSourceKind, task_store::TaskStore};
 use task::{DebugScenario, RevealTarget, VariableName, ZedDebugConfig};
 use ui::{
-    ContextMenu, DropdownMenu, FluentBuilder, IconWithIndicator, Indicator, KeyBinding, ListItem,
-    ListItemSpacing, Switch, SwitchLabelPosition, ToggleButtonGroup, ToggleButtonSimple,
-    ToggleState, Tooltip, prelude::*,
+    ContextMenu, DropdownMenu, IconWithIndicator, Indicator, KeyBinding, ListItem, ListItemSpacing,
+    Switch, SwitchLabelPosition, ToggleButtonGroup, ToggleButtonSimple, ToggleState, Tooltip,
+    prelude::*,
 };
 use ui_input::InputField;
 use util::{ResultExt, debug_panic, rel_path::RelPath, shell::ShellKind};
@@ -35,6 +35,16 @@ use crate::{
     attach_modal::{AttachModal, ModalIntent},
     debugger_panel::DebugPanel,
 };
+
+actions!(
+    new_process_modal,
+    [
+        ActivateTaskTab,
+        ActivateDebugTab,
+        ActivateAttachTab,
+        ActivateLaunchTab
+    ]
+);
 
 pub(super) struct NewProcessModal {
     workspace: WeakEntity<Workspace>,
@@ -547,11 +557,13 @@ impl Focusable for NewProcessMode {
 }
 
 impl Render for NewProcessModal {
-    fn render(
-        &mut self,
-        window: &mut ui::Window,
-        cx: &mut ui::Context<Self>,
-    ) -> impl ui::IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus_handle = self.mode_focus_handle(cx);
+        let task_focus_handle = focus_handle.clone();
+        let debug_focus_handle = focus_handle.clone();
+        let attach_focus_handle = focus_handle.clone();
+        let launch_focus_handle = focus_handle;
+
         v_flex()
             .key_context({
                 let mut key_context = KeyContext::new_with_defaults();
@@ -588,72 +600,119 @@ impl Render for NewProcessModal {
                     this.mode_focus_handle(cx).focus(window, cx);
                 }),
             )
+            .on_action(cx.listener(|this, _: &ActivateTaskTab, window, cx| {
+                this.mode = NewProcessMode::Task;
+                this.mode_focus_handle(cx).focus(window, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ActivateDebugTab, window, cx| {
+                this.mode = NewProcessMode::Debug;
+                this.mode_focus_handle(cx).focus(window, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ActivateAttachTab, window, cx| {
+                this.mode = NewProcessMode::Attach;
+                if let Some(debugger) = this.debugger.as_ref() {
+                    Self::update_attach_picker(&this.attach_mode, debugger, window, cx);
+                }
+                this.mode_focus_handle(cx).focus(window, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ActivateLaunchTab, window, cx| {
+                this.mode = NewProcessMode::Launch;
+                this.mode_focus_handle(cx).focus(window, cx);
+                cx.notify();
+            }))
             .child(
-                h_flex()
-                    .p_2()
-                    .w_full()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(
-                        ToggleButtonGroup::single_row(
-                            "debugger-mode-buttons",
-                            [
-                                ToggleButtonSimple::new(
-                                    NewProcessMode::Task.to_string(),
-                                    cx.listener(|this, _, window, cx| {
-                                        this.mode = NewProcessMode::Task;
-                                        this.mode_focus_handle(cx).focus(window, cx);
-                                        cx.notify();
-                                    }),
+                h_flex().p_2().pb_0p5().w_full().child(
+                    ToggleButtonGroup::single_row(
+                        "debugger-mode-buttons",
+                        [
+                            ToggleButtonSimple::new(
+                                NewProcessMode::Task.to_string(),
+                                cx.listener(|this, _, window, cx| {
+                                    this.mode = NewProcessMode::Task;
+                                    this.mode_focus_handle(cx).focus(window, cx);
+                                    cx.notify();
+                                }),
+                            )
+                            .tooltip(move |_, cx| {
+                                Tooltip::for_action_in(
+                                    "Run predefined task",
+                                    &ActivateTaskTab,
+                                    &task_focus_handle,
+                                    cx,
                                 )
-                                .tooltip(Tooltip::text("Run predefined task")),
-                                ToggleButtonSimple::new(
-                                    NewProcessMode::Debug.to_string(),
-                                    cx.listener(|this, _, window, cx| {
-                                        this.mode = NewProcessMode::Debug;
-                                        this.mode_focus_handle(cx).focus(window, cx);
-                                        cx.notify();
-                                    }),
+                            }),
+                            ToggleButtonSimple::new(
+                                NewProcessMode::Debug.to_string(),
+                                cx.listener(|this, _, window, cx| {
+                                    this.mode = NewProcessMode::Debug;
+                                    this.mode_focus_handle(cx).focus(window, cx);
+                                    cx.notify();
+                                }),
+                            )
+                            .tooltip(move |_, cx| {
+                                Tooltip::for_action_in(
+                                    "Start a predefined debug scenario",
+                                    &ActivateDebugTab,
+                                    &debug_focus_handle,
+                                    cx,
                                 )
-                                .tooltip(Tooltip::text("Start a predefined debug scenario")),
-                                ToggleButtonSimple::new(
-                                    NewProcessMode::Attach.to_string(),
-                                    cx.listener(|this, _, window, cx| {
-                                        this.mode = NewProcessMode::Attach;
+                            }),
+                            ToggleButtonSimple::new(
+                                NewProcessMode::Attach.to_string(),
+                                cx.listener(|this, _, window, cx| {
+                                    this.mode = NewProcessMode::Attach;
 
-                                        if let Some(debugger) = this.debugger.as_ref() {
-                                            Self::update_attach_picker(
-                                                &this.attach_mode,
-                                                debugger,
-                                                window,
-                                                cx,
-                                            );
-                                        }
-                                        this.mode_focus_handle(cx).focus(window, cx);
-                                        cx.notify();
-                                    }),
+                                    if let Some(debugger) = this.debugger.as_ref() {
+                                        Self::update_attach_picker(
+                                            &this.attach_mode,
+                                            debugger,
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                    this.mode_focus_handle(cx).focus(window, cx);
+                                    cx.notify();
+                                }),
+                            )
+                            .tooltip(move |_, cx| {
+                                Tooltip::for_action_in(
+                                    "Attach the debugger to a running process",
+                                    &ActivateAttachTab,
+                                    &attach_focus_handle,
+                                    cx,
                                 )
-                                .tooltip(Tooltip::text("Attach the debugger to a running process")),
-                                ToggleButtonSimple::new(
-                                    NewProcessMode::Launch.to_string(),
-                                    cx.listener(|this, _, window, cx| {
-                                        this.mode = NewProcessMode::Launch;
-                                        this.mode_focus_handle(cx).focus(window, cx);
-                                        cx.notify();
-                                    }),
+                            }),
+                            ToggleButtonSimple::new(
+                                NewProcessMode::Launch.to_string(),
+                                cx.listener(|this, _, window, cx| {
+                                    this.mode = NewProcessMode::Launch;
+                                    this.mode_focus_handle(cx).focus(window, cx);
+                                    cx.notify();
+                                }),
+                            )
+                            .tooltip(move |_, cx| {
+                                Tooltip::for_action_in(
+                                    "Launch a new process with a debugger",
+                                    &ActivateLaunchTab,
+                                    &launch_focus_handle,
+                                    cx,
                                 )
-                                .tooltip(Tooltip::text("Launch a new process with a debugger")),
-                            ],
-                        )
-                        .label_size(LabelSize::Default)
-                        .auto_width()
-                        .selected_index(match self.mode {
-                            NewProcessMode::Task => 0,
-                            NewProcessMode::Debug => 1,
-                            NewProcessMode::Attach => 2,
-                            NewProcessMode::Launch => 3,
-                        }),
-                    ),
+                            }),
+                        ],
+                    )
+                    .style(ui::ToggleButtonGroupStyle::Outlined)
+                    .label_size(LabelSize::Default)
+                    .auto_width()
+                    .selected_index(match self.mode {
+                        NewProcessMode::Task => 0,
+                        NewProcessMode::Debug => 1,
+                        NewProcessMode::Attach => 2,
+                        NewProcessMode::Launch => 3,
+                    }),
+                ),
             )
             .child(v_flex().child(self.render_mode(window, cx)))
             .map(|el| {

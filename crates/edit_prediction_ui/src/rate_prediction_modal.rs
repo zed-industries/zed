@@ -329,7 +329,7 @@ impl RatePredictionsModal {
                     let update = diff.update_diff(
                         new_buffer_snapshot.text.clone(),
                         Some(old_buffer_snapshot.text().into()),
-                        true,
+                        Some(true),
                         language,
                         cx,
                     );
@@ -374,7 +374,7 @@ impl RatePredictionsModal {
 
             write!(&mut formatted_inputs, "## Related files\n\n").unwrap();
 
-            for included_file in prediction.inputs.related_files.as_ref() {
+            for included_file in prediction.inputs.related_files.iter() {
                 write!(
                     &mut formatted_inputs,
                     "### {}\n\n",

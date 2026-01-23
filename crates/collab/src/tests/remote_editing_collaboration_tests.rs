@@ -62,7 +62,7 @@ async fn test_sharing_an_ssh_remote_project(
         .await;
 
     // Set up project on remote FS
-    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
+    let (opts, server_ssh, _) = RemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
@@ -105,7 +105,7 @@ async fn test_sharing_an_ssh_remote_project(
         )
     });
 
-    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
+    let client_ssh = RemoteClient::connect_mock(opts, cx_a).await;
     let (project_a, worktree_id) = client_a
         .build_ssh_project(path!("/code/project1"), client_ssh, false, cx_a)
         .await;
@@ -233,7 +233,7 @@ async fn test_ssh_collaboration_git_branches(
         .await;
 
     // Set up project on remote FS
-    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
+    let (opts, server_ssh, _) = RemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree("/project", serde_json::json!({ ".git":{} }))
@@ -266,7 +266,7 @@ async fn test_ssh_collaboration_git_branches(
         )
     });
 
-    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
+    let client_ssh = RemoteClient::connect_mock(opts, cx_a).await;
     let (project_a, _) = client_a
         .build_ssh_project("/project", client_ssh, false, cx_a)
         .await;
@@ -418,7 +418,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
 
-    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
+    let (opts, server_ssh, _) = RemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     let buffer_text = "let one = \"two\"";
     let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
@@ -471,7 +471,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
         )
     });
 
-    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
+    let client_ssh = RemoteClient::connect_mock(opts, cx_a).await;
     let (project_a, worktree_id) = client_a
         .build_ssh_project(path!("/project"), client_ssh, false, cx_a)
         .await;
@@ -602,7 +602,7 @@ async fn test_remote_server_debugger(
         release_channel::init(semver::Version::new(0, 0, 0), cx);
         dap_adapters::init(cx);
     });
-    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
+    let (opts, server_ssh, _) = RemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
@@ -633,7 +633,7 @@ async fn test_remote_server_debugger(
         )
     });
 
-    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
+    let client_ssh = RemoteClient::connect_mock(opts, cx_a).await;
     let mut server = TestServer::start(server_cx.executor()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     cx_a.update(|cx| {
@@ -677,7 +677,7 @@ async fn test_remote_server_debugger(
     });
 
     session.update(cx_a, |session, _| {
-        assert_eq!(session.binary().unwrap().command.as_deref(), Some("ssh"));
+        assert_eq!(session.binary().unwrap().command.as_deref(), Some("mock"));
     });
 
     let shutdown_session = workspace.update(cx_a, |workspace, cx| {
@@ -711,7 +711,7 @@ async fn test_slow_adapter_startup_retries(
         release_channel::init(semver::Version::new(0, 0, 0), cx);
         dap_adapters::init(cx);
     });
-    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
+    let (opts, server_ssh, _) = RemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
@@ -742,7 +742,7 @@ async fn test_slow_adapter_startup_retries(
         )
     });
 
-    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
+    let client_ssh = RemoteClient::connect_mock(opts, cx_a).await;
     let mut server = TestServer::start(server_cx.executor()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     cx_a.update(|cx| {
@@ -858,11 +858,11 @@ async fn test_slow_adapter_startup_retries(
 async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &mut TestAppContext) {
     cx_a.update(|cx| {
         release_channel::init(semver::Version::new(0, 0, 0), cx);
-        project::trusted_worktrees::init(HashMap::default(), None, None, cx);
+        project::trusted_worktrees::init(HashMap::default(), cx);
     });
     server_cx.update(|cx| {
         release_channel::init(semver::Version::new(0, 0, 0), cx);
-        project::trusted_worktrees::init(HashMap::default(), None, None, cx);
+        project::trusted_worktrees::init(HashMap::default(), cx);
     });
 
     let mut server = TestServer::start(cx_a.executor().clone()).await;
@@ -871,7 +871,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
     let server_name = "override-rust-analyzer";
     let lsp_inlay_hint_request_count = Arc::new(AtomicUsize::new(0));
 
-    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
+    let (opts, server_ssh, _) = RemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
@@ -945,7 +945,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
         )
     });
 
-    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
+    let client_ssh = RemoteClient::connect_mock(opts, cx_a).await;
     let (project_a, worktree_id_a) = client_a
         .build_ssh_project(path!("/projects/project_a"), client_ssh.clone(), true, cx_a)
         .await;

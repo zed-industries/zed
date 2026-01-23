@@ -265,6 +265,8 @@ pub fn deploy_context_menu(
                     !has_reveal_target,
                     if cfg!(target_os = "macos") {
                         "Reveal in Finder"
+                    } else if cfg!(target_os = "windows") {
+                        "Reveal in File Explorer"
                     } else {
                         "Reveal in File Manager"
                     },

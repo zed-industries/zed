@@ -17,6 +17,7 @@ test-support = [
     "buffer_diff/test-support",
     "client/test-support",
     "language/test-support",
+    "remote/test-support",
     "settings/test-support",
     "snippet_provider/test-support",
     "text/test-support",
@@ -40,7 +41,6 @@ clock.workspace = true
 collections.workspace = true
 context_server.workspace = true
 dap.workspace = true
-encoding_rs.workspace = true
 extension.workspace = true
 fancy-regex.workspace = true
 fs.workspace = true
@@ -117,6 +117,7 @@ snippet_provider = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
+remote = { workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-machete]
 ignored = ["tracing"]

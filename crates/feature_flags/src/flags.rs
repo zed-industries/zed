@@ -12,12 +12,6 @@ impl FeatureFlag for PanicFeatureFlag {
     const NAME: &'static str = "panic";
 }
 
-pub struct InlineAssistantUseToolFeatureFlag;
-
-impl FeatureFlag for InlineAssistantUseToolFeatureFlag {
-    const NAME: &'static str = "inline-assistant-use-tool";
-}
-
 pub struct AgentV2FeatureFlag;
 
 impl FeatureFlag for AgentV2FeatureFlag {
@@ -30,8 +24,55 @@ impl FeatureFlag for AcpBetaFeatureFlag {
     const NAME: &'static str = "acp-beta";
 }
 
+pub struct UserSlashCommandsFeatureFlag;
+
+impl FeatureFlag for UserSlashCommandsFeatureFlag {
+    const NAME: &'static str = "slash-commands";
+}
+
+pub struct ToolPermissionsFeatureFlag;
+
+impl FeatureFlag for ToolPermissionsFeatureFlag {
+    const NAME: &'static str = "tool-permissions";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+
 pub struct AgentSharingFeatureFlag;
 
 impl FeatureFlag for AgentSharingFeatureFlag {
     const NAME: &'static str = "agent-sharing";
+}
+
+pub struct SubagentsFeatureFlag;
+
+impl FeatureFlag for SubagentsFeatureFlag {
+    const NAME: &'static str = "subagents";
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+
+pub struct DiffReviewFeatureFlag;
+
+impl FeatureFlag for DiffReviewFeatureFlag {
+    const NAME: &'static str = "diff-review";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+
+/// Controls whether we show the new thinking toggle in the Agent Panel when using models through the Zed provider (Cloud).
+pub struct CloudThinkingToggleFeatureFlag;
+
+impl FeatureFlag for CloudThinkingToggleFeatureFlag {
+    const NAME: &'static str = "cloud-thinking-toggle";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
