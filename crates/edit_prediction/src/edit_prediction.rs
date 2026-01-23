@@ -1923,6 +1923,7 @@ impl EditPredictionStore {
         client: Arc<Client>,
         llm_token: LlmApiToken,
         app_version: Version,
+        trigger: PredictEditsRequestTrigger,
     ) -> Result<(PredictEditsV3Response, Option<EditPredictionUsage>)> {
         let url = client
             .http_client()
@@ -1932,6 +1933,7 @@ impl EditPredictionStore {
             input,
             model: EDIT_PREDICTIONS_MODEL_ID.clone(),
             prompt_version,
+            trigger,
         };
 
         Self::send_api_request(
