@@ -3210,9 +3210,9 @@ impl BufferGitState {
                 unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
             {
                 let task = unstaged_diff.update(cx, |diff, cx| {
-                    if language_changed {
-                        diff.language_changed(language.clone(), language_registry.clone(), cx);
-                    }
+                    // For git index buffer we skip assigning the language as we do not really need to perform any syntax highlighting on
+                    // it. As a result, by skipping it we are potentially shaving off a lot of RSS plus we get a snappier feel for large diff
+                    // view multibuffers.
                     diff.set_snapshot(new_unstaged_diff, &buffer, cx)
                 });
                 Some(task.await)
