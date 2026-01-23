@@ -9,7 +9,7 @@ use crate::{
     CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
     FontFallbacks, FontFeatures, FontStyle, FontWeight, GridLocation, Hsla, Length, Pixels, Point,
     PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, Window, black, phi,
-    point, px, quad, rems, size,
+    point, quad, rems, size,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -691,13 +691,6 @@ impl Style {
                 bottom_bounds.top_right(),
             );
             right_bounds.size = right_bounds.size.max(&zero_size);
-
-            if right_bounds.size.height < px(0.0) {
-                bounds.origin;
-                bounds.top_right();
-                max_border_width.max(max_corner_radius);
-                (right_bounds, left_bounds, top_bounds, bottom_bounds);
-            }
 
             let mut background = self.border_color.unwrap_or_default();
             background.a = 0.;
