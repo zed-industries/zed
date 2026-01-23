@@ -519,11 +519,7 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-fn lane_center_x(
-    bounds: Bounds<Pixels>,
-    lane: f32,
-    horizontal_scroll_offset: Pixels,
-) -> Pixels {
+fn lane_center_x(bounds: Bounds<Pixels>, lane: f32, horizontal_scroll_offset: Pixels) -> Pixels {
     bounds.origin.x + LEFT_PADDING + lane * LANE_WIDTH + LANE_WIDTH / 2.0 - horizontal_scroll_offset
 }
 
@@ -571,7 +567,6 @@ pub struct GitGraph {
     focus_handle: FocusHandle,
     graph_data: GraphData,
     project: Entity<Project>,
-    error: Option<SharedString>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     row_height: Pixels,
     table_interaction_state: Entity<TableInteractionState>,
@@ -647,7 +642,6 @@ impl GitGraph {
             focus_handle,
             project,
             graph_data: graph,
-            error: None,
             _load_task: None,
             _commit_diff_task: None,
             context_menu: None,
@@ -1228,11 +1222,8 @@ impl GitGraph {
                             bounds.origin.y + row_idx as f32 * row_height + row_height / 2.0
                                 - vertical_scroll_offset;
 
-                        let commit_x = lane_center_x(
-                            bounds,
-                            row.lane as f32,
-                            horizontal_scroll_offset,
-                        );
+                        let commit_x =
+                            lane_center_x(bounds, row.lane as f32, horizontal_scroll_offset);
 
                         draw_commit_circle(commit_x, row_y_center, row_color, window);
                     }
@@ -1244,11 +1235,8 @@ impl GitGraph {
                             continue;
                         };
 
-                        let line_x = lane_center_x(
-                            bounds,
-                            start_column as f32,
-                            horizontal_scroll_offset,
-                        );
+                        let line_x =
+                            lane_center_x(bounds, start_column as f32, horizontal_scroll_offset);
 
                         let start_row = line.full_interval.start as i32 - first_visible_row as i32;
 
@@ -1445,34 +1433,6 @@ impl Render for GitGraph {
         let author_width_fraction = 0.10;
         let commit_width_fraction = 0.06;
 
-        let error_banner = self.error.as_ref().map(|error| {
-            h_flex()
-                .id("error-banner")
-                .w_full()
-                .px_2()
-                .py_1()
-                .bg(cx.theme().colors().surface_background)
-                .border_b_1()
-                .border_color(cx.theme().colors().border)
-                .justify_between()
-                .items_center()
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .overflow_hidden()
-                        .child(Icon::new(IconName::Warning).color(Color::Error))
-                        .child(Label::new(error.clone()).color(Color::Error).single_line()),
-                )
-                .child(
-                    IconButton::new("dismiss-error", IconName::Close)
-                        .icon_size(IconSize::Small)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.error = None;
-                            cx.notify();
-                        })),
-                )
-        });
-
         let commit_count = match self.graph_data.max_commit_count {
             AllCommitCount::Loaded(count) => count,
             AllCommitCount::NotLoaded => {
@@ -1587,7 +1547,7 @@ impl Render for GitGraph {
             .bg(cx.theme().colors().editor_background)
             .key_context("GitGraph")
             .track_focus(&self.focus_handle)
-            .child(v_flex().size_full().children(error_banner).child(content))
+            .child(content)
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
                     anchored()
