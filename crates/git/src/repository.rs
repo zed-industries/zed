@@ -342,6 +342,11 @@ pub struct FileHistory {
     pub path: RepoPath,
 }
 
+#[derive(Debug, Clone)]
+pub struct CommitLog {
+    pub entries: Vec<FileHistoryEntry>,
+}
+
 #[derive(Debug)]
 pub struct CommitDiff {
     pub files: Vec<CommitFile>,
