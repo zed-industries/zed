@@ -21,8 +21,8 @@ use std::{ops::Range, rc::Rc, sync::Arc, sync::OnceLock};
 use theme::{AccentColors, ThemeSettings};
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
-    CommonAnimationExt as _, ContextMenu, ScrollableHandle, Table, TableInteractionState, Tooltip,
-    prelude::*,
+    CommonAnimationExt as _, ContextMenu, ScrollableHandle, Table, TableColumnWidths,
+    TableInteractionState, TableResizeBehavior, Tooltip, prelude::*,
 };
 use workspace::{
     Workspace,
@@ -573,6 +573,7 @@ pub struct GitGraph {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     row_height: Pixels,
     table_interaction_state: Entity<TableInteractionState>,
+    table_column_widths: Entity<TableColumnWidths>,
     horizontal_scroll_offset: Pixels,
     graph_viewport_width: Pixels,
     selected_entry_idx: Option<usize>,
@@ -633,6 +634,7 @@ impl GitGraph {
         }
 
         let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
+        let table_column_widths = cx.new(|cx| TableColumnWidths::new(4, cx));
         let mut row_height = Self::row_height(cx);
 
         cx.observe_global_in::<settings::SettingsStore>(window, move |this, _window, cx| {
@@ -657,6 +659,7 @@ impl GitGraph {
             context_menu: None,
             row_height,
             table_interaction_state,
+            table_column_widths,
             horizontal_scroll_offset: px(0.),
             graph_viewport_width: px(88.),
             selected_entry_idx: None,
@@ -1545,6 +1548,16 @@ impl Render for GitGraph {
                                     DefiniteLength::Fraction(commit_width_fraction),
                                 ]
                                 .to_vec(),
+                            )
+                            .resizable_columns(
+                                vec![
+                                    TableResizeBehavior::Resizable,
+                                    TableResizeBehavior::Resizable,
+                                    TableResizeBehavior::Resizable,
+                                    TableResizeBehavior::Resizable,
+                                ],
+                                &self.table_column_widths,
+                                cx,
                             )
                             .map_row(move |(index, row), _window, cx| {
                                 let is_selected = selected_entry_idx == Some(index);
