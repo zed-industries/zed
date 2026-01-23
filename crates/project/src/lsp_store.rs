@@ -4552,7 +4552,7 @@ impl LspStore {
             modeline::parse_modeline(&first_lines_ref, &last_lines_ref)
         };
 
-        log::info!("Parsed modeline settings: {:?}", modeline_settings);
+        log::debug!("Parsed modeline settings: {:?}", modeline_settings);
 
         buffer_handle.update(cx, |buffer, _cx| buffer.set_modeline(modeline_settings))
     }
