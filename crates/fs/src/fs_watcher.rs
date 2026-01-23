@@ -1,7 +1,7 @@
 use notify::EventKind;
 use parking_lot::Mutex;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     ops::DerefMut,
     sync::{Arc, OnceLock},
 };
@@ -13,6 +13,8 @@ pub struct FsWatcher {
     tx: smol::channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
     registrations: Mutex<BTreeMap<Arc<std::path::Path>, WatcherRegistrationId>>,
+    #[cfg(target_os = "linux")]
+    removed_paths: Arc<Mutex<HashSet<Arc<std::path::Path>>>>,
 }
 
 impl FsWatcher {
@@ -24,6 +26,8 @@ impl FsWatcher {
             tx,
             pending_path_events,
             registrations: Default::default(),
+            #[cfg(target_os = "linux")]
+            removed_paths: Arc::new(Default::default()),
         }
     }
 }
@@ -70,31 +74,57 @@ impl Watcher for FsWatcher {
                 return Ok(());
             }
         }
-        #[cfg(target_os = "linux")]
-        {
-            if self.registrations.lock().contains_key(path) {
-                log::trace!("path to watch is already watched: {path:?}");
-                return Ok(());
-            }
-        }
 
         let root_path = SanitizedPath::new_arc(path);
         let path: Arc<std::path::Path> = path.into();
+
+        #[cfg(target_os = "linux")]
+        {
+            if self.registrations.lock().contains_key(&path) {
+                // In Linux, the watched path ended when the directory was removed.
+                // So if we are re-adding a path that is already being watched,
+                if self.removed_paths.lock().remove(&path) {
+                    self.remove(&path).map_err(|e| {
+                        log::trace!("path removed, but watcher remains registered; watcher unregistration failed: {path:?}, error: {e:?}");
+                        e
+                    })?;
+                } else {
+                    log::trace!("path to watch is already watched: {path:?}");
+                    return Ok(());
+                }
+            }
+        }
 
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         let mode = notify::RecursiveMode::Recursive;
         #[cfg(target_os = "linux")]
         let mode = notify::RecursiveMode::NonRecursive;
+        #[cfg(target_os = "linux")]
+        let removed_paths = self.removed_paths.clone();
 
         let registration_id = global({
             let path = path.clone();
+            #[cfg(target_os = "linux")]
+            let path_for_removal_check = path.clone();
             |g| {
                 g.add(path, mode, move |event: &notify::Event| {
                     log::trace!("watcher received event: {event:?}");
                     let kind = match event.kind {
                         EventKind::Create(_) => Some(PathEventKind::Created),
                         EventKind::Modify(_) => Some(PathEventKind::Changed),
-                        EventKind::Remove(_) => Some(PathEventKind::Removed),
+                        EventKind::Remove(_) => {
+                            #[cfg(target_os = "linux")]
+                            if event
+                                .paths
+                                .iter()
+                                .any(|p| p.as_path() == path_for_removal_check.as_ref())
+                            {
+                                {
+                                    removed_paths.lock().insert(path_for_removal_check.clone());
+                                }
+                            }
+                            Some(PathEventKind::Removed)
+                        }
                         _ => None,
                     };
                     let mut path_events = event
