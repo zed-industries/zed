@@ -32,10 +32,11 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_tokio = { workspace = true, optional = true }
+credentials_provider.workspace = true
+google_ai.workspace = true
 http_client.workspace = true
 indoc.workspace = true
 language_model.workspace = true
-language_models.workspace = true
 log.workspace = true
 project.workspace = true
 release_channel.workspace = true

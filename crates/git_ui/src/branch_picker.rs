@@ -20,6 +20,7 @@ use ui::{
     Divider, HighlightedLabel, KeyBinding, ListHeader, ListItem, ListItemSpacing, Tooltip,
     prelude::*,
 };
+use ui_input::ErasedEditor;
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -611,11 +612,12 @@ impl PickerDelegate for BranchListDelegate {
 
     fn render_editor(
         &self,
-        editor: &Entity<Editor>,
+        editor: &Arc<dyn ErasedEditor>,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Div {
         let focus_handle = self.focus_handle.clone();
+        let editor = editor.as_any().downcast_ref::<Entity<Editor>>().unwrap();
 
         v_flex()
             .when(
@@ -1325,6 +1327,7 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
         });
     }
 

@@ -1,7 +1,6 @@
 name = "TSX"
 grammar = "tsx"
 path_suffixes = ["tsx"]
-modeline_aliases = ["typescript-txs"]
 line_comments = ["// "]
 block_comment = { start = "/*", prefix = "* ", end = "*/", tab_size = 1 }
 documentation_comment = { start = "/**", prefix = "* ", end = "*/", tab_size = 1 }

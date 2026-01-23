@@ -12,7 +12,6 @@ mod highlight_map;
 mod language_registry;
 pub mod language_settings;
 mod manifest;
-pub mod modeline;
 mod outline;
 pub mod proto;
 mod syntax_map;
@@ -41,7 +40,6 @@ use lsp::{
     CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions, Uri,
 };
 pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQuery};
-pub use modeline::{ModelineSettings, parse_modeline};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{JsonSchema, SchemaGenerator, json_schema};
@@ -138,7 +136,6 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
             matcher: LanguageMatcher {
                 path_suffixes: vec!["txt".to_owned()],
                 first_line_pattern: None,
-                modeline_aliases: vec!["text".to_owned(), "txt".to_owned()],
             },
             brackets: BracketPairConfig {
                 pairs: vec![
@@ -967,11 +964,6 @@ pub struct LanguageMatcher {
     )]
     #[schemars(schema_with = "regex_json_schema")]
     pub first_line_pattern: Option<Regex>,
-    /// Alternative names for this language used in vim/emacs modelines.
-    /// These are matched case-insensitively against the `mode` (emacs) or
-    /// `filetype`/`ft` (vim) specified in the modeline.
-    #[serde(default)]
-    pub modeline_aliases: Vec<String>,
 }
 
 /// The configuration for JSX tag auto-closing.

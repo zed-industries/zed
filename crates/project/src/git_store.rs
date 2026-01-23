@@ -4240,8 +4240,8 @@ impl Repository {
         log_order: LogOrder,
         range: Range<usize>,
         cx: &mut Context<Self>,
-    ) -> &[Arc<InitialGraphCommitData>] {
-        let initial_commit_data = &self
+    ) -> (&[Arc<InitialGraphCommitData>], bool) {
+        let (loading_task, initial_commit_data) = self
             .initial_graph_data
             .entry((log_order, log_source.clone()))
             .or_insert_with(|| {
@@ -4267,12 +4267,14 @@ impl Repository {
                     }),
                     vec![],
                 )
-            })
-            .1;
+            });
 
         let max_start = initial_commit_data.len().saturating_sub(1);
         let max_end = initial_commit_data.len();
-        &initial_commit_data[range.start.min(max_start)..range.end.min(max_end)]
+        (
+            &initial_commit_data[range.start.min(max_start)..range.end.min(max_end)],
+            !loading_task.is_ready(),
+        )
     }
 
     async fn local_git_graph_data(

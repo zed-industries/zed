@@ -2,12 +2,13 @@ use anyhow::{Context as _, ensure};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
+use futures::future::BoxFuture;
 use futures::lock::OwnedMutexGuard;
 use futures::{AsyncBufReadExt, StreamExt as _};
-use gpui::{App, AsyncApp, Entity, SharedString, Task};
+use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
-use language::language_settings::LanguageSettings;
-use language::{Buffer, ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller};
+use language::language_settings::language_settings;
+use language::{ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
@@ -24,11 +25,13 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use settings::Settings;
+use terminal::terminal_settings::TerminalSettings;
+
 use smol::lock::OnceCell;
 use std::cmp::{Ordering, Reverse};
 use std::env::consts;
 use std::process::Stdio;
-use terminal::terminal_settings::TerminalSettings;
+
 use util::command::new_smol_command;
 use util::fs::{make_file_executable, remove_matching};
 use util::paths::PathStyle;
@@ -783,10 +786,11 @@ impl ContextProvider for PythonContextProvider {
         toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<task::TaskVariables>> {
-        let test_target = match selected_test_runner(Some(&location.file_location.buffer), cx) {
-            TestRunner::UNITTEST => self.build_unittest_target(variables),
-            TestRunner::PYTEST => self.build_pytest_target(variables),
-        };
+        let test_target =
+            match selected_test_runner(location.file_location.buffer.read(cx).file(), cx) {
+                TestRunner::UNITTEST => self.build_unittest_target(variables),
+                TestRunner::PYTEST => self.build_pytest_target(variables),
+            };
 
         let module_target = self.build_module_target(variables);
         let location_file = location.file_location.buffer.read(cx).file().cloned();
@@ -824,10 +828,10 @@ impl ContextProvider for PythonContextProvider {
 
     fn associated_tasks(
         &self,
-        buffer: Option<Entity<Buffer>>,
+        file: Option<Arc<dyn language::File>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
-        let test_runner = selected_test_runner(buffer.as_ref(), cx);
+        let test_runner = selected_test_runner(file.as_ref(), cx);
 
         let mut tasks = vec![
             // Execute a selection
@@ -934,11 +938,9 @@ impl ContextProvider for PythonContextProvider {
     }
 }
 
-fn selected_test_runner(location: Option<&Entity<Buffer>>, cx: &App) -> TestRunner {
+fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &App) -> TestRunner {
     const TEST_RUNNER_VARIABLE: &str = "TEST_RUNNER";
-    let language = LanguageName::new_static("Python");
-    let settings = LanguageSettings::resolve(location.map(|b| b.read(cx)), Some(&language), cx);
-    settings
+    language_settings(Some(LanguageName::new_static("Python")), location, cx)
         .tasks
         .variables
         .get(TEST_RUNNER_VARIABLE)
@@ -1334,94 +1336,110 @@ impl ToolchainLister for PythonToolchainProvider {
             .context("Could not convert a venv into a toolchain")
     }
 
-    fn activation_script(&self, toolchain: &Toolchain, shell: ShellKind, cx: &App) -> Vec<String> {
-        let Ok(toolchain) =
-            serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone())
-        else {
-            return vec![];
-        };
+    fn activation_script(
+        &self,
+        toolchain: &Toolchain,
+        shell: ShellKind,
+        cx: &App,
+    ) -> BoxFuture<'static, Vec<String>> {
+        let settings = TerminalSettings::get_global(cx);
+        let conda_manager = settings
+            .detect_venv
+            .as_option()
+            .map(|venv| venv.conda_manager)
+            .unwrap_or(settings::CondaManager::Auto);
 
-        log::debug!("(Python) Composing activation script for toolchain {toolchain:?}");
+        let toolchain_clone = toolchain.clone();
+        Box::pin(async move {
+            let Ok(toolchain) =
+                serde_json::from_value::<PythonToolchainData>(toolchain_clone.as_json.clone())
+            else {
+                return vec![];
+            };
 
-        let mut activation_script = vec![];
+            log::debug!("(Python) Composing activation script for toolchain {toolchain:?}");
 
-        match toolchain.environment.kind {
-            Some(PythonEnvironmentKind::Conda) => {
-                let settings = TerminalSettings::get_global(cx);
-                let conda_manager = settings
-                    .detect_venv
-                    .as_option()
-                    .map(|venv| venv.conda_manager)
-                    .unwrap_or(settings::CondaManager::Auto);
-                let manager = match conda_manager {
-                    settings::CondaManager::Conda => "conda",
-                    settings::CondaManager::Mamba => "mamba",
-                    settings::CondaManager::Micromamba => "micromamba",
-                    settings::CondaManager::Auto => toolchain
-                        .environment
-                        .manager
-                        .as_ref()
-                        .and_then(|m| m.executable.file_name())
-                        .and_then(|name| name.to_str())
-                        .filter(|name| matches!(*name, "conda" | "mamba" | "micromamba"))
-                        .unwrap_or("conda"),
-                };
+            let mut activation_script = vec![];
 
-                // Activate micromamba shell in the child shell
-                // [required for micromamba]
-                if manager == "micromamba" {
-                    let shell = micromamba_shell_name(shell);
-                    activation_script
-                        .push(format!(r#"eval "$({manager} shell hook --shell {shell})""#));
+            match toolchain.environment.kind {
+                Some(PythonEnvironmentKind::Conda) => {
+                    let Some(manager_info) = &toolchain.environment.manager else {
+                        return vec![];
+                    };
+                    if smol::fs::metadata(&manager_info.executable).await.is_err() {
+                        return vec![];
+                    }
+
+                    let manager = match conda_manager {
+                        settings::CondaManager::Conda => "conda",
+                        settings::CondaManager::Mamba => "mamba",
+                        settings::CondaManager::Micromamba => "micromamba",
+                        settings::CondaManager::Auto => toolchain
+                            .environment
+                            .manager
+                            .as_ref()
+                            .and_then(|m| m.executable.file_name())
+                            .and_then(|name| name.to_str())
+                            .filter(|name| matches!(*name, "conda" | "mamba" | "micromamba"))
+                            .unwrap_or("conda"),
+                    };
+
+                    // Activate micromamba shell in the child shell
+                    // [required for micromamba]
+                    if manager == "micromamba" {
+                        let shell = micromamba_shell_name(shell);
+                        activation_script
+                            .push(format!(r#"eval "$({manager} shell hook --shell {shell})""#));
+                    }
+
+                    if let Some(name) = &toolchain.environment.name {
+                        activation_script.push(format!("{manager} activate {name}"));
+                    } else {
+                        activation_script.push(format!("{manager} activate base"));
+                    }
                 }
-
-                if let Some(name) = &toolchain.environment.name {
-                    activation_script.push(format!("{manager} activate {name}"));
-                } else {
-                    activation_script.push(format!("{manager} activate base"));
-                }
-            }
-            Some(
-                PythonEnvironmentKind::Venv
-                | PythonEnvironmentKind::VirtualEnv
-                | PythonEnvironmentKind::Uv
-                | PythonEnvironmentKind::UvWorkspace
-                | PythonEnvironmentKind::Poetry,
-            ) => {
-                if let Some(activation_scripts) = &toolchain.activation_scripts {
-                    if let Some(activate_script_path) = activation_scripts.get(&shell) {
-                        let activate_keyword = shell.activate_keyword();
-                        if let Some(quoted) =
-                            shell.try_quote(&activate_script_path.to_string_lossy())
-                        {
-                            activation_script.push(format!("{activate_keyword} {quoted}"));
+                Some(
+                    PythonEnvironmentKind::Venv
+                    | PythonEnvironmentKind::VirtualEnv
+                    | PythonEnvironmentKind::Uv
+                    | PythonEnvironmentKind::UvWorkspace
+                    | PythonEnvironmentKind::Poetry,
+                ) => {
+                    if let Some(activation_scripts) = &toolchain.activation_scripts {
+                        if let Some(activate_script_path) = activation_scripts.get(&shell) {
+                            let activate_keyword = shell.activate_keyword();
+                            if let Some(quoted) =
+                                shell.try_quote(&activate_script_path.to_string_lossy())
+                            {
+                                activation_script.push(format!("{activate_keyword} {quoted}"));
+                            }
                         }
                     }
                 }
+                Some(PythonEnvironmentKind::Pyenv) => {
+                    let Some(manager) = &toolchain.environment.manager else {
+                        return vec![];
+                    };
+                    let version = toolchain.environment.version.as_deref().unwrap_or("system");
+                    let pyenv = &manager.executable;
+                    let pyenv = pyenv.display();
+                    activation_script.extend(match shell {
+                        ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
+                        ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
+                        ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
+                        ShellKind::PowerShell | ShellKind::Pwsh => None,
+                        ShellKind::Csh => None,
+                        ShellKind::Tcsh => None,
+                        ShellKind::Cmd => None,
+                        ShellKind::Rc => None,
+                        ShellKind::Xonsh => None,
+                        ShellKind::Elvish => None,
+                    })
+                }
+                _ => {}
             }
-            Some(PythonEnvironmentKind::Pyenv) => {
-                let Some(manager) = &toolchain.environment.manager else {
-                    return vec![];
-                };
-                let version = toolchain.environment.version.as_deref().unwrap_or("system");
-                let pyenv = &manager.executable;
-                let pyenv = pyenv.display();
-                activation_script.extend(match shell {
-                    ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
-                    ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
-                    ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
-                    ShellKind::PowerShell | ShellKind::Pwsh => None,
-                    ShellKind::Csh => None,
-                    ShellKind::Tcsh => None,
-                    ShellKind::Cmd => None,
-                    ShellKind::Rc => None,
-                    ShellKind::Xonsh => None,
-                    ShellKind::Elvish => None,
-                })
-            }
-            _ => {}
-        }
-        activation_script
+            activation_script
+        })
     }
 }
 

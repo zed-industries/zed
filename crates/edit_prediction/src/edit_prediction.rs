@@ -5,12 +5,12 @@ use cloud_llm_client::predict_edits_v3::{
     PredictEditsV3Request, PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
 };
 use cloud_llm_client::{
-    EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason, EditPredictionRejection,
+    EditPredictionRejectReason, EditPredictionRejection,
     MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
     PredictEditsRequestTrigger, RejectEditPredictionsBodyRef, ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet};
-use copilot::Copilot;
+use copilot::{Copilot, Reinstall, SignIn, SignOut};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
@@ -29,7 +29,7 @@ use gpui::{
 use language::language_settings::all_language_settings;
 use language::{Anchor, Buffer, File, Point, TextBufferSnapshot, ToOffset, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
-use language_model::{LlmApiToken, RefreshLlmTokenListener};
+use language_model::{LlmApiToken, NeedsLlmTokenRefresh, RefreshLlmTokenListener};
 use project::{Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
@@ -754,7 +754,7 @@ impl EditPredictionStore {
             let next_id = project.languages().next_language_server_id();
             let fs = project.fs().clone();
 
-            let copilot = cx.new(|cx| Copilot::new(_project, next_id, fs, node, cx));
+            let copilot = cx.new(|cx| Copilot::new(Some(_project), next_id, fs, node, cx));
             state.copilot = Some(copilot.clone());
             Some(copilot)
         } else {
@@ -2046,13 +2046,7 @@ impl EditPredictionStore {
                 let mut body = Vec::new();
                 response.body_mut().read_to_end(&mut body).await?;
                 return Ok((serde_json::from_slice(&body)?, usage));
-            } else if !did_retry
-                && token.is_some()
-                && response
-                    .headers()
-                    .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
-                    .is_some()
-            {
+            } else if !did_retry && token.is_some() && response.needs_llm_token_refresh() {
                 did_retry = true;
                 token = Some(llm_token.refresh(&client).await?);
             } else {
@@ -2331,6 +2325,27 @@ pub fn init(cx: &mut App) {
                     .get_or_insert_default()
                     .edit_prediction_provider = Some(EditPredictionProvider::None)
             });
+        });
+        fn copilot_for_project(project: &Entity<Project>, cx: &mut App) -> Option<Entity<Copilot>> {
+            EditPredictionStore::try_global(cx).and_then(|store| {
+                store.update(cx, |this, cx| this.start_copilot_for_project(project, cx))
+            })
+        }
+
+        workspace.register_action(|workspace, _: &SignIn, window, cx| {
+            if let Some(copilot) = copilot_for_project(workspace.project(), cx) {
+                copilot_ui::initiate_sign_in(copilot, window, cx);
+            }
+        });
+        workspace.register_action(|workspace, _: &Reinstall, window, cx| {
+            if let Some(copilot) = copilot_for_project(workspace.project(), cx) {
+                copilot_ui::reinstall_and_sign_in(copilot, window, cx);
+            }
+        });
+        workspace.register_action(|workspace, _: &SignOut, window, cx| {
+            if let Some(copilot) = copilot_for_project(workspace.project(), cx) {
+                copilot_ui::initiate_sign_out(copilot, window, cx);
+            }
         });
     })
     .detach();
