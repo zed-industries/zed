@@ -48,7 +48,7 @@ use project::{
 };
 use serde_json::{self, json};
 use settings::{
-    AllLanguageSettingsContent, EditorSettingsContent, IndentGuideBackgroundColoring,
+    AllLanguageSettingsContent, DelayMs, EditorSettingsContent, IndentGuideBackgroundColoring,
     IndentGuideColoring, InlayHintSettingsContent, ProjectSettingsContent, SearchSettingsContent,
     SettingsStore,
 };
@@ -13544,6 +13544,7 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings(cx, |settings| {
                 settings.editor.auto_signature_help = Some(true);
+                settings.editor.hover_popover_delay = Some(DelayMs(300));
             });
         });
     });
