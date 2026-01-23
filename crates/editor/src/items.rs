@@ -8,9 +8,9 @@ use crate::{
     scroll::{ScrollAnchor, ScrollOffset},
 };
 use anyhow::{Context as _, Result, anyhow};
-use fs::MTime;
 use collections::{HashMap, HashSet};
 use file_icons::FileIcons;
+use fs::MTime;
 use futures::future::try_join_all;
 use git::status::GitSummary;
 use gpui::{
@@ -1156,51 +1156,55 @@ impl SerializableItem for Editor {
                 });
 
                 match opened_buffer {
-                    Some(opened_buffer) => {
-                        window.spawn(cx, async move |cx| {
-                            let (_, buffer) = opened_buffer
-                                .await
-                                .context("Failed to open path in project")?;
+                    Some(opened_buffer) => window.spawn(cx, async move |cx| {
+                        let (_, buffer) = opened_buffer
+                            .await
+                            .context("Failed to open path in project")?;
 
-                            if let Some(contents) = contents {
-                                buffer.update(cx, |buffer, cx| {
-                                    restore_serialized_buffer_contents(buffer, contents, mtime, cx);
-                                });
-                            }
+                        if let Some(contents) = contents {
+                            buffer.update(cx, |buffer, cx| {
+                                restore_serialized_buffer_contents(buffer, contents, mtime, cx);
+                            });
+                        }
 
-                            cx.update(|window, cx| {
-                                cx.new(|cx| {
-                                    let mut editor =
-                                        Editor::for_buffer(buffer, Some(project), window, cx);
+                        cx.update(|window, cx| {
+                            cx.new(|cx| {
+                                let mut editor =
+                                    Editor::for_buffer(buffer, Some(project), window, cx);
 
-                                    editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                                    editor
-                                })
+                                editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                                editor
                             })
                         })
-                    }
+                    }),
                     None => {
                         // File is not in any worktree (e.g., opened as a standalone file)
                         // We need to open it via workspace and then restore dirty contents
                         window.spawn(cx, async move |cx| {
-                            let open_by_abs_path = workspace.update_in(cx, |workspace, window, cx| {
-                                workspace.open_abs_path(
-                                    abs_path.clone(),
-                                    OpenOptions {
-                                        visible: Some(OpenVisible::None),
-                                        ..Default::default()
-                                    },
-                                    window,
-                                    cx,
-                                )
-                            })?;
-                            let editor = open_by_abs_path.await?.downcast::<Editor>().with_context(|| format!("path {abs_path:?} cannot be opened as an Editor"))?;
+                            let open_by_abs_path =
+                                workspace.update_in(cx, |workspace, window, cx| {
+                                    workspace.open_abs_path(
+                                        abs_path.clone(),
+                                        OpenOptions {
+                                            visible: Some(OpenVisible::None),
+                                            ..Default::default()
+                                        },
+                                        window,
+                                        cx,
+                                    )
+                                })?;
+                            let editor =
+                                open_by_abs_path.await?.downcast::<Editor>().with_context(
+                                    || format!("path {abs_path:?} cannot be opened as an Editor"),
+                                )?;
 
                             if let Some(contents) = contents {
                                 editor.update_in(cx, |editor, _window, cx| {
                                     if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                                         buffer.update(cx, |buffer, cx| {
-                                            restore_serialized_buffer_contents(buffer, contents, mtime, cx);
+                                            restore_serialized_buffer_contents(
+                                                buffer, contents, mtime, cx,
+                                            );
                                         });
                                     }
                                 })?;
