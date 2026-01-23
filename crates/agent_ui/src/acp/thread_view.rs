@@ -4633,7 +4633,9 @@ impl AcpThreadView {
                                 terminal.update(cx, |terminal, cx| {
                                     terminal.stop_by_user(cx);
                                 });
-                                this.cancel_generation(cx);
+                                if AgentSettings::get_global(cx).cancel_generation_on_terminal_stop {
+                                    this.cancel_generation(cx);
+                                }
                             })
                         }),
                     )
