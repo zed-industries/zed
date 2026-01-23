@@ -8,10 +8,10 @@ mod terminal_slash_command;
 use assistant_slash_command::SlashCommandRegistry;
 use editor::{Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
 use gpui::{
-    Action, AnyElement, App, Bounds, ClipboardEntry, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    Pixels, Point, Render, ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions,
-    anchored, canvas, deferred, div, point,
+    Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Point,
+    Render, ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred,
+    div,
 };
 use menu;
 use persistence::TERMINAL_DB;
@@ -92,10 +92,7 @@ actions!(
 
 /// Renames the terminal tab.
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
-pub struct RenameTerminal {
-    #[serde(skip)]
-    pub position: Option<Point<Pixels>>,
-}
+pub struct RenameTerminal;
 
 pub fn init(cx: &mut App) {
     assistant_slash_command::init(cx);
@@ -134,8 +131,7 @@ pub struct TerminalView {
     blink_manager: Entity<BlinkManager>,
     mode: TerminalMode,
     blinking_terminal_enabled: bool,
-    cwd_serialized: bool,
-    custom_title_serialized: bool,
+    needs_serialize: bool,
     custom_title: Option<String>,
     hover: Option<HoverTarget>,
     hover_tooltip_update: Task<()>,
@@ -145,10 +141,9 @@ pub struct TerminalView {
     scroll_top: Pixels,
     scroll_handle: TerminalScrollHandle,
     ime_state: Option<ImeState>,
-    last_tab_bounds: Option<Bounds<Pixels>>,
     self_handle: WeakEntity<Self>,
-    rename_editor: Entity<Editor>,
-    is_renaming: bool,
+    rename_editor: Option<Entity<Editor>>,
+    rename_editor_subscription: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -259,26 +254,11 @@ impl TerminalView {
             )
         });
 
-        let rename_editor = cx.new(|cx| Editor::single_line(window, cx));
-        let rename_subscription =
-            cx.subscribe_in(&rename_editor, window, |this, _, event, window, cx| {
-                if let editor::EditorEvent::Blurred = event {
-                    // Defer to let focus settle (avoids canceling during double-click).
-                    let editor = this.rename_editor.clone();
-                    cx.defer_in(window, move |this, window, cx| {
-                        if !editor.focus_handle(cx).is_focused(window) {
-                            this.finish_renaming(false, window, cx);
-                        }
-                    });
-                }
-            });
-
         let subscriptions = vec![
             focus_in,
             focus_out,
             cx.observe(&blink_manager, |_, _, cx| cx.notify()),
             cx.observe_global::<SettingsStore>(Self::settings_changed),
-            rename_subscription,
         ];
 
         Self {
@@ -299,14 +279,12 @@ impl TerminalView {
             block_below_cursor: None,
             scroll_top: Pixels::ZERO,
             scroll_handle,
-            cwd_serialized: false,
-            custom_title_serialized: false,
+            needs_serialize: false,
             custom_title: None,
             ime_state: None,
-            last_tab_bounds: None,
             self_handle: cx.entity().downgrade(),
-            rename_editor,
-            is_renaming: false,
+            rename_editor: None,
+            rename_editor_subscription: None,
             _subscriptions: subscriptions,
             _terminal_subscriptions: terminal_subscriptions,
         }
@@ -415,27 +393,29 @@ impl TerminalView {
         let label = label.filter(|l| !l.trim().is_empty());
         if self.custom_title != label {
             self.custom_title = label;
-            self.custom_title_serialized = false;
+            self.needs_serialize = true;
             cx.emit(ItemEvent::UpdateTab);
             cx.notify();
         }
     }
 
     pub fn is_renaming(&self) -> bool {
-        self.is_renaming
+        self.rename_editor.is_some()
     }
 
     pub fn rename_editor_is_focused(&self, window: &Window, cx: &App) -> bool {
-        self.is_renaming && self.rename_editor.focus_handle(cx).is_focused(window)
+        self.rename_editor
+            .as_ref()
+            .is_some_and(|editor| editor.focus_handle(cx).is_focused(window))
     }
 
     fn finish_renaming(&mut self, save: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.is_renaming {
+        let Some(editor) = self.rename_editor.take() else {
             return;
-        }
-        self.is_renaming = false;
+        };
+        self.rename_editor_subscription = None;
         if save {
-            let new_label = self.rename_editor.read(cx).text(cx).trim().to_string();
+            let new_label = editor.read(cx).text(cx).trim().to_string();
             let label = if new_label.is_empty() {
                 None
             } else {
@@ -469,8 +449,30 @@ impl TerminalView {
             .clone()
             .unwrap_or_else(|| self.terminal.read(cx).title(true));
 
-        self.is_renaming = true;
-        self.rename_editor.update(cx, |editor, cx| {
+        let rename_editor = cx.new(|cx| Editor::single_line(window, cx));
+        let rename_editor_subscription = cx.subscribe_in(&rename_editor, window, {
+            let rename_editor = rename_editor.clone();
+            move |_this, _, event, window, cx| {
+                if let editor::EditorEvent::Blurred = event {
+                    // Defer to let focus settle (avoids canceling during double-click).
+                    let rename_editor = rename_editor.clone();
+                    cx.defer_in(window, move |this, window, cx| {
+                        let still_current = this
+                            .rename_editor
+                            .as_ref()
+                            .is_some_and(|current| current == &rename_editor);
+                        if still_current && !rename_editor.focus_handle(cx).is_focused(window) {
+                            this.finish_renaming(false, window, cx);
+                        }
+                    });
+                }
+            }
+        });
+
+        self.rename_editor = Some(rename_editor.clone());
+        self.rename_editor_subscription = Some(rename_editor_subscription);
+
+        rename_editor.update(cx, |editor, cx| {
             editor.set_text(current_label, window, cx);
             editor.select_all(&SelectAll, window, cx);
             editor.focus_handle(cx).focus(window, cx);
@@ -980,7 +982,7 @@ fn subscribe_for_terminal_events(
             let current_cwd = terminal.read(cx).working_directory();
             if current_cwd != previous_cwd {
                 previous_cwd = current_cwd;
-                terminal_view.cwd_serialized = false;
+                terminal_view.needs_serialize = true;
             }
 
             match event {
@@ -1320,23 +1322,8 @@ impl Item for TerminalView {
             None => (IconName::Terminal, Color::Muted, None),
         };
 
-        let self_handle = self.self_handle.clone();
         h_flex()
             .gap_1()
-            .child(
-                canvas(
-                    move |bounds, _, cx| {
-                        self_handle
-                            .update(cx, |this, _| {
-                                this.last_tab_bounds = Some(bounds);
-                            })
-                            .ok();
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            )
             .group("term-tab-icon")
             .child(
                 h_flex()
@@ -1363,10 +1350,9 @@ impl Item for TerminalView {
                     .child(
                         Label::new(title)
                             .color(params.text_color())
-                            .when(self.is_renaming, |this| this.alpha(0.)),
+                            .when(self.is_renaming(), |this| this.alpha(0.)),
                     )
-                    .when(self.is_renaming, |this| {
-                        let editor = self.rename_editor.clone();
+                    .when_some(self.rename_editor.clone(), |this, editor| {
                         let self_handle = self.self_handle.clone();
                         let self_handle_cancel = self.self_handle.clone();
                         this.child(
@@ -1415,10 +1401,7 @@ impl Item for TerminalView {
     ) -> Vec<(SharedString, Box<dyn gpui::Action>)> {
         let terminal = self.terminal.read(cx);
         if terminal.task().is_none() {
-            let position = self
-                .last_tab_bounds
-                .map(|b| point(b.origin.x + b.size.width / 2.0, b.origin.y));
-            vec![("Rename".into(), Box::new(RenameTerminal { position }))]
+            vec![("Rename".into(), Box::new(RenameTerminal))]
         } else {
             Vec::new()
         }
@@ -1557,34 +1540,30 @@ impl SerializableItem for TerminalView {
             return None;
         }
 
+        if !self.needs_serialize {
+            return None;
+        }
+
         let workspace_id = self.workspace_id?;
         let cwd = terminal.working_directory();
         let custom_title = self.custom_title.clone();
-        let cwd_serialized = self.cwd_serialized;
-        let custom_title_serialized = self.custom_title_serialized;
-
-        self.cwd_serialized = true;
-        self.custom_title_serialized = true;
+        self.needs_serialize = false;
 
         Some(cx.background_spawn(async move {
-            if !cwd_serialized {
-                if let Some(cwd) = cwd {
-                    TERMINAL_DB
-                        .save_working_directory(item_id, workspace_id, cwd)
-                        .await?;
-                }
-            }
-            if !custom_title_serialized {
+            if let Some(cwd) = cwd {
                 TERMINAL_DB
-                    .save_custom_title(item_id, workspace_id, custom_title)
+                    .save_working_directory(item_id, workspace_id, cwd)
                     .await?;
             }
+            TERMINAL_DB
+                .save_custom_title(item_id, workspace_id, custom_title)
+                .await?;
             Ok(())
         }))
     }
 
     fn should_serialize(&self, _: &Self::Event) -> bool {
-        !self.cwd_serialized || !self.custom_title_serialized
+        self.needs_serialize
     }
 
     fn deserialize(
@@ -1637,7 +1616,6 @@ impl SerializableItem for TerminalView {
                     );
                     if custom_title.is_some() {
                         view.custom_title = custom_title;
-                        view.custom_title_serialized = true;
                     }
                     view
                 })
@@ -2106,7 +2084,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_custom_title_clears_serialized_flag(cx: &mut TestAppContext) {
+    async fn test_custom_title_marks_needs_serialize(cx: &mut TestAppContext) {
         let (project, workspace) = init_test(cx).await;
 
         let terminal = project
@@ -2129,9 +2107,9 @@ mod tests {
             .unwrap();
 
         terminal_view.update(cx, |view, cx| {
-            view.custom_title_serialized = true;
+            view.needs_serialize = false;
             view.set_custom_title(Some("new_label".to_string()), cx);
-            assert!(!view.custom_title_serialized);
+            assert!(view.needs_serialize);
         });
     }
 

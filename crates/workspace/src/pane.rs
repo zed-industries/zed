@@ -2713,11 +2713,14 @@ impl Pane {
                 let item_handle = item.boxed_clone();
                 move |pane: &mut Self, event: &ClickEvent, window, cx| {
                     if event.click_count() > 1 {
-                        // On double-click, dispatch the first extra action (e.g., Rename)
+                        // On double-click, dispatch the Rename action (when available)
                         // instead of just activating the item.
                         pane.unpreview_item_if_preview(item_id);
                         let extra_actions = item_handle.tab_extra_context_menu_actions(window, cx);
-                        if let Some((_, action)) = extra_actions.into_iter().next() {
+                        if let Some((_, action)) = extra_actions
+                            .into_iter()
+                            .find(|(label, _)| label.as_ref() == "Rename")
+                        {
                             // Dispatch action directly through the focus handle to avoid
                             // relay_action's intermediate focus step which can interfere
                             // with inline editors.
