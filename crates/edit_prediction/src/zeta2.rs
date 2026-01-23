@@ -34,6 +34,7 @@ pub fn request_prediction_with_zeta2(
         related_files,
         events,
         debug_tx,
+        trigger,
         ..
     }: EditPredictionModelInput,
     zeta_version: ZetaVersion,
@@ -110,6 +111,7 @@ pub fn request_prediction_with_zeta2(
                     client,
                     llm_token,
                     app_version,
+                    trigger,
                 )
                 .await?;
 
