@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use futures::lock::OwnedMutexGuard;
-use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task};
+use gpui::{App, AppContext, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
@@ -31,7 +31,7 @@ use util::merge_json_value_into;
 use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
-use crate::language_settings::LanguageSettings;
+use crate::language_settings::language_settings;
 
 pub struct RustLspAdapter;
 
@@ -893,16 +893,23 @@ impl ContextProvider for RustContextProvider {
 
     fn associated_tasks(
         &self,
-        buffer: Option<Entity<Buffer>>,
+        file: Option<Arc<dyn language::File>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         const CUSTOM_TARGET_DIR: &str = "RUST_TARGET_DIR";
 
-        let language = LanguageName::new_static("Rust");
-        let settings = LanguageSettings::resolve(buffer.map(|b| b.read(cx)), Some(&language), cx);
-        let package_to_run = settings.tasks.variables.get(DEFAULT_RUN_NAME_STR).cloned();
-        let custom_target_dir = settings.tasks.variables.get(CUSTOM_TARGET_DIR).cloned();
+        let language_sets = language_settings(Some("Rust".into()), file.as_ref(), cx);
+        let package_to_run = language_sets
+            .tasks
+            .variables
+            .get(DEFAULT_RUN_NAME_STR)
+            .cloned();
+        let custom_target_dir = language_sets
+            .tasks
+            .variables
+            .get(CUSTOM_TARGET_DIR)
+            .cloned();
         let run_task_args = if let Some(package_to_run) = package_to_run {
             vec!["run".into(), "-p".into(), package_to_run]
         } else {

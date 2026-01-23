@@ -216,7 +216,6 @@ impl VsCodeSettings {
             vim_mode: None,
             workspace: self.workspace_settings_content(),
             which_key: None,
-            modeline_lines: None,
         }
     }
 
