@@ -143,11 +143,9 @@ impl DockerExecConnection {
         commit: Option<AppCommitSha>,
         cx: &mut AsyncApp,
     ) -> Result<Arc<RelPath>> {
-        let remote_platform = if self.remote_platform.is_some() {
-            self.remote_platform.unwrap()
-        } else {
-            anyhow::bail!("No remote platform defined; cannot proceed.")
-        };
+        let remote_platform = self
+            .remote_platform
+            .context("No remote platform defined; cannot proceed.")?;
 
         let version_str = match release_channel {
             ReleaseChannel::Nightly => {
