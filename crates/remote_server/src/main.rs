@@ -39,7 +39,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     if let Some(command) = cli.command {
-        use remote_server::unix::ExecuteProxyError;
+        use remote_server::ExecuteProxyError;
 
         let res = remote_server::run(command);
         if let Err(e) = &res

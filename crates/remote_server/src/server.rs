@@ -1,29 +1,37 @@
-use crate::HeadlessProject;
-use crate::headless_project::HeadlessAppState;
+mod headless_project;
+
+#[cfg(test)]
+mod remote_editing_tests;
+
+#[cfg(windows)]
+pub mod windows;
+
+pub use headless_project::{HeadlessAppState, HeadlessProject};
+
 use anyhow::{Context as _, Result, anyhow};
+use clap::Subcommand;
 use client::ProxySettings;
 use collections::HashMap;
-use project::trusted_worktrees;
-use util::ResultExt;
-
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
-use futures::channel::{mpsc, oneshot};
-use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, select, select_biased};
+use futures::{
+    AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt,
+    channel::{mpsc, oneshot},
+    select, select_biased,
+};
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Context, Entity, UpdateGlobal as _};
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
+use net::async_net::{UnixListener, UnixStream};
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
-use project::project_settings::ProjectSettings;
-use util::command::new_smol_command;
-
+use project::{project_settings::ProjectSettings, trusted_worktrees};
 use proto::CrashReport;
 use release_channel::{AppCommitSha, AppVersion, RELEASE_CHANNEL, ReleaseChannel};
-use remote::RemoteClient;
 use remote::{
+    RemoteClient,
     json_log::LogRecord,
     protocol::{read_message, write_message},
     proxy::ProxyLaunchError,
@@ -32,11 +40,11 @@ use reqwest_client::ReqwestClient;
 use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
-
-use net::async_net::{UnixListener, UnixStream};
-use smol::channel::{Receiver, Sender};
-use smol::io::AsyncReadExt;
-use smol::stream::StreamExt as _;
+use smol::{
+    channel::{Receiver, Sender},
+    io::AsyncReadExt,
+    stream::StreamExt as _,
+};
 use std::{
     env,
     ffi::OsStr,
@@ -48,6 +56,74 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use thiserror::Error;
+use util::{ResultExt, command::new_smol_command};
+
+#[derive(Subcommand)]
+pub enum Commands {
+    Run {
+        #[arg(long)]
+        log_file: PathBuf,
+        #[arg(long)]
+        pid_file: PathBuf,
+        #[arg(long)]
+        stdin_socket: PathBuf,
+        #[arg(long)]
+        stdout_socket: PathBuf,
+        #[arg(long)]
+        stderr_socket: PathBuf,
+    },
+    Proxy {
+        #[arg(long)]
+        reconnect: bool,
+        #[arg(long)]
+        identifier: String,
+    },
+    Version,
+}
+
+pub fn run(command: Commands) -> anyhow::Result<()> {
+    use anyhow::Context;
+    use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
+
+    match command {
+        Commands::Run {
+            log_file,
+            pid_file,
+            stdin_socket,
+            stdout_socket,
+            stderr_socket,
+        } => execute_run(
+            log_file,
+            pid_file,
+            stdin_socket,
+            stdout_socket,
+            stderr_socket,
+        ),
+        Commands::Proxy {
+            identifier,
+            reconnect,
+        } => execute_proxy(identifier, reconnect).context("running proxy on the remote server"),
+        Commands::Version => {
+            let release_channel = *RELEASE_CHANNEL;
+            match release_channel {
+                ReleaseChannel::Stable | ReleaseChannel::Preview => {
+                    println!("{}", env!("ZED_PKG_VERSION"))
+                }
+                ReleaseChannel::Nightly | ReleaseChannel::Dev => {
+                    let commit_sha =
+                        option_env!("ZED_COMMIT_SHA").unwrap_or(release_channel.dev_name());
+                    let build_id = option_env!("ZED_BUILD_ID");
+                    if let Some(build_id) = build_id {
+                        println!("{}+{}", build_id, commit_sha)
+                    } else {
+                        println!("{commit_sha}");
+                    }
+                }
+            };
+            Ok(())
+        }
+    }
+}
 
 pub static VERSION: LazyLock<String> = LazyLock::new(|| match *RELEASE_CHANNEL {
     ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION").to_owned(),

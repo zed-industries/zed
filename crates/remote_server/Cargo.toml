@@ -10,7 +10,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/remote_server.rs"
+path = "src/server.rs"
 doctest = false
 
 [[bin]]
