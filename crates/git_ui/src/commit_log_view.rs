@@ -131,10 +131,10 @@ impl CommitLogView {
         });
 
         let repo_name: SharedString = snapshot
-            .root_path
+            .work_directory_abs_path
             .file_name()
-            .and_then(|n| n.to_str())
-            .map(|s| s.to_string())
+            .and_then(|n: &std::ffi::OsStr| n.to_str())
+            .map(|s: &str| s.to_string())
             .unwrap_or_else(|| "Repository".to_string())
             .into();
 
