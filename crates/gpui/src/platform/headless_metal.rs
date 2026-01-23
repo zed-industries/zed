@@ -229,10 +229,17 @@ impl HeadlessMetalAppContext {
     }
 
     /// Captures a screenshot from a window.
+    ///
+    /// This calls `draw()` to ensure the window's scene is up to date before
+    /// capturing the rendered image.
     pub fn capture_screenshot(&mut self, window: AnyWindowHandle) -> Result<RgbaImage> {
         let mut app = self.app.borrow_mut();
-        app.update_window(window, |_, window, _| window.render_to_image())
-            .map_err(|e| anyhow::anyhow!("Failed to update window: {:?}", e))?
+        app.update_window(window, |_, window, cx| {
+            // Ensure the window is drawn before capturing
+            window.draw(cx).clear();
+            window.render_to_image()
+        })
+        .map_err(|e| anyhow::anyhow!("Failed to update window: {:?}", e))?
     }
 
     /// Returns the text system.
