@@ -8771,6 +8771,109 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     });
 }
 
+// This test deserves a bit of context, as it was introduced when we found that
+// `git: file history` was returning duplicated commits when loading more
+// commits.
+//
+// It was later found that combining both `--follow` and `--skip N` when using
+// `git log` might not yield the results one expects, as outlined in
+// https://github.com/zed-industries/zed/issues/47487#issuecomment-3792148562 .
+#[gpui::test]
+async fn test_file_history_pagination(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let root = TempTree::new(json!({
+        "project": {
+            "file_a.txt": "content a",
+            "file_b.txt": "content b"
+        },
+    }));
+
+    let work_dir = root.path().join("project");
+    let file_a_path = work_dir.join("file_a.txt");
+    let file_b_path = work_dir.join("file_b.txt");
+
+    let repo = git_init(work_dir.as_path());
+    git_add("file_a.txt", &repo);
+    git_add("file_b.txt", &repo);
+    git_commit("chore: initial commit", &repo);
+
+    // Interleaving commits to both `file_a.txt` with commits to `file_b.txt`
+    // triggers the bug seen with combining both `--follow` and `--skip` flags.
+    for index_a in 0..4 {
+        let commit_message = format!("chore: file_a {}", index_a).into_boxed_str();
+        std::fs::write(&file_a_path, format!("{}", index_a)).unwrap();
+        git_add("file_a.txt", &repo);
+        git_commit(Box::leak(commit_message), &repo);
+
+        for index_b in 0..5 {
+            let commit_message = format!("chore: file_b {}.{}", index_a, index_b).into_boxed_str();
+            std::fs::write(&file_b_path, format!("{}.{}", index_a, index_b)).unwrap();
+            git_add("file_b.txt", &repo);
+            git_commit(Box::leak(commit_message), &repo);
+        }
+    }
+
+    let project = Project::test(
+        Arc::new(RealFs::new(None, cx.executor())),
+        [root.path()],
+        cx,
+    )
+    .await;
+
+    cx.run_until_parked();
+
+    let (git_store, repository) = project.update(cx, |project, cx| {
+        let git_store = project.git_store().clone();
+        let repository = git_store
+            .read(cx)
+            .repositories()
+            .values()
+            .next()
+            .unwrap()
+            .clone();
+
+        (git_store, repository)
+    });
+
+    // We'll now start fetching `file_a.txt` history, with a page size of 2.
+    // Since we had a total of 5 commits that touched `file_a.txt` (initial + 4
+    // edits), we should end up having a total of 2 pages.
+    let page_size = 2;
+    let repo_path = repo_path("file_a.txt");
+
+    let first_page = git_store
+        .update(cx, |git_store, cx| {
+            git_store.file_history_paginated(&repository, repo_path.clone(), 0, Some(page_size), cx)
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(first_page.entries.len(), page_size);
+
+    let second_page = git_store
+        .update(cx, |git_store, cx| {
+            git_store.file_history_paginated(
+                &repository,
+                repo_path.clone(),
+                page_size,
+                Some(page_size),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(second_page.entries.len(), page_size);
+
+    // Assert that the no duplicate entries were returned by both pages.
+    let first_page_shas: HashSet<_> = first_page.entries.iter().map(|e| e.sha.clone()).collect();
+    let second_page_shas: HashSet<_> = second_page.entries.iter().map(|e| e.sha.clone()).collect();
+    let duplicates: Vec<_> = first_page_shas.intersection(&second_page_shas).collect();
+    assert!(duplicates.is_empty());
+}
+
 // TODO: Should we test this on Windows also?
 #[gpui::test]
 #[cfg(not(windows))]

@@ -1596,7 +1596,7 @@ impl GitRepository for RealGitRepository {
                     commit_delimiter
                 );
 
-                let mut args = vec!["--no-optional-locks", "log", "--follow", &format_string];
+                let mut args = vec!["--no-optional-locks", "log", &format_string];
 
                 let skip_str;
                 let limit_str;
