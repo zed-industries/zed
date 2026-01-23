@@ -1663,6 +1663,13 @@ impl Thread {
                 }
             }
 
+            // Drop the stream to release the rate limit permit before tool execution.
+            // The stream holds a semaphore guard that limits concurrent requests.
+            // Without this, the permit would be held during potentially long-running
+            // tool execution, which could cause deadlocks when tools spawn subagents
+            // that need their own permits.
+            drop(events);
+
             let end_turn = tool_results.is_empty();
             while let Some(tool_result) = tool_results.next().await {
                 log::debug!("Tool finished {:?}", tool_result);
@@ -2263,7 +2270,6 @@ impl Thread {
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: self.thinking_enabled,
-            bypass_rate_limit: false,
         };
 
         log::debug!("Completion request built successfully");
