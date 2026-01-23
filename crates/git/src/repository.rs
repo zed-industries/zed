@@ -2605,7 +2605,9 @@ impl GitRepository for RealGitRepository {
                 if bytes_read == 0 {
                     if !lines.is_empty() {
                         let commits = parse_initial_graph_output(lines.iter().map(|s| s.as_str()));
-                        request_tx.send(commits).await.ok();
+                        if request_tx.send(commits).await.is_err() {
+                            log::warn!("initial_graph_data: receiver dropped while sending final chunk");
+                        }
                     }
                     break;
                 }
@@ -2615,7 +2617,10 @@ impl GitRepository for RealGitRepository {
 
                 if lines.len() >= GRAPH_CHUNK_SIZE {
                     let commits = parse_initial_graph_output(lines.iter().map(|s| s.as_str()));
-                    request_tx.send(commits).await.ok();
+                    if request_tx.send(commits).await.is_err() {
+                        log::warn!("initial_graph_data: receiver dropped while streaming commits");
+                        break;
+                    }
                     lines.clear();
                 }
             }

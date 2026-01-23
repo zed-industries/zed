@@ -30,6 +30,7 @@ const LANE_WIDTH: Pixels = px(16.0);
 const LINE_WIDTH: Pixels = px(1.5);
 const COMMIT_CIRCLE_RADIUS: Pixels = px(4.5);
 const COMMIT_CIRCLE_STROKE_WIDTH: Pixels = px(1.5);
+const LEFT_PADDING: Pixels = px(12.0);
 
 actions!(
     git_graph,
@@ -520,11 +521,10 @@ pub fn init(cx: &mut App) {
 
 fn lane_center_x(
     bounds: Bounds<Pixels>,
-    left_padding: Pixels,
     lane: f32,
     horizontal_scroll_offset: Pixels,
 ) -> Pixels {
-    bounds.origin.x + left_padding + lane * LANE_WIDTH + LANE_WIDTH / 2.0 - horizontal_scroll_offset
+    bounds.origin.x + LEFT_PADDING + lane * LANE_WIDTH + LANE_WIDTH / 2.0 - horizontal_scroll_offset
 }
 
 fn to_row_center(
@@ -1105,22 +1105,7 @@ impl GitGraph {
                                             ),
                                         ),
                                 )
-                            })
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(
-                                        Icon::new(IconName::Undo)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(
-                                        Button::new("uncommit", "Uncommit")
-                                            .style(ButtonStyle::Transparent)
-                                            .label_size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    ),
-                            ),
+                            }),
                     ),
             )
             .child(
@@ -1210,9 +1195,8 @@ impl GitGraph {
         let vertical_scroll_offset = scroll_offset_y - (first_visible_row as f32 * row_height);
         let horizontal_scroll_offset = self.horizontal_scroll_offset;
 
-        let left_padding = px(12.0);
         let max_lanes = self.graph_data.max_lanes.max(6);
-        let graph_width = LANE_WIDTH * max_lanes as f32 + left_padding * 2;
+        let graph_width = LANE_WIDTH * max_lanes as f32 + LEFT_PADDING * 2.0;
         let last_visible_row =
             first_visible_row + (viewport_height / row_height).ceil() as usize + 1;
 
@@ -1246,7 +1230,6 @@ impl GitGraph {
 
                         let commit_x = lane_center_x(
                             bounds,
-                            left_padding,
                             row.lane as f32,
                             horizontal_scroll_offset,
                         );
@@ -1263,7 +1246,6 @@ impl GitGraph {
 
                         let line_x = lane_center_x(
                             bounds,
-                            left_padding,
                             start_column as f32,
                             horizontal_scroll_offset,
                         );
@@ -1311,7 +1293,6 @@ impl GitGraph {
                                 } => {
                                     let mut to_column = lane_center_x(
                                         bounds,
-                                        left_padding,
                                         *to_column as f32,
                                         horizontal_scroll_offset,
                                     );
@@ -1433,10 +1414,8 @@ impl GitGraph {
         let new_y = (current_offset.y + delta.y).clamp(max_vertical_scroll, px(0.));
         let new_offset = Point::new(current_offset.x, new_y);
 
-        let left_padding = px(12.0);
-        let lane_width = px(16.0);
         let max_lanes = self.graph_data.max_lanes.max(1);
-        let graph_content_width = lane_width * max_lanes as f32 + left_padding * 2.0;
+        let graph_content_width = LANE_WIDTH * max_lanes as f32 + LEFT_PADDING * 2.0;
         let max_horizontal_scroll = (graph_content_width - self.graph_viewport_width).max(px(0.));
 
         let new_horizontal_offset =
