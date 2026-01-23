@@ -277,6 +277,23 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
+        workspace.register_action(|workspace, _: &git::CommitLog, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            let Some(repo) = panel.read(cx).active_repository.clone() else {
+                return;
+            };
+            let project = workspace.project();
+            let git_store = project.read(cx).git_store();
+            commit_log_view::CommitLogView::open(
+                git_store.downgrade(),
+                repo.downgrade(),
+                workspace.weak_handle(),
+                window,
+                cx,
+            );
+        });
     })
     .detach();
 }
