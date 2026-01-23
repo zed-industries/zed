@@ -3372,6 +3372,7 @@ dependencies = [
  "uuid",
  "workspace",
  "worktree",
+ "zed_actions",
  "zlog",
 ]
 
