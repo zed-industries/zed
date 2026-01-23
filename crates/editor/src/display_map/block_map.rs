@@ -666,7 +666,7 @@ impl BlockMap {
 
                     let my_start = wrap_snapshot.make_wrap_point(my_start, Bias::Left);
                     let mut my_end = wrap_snapshot.make_wrap_point(my_end, Bias::Left);
-                    if my_end.column() > 0 {
+                    if my_end.column() > 0 || my_end == wrap_snapshot.max_point() {
                         my_end.0.row += 1;
                         my_end.0.column = 0;
                     }

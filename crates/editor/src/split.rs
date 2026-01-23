@@ -3352,4 +3352,82 @@ mod tests {
             &mut cx,
         );
     }
+
+    #[gpui::test]
+    async fn test_added_file_at_end(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx).await;
+
+        let base_text = "";
+        let current_text = "
+            aaaa bbbb cccc dddd eeee ffff
+            bbb
+            ccc
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
+            editor.set_excerpts_for_path(
+                path,
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaaa bbbb cccc dddd eeee ffff
+            bbb
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            § spacer
+            § spacer
+            § spacer"
+                .unindent(),
+            &mut cx,
+        );
+
+        dbg!("---------------------");
+
+        assert_split_content_with_widths(
+            &editor,
+            px(200.0),
+            px(200.0),
+            "
+            § <no file>
+            § -----
+            aaaa bbbb\x20
+            cccc dddd\x20
+            eeee ffff
+            bbb
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            § spacer
+            § spacer
+            § spacer
+            § spacer
+            § spacer"
+                .unindent(),
+            &mut cx,
+        );
+    }
 }
