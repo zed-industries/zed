@@ -5,8 +5,8 @@ use copilot::{
 };
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, ReadGlobal, Render,
-    Styled, Subscription, Window, WindowBounds, WindowOptions, div, point,
+    Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled,
+    Subscription, Window, WindowBounds, WindowOptions, div, point,
 };
 use ui::{ButtonLike, CommonAnimationExt, ConfiguredApiCard, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
