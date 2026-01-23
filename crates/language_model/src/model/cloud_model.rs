@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use client::Client;
 use cloud_api_types::websocket_protocol::MessageToClient;
-use cloud_llm_client::EXPIRED_LLM_TOKEN_HEADER_NAME;
+use cloud_llm_client::{EXPIRED_LLM_TOKEN_HEADER_NAME, OUTDATED_LLM_TOKEN_HEADER_NAME};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, ReadGlobal as _};
 use smol::lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use thiserror::Error;
@@ -61,6 +61,7 @@ pub trait NeedsLlmTokenRefresh {
 impl NeedsLlmTokenRefresh for http_client::Response<http_client::AsyncBody> {
     fn needs_llm_token_refresh(&self) -> bool {
         self.headers().get(EXPIRED_LLM_TOKEN_HEADER_NAME).is_some()
+            || self.headers().get(OUTDATED_LLM_TOKEN_HEADER_NAME).is_some()
     }
 }
 
