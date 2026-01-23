@@ -31,6 +31,7 @@ use futures::{
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
+use heck::ToSnakeCase as _;
 use language::Buffer;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
@@ -2377,13 +2378,14 @@ impl Thread {
         }
 
         // When there are duplicate tool names, disambiguate by prefixing them
-        // with the server ID. In the rare case there isn't enough space for the
-        // disambiguated tool name, keep only the last tool with this name.
+        // with the server ID (converted to snake_case for API compatibility).
+        // In the rare case there isn't enough space for the disambiguated tool
+        // name, keep only the last tool with this name.
         for (server_id, tool_name, tool) in context_server_tools {
             if duplicate_tool_names.contains(&tool_name) {
                 let available = MAX_TOOL_NAME_LENGTH.saturating_sub(tool_name.len());
                 if available >= 2 {
-                    let mut disambiguated = server_id.0.to_string();
+                    let mut disambiguated = server_id.0.to_snake_case();
                     disambiguated.truncate(available - 1);
                     disambiguated.push('_');
                     disambiguated.push_str(&tool_name);

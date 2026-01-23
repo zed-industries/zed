@@ -1506,6 +1506,23 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
         cx,
     );
 
+    // Server with spaces in name - tests snake_case conversion for API compatibility
+    let _server4_calls = setup_context_server(
+        "Azure DevOps",
+        vec![context_server::types::Tool {
+            name: "echo".into(), // Also conflicts - will be disambiguated as azure_dev_ops_echo
+            description: None,
+            input_schema: serde_json::to_value(EchoTool::input_schema(
+                LanguageModelToolSchemaFormat::JsonSchema,
+            ))
+            .unwrap(),
+            output_schema: None,
+            annotations: None,
+        }],
+        &context_server_store,
+        cx,
+    );
+
     thread
         .update(cx, |thread, cx| {
             thread.send(UserMessageId::new(), ["Go"], cx)
@@ -1516,6 +1533,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
     assert_eq!(
         tool_names_for_completion(&completion),
         vec![
+            "azure_dev_ops_echo",
             "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
             "delay",
