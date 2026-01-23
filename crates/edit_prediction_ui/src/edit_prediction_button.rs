@@ -2,7 +2,7 @@ use anyhow::Result;
 use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
 use codestral::CodestralEditPredictionDelegate;
-use copilot::{Copilot, Status};
+use copilot::Status;
 use edit_prediction::{
     EditPredictionStore, MercuryFeatureFlag, SweepFeatureFlag, Zeta2FeatureFlag,
 };
