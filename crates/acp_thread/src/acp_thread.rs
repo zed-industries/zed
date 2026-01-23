@@ -2333,8 +2333,11 @@ impl AcpThread {
                 let format_on_save = buffer.update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
 
-                    let settings =
-                        language::language_settings::LanguageSettings::for_buffer(buffer, cx);
+                    let settings = language::language_settings::language_settings(
+                        buffer.language().map(|l| l.name()),
+                        buffer.file(),
+                        cx,
+                    );
 
                     settings.format_on_save != FormatOnSave::Off
                 });

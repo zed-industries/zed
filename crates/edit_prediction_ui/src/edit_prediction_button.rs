@@ -20,9 +20,7 @@ use gpui::{
 use indoc::indoc;
 use language::{
     EditPredictionsMode, File, Language,
-    language_settings::{
-        AllLanguageSettings, EditPredictionProvider, LanguageSettings, all_language_settings,
-    },
+    language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
 use project::{DisableAiSettings, Project};
 use regex::Regex;
@@ -670,7 +668,8 @@ impl EditPredictionButton {
         let language_state = self.language.as_ref().map(|language| {
             (
                 language.clone(),
-                LanguageSettings::resolve(None, Some(&language.name()), cx).show_edit_predictions,
+                language_settings::language_settings(Some(language.name()), None, cx)
+                    .show_edit_predictions,
             )
         });
 

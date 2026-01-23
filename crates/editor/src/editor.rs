@@ -128,8 +128,8 @@ use language::{
     OutlineItem, Point, Runnable, Selection, SelectionGoal, TextObject, TransactionId,
     TreeSitterOptions, WordsQuery,
     language_settings::{
-        self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior,
-        WordsCompletionMode, all_language_settings,
+        self, LanguageSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
+        all_language_settings, language_settings,
     },
     point_from_lsp, point_to_lsp, text_diff_with_options,
 };
@@ -581,8 +581,7 @@ impl Default for EditorStyle {
 }
 
 pub fn make_inlay_hints_style(cx: &App) -> HighlightStyle {
-    let show_background = AllLanguageSettings::get_global(cx)
-        .defaults
+    let show_background = language_settings::language_settings(None, None, cx)
         .inlay_hints
         .show_background;
 
@@ -5642,7 +5641,14 @@ impl Editor {
             .read(cx)
             .text_anchor_for_position(position, cx)?;
 
-        let settings = LanguageSettings::for_buffer_at(&buffer.read(cx), buffer_position, cx);
+        let settings = language_settings::language_settings(
+            buffer
+                .read(cx)
+                .language_at(buffer_position)
+                .map(|l| l.name()),
+            buffer.read(cx).file(),
+            cx,
+        );
         if !settings.use_on_type_format {
             return None;
         }
@@ -5756,7 +5762,8 @@ impl Editor {
         let language = buffer_snapshot
             .language_at(buffer_position.text_anchor)
             .map(|language| language.name());
-        let language_settings = multibuffer_snapshot.language_settings_at(buffer_position, cx);
+
+        let language_settings = language_settings(language.clone(), buffer_snapshot.file(), cx);
         let completion_settings = language_settings.completions.clone();
 
         let show_completions_on_input = self
@@ -6641,7 +6648,8 @@ impl Editor {
             let resolved_tasks = resolved_tasks.as_ref()?;
             let buffer = buffer.read(cx);
             let language = buffer.language()?;
-            let debug_adapter = LanguageSettings::for_buffer(&buffer, cx)
+            let file = buffer.file();
+            let debug_adapter = language_settings(language.name().into(), file, cx)
                 .debuggers
                 .first()
                 .map(SharedString::from)
@@ -7668,7 +7676,11 @@ impl Editor {
             return EditPredictionSettings::Disabled;
         }
 
-        if !LanguageSettings::for_buffer(&buffer.read(cx), cx).show_edit_predictions {
+        let buffer = buffer.read(cx);
+
+        let file = buffer.file();
+
+        if !language_settings(buffer.language().map(|l| l.name()), file, cx).show_edit_predictions {
             return EditPredictionSettings::Disabled;
         };
 
@@ -7683,7 +7695,6 @@ impl Editor {
                 .as_ref()
                 .is_some_and(|provider| provider.provider.show_predictions_in_menu());
 
-        let file = buffer.read(cx).file();
         let preview_requires_modifier =
             all_language_settings(file, cx).edit_predictions_mode() == EditPredictionsMode::Subtle;
 
@@ -16817,17 +16828,17 @@ impl Editor {
         runnable: &mut Runnable,
         cx: &mut App,
     ) -> Task<Vec<(TaskSourceKind, TaskTemplate)>> {
-        let (inventory, worktree_id, buffer) = project.read_with(cx, |project, cx| {
-            let buffer = project.buffer_for_id(runnable.buffer, cx);
-            let worktree_id = buffer
-                .as_ref()
+        let (inventory, worktree_id, file) = project.read_with(cx, |project, cx| {
+            let (worktree_id, file) = project
+                .buffer_for_id(runnable.buffer, cx)
                 .and_then(|buffer| buffer.read(cx).file())
-                .map(|file| file.worktree_id(cx));
+                .map(|file| (file.worktree_id(cx), file.clone()))
+                .unzip();
 
             (
                 project.task_store().read(cx).task_inventory().cloned(),
                 worktree_id,
-                buffer,
+                file,
             )
         });
 
@@ -16838,12 +16849,7 @@ impl Editor {
             if let Some(inventory) = inventory {
                 for RunnableTag(tag) in tags {
                     let new_tasks = inventory.update(cx, |inventory, cx| {
-                        inventory.list_tasks(
-                            buffer.clone(),
-                            Some(language.clone()),
-                            worktree_id,
-                            cx,
-                        )
+                        inventory.list_tasks(file.clone(), Some(language.clone()), worktree_id, cx)
                     });
                     templates_with_tags.extend(new_tasks.await.into_iter().filter(
                         move |(_, template)| {
@@ -23870,8 +23876,9 @@ impl Editor {
             |mut acc, buffer| {
                 let buffer = buffer.read(cx);
                 let language = buffer.language().map(|language| language.name());
-                if let hash_map::Entry::Vacant(v) = acc.entry(language) {
-                    v.insert(LanguageSettings::for_buffer(&buffer, cx).into_owned());
+                if let hash_map::Entry::Vacant(v) = acc.entry(language.clone()) {
+                    let file = buffer.file();
+                    v.insert(language_settings(language, file, cx).into_owned());
                 }
                 acc
             },
@@ -25140,9 +25147,10 @@ fn process_completion_for_edit(
                 CompletionIntent::CompleteWithInsert => false,
                 CompletionIntent::CompleteWithReplace => true,
                 CompletionIntent::Complete | CompletionIntent::Compose => {
-                    let insert_mode = LanguageSettings::for_buffer(&buffer, cx)
-                        .completions
-                        .lsp_insert_mode;
+                    let insert_mode =
+                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                            .completions
+                            .lsp_insert_mode;
                     match insert_mode {
                         LspInsertMode::Insert => false,
                         LspInsertMode::Replace => true,

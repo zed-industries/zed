@@ -5,7 +5,7 @@ use multi_buffer::{BufferOffset, MultiBuffer, ToOffset};
 use std::ops::Range;
 use util::ResultExt as _;
 
-use language::{BufferSnapshot, JsxTagAutoCloseConfig, Node, language_settings::LanguageSettings};
+use language::{BufferSnapshot, JsxTagAutoCloseConfig, Node};
 use text::{Anchor, OffsetRangeExt as _};
 
 use crate::{Editor, SelectionEffects};
@@ -323,10 +323,12 @@ pub(crate) fn refresh_enabled_in_any_buffer(
                 if language.config().jsx_tag_auto_close.is_none() {
                     continue;
                 }
-                let should_auto_close =
-                    LanguageSettings::resolve(Some(buffer), Some(&language.name()), cx)
-                        .jsx_tag_auto_close;
-                if should_auto_close {
+                let language_settings = language::language_settings::language_settings(
+                    Some(language.name()),
+                    snapshot.file(),
+                    cx,
+                );
+                if language_settings.jsx_tag_auto_close {
                     found_enabled = true;
                 }
             }
