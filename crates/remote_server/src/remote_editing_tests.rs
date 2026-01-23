@@ -7,6 +7,7 @@ use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
 use language_model::LanguageModelToolResultContent;
+use languages::rust_lang;
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
@@ -481,6 +482,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
 
     let worktree_id = project
         .update(cx, |project, cx| {
+            project.languages().add(rust_lang());
             project.find_or_create_worktree("/code/project1", true, cx)
         })
         .await
@@ -524,7 +526,6 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
         assert_eq!(
             language_settings(cx)
                 .buffer(buffer.read(cx))
-                .language(Some("Rust".into()))
                 .get()
                 .language_servers,
             ["override-rust-analyzer".to_string()]
@@ -649,6 +650,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     let worktree_id = project
         .update(cx, |project, cx| {
+            project.languages().add(rust_lang());
             project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
@@ -674,7 +676,6 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         assert_eq!(
             language_settings(cx)
                 .buffer(buffer.read(cx))
-                .language(Some("Rust".into()))
                 .get()
                 .language_servers,
             ["rust-analyzer".to_string(), "fake-analyzer".to_string()]

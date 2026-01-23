@@ -1319,7 +1319,6 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
         assert_eq!(
             language_settings(cx)
                 .buffer(buffer_before_approval.read(cx))
-                .language(Some("Rust".into()))
                 .get()
                 .language_servers,
             ["override-rust-analyzer".to_string()],
