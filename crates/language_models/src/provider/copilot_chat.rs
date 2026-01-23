@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use cloud_llm_client::CompletionIntent;
 use collections::HashMap;
-use copilot::{Copilot, Status};
+use copilot::{Copilot, GlobalCopilotAuth, Status};
 use copilot_chat::responses as copilot_responses;
 use copilot_chat::{
     ChatMessage, ChatMessageContent, ChatMessagePart, CopilotChat, CopilotChatConfiguration,
@@ -141,7 +141,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             return Task::ready(Ok(()));
         };
 
-        let Some(copilot) = Copilot::global(cx) else {
+        let Some(copilot) = GlobalCopilotAuth::try_global(cx).cloned() else {
             return Task::ready(Err(anyhow!(concat!(
                 "Copilot must be enabled for Copilot Chat to work. ",
                 "Please enable Copilot and try again."
@@ -149,7 +149,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             .into()));
         };
 
-        let err = match copilot.read(cx).status() {
+        let err = match copilot.0.read(cx).status() {
             Status::Authorized => return Task::ready(Ok(())),
             Status::Disabled => anyhow!(
                 "Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."
