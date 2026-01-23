@@ -31,7 +31,6 @@ use futures::{
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
-use language::Buffer;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
@@ -716,11 +715,6 @@ enum CompletionError {
     Other(#[from] anyhow::Error),
 }
 
-pub struct QueuedMessage {
-    pub content: Vec<acp::ContentBlock>,
-    pub tracked_buffers: Vec<Entity<Buffer>>,
-}
-
 pub struct Thread {
     id: acp::SessionId,
     prompt_id: PromptId,
@@ -735,7 +729,9 @@ pub struct Thread {
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
     running_turn: Option<RunningTurn>,
-    queued_messages: Vec<QueuedMessage>,
+    /// Flag indicating the UI has a queued message waiting to be sent.
+    /// Used to signal that the turn should end at the next message boundary.
+    has_queued_message: bool,
     pending_message: Option<AgentMessage>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
@@ -795,7 +791,7 @@ impl Thread {
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
             running_turn: None,
-            queued_messages: Vec::new(),
+            has_queued_message: false,
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: HashMap::default(),
@@ -862,7 +858,7 @@ impl Thread {
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
             running_turn: None,
-            queued_messages: Vec::new(),
+            has_queued_message: false,
             pending_message: None,
             tools,
             request_token_usage: HashMap::default(),
@@ -1060,7 +1056,7 @@ impl Thread {
             messages: db_thread.messages,
             user_store: project.read(cx).user_store(),
             running_turn: None,
-            queued_messages: Vec::new(),
+            has_queued_message: false,
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: db_thread.request_token_usage.clone(),
@@ -1298,52 +1294,12 @@ impl Thread {
         })
     }
 
-    pub fn queue_message(
-        &mut self,
-        content: Vec<acp::ContentBlock>,
-        tracked_buffers: Vec<Entity<Buffer>>,
-    ) {
-        self.queued_messages.push(QueuedMessage {
-            content,
-            tracked_buffers,
-        });
+    pub fn set_has_queued_message(&mut self, has_queued: bool) {
+        self.has_queued_message = has_queued;
     }
 
-    pub fn queued_messages(&self) -> &[QueuedMessage] {
-        &self.queued_messages
-    }
-
-    pub fn remove_queued_message(&mut self, index: usize) -> Option<QueuedMessage> {
-        if index < self.queued_messages.len() {
-            Some(self.queued_messages.remove(index))
-        } else {
-            None
-        }
-    }
-
-    pub fn update_queued_message(
-        &mut self,
-        index: usize,
-        content: Vec<acp::ContentBlock>,
-        tracked_buffers: Vec<Entity<Buffer>>,
-    ) -> bool {
-        if index < self.queued_messages.len() {
-            self.queued_messages[index] = QueuedMessage {
-                content,
-                tracked_buffers,
-            };
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn clear_queued_messages(&mut self) {
-        self.queued_messages.clear();
-    }
-
-    fn has_queued_messages(&self) -> bool {
-        !self.queued_messages.is_empty()
+    pub fn has_queued_message(&self) -> bool {
+        self.has_queued_message
     }
 
     fn update_token_usage(&mut self, update: language_model::TokenUsage, cx: &mut Context<Self>) {
@@ -1760,7 +1716,7 @@ impl Thread {
             } else if end_turn {
                 return Ok(());
             } else {
-                let has_queued = this.update(cx, |this, _| this.has_queued_messages())?;
+                let has_queued = this.update(cx, |this, _| this.has_queued_message())?;
                 if has_queued {
                     log::debug!("Queued message found, ending turn at message boundary");
                     return Ok(());

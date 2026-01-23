@@ -1781,14 +1781,16 @@ impl Vim {
         let newest = editor.read(cx).selections.newest_anchor().clone();
         let is_multicursor = editor.read(cx).selections.count() > 1;
         if self.mode == Mode::Insert && self.current_tx.is_some() {
-            if self.current_anchor.is_none() {
+            if let Some(current_anchor) = &self.current_anchor {
+                if current_anchor != &newest
+                    && let Some(tx_id) = self.current_tx.take()
+                {
+                    self.update_editor(cx, |_, editor, cx| {
+                        editor.group_until_transaction(tx_id, cx)
+                    });
+                }
+            } else {
                 self.current_anchor = Some(newest);
-            } else if self.current_anchor.as_ref().unwrap() != &newest
-                && let Some(tx_id) = self.current_tx.take()
-            {
-                self.update_editor(cx, |_, editor, cx| {
-                    editor.group_until_transaction(tx_id, cx)
-                });
             }
         } else if self.mode == Mode::Normal && newest.start != newest.end {
             if matches!(newest.goal, SelectionGoal::HorizontalRange { .. }) {

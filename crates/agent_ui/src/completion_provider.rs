@@ -1850,7 +1850,12 @@ pub(crate) fn search_files(
 
         Task::ready(recent_matches.chain(file_matches).collect())
     } else {
-        let worktrees = workspace.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
+        let workspace = workspace.read(cx);
+        let relative_to = workspace
+            .recent_navigation_history_iter(cx)
+            .next()
+            .map(|(path, _)| path.path);
+        let worktrees = workspace.visible_worktrees(cx).collect::<Vec<_>>();
         let include_root_name = worktrees.len() > 1;
         let candidate_sets = worktrees
             .into_iter()
@@ -1871,7 +1876,7 @@ pub(crate) fn search_files(
             fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
                 query.as_str(),
-                &None,
+                &relative_to,
                 false,
                 100,
                 &cancellation_flag,
@@ -2418,5 +2423,82 @@ mod tests {
         let results = task.await;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].session_id, alpha.session_id);
+    }
+
+    #[gpui::test]
+    async fn test_search_files_path_distance_ordering(cx: &mut TestAppContext) {
+        use project::Project;
+        use serde_json::json;
+        use util::{path, rel_path::rel_path};
+        use workspace::AppState;
+
+        let app_state = cx.update(|cx| {
+            let state = AppState::test(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            state
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "dir1": { "a.txt": "" },
+                    "dir2": {
+                        "a.txt": "",
+                        "b.txt": ""
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| workspace::Workspace::test_new(project, window, cx));
+
+        let worktree_id = cx.read(|cx| {
+            let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1);
+            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
+        });
+
+        // Open a file in dir2 to create navigation history.
+        // When searching for "a.txt", dir2/a.txt should be sorted first because
+        // it is closer to the most recently opened file (dir2/b.txt).
+        let b_path = ProjectPath {
+            worktree_id,
+            path: rel_path("dir2/b.txt").into(),
+        };
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path(b_path, None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        let results = cx
+            .update(|_window, cx| {
+                search_files(
+                    "a.txt".into(),
+                    Arc::new(AtomicBool::default()),
+                    &workspace,
+                    cx,
+                )
+            })
+            .await;
+
+        assert_eq!(results.len(), 2, "expected 2 matching files");
+        assert_eq!(
+            results[0].mat.path.as_ref(),
+            rel_path("dir2/a.txt"),
+            "dir2/a.txt should be first because it's closer to the recently opened dir2/b.txt"
+        );
+        assert_eq!(
+            results[1].mat.path.as_ref(),
+            rel_path("dir1/a.txt"),
+            "dir1/a.txt should be second"
+        );
     }
 }
