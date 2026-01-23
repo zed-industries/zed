@@ -6308,8 +6308,7 @@ impl LspStore {
             let scope = snapshot.language_scope_at(offset);
             let language = snapshot.language().cloned();
             let completion_settings = language_settings(cx)
-                .buffer(buffer.read(cx))
-                .language(language.as_ref().map(|language| language.name()))
+                .buffer_snapshot(&snapshot)
                 .get()
                 .completions
                 .clone();
