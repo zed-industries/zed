@@ -778,7 +778,7 @@ mod tests {
         use language::Buffer;
         let text = crate::Rope::from("hello\nworld\nhello\nworld");
         let snapshot = cx
-            .update(|app| Buffer::build_snapshot(text, None, None, app))
+            .update(|app| Buffer::build_snapshot(text, None, None, None, app))
             .await;
 
         let results = search_query.search(&snapshot, None).await;

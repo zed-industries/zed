@@ -22,6 +22,7 @@
 - [Configuration](./ai/configuration.md)
   - [LLM Providers](./ai/llm-providers.md)
   - [Agent Settings](./ai/agent-settings.md)
+  - [Modelines](./modelines.md)
 - [Subscription](./ai/subscription.md)
   - [Models](./ai/models.md)
   - [Plans and Usage](./ai/plans-and-usage.md)
