@@ -1852,8 +1852,8 @@ impl EditorElement {
                                 None
                             }
                         }) {
-                            let is_whitespace_only =
-                                text.as_ref().chars().all(|c| c.is_whitespace());
+                            let is_ascii_whitespace_only =
+                                text.as_ref().chars().all(|c| c.is_ascii_whitespace());
                             let len = text.len();
 
                             let mut font = cursor_row_layout
@@ -1891,7 +1891,7 @@ impl EditorElement {
                                 }],
                                 None,
                             );
-                            if !is_whitespace_only {
+                            if !is_ascii_whitespace_only {
                                 block_width = block_width.max(shaped.width);
                             }
                             block_text = Some(shaped);
