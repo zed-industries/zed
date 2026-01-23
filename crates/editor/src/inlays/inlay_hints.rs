@@ -36,13 +36,14 @@ pub fn inlay_hint_settings(
     snapshot: &MultiBufferSnapshot,
     cx: &mut Context<Editor>,
 ) -> InlayHintSettings {
-    let file = snapshot.file_at(location);
-    let language = snapshot.language_at(location).map(|l| l.name());
-    language_settings(cx)
-        .language(language)
-        .file(file)
-        .get()
-        .inlay_hints
+    if let Some((buffer, offset)) = snapshot.point_to_buffer_offset(location) {
+        language_settings(cx)
+            .buffer_snapshot_at(buffer, offset)
+            .get()
+            .inlay_hints
+    } else {
+        language_settings(cx).get().inlay_hints
+    }
 }
 
 #[derive(Debug)]
