@@ -3837,6 +3837,49 @@ impl AcpThreadView {
                         .take(self.subagent_navigation_stack.len().saturating_sub(1))
                         .map(|(i, breadcrumb)| {
                             let depth = i + 1;
+                            // Get the parent thread for this breadcrumb to check tool call status
+                            let parent_thread = if i == 0 {
+                                self.thread()
+                            } else {
+                                self.subagent_navigation_stack.get(i - 1).map(|b| &b.thread)
+                            };
+                            let (is_running, is_failed) = parent_thread
+                                .and_then(|parent| {
+                                    parent
+                                        .read(cx)
+                                        .tool_call_status_for_subagent(&breadcrumb.thread)
+                                })
+                                .map(|status| {
+                                    let running = matches!(
+                                        status,
+                                        ToolCallStatus::Pending | ToolCallStatus::InProgress
+                                    );
+                                    let failed = matches!(
+                                        status,
+                                        ToolCallStatus::Failed
+                                            | ToolCallStatus::Rejected
+                                            | ToolCallStatus::Canceled
+                                    );
+                                    (running, failed)
+                                })
+                                .unwrap_or((true, false));
+
+                            let status_icon = if is_running {
+                                SpinnerLabel::new()
+                                    .size(LabelSize::Small)
+                                    .into_any_element()
+                            } else if is_failed {
+                                Icon::new(IconName::XCircle)
+                                    .color(Color::Error)
+                                    .size(IconSize::Small)
+                                    .into_any_element()
+                            } else {
+                                Icon::new(IconName::Check)
+                                    .color(Color::Success)
+                                    .size(IconSize::Small)
+                                    .into_any_element()
+                            };
+
                             h_flex()
                                 .id(SharedString::from(format!("subagent-breadcrumb-{}", depth)))
                                 .w_full()
@@ -3847,11 +3890,7 @@ impl AcpThreadView {
                                 .border_b_1()
                                 .border_color(cx.theme().colors().border)
                                 .cursor_pointer()
-                                .child(
-                                    Icon::new(IconName::ArrowRight)
-                                        .color(Color::Muted)
-                                        .size(IconSize::XSmall),
-                                )
+                                .child(status_icon)
                                 .child(Label::new(breadcrumb.title.clone()).size(LabelSize::Small))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.navigate_to_ancestor(depth, cx);
@@ -8741,14 +8780,21 @@ impl Render for AcpThreadView {
                         .vertical_scrollbar_for(&self.list_state, window, cx)
                         .into_any()
                     } else if self.is_viewing_subagent() {
-                        this.child(
-                            v_flex()
-                                .size_full()
-                                .items_center()
-                                .justify_center()
-                                .child(SpinnerLabel::new().size(LabelSize::Large)),
-                        )
-                        .into_any()
+                        // Subagent has no entries yet - show a subtle loading indicator
+                        // The breadcrumb already shows the spinner, so this is secondary
+                        if self.is_displayed_thread_generating(cx) {
+                            this.child(
+                                v_flex()
+                                    .size_full()
+                                    .items_center()
+                                    .pt_4()
+                                    .child(SpinnerLabel::new().size(LabelSize::Small)),
+                            )
+                            .into_any()
+                        } else {
+                            // Subagent completed with no visible entries
+                            this.into_any()
+                        }
                     } else {
                         this.child(self.render_recent_history(cx)).into_any()
                     }
