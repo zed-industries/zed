@@ -346,7 +346,7 @@ impl TestServer {
             Project::init(&client, cx);
             client::init(&client, cx);
             editor::init(cx);
-            workspace::init(app_state.clone(), cx);
+            workspace::init(cx);
             call::init(client.clone(), user_store.clone(), cx);
             channel::init(&client, user_store.clone(), cx);
             notifications::init(client.clone(), user_store, cx);

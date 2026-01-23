@@ -645,7 +645,7 @@ fn main() {
         diagnostics::init(cx);
 
         audio::init(cx);
-        workspace::init(app_state.clone(), cx);
+        workspace::init(cx);
         ui_prompt::init(cx);
 
         go_to_line::init(cx);

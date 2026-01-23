@@ -1607,7 +1607,7 @@ mod tests {
 
         cx.update(|cx| {
             editor::init(cx);
-            workspace::init(app_state.clone(), cx);
+            workspace::init(cx);
         });
 
         let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
@@ -1777,7 +1777,7 @@ mod tests {
 
         cx.update(|cx| {
             editor::init(cx);
-            workspace::init(app_state.clone(), cx);
+            workspace::init(cx);
         });
 
         app_state
@@ -2883,7 +2883,7 @@ mod tests {
 
         cx.update(|cx| {
             editor::init(cx);
-            workspace::init(app_state.clone(), cx);
+            workspace::init(cx);
         });
 
         app_state
