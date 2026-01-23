@@ -316,9 +316,9 @@ impl LanguageSettings {
         settings
     }
 
-    pub fn resolve<'a, 'b>(
+    pub fn resolve<'a>(
         buffer: Option<&'a Buffer>,
-        override_language: Option<&'b LanguageName>,
+        override_language: Option<&LanguageName>,
         cx: &'a App,
     ) -> Cow<'a, LanguageSettings> {
         let Some(buffer) = buffer else {

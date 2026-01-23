@@ -309,7 +309,6 @@ async fn test_external_editorconfig_support(cx: &mut gpui::TestAppContext) {
     let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
 
     cx.executor().run_until_parked();
-
     let settings_for = async |path: &str, cx: &mut TestAppContext| -> LanguageSettings {
         let buffer = project
             .update(cx, |project, cx| {
@@ -367,8 +366,7 @@ async fn test_internal_editorconfig_root_stops_traversal(cx: &mut gpui::TestAppC
         .await
         .unwrap();
     cx.update(|cx| {
-        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx).into_owned();
-
+        let settings = LanguageSettings::for_buffer(buffer.read(cx), cx).into_owned();
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(2));
     });
 }
@@ -405,8 +403,9 @@ async fn test_external_editorconfig_root_stops_traversal(cx: &mut gpui::TestAppC
         })
         .await
         .unwrap();
+
     cx.update(|cx| {
-        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
         // file.rs gets indent_size = 2 from worktree's root config, NOT 99 from parent
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(2));
@@ -447,8 +446,9 @@ async fn test_external_editorconfig_root_in_parent_stops_traversal(cx: &mut gpui
         })
         .await
         .unwrap();
+
     cx.update(|cx| {
-        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
         // file.rs gets indent_size = 4 from parent's root config, NOT 99 from grandparent
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(4));
@@ -501,8 +501,9 @@ async fn test_external_editorconfig_shared_across_worktrees(cx: &mut gpui::TestA
             })
             .await
             .unwrap();
+
         cx.update(|cx| {
-            let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx).into_owned();
+            let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
             // Both worktrees should get indent_size = 5 from shared parent .editorconfig
             assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
@@ -543,8 +544,9 @@ async fn test_external_editorconfig_not_loaded_without_internal_config(
         })
         .await
         .unwrap();
+
     cx.update(|cx| {
-        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
         // file.rs should have default tab_size = 4, NOT 99 from parent's external .editorconfig
         // because without an internal .editorconfig, external configs are not loaded
@@ -584,8 +586,9 @@ async fn test_external_editorconfig_modification_triggers_refresh(cx: &mut gpui:
         })
         .await
         .unwrap();
+
     cx.update(|cx| {
-        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
         // Test initial settings: tab_size = 4 from parent's external .editorconfig
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(4));
@@ -600,8 +603,15 @@ async fn test_external_editorconfig_modification_triggers_refresh(cx: &mut gpui:
 
     cx.executor().run_until_parked();
 
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("file.rs")), cx)
+        })
+        .await
+        .unwrap();
+
     cx.update(|cx| {
-        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
         // Test settings updated: tab_size = 8
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(8));
@@ -636,15 +646,16 @@ async fn test_adding_worktree_discovers_external_editorconfigs(cx: &mut gpui::Te
 
     cx.executor().run_until_parked();
 
-    let existing_worktree = cx.update(|cx| project.read(cx).worktrees(cx).next().unwrap());
-    let buffer_existing = project
+    let buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((existing_worktree.read(cx).id(), rel_path("file.rs")), cx)
+            let id = project.worktrees(cx).next().unwrap().read(cx).id();
+            project.open_buffer((id, rel_path("file.rs")), cx)
         })
         .await
         .unwrap();
+
     cx.update(|cx| {
-        let settings = LanguageSettings::for_buffer(&buffer_existing.read(cx), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx).into_owned();
 
         // Test existing worktree has tab_size = 7
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(7));
@@ -659,14 +670,15 @@ async fn test_adding_worktree_discovers_external_editorconfigs(cx: &mut gpui::Te
 
     cx.executor().run_until_parked();
 
-    let buffer_new = project
+    let buffer = project
         .update(cx, |project, cx| {
             project.open_buffer((new_worktree.read(cx).id(), rel_path("file.rs")), cx)
         })
         .await
         .unwrap();
+
     cx.update(|cx| {
-        let settings = LanguageSettings::for_buffer(&buffer_new.read(cx), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
         // Verify new worktree also has tab_size = 7 from shared parent editorconfig
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(7));
@@ -807,14 +819,15 @@ async fn test_shared_external_editorconfig_cleanup_with_multiple_worktrees(
         assert_eq!(watcher_paths.len(), 1);
     });
 
-    let buffer_b = project
+    let buffer = project
         .update(cx, |project, cx| {
             project.open_buffer((worktree_b.read(cx).id(), rel_path("file.rs")), cx)
         })
         .await
         .unwrap();
+
     cx.update(|cx| {
-        let settings = LanguageSettings::for_buffer(&buffer_b.read(cx), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
         // Test worktree_b still has correct settings
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
