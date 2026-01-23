@@ -1071,36 +1071,18 @@ impl AcpThreadView {
         !self.subagent_navigation_stack.is_empty()
     }
 
-    /// Returns (is_running, is_failed) for the currently displayed subagent's tool call.
-    /// Returns (true, false) if viewing the root thread or status cannot be determined.
+    /// Returns (is_running, is_failed) for the currently displayed subagent.
+    /// Checks the subagent thread's own status (generating or has in-progress tool calls).
     fn displayed_subagent_status(&self, cx: &App) -> (bool, bool) {
         let Some(current) = self.subagent_navigation_stack.last() else {
             return (false, false);
         };
-        let parent_thread = if self.subagent_navigation_stack.len() > 1 {
-            self.subagent_navigation_stack
-                .get(self.subagent_navigation_stack.len() - 2)
-                .map(|b| &b.thread)
-        } else {
-            self.thread()
-        };
 
-        parent_thread
-            .and_then(|parent| {
-                parent
-                    .read(cx)
-                    .tool_call_status_for_subagent(&current.thread)
-            })
-            .map(|status| {
-                let is_running =
-                    matches!(status, ToolCallStatus::Pending | ToolCallStatus::InProgress);
-                let is_failed = matches!(
-                    status,
-                    ToolCallStatus::Failed | ToolCallStatus::Rejected | ToolCallStatus::Canceled
-                );
-                (is_running, is_failed)
-            })
-            .unwrap_or((true, false))
+        let thread = current.thread.read(cx);
+        let is_running =
+            thread.status() == ThreadStatus::Generating || thread.has_in_progress_tool_calls();
+        let is_failed = thread.has_failed_tool_calls();
+        (is_running, is_failed)
     }
 
     /// Returns true if the displayed thread is still generating content.
