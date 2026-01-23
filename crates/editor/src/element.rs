@@ -1321,9 +1321,12 @@ impl EditorElement {
                     });
             }
 
+            let anchor = position_map
+                .snapshot
+                .display_point_to_anchor(valid_point, Bias::Left);
             Some(PhantomDiffReviewIndicator {
-                start_row: valid_point.row(),
-                end_row: valid_point.row(),
+                start: anchor,
+                end: anchor,
                 is_active: is_visible,
             })
         } else {
@@ -1338,7 +1341,11 @@ impl EditorElement {
 
         // Don't show breakpoint indicator when diff review indicator is active on this row
         let is_on_diff_review_button_row = diff_review_indicator.is_some_and(|indicator| {
-            indicator.is_active && indicator.start_row == valid_point.row()
+            let start_row = indicator
+                .start
+                .to_display_point(&position_map.snapshot.display_snapshot)
+                .row();
+            indicator.is_active && start_row == valid_point.row()
         });
 
         let breakpoint_indicator = if gutter_hovered && !is_on_diff_review_button_row {
@@ -3106,6 +3113,7 @@ impl EditorElement {
         &self,
         range: Range<DisplayRow>,
         row_infos: &[RowInfo],
+        snapshot: &EditorSnapshot,
         cx: &App,
     ) -> Option<(DisplayRow, Option<u32>)> {
         if !cx.has_flag::<DiffReviewFeatureFlag>() {
@@ -3122,7 +3130,10 @@ impl EditorElement {
             return None;
         }
 
-        let display_row = indicator.start_row;
+        let display_row = indicator
+            .start
+            .to_display_point(&snapshot.display_snapshot)
+            .row();
         let row_index = (display_row.0.saturating_sub(range.start.0)) as usize;
 
         let row_info = row_infos.get(row_index);
@@ -9697,7 +9708,7 @@ impl Element for EditorElement {
                             type_id: None,
                         };
                         for row_num in start_row..=end_row {
-                            highlighted_rows.entry(DisplayRow(row_num)).or_insert(drag_highlight.clone());
+                            highlighted_rows.entry(DisplayRow(row_num)).or_insert(drag_highlight);
                         }
                     }
 
@@ -10469,7 +10480,7 @@ impl Element for EditorElement {
                         + 1;
 
                     let diff_review_button = self
-                        .should_render_diff_review_button(start_row..end_row, &row_infos, cx)
+                        .should_render_diff_review_button(start_row..end_row, &row_infos, &snapshot, cx)
                         .map(|(display_row, buffer_row)| {
                             let is_wide = max_line_number_length
                                 >= EditorSettings::get_global(cx).gutter.min_line_number_digits

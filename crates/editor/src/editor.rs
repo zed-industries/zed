@@ -1025,16 +1025,15 @@ struct PhantomBreakpointIndicator {
 /// in diff view mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PhantomDiffReviewIndicator {
-    /// The starting row of the selection (or the only row if not dragging).
-    pub start_row: DisplayRow,
-    /// The ending row of the selection. Equal to start_row for single-line selection.
-    pub end_row: DisplayRow,
+    /// The starting anchor of the selection (or the only row if not dragging).
+    pub start: Anchor,
+    /// The ending anchor of the selection. Equal to start_anchor for single-line selection.
+    pub end: Anchor,
     /// There's a small debounce between hovering over the line and showing the indicator.
     /// We don't want to show the indicator when moving the mouse from editor to e.g. project panel.
     pub is_active: bool,
 }
 
-/// Drag state when selecting multiple lines
 #[derive(Clone, Debug)]
 pub(crate) struct DiffReviewDragState {
     pub start_anchor: Anchor,
@@ -1042,7 +1041,6 @@ pub(crate) struct DiffReviewDragState {
 }
 
 impl DiffReviewDragState {
-    /// Returns the display row range in sorted order (min..=max).
     pub fn row_range(&self, snapshot: &DisplaySnapshot) -> std::ops::RangeInclusive<DisplayRow> {
         let start = self.start_anchor.to_display_point(snapshot).row();
         let current = self.current_anchor.to_display_point(snapshot).row();
@@ -1069,7 +1067,7 @@ pub struct StoredReviewComment {
     /// The comment text entered by the user.
     pub comment: String,
     /// Anchors for the code range being reviewed.
-    pub anchor_range: Range<Anchor>,
+    pub range: Range<Anchor>,
     /// Timestamp when the comment was created (for chronological ordering).
     pub created_at: Instant,
     /// Whether this comment is currently being edited inline.
@@ -1081,7 +1079,7 @@ impl StoredReviewComment {
         Self {
             id,
             comment,
-            anchor_range,
+            range: anchor_range,
             created_at: Instant::now(),
             is_editing: false,
         }
@@ -1276,7 +1274,6 @@ pub struct Editor {
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
     pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
-    /// Tracks an active drag operation for selecting multiple lines for diff review.
     pub(crate) diff_review_drag_state: Option<DiffReviewDragState>,
     /// Active diff review overlays. Multiple overlays can be open simultaneously
     /// when hunks have comments stored.
@@ -21128,7 +21125,7 @@ impl Editor {
         let snapshot = self.snapshot(window, cx);
         let point = snapshot
             .display_snapshot
-            .display_point_to_point(DisplayPoint::new(display_row, 0), Bias::Left);
+            .display_point_to_point(display_row.as_display_point(), Bias::Left);
         let anchor = snapshot.buffer_snapshot().anchor_before(point);
         if let Some(drag_state) = &mut self.diff_review_drag_state {
             drag_state.current_anchor = anchor;
@@ -21136,7 +21133,6 @@ impl Editor {
         }
     }
 
-    /// Ends a diff review drag operation and shows the overlay for the selected range.
     pub fn end_diff_review_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(drag_state) = self.diff_review_drag_state.take() {
             let snapshot = self.snapshot(window, cx);
@@ -21146,7 +21142,6 @@ impl Editor {
         cx.notify();
     }
 
-    /// Cancels a diff review drag operation without showing the overlay.
     pub fn cancel_diff_review_drag(&mut self, cx: &mut Context<Self>) {
         self.diff_review_drag_state = None;
         cx.notify();
@@ -21189,11 +21184,10 @@ impl Editor {
         // Convert display rows to multibuffer points
         let start_point = editor_snapshot
             .display_snapshot
-            .display_point_to_point(DisplayPoint::new(start, 0), Bias::Left);
-        let end_display_point = DisplayPoint::new(end, 0);
+            .display_point_to_point(start.as_display_point(), Bias::Left);
         let end_point = editor_snapshot
             .display_snapshot
-            .display_point_to_point(end_display_point, Bias::Left);
+            .display_point_to_point(end.as_display_point(), Bias::Left);
         let end_multi_buffer_row = MultiBufferRow(end_point.row);
 
         // Create anchor range for the selected lines (start of first line to end of last line)
@@ -21644,8 +21638,8 @@ impl Editor {
         // Also clean up individual comments with invalid anchor ranges
         for (_, comments) in &mut self.stored_review_comments {
             comments.retain(|comment| {
-                comment.anchor_range.start.is_valid(&snapshot)
-                    && comment.anchor_range.end.is_valid(&snapshot)
+                comment.range.start.is_valid(&snapshot)
+                    && comment.range.end.is_valid(&snapshot)
             });
         }
 
