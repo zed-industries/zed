@@ -23,7 +23,7 @@ use workspace::{
 
 /// Registry IDs for built-in agents that Zed already provides first-class support for.
 /// These are filtered out of the ACP Agent Registry UI to avoid showing duplicates.
-const BUILT_IN_REGISTRY_IDS: [&str; 3] = ["claude-acp", "codex-acp", "gemini"];
+const BUILT_IN_REGISTRY_IDS: [&str; 4] = ["claude-acp", "claude-code-acp", "codex-acp", "gemini"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RegistryFilter {
