@@ -1027,10 +1027,28 @@ struct PhantomBreakpointIndicator {
 /// in diff view mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PhantomDiffReviewIndicator {
-    pub display_row: DisplayRow,
+    /// The starting anchor of the selection (or the only row if not dragging).
+    pub start: Anchor,
+    /// The ending anchor of the selection. Equal to start_anchor for single-line selection.
+    pub end: Anchor,
     /// There's a small debounce between hovering over the line and showing the indicator.
     /// We don't want to show the indicator when moving the mouse from editor to e.g. project panel.
     pub is_active: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DiffReviewDragState {
+    pub start_anchor: Anchor,
+    pub current_anchor: Anchor,
+}
+
+impl DiffReviewDragState {
+    pub fn row_range(&self, snapshot: &DisplaySnapshot) -> std::ops::RangeInclusive<DisplayRow> {
+        let start = self.start_anchor.to_display_point(snapshot).row();
+        let current = self.current_anchor.to_display_point(snapshot).row();
+
+        (start..=current).sorted()
+    }
 }
 
 /// Identifies a specific hunk in the diff buffer.
@@ -1050,10 +1068,8 @@ pub struct StoredReviewComment {
     pub id: usize,
     /// The comment text entered by the user.
     pub comment: String,
-    /// The display row where this comment was added (within the hunk).
-    pub display_row: DisplayRow,
     /// Anchors for the code range being reviewed.
-    pub anchor_range: Range<Anchor>,
+    pub range: Range<Anchor>,
     /// Timestamp when the comment was created (for chronological ordering).
     pub created_at: Instant,
     /// Whether this comment is currently being edited inline.
@@ -1061,17 +1077,11 @@ pub struct StoredReviewComment {
 }
 
 impl StoredReviewComment {
-    pub fn new(
-        id: usize,
-        comment: String,
-        display_row: DisplayRow,
-        anchor_range: Range<Anchor>,
-    ) -> Self {
+    pub fn new(id: usize, comment: String, anchor_range: Range<Anchor>) -> Self {
         Self {
             id,
             comment,
-            display_row,
-            anchor_range,
+            range: anchor_range,
             created_at: Instant::now(),
             is_editing: false,
         }
@@ -1080,8 +1090,7 @@ impl StoredReviewComment {
 
 /// Represents an active diff review overlay that appears when clicking the "Add Review" button.
 pub(crate) struct DiffReviewOverlay {
-    /// The display row where the overlay is anchored.
-    pub display_row: DisplayRow,
+    pub anchor_range: Range<Anchor>,
     /// The block ID for the overlay.
     pub block_id: CustomBlockId,
     /// The editor entity for the review input.
@@ -1270,6 +1279,7 @@ pub struct Editor {
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
     pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
+    pub(crate) diff_review_drag_state: Option<DiffReviewDragState>,
     /// Active diff review overlays. Multiple overlays can be open simultaneously
     /// when hunks have comments stored.
     pub(crate) diff_review_overlays: Vec<DiffReviewOverlay>,
@@ -2457,6 +2467,7 @@ impl Editor {
             breakpoint_store,
             gutter_breakpoint_indicator: (None, None),
             gutter_diff_review_indicator: (None, None),
+            diff_review_drag_state: None,
             diff_review_overlays: Vec::new(),
             stored_review_comments: Vec::new(),
             next_review_comment_id: 0,
@@ -4385,6 +4396,10 @@ impl Editor {
         dismissed |= self.mouse_context_menu.take().is_some();
         dismissed |= is_user_requested && self.discard_edit_prediction(true, cx);
         dismissed |= self.snippet_stack.pop().is_some();
+        if self.diff_review_drag_state.is_some() {
+            self.cancel_diff_review_drag(cx);
+            dismissed = true;
+        }
         if !self.diff_review_overlays.is_empty() {
             self.dismiss_all_diff_review_overlays(cx);
             dismissed = true;
@@ -21111,10 +21126,65 @@ impl Editor {
                     .border_color(icon_color.opacity(0.5))
             })
             .child(Icon::new(IconName::Plus).size(IconSize::Small))
-            .tooltip(Tooltip::text("Add Review"))
-            .on_click(cx.listener(move |editor, _event: &ClickEvent, window, cx| {
-                editor.show_diff_review_overlay(display_row, window, cx);
-            }))
+            .tooltip(Tooltip::text("Add Review (drag to select multiple lines)"))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(move |editor, _event: &gpui::MouseDownEvent, window, cx| {
+                    editor.start_diff_review_drag(display_row, window, cx);
+                }),
+            )
+    }
+
+    pub fn start_diff_review_drag(
+        &mut self,
+        display_row: DisplayRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.snapshot(window, cx);
+        let point = snapshot
+            .display_snapshot
+            .display_point_to_point(DisplayPoint::new(display_row, 0), Bias::Left);
+        let anchor = snapshot.buffer_snapshot().anchor_before(point);
+        self.diff_review_drag_state = Some(DiffReviewDragState {
+            start_anchor: anchor,
+            current_anchor: anchor,
+        });
+        cx.notify();
+    }
+
+    pub fn update_diff_review_drag(
+        &mut self,
+        display_row: DisplayRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.diff_review_drag_state.is_none() {
+            return;
+        }
+        let snapshot = self.snapshot(window, cx);
+        let point = snapshot
+            .display_snapshot
+            .display_point_to_point(display_row.as_display_point(), Bias::Left);
+        let anchor = snapshot.buffer_snapshot().anchor_before(point);
+        if let Some(drag_state) = &mut self.diff_review_drag_state {
+            drag_state.current_anchor = anchor;
+            cx.notify();
+        }
+    }
+
+    pub fn end_diff_review_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(drag_state) = self.diff_review_drag_state.take() {
+            let snapshot = self.snapshot(window, cx);
+            let range = drag_state.row_range(&snapshot.display_snapshot);
+            self.show_diff_review_overlay(*range.start()..*range.end(), window, cx);
+        }
+        cx.notify();
+    }
+
+    pub fn cancel_diff_review_drag(&mut self, cx: &mut Context<Self>) {
+        self.diff_review_drag_state = None;
+        cx.notify();
     }
 
     /// Calculates the appropriate block height for the diff review overlay.
@@ -21142,24 +21212,38 @@ impl Editor {
 
     pub fn show_diff_review_overlay(
         &mut self,
-        display_row: DisplayRow,
+        display_range: Range<DisplayRow>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Check if there's already an overlay for the same hunk - if so, just focus it
+        let Range { start, end } = display_range.sorted();
+
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let editor_snapshot = self.snapshot(window, cx);
-        let display_point = DisplayPoint::new(display_row, 0);
-        let buffer_point = editor_snapshot
+
+        // Convert display rows to multibuffer points
+        let start_point = editor_snapshot
             .display_snapshot
-            .display_point_to_point(display_point, Bias::Left);
+            .display_point_to_point(start.as_display_point(), Bias::Left);
+        let end_point = editor_snapshot
+            .display_snapshot
+            .display_point_to_point(end.as_display_point(), Bias::Left);
+        let end_multi_buffer_row = MultiBufferRow(end_point.row);
+
+        // Create anchor range for the selected lines (start of first line to end of last line)
+        let line_end = Point::new(
+            end_point.row,
+            buffer_snapshot.line_len(end_multi_buffer_row),
+        );
+        let anchor_range =
+            buffer_snapshot.anchor_after(start_point)..buffer_snapshot.anchor_before(line_end);
 
         // Compute the hunk key for this display row
         let file_path = buffer_snapshot
-            .file_at(Point::new(buffer_point.row, 0))
+            .file_at(start_point)
             .map(|file: &Arc<dyn language::File>| file.path().clone())
             .unwrap_or_else(|| Arc::from(util::rel_path::RelPath::empty()));
-        let hunk_start_anchor = buffer_snapshot.anchor_before(Point::new(buffer_point.row, 0));
+        let hunk_start_anchor = buffer_snapshot.anchor_before(start_point);
         let new_hunk_key = DiffHunkKey {
             file_path,
             hunk_start_anchor,
@@ -21187,9 +21271,10 @@ impl Editor {
                 .map(|user| user.avatar_uri.clone())
         });
 
-        // Create anchor at the end of the row so the block appears immediately below it
-        let line_len = buffer_snapshot.line_len(MultiBufferRow(buffer_point.row));
-        let anchor = buffer_snapshot.anchor_after(Point::new(buffer_point.row, line_len));
+        // Create anchor at the end of the last row so the block appears immediately below it
+        // Use multibuffer coordinates for anchor creation
+        let line_len = buffer_snapshot.line_len(end_multi_buffer_row);
+        let anchor = buffer_snapshot.anchor_after(Point::new(end_multi_buffer_row.0, line_len));
 
         // Use the hunk key we already computed
         let hunk_key = new_hunk_key;
@@ -21245,7 +21330,7 @@ impl Editor {
         };
 
         self.diff_review_overlays.push(DiffReviewOverlay {
-            display_row,
+            anchor_range,
             block_id,
             prompt_editor: prompt_editor.clone(),
             hunk_key,
@@ -21383,45 +21468,15 @@ impl Editor {
         };
         let overlay = &self.diff_review_overlays[overlay_index];
 
-        // Get the comment text from the prompt editor
         let comment_text = overlay.prompt_editor.read(cx).text(cx).trim().to_string();
-
-        // Don't submit if the comment is empty
         if comment_text.is_empty() {
             return;
         }
 
-        // Get the display row and hunk key
-        let display_row = overlay.display_row;
+        let anchor_range = overlay.anchor_range.clone();
         let hunk_key = overlay.hunk_key.clone();
 
-        // Convert to buffer position for anchors
-        let snapshot = self.snapshot(window, cx);
-        let display_point = DisplayPoint::new(display_row, 0);
-        let buffer_point = snapshot
-            .display_snapshot
-            .display_point_to_point(display_point, Bias::Left);
-
-        // Get the line range
-        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let line_start = Point::new(buffer_point.row, 0);
-        let line_end = Point::new(
-            buffer_point.row,
-            buffer_snapshot.line_len(MultiBufferRow(buffer_point.row)),
-        );
-
-        // Create anchors for the selection
-        let anchor_start = buffer_snapshot.anchor_after(line_start);
-        let anchor_end = buffer_snapshot.anchor_before(line_end);
-
-        // Store the comment locally
-        self.add_review_comment(
-            hunk_key.clone(),
-            comment_text,
-            display_row,
-            anchor_start..anchor_end,
-            cx,
-        );
+        self.add_review_comment(hunk_key.clone(), comment_text, anchor_range, cx);
 
         // Clear the prompt editor but keep the overlay open
         if let Some(overlay) = self.diff_review_overlays.get(overlay_index) {
@@ -21444,11 +21499,22 @@ impl Editor {
             .map(|overlay| &overlay.prompt_editor)
     }
 
-    /// Returns the display row for the first diff review overlay, if one is active.
-    pub fn diff_review_display_row(&self) -> Option<DisplayRow> {
-        self.diff_review_overlays
-            .first()
-            .map(|overlay| overlay.display_row)
+    /// Returns the line range for the first diff review overlay, if one is active.
+    /// Returns (start_row, end_row) as physical line numbers in the underlying file.
+    pub fn diff_review_line_range(&self, cx: &App) -> Option<(u32, u32)> {
+        let overlay = self.diff_review_overlays.first()?;
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let start_point = overlay.anchor_range.start.to_point(&snapshot);
+        let end_point = overlay.anchor_range.end.to_point(&snapshot);
+        let start_row = snapshot
+            .point_to_buffer_point(start_point)
+            .map(|(_, p, _)| p.row)
+            .unwrap_or(start_point.row);
+        let end_row = snapshot
+            .point_to_buffer_point(end_point)
+            .map(|(_, p, _)| p.row)
+            .unwrap_or(end_point.row);
+        Some((start_row, end_row))
     }
 
     /// Sets whether the comments section is expanded in the diff review overlay.
@@ -21507,14 +21573,13 @@ impl Editor {
         &mut self,
         hunk_key: DiffHunkKey,
         comment: String,
-        display_row: DisplayRow,
         anchor_range: Range<Anchor>,
         cx: &mut Context<Self>,
     ) -> usize {
         let id = self.next_review_comment_id;
         self.next_review_comment_id += 1;
 
-        let stored_comment = StoredReviewComment::new(id, comment, display_row, anchor_range);
+        let stored_comment = StoredReviewComment::new(id, comment, anchor_range);
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let key_point = hunk_key.hunk_start_anchor.to_point(&snapshot);
@@ -21616,8 +21681,7 @@ impl Editor {
         // Also clean up individual comments with invalid anchor ranges
         for (_, comments) in &mut self.stored_review_comments {
             comments.retain(|comment| {
-                comment.anchor_range.start.is_valid(&snapshot)
-                    && comment.anchor_range.end.is_valid(&snapshot)
+                comment.range.start.is_valid(&snapshot) && comment.range.end.is_valid(&snapshot)
             });
         }
 
@@ -21901,33 +21965,74 @@ impl Editor {
         editor_handle: &WeakEntity<Editor>,
         cx: &mut BlockContext,
     ) -> AnyElement {
+        fn format_line_ranges(ranges: &[(u32, u32)]) -> Option<String> {
+            if ranges.is_empty() {
+                return None;
+            }
+            let formatted: Vec<String> = ranges
+                .iter()
+                .map(|(start, end)| {
+                    let start_line = start + 1;
+                    let end_line = end + 1;
+                    if start_line == end_line {
+                        format!("Line {start_line}")
+                    } else {
+                        format!("Lines {start_line}-{end_line}")
+                    }
+                })
+                .collect();
+            // Don't show label for single line in single excerpt
+            if ranges.len() == 1 && ranges[0].0 == ranges[0].1 {
+                return None;
+            }
+            Some(formatted.join(" ⋯ "))
+        }
+
         let theme = cx.theme();
         let colors = theme.colors();
 
-        // Get stored comments, expanded state, inline editors, and user avatar from the editor
-        let (comments, comments_expanded, inline_editors, user_avatar_uri) = editor_handle
-            .upgrade()
-            .map(|editor| {
-                let editor = editor.read(cx);
-                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                let comments = editor.comments_for_hunk(hunk_key, &snapshot).to_vec();
-                let snapshot = editor.buffer.read(cx).snapshot(cx);
-                let (expanded, editors, avatar_uri) = editor
-                    .diff_review_overlays
-                    .iter()
-                    .find(|overlay| Editor::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot))
-                    .as_ref()
-                    .map(|o| {
-                        (
-                            o.comments_expanded,
-                            o.inline_edit_editors.clone(),
-                            o.user_avatar_uri.clone(),
-                        )
-                    })
-                    .unwrap_or((true, HashMap::default(), None));
-                (comments, expanded, editors, avatar_uri)
-            })
-            .unwrap_or((Vec::new(), true, HashMap::default(), None));
+        let (comments, comments_expanded, inline_editors, user_avatar_uri, line_ranges) =
+            editor_handle
+                .upgrade()
+                .map(|editor| {
+                    let editor = editor.read(cx);
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    let comments = editor.comments_for_hunk(hunk_key, &snapshot).to_vec();
+                    let (expanded, editors, avatar_uri, line_ranges) = editor
+                        .diff_review_overlays
+                        .iter()
+                        .find(|overlay| {
+                            Editor::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot)
+                        })
+                        .map(|o| {
+                            let start_point = o.anchor_range.start.to_point(&snapshot);
+                            let end_point = o.anchor_range.end.to_point(&snapshot);
+                            // Get line ranges per excerpt to detect discontinuities
+                            let buffer_ranges =
+                                snapshot.range_to_buffer_ranges(start_point..end_point);
+                            let ranges: Vec<(u32, u32)> = buffer_ranges
+                                .iter()
+                                .map(|(buffer, range, _)| {
+                                    let start = buffer.offset_to_point(range.start.0).row;
+                                    let end = buffer.offset_to_point(range.end.0).row;
+                                    (start, end)
+                                })
+                                .collect();
+                            (
+                                o.comments_expanded,
+                                o.inline_edit_editors.clone(),
+                                o.user_avatar_uri.clone(),
+                                if ranges.is_empty() {
+                                    None
+                                } else {
+                                    Some(ranges)
+                                },
+                            )
+                        })
+                        .unwrap_or((true, HashMap::default(), None, None));
+                    (comments, expanded, editors, avatar_uri, line_ranges)
+                })
+                .unwrap_or((Vec::new(), true, HashMap::default(), None, None));
 
         let comment_count = comments.len();
         let avatar_size = px(20.);
@@ -21941,6 +22046,20 @@ impl Editor {
             .px_2()
             .pb_2()
             .gap_2()
+            // Line range indicator (only shown for multi-line selections or multiple excerpts)
+            .when_some(line_ranges, |el, ranges| {
+                let label = format_line_ranges(&ranges);
+                if let Some(label) = label {
+                    el.child(
+                        h_flex()
+                            .w_full()
+                            .px_2()
+                            .child(Label::new(label).size(LabelSize::Small).color(Color::Muted)),
+                    )
+                } else {
+                    el
+                }
+            })
             // Top row: editable input with user's avatar
             .child(
                 h_flex()

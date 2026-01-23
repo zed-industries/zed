@@ -869,6 +869,7 @@ dependencies = [
  "html_to_markdown",
  "http_client",
  "language",
+ "multi_buffer",
  "pretty_assertions",
  "project",
  "prompt_store",

@@ -30564,16 +30564,9 @@ fn add_test_comment(
     editor: &mut Editor,
     key: DiffHunkKey,
     comment: &str,
-    display_row: u32,
     cx: &mut Context<Editor>,
 ) -> usize {
-    editor.add_review_comment(
-        key,
-        comment.to_string(),
-        DisplayRow(display_row),
-        Anchor::min()..Anchor::max(),
-        cx,
-    )
+    editor.add_review_comment(key, comment.to_string(), Anchor::min()..Anchor::max(), cx)
 }
 
 #[gpui::test]
@@ -30585,7 +30578,7 @@ fn test_review_comment_add_to_hunk(cx: &mut TestAppContext) {
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
         let key = test_hunk_key("");
 
-        let id = add_test_comment(editor, key.clone(), "Test comment", 0, cx);
+        let id = add_test_comment(editor, key.clone(), "Test comment", cx);
 
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         assert_eq!(editor.total_review_comment_count(), 1);
@@ -30611,8 +30604,8 @@ fn test_review_comments_are_per_hunk(cx: &mut TestAppContext) {
         let key1 = test_hunk_key_with_anchor("file1.rs", anchor1);
         let key2 = test_hunk_key_with_anchor("file2.rs", anchor2);
 
-        add_test_comment(editor, key1.clone(), "Comment for file1", 0, cx);
-        add_test_comment(editor, key2.clone(), "Comment for file2", 10, cx);
+        add_test_comment(editor, key1.clone(), "Comment for file1", cx);
+        add_test_comment(editor, key2.clone(), "Comment for file2", cx);
 
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         assert_eq!(editor.total_review_comment_count(), 2);
@@ -30639,7 +30632,7 @@ fn test_review_comment_remove(cx: &mut TestAppContext) {
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
         let key = test_hunk_key("");
 
-        let id = add_test_comment(editor, key, "To be removed", 0, cx);
+        let id = add_test_comment(editor, key, "To be removed", cx);
 
         assert_eq!(editor.total_review_comment_count(), 1);
 
@@ -30662,7 +30655,7 @@ fn test_review_comment_update(cx: &mut TestAppContext) {
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
         let key = test_hunk_key("");
 
-        let id = add_test_comment(editor, key.clone(), "Original text", 0, cx);
+        let id = add_test_comment(editor, key.clone(), "Original text", cx);
 
         let updated = editor.update_review_comment(id, "Updated text".to_string(), cx);
         assert!(updated);
@@ -30687,9 +30680,9 @@ fn test_review_comment_take_all(cx: &mut TestAppContext) {
         let key1 = test_hunk_key_with_anchor("file1.rs", anchor1);
         let key2 = test_hunk_key_with_anchor("file2.rs", anchor2);
 
-        let id1 = add_test_comment(editor, key1.clone(), "Comment 1", 0, cx);
-        let id2 = add_test_comment(editor, key1.clone(), "Comment 2", 1, cx);
-        let id3 = add_test_comment(editor, key2.clone(), "Comment 3", 10, cx);
+        let id1 = add_test_comment(editor, key1.clone(), "Comment 1", cx);
+        let id2 = add_test_comment(editor, key1.clone(), "Comment 2", cx);
+        let id3 = add_test_comment(editor, key2.clone(), "Comment 3", cx);
 
         // IDs should be sequential starting from 0
         assert_eq!(id1, 0);
@@ -30715,8 +30708,8 @@ fn test_review_comment_take_all(cx: &mut TestAppContext) {
 
         // After taking all comments, ID counter should reset
         // New comments should get IDs starting from 0 again
-        let new_id1 = add_test_comment(editor, key1, "New Comment 1", 0, cx);
-        let new_id2 = add_test_comment(editor, key2, "New Comment 2", 0, cx);
+        let new_id1 = add_test_comment(editor, key1, "New Comment 1", cx);
+        let new_id2 = add_test_comment(editor, key2, "New Comment 2", cx);
 
         assert_eq!(new_id1, 0, "ID counter should reset after take_all");
         assert_eq!(new_id2, 1, "IDs should be sequential after reset");
@@ -30732,15 +30725,15 @@ fn test_diff_review_overlay_show_and_dismiss(cx: &mut TestAppContext) {
     // Show overlay
     editor
         .update(cx, |editor, window, cx| {
-            editor.show_diff_review_overlay(DisplayRow(0), window, cx);
+            editor.show_diff_review_overlay(DisplayRow(0)..DisplayRow(0), window, cx);
         })
         .unwrap();
 
     // Verify overlay is shown
     editor
-        .update(cx, |editor, _window, _cx| {
+        .update(cx, |editor, _window, cx| {
             assert!(!editor.diff_review_overlays.is_empty());
-            assert_eq!(editor.diff_review_display_row(), Some(DisplayRow(0)));
+            assert_eq!(editor.diff_review_line_range(cx), Some((0, 0)));
             assert!(editor.diff_review_prompt_editor().is_some());
         })
         .unwrap();
@@ -30754,9 +30747,9 @@ fn test_diff_review_overlay_show_and_dismiss(cx: &mut TestAppContext) {
 
     // Verify overlay is dismissed
     editor
-        .update(cx, |editor, _window, _cx| {
+        .update(cx, |editor, _window, cx| {
             assert!(editor.diff_review_overlays.is_empty());
-            assert_eq!(editor.diff_review_display_row(), None);
+            assert_eq!(editor.diff_review_line_range(cx), None);
             assert!(editor.diff_review_prompt_editor().is_none());
         })
         .unwrap();
@@ -30771,7 +30764,7 @@ fn test_diff_review_overlay_dismiss_via_cancel(cx: &mut TestAppContext) {
     // Show overlay
     editor
         .update(cx, |editor, window, cx| {
-            editor.show_diff_review_overlay(DisplayRow(0), window, cx);
+            editor.show_diff_review_overlay(DisplayRow(0)..DisplayRow(0), window, cx);
         })
         .unwrap();
 
@@ -30806,7 +30799,7 @@ fn test_diff_review_empty_comment_not_submitted(cx: &mut TestAppContext) {
     // Show overlay
     editor
         .update(cx, |editor, window, cx| {
-            editor.show_diff_review_overlay(DisplayRow(0), window, cx);
+            editor.show_diff_review_overlay(DisplayRow(0)..DisplayRow(0), window, cx);
         })
         .unwrap();
 
@@ -30854,7 +30847,7 @@ fn test_diff_review_inline_edit_flow(cx: &mut TestAppContext) {
     let comment_id = editor
         .update(cx, |editor, _window, cx| {
             let key = test_hunk_key("");
-            add_test_comment(editor, key, "Original comment", 0, cx)
+            add_test_comment(editor, key, "Original comment", cx)
         })
         .unwrap();
 
@@ -30917,13 +30910,7 @@ fn test_orphaned_comments_are_cleaned_up(cx: &mut TestAppContext) {
                 file_path: Arc::from(util::rel_path::RelPath::empty()),
                 hunk_start_anchor: anchor,
             };
-            editor.add_review_comment(
-                key,
-                "Comment on line 2".to_string(),
-                DisplayRow(1),
-                anchor..anchor,
-                cx,
-            );
+            editor.add_review_comment(key, "Comment on line 2".to_string(), anchor..anchor, cx);
             assert_eq!(editor.total_review_comment_count(), 1);
         })
         .unwrap();
@@ -30966,13 +30953,7 @@ fn test_orphaned_comments_cleanup_called_on_buffer_edit(cx: &mut TestAppContext)
                 file_path: Arc::from(util::rel_path::RelPath::empty()),
                 hunk_start_anchor: anchor,
             };
-            editor.add_review_comment(
-                key,
-                "Comment on line 2".to_string(),
-                DisplayRow(1),
-                anchor..anchor,
-                cx,
-            );
+            editor.add_review_comment(key, "Comment on line 2".to_string(), anchor..anchor, cx);
             assert_eq!(editor.total_review_comment_count(), 1);
         })
         .unwrap();
@@ -31023,14 +31004,12 @@ fn test_comments_stored_for_multiple_hunks(cx: &mut TestAppContext) {
         editor.add_review_comment(
             key1.clone(),
             "Comment 1 for file1".to_string(),
-            DisplayRow(0),
             anchor..anchor,
             cx,
         );
         editor.add_review_comment(
             key1.clone(),
             "Comment 2 for file1".to_string(),
-            DisplayRow(1),
             anchor..anchor,
             cx,
         );
@@ -31039,7 +31018,6 @@ fn test_comments_stored_for_multiple_hunks(cx: &mut TestAppContext) {
         editor.add_review_comment(
             key2.clone(),
             "Comment for file2".to_string(),
-            DisplayRow(0),
             anchor..anchor,
             cx,
         );
@@ -31095,13 +31073,7 @@ fn test_same_hunk_detected_by_matching_keys(cx: &mut TestAppContext) {
         };
 
         // Add comment to first key
-        editor.add_review_comment(
-            key1,
-            "Test comment".to_string(),
-            DisplayRow(0),
-            anchor..anchor,
-            cx,
-        );
+        editor.add_review_comment(key1, "Test comment".to_string(), anchor..anchor, cx);
 
         // Verify second key (same hunk) finds the comment
         let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -31137,7 +31109,7 @@ fn test_overlay_comments_expanded_state(cx: &mut TestAppContext) {
     // Show overlay
     editor
         .update(cx, |editor, window, cx| {
-            editor.show_diff_review_overlay(DisplayRow(0), window, cx);
+            editor.show_diff_review_overlay(DisplayRow(0)..DisplayRow(0), window, cx);
         })
         .unwrap();
 
@@ -31187,6 +31159,168 @@ fn test_overlay_comments_expanded_state(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_diff_review_multiline_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    // Create an editor with multiple lines of text
+    let editor = cx.add_window(|window, cx| {
+        let buffer = cx.new(|cx| Buffer::local("line 1\nline 2\nline 3\nline 4\nline 5\n", cx));
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    // Test showing overlay with a multi-line selection (lines 1-3, which are rows 0-2)
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.show_diff_review_overlay(DisplayRow(0)..DisplayRow(2), window, cx);
+        })
+        .unwrap();
+
+    // Verify line range
+    editor
+        .update(cx, |editor, _window, cx| {
+            assert!(!editor.diff_review_overlays.is_empty());
+            assert_eq!(editor.diff_review_line_range(cx), Some((0, 2)));
+        })
+        .unwrap();
+
+    // Dismiss and test with reversed range (end < start)
+    editor
+        .update(cx, |editor, _window, cx| {
+            editor.dismiss_all_diff_review_overlays(cx);
+        })
+        .unwrap();
+
+    // Show overlay with reversed range - should normalize it
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.show_diff_review_overlay(DisplayRow(3)..DisplayRow(1), window, cx);
+        })
+        .unwrap();
+
+    // Verify range is normalized (start <= end)
+    editor
+        .update(cx, |editor, _window, cx| {
+            assert_eq!(editor.diff_review_line_range(cx), Some((1, 3)));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_diff_review_drag_state(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = cx.new(|cx| Buffer::local("line 1\nline 2\nline 3\n", cx));
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    // Initially no drag state
+    editor
+        .update(cx, |editor, _window, _cx| {
+            assert!(editor.diff_review_drag_state.is_none());
+        })
+        .unwrap();
+
+    // Start drag at row 1
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.start_diff_review_drag(DisplayRow(1), window, cx);
+        })
+        .unwrap();
+
+    // Verify drag state is set
+    editor
+        .update(cx, |editor, window, cx| {
+            assert!(editor.diff_review_drag_state.is_some());
+            let snapshot = editor.snapshot(window, cx);
+            let range = editor
+                .diff_review_drag_state
+                .as_ref()
+                .unwrap()
+                .row_range(&snapshot.display_snapshot);
+            assert_eq!(*range.start(), DisplayRow(1));
+            assert_eq!(*range.end(), DisplayRow(1));
+        })
+        .unwrap();
+
+    // Update drag to row 3
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.update_diff_review_drag(DisplayRow(3), window, cx);
+        })
+        .unwrap();
+
+    // Verify drag state is updated
+    editor
+        .update(cx, |editor, window, cx| {
+            assert!(editor.diff_review_drag_state.is_some());
+            let snapshot = editor.snapshot(window, cx);
+            let range = editor
+                .diff_review_drag_state
+                .as_ref()
+                .unwrap()
+                .row_range(&snapshot.display_snapshot);
+            assert_eq!(*range.start(), DisplayRow(1));
+            assert_eq!(*range.end(), DisplayRow(3));
+        })
+        .unwrap();
+
+    // End drag - should show overlay
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.end_diff_review_drag(window, cx);
+        })
+        .unwrap();
+
+    // Verify drag state is cleared and overlay is shown
+    editor
+        .update(cx, |editor, _window, cx| {
+            assert!(editor.diff_review_drag_state.is_none());
+            assert!(!editor.diff_review_overlays.is_empty());
+            assert_eq!(editor.diff_review_line_range(cx), Some((1, 3)));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_diff_review_drag_cancel(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+
+    // Start drag
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.start_diff_review_drag(DisplayRow(0), window, cx);
+        })
+        .unwrap();
+
+    // Verify drag state is set
+    editor
+        .update(cx, |editor, _window, _cx| {
+            assert!(editor.diff_review_drag_state.is_some());
+        })
+        .unwrap();
+
+    // Cancel drag
+    editor
+        .update(cx, |editor, _window, cx| {
+            editor.cancel_diff_review_drag(cx);
+        })
+        .unwrap();
+
+    // Verify drag state is cleared and no overlay was created
+    editor
+        .update(cx, |editor, _window, _cx| {
+            assert!(editor.diff_review_drag_state.is_none());
+            assert!(editor.diff_review_overlays.is_empty());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn test_calculate_overlay_height(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -31210,13 +31344,7 @@ fn test_calculate_overlay_height(cx: &mut TestAppContext) {
         );
 
         // Add one comment
-        editor.add_review_comment(
-            key.clone(),
-            "Comment 1".to_string(),
-            DisplayRow(0),
-            anchor..anchor,
-            cx,
-        );
+        editor.add_review_comment(key.clone(), "Comment 1".to_string(), anchor..anchor, cx);
 
         let snapshot = editor.buffer().read(cx).snapshot(cx);
 
@@ -31237,20 +31365,8 @@ fn test_calculate_overlay_height(cx: &mut TestAppContext) {
         );
 
         // Add more comments
-        editor.add_review_comment(
-            key.clone(),
-            "Comment 2".to_string(),
-            DisplayRow(0),
-            anchor..anchor,
-            cx,
-        );
-        editor.add_review_comment(
-            key.clone(),
-            "Comment 3".to_string(),
-            DisplayRow(0),
-            anchor..anchor,
-            cx,
-        );
+        editor.add_review_comment(key.clone(), "Comment 2".to_string(), anchor..anchor, cx);
+        editor.add_review_comment(key.clone(), "Comment 3".to_string(), anchor..anchor, cx);
 
         let snapshot = editor.buffer().read(cx).snapshot(cx);
 
