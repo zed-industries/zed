@@ -935,7 +935,7 @@ fn get_dir_and_suffix(query: String, path_style: PathStyle) -> (String, String) 
 mod tests {
     use util::paths::PathStyle;
 
-    use crate::open_path_prompt::get_dir_and_suffix;
+    use super::get_dir_and_suffix;
 
     #[test]
     fn test_get_dir_and_suffix_with_windows_style() {

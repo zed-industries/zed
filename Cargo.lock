@@ -11113,6 +11113,7 @@ dependencies = [
 name = "open_path_prompt"
 version = "0.1.0"
 dependencies = [
+ "editor",
  "file_icons",
  "futures 0.3.31",
  "fuzzy",
@@ -11121,7 +11122,9 @@ dependencies = [
  "project",
  "schemars",
  "serde",
+ "serde_json",
  "settings",
+ "theme",
  "ui",
  "util",
  "workspace",
