@@ -7647,6 +7647,18 @@ impl AcpThreadView {
         });
     }
 
+    /// Inserts terminal text as a crease into the message editor.
+    pub(crate) fn insert_terminal_text(
+        &self,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.message_editor.update(cx, |message_editor, cx| {
+            message_editor.insert_terminal_crease(text, window, cx);
+        });
+    }
+
     /// Inserts code snippets as creases into the message editor.
     pub(crate) fn insert_code_crease(
         &self,

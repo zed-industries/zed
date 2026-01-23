@@ -1003,61 +1003,90 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.insert("\n", window, cx);
+        });
+        for (text, crease_title) in creases {
+            self.insert_crease_impl(text, crease_title, IconName::TextSnippet, true, window, cx);
+        }
+    }
+
+    pub fn insert_terminal_crease(
+        &mut self,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let formatted_text = format!("```terminal\n{}\n```", text);
+        self.insert_crease_impl(formatted_text, "Terminal".to_string(), IconName::Terminal, false, window, cx);
+        self.editor.update(cx, |editor, cx| {
+            editor.insert(" ", window, cx);
+        });
+    }
+
+    fn insert_crease_impl(
+        &mut self,
+        text: String,
+        title: String,
+        icon: IconName,
+        add_trailing_newline: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         use editor::display_map::{Crease, FoldPlaceholder};
         use multi_buffer::MultiBufferRow;
         use rope::Point;
 
         self.editor.update(cx, |editor, cx| {
-            editor.insert("\n", window, cx);
-            for (text, crease_title) in creases {
-                let point = editor
-                    .selections
-                    .newest::<Point>(&editor.display_snapshot(cx))
-                    .head();
-                let start_row = MultiBufferRow(point.row);
+            let point = editor
+                .selections
+                .newest::<Point>(&editor.display_snapshot(cx))
+                .head();
+            let start_row = MultiBufferRow(point.row);
 
-                editor.insert(&text, window, cx);
+            editor.insert(&text, window, cx);
 
-                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                let anchor_before = snapshot.anchor_after(point);
-                let anchor_after = editor
-                    .selections
-                    .newest_anchor()
-                    .head()
-                    .bias_left(&snapshot);
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let anchor_before = snapshot.anchor_after(point);
+            let anchor_after = editor
+                .selections
+                .newest_anchor()
+                .head()
+                .bias_left(&snapshot);
 
+            if add_trailing_newline {
                 editor.insert("\n", window, cx);
-
-                let fold_placeholder = FoldPlaceholder {
-                    render: Arc::new({
-                        let title = crease_title.clone();
-                        move |_fold_id, _fold_range, _cx| {
-                            ButtonLike::new("code-crease")
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ElevatedSurface)
-                                .child(Icon::new(IconName::TextSnippet))
-                                .child(Label::new(title.clone()).single_line())
-                                .into_any_element()
-                        }
-                    }),
-                    merge_adjacent: false,
-                    ..Default::default()
-                };
-
-                let crease = Crease::inline(
-                    anchor_before..anchor_after,
-                    fold_placeholder,
-                    |row, is_folded, fold, _window, _cx| {
-                        Disclosure::new(("code-crease-toggle", row.0 as u64), !is_folded)
-                            .toggle_state(is_folded)
-                            .on_click(move |_e, window, cx| fold(!is_folded, window, cx))
-                            .into_any_element()
-                    },
-                    |_, _, _, _| gpui::Empty.into_any(),
-                );
-                editor.insert_creases(vec![crease], cx);
-                editor.fold_at(start_row, window, cx);
             }
+
+            let fold_placeholder = FoldPlaceholder {
+                render: Arc::new({
+                    let title = title.clone();
+                    move |_fold_id, _fold_range, _cx| {
+                        ButtonLike::new("crease")
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::ElevatedSurface)
+                            .child(Icon::new(icon))
+                            .child(Label::new(title.clone()).single_line())
+                            .into_any_element()
+                    }
+                }),
+                merge_adjacent: false,
+                ..Default::default()
+            };
+
+            let crease = Crease::inline(
+                anchor_before..anchor_after,
+                fold_placeholder,
+                |row, is_folded, fold, _window, _cx| {
+                    Disclosure::new(("crease-toggle", row.0 as u64), !is_folded)
+                        .toggle_state(is_folded)
+                        .on_click(move |_e, window, cx| fold(!is_folded, window, cx))
+                        .into_any_element()
+                },
+                |_, _, _, _| gpui::Empty.into_any(),
+            );
+            editor.insert_creases(vec![crease], cx);
+            editor.fold_at(start_row, window, cx);
         });
     }
 
@@ -1189,11 +1218,30 @@ impl MessageEditor {
         let path_style = workspace.read(cx).project().read(cx).path_style(cx);
         let mut text = String::new();
         let mut mentions = Vec::new();
+        let mut terminal_blocks: Vec<std::ops::Range<usize>> = Vec::new();
 
         for chunk in message {
             match chunk {
                 acp::ContentBlock::Text(text_content) => {
-                    text.push_str(&text_content.text);
+                    // Track terminal code blocks for folding
+                    let chunk_text = &text_content.text;
+                    let chunk_start = text.len();
+
+                    // Find all ```terminal blocks in this chunk
+                    let mut search_start = 0;
+                    while let Some(block_start) = chunk_text[search_start..].find("```terminal") {
+                        let absolute_block_start = chunk_start + search_start + block_start;
+                        // Find the closing ```
+                        if let Some(block_end_relative) = chunk_text[search_start + block_start + 11..].find("\n```") {
+                            let absolute_block_end = absolute_block_start + 11 + block_end_relative + 4;
+                            terminal_blocks.push(absolute_block_start..absolute_block_end);
+                            search_start = search_start + block_start + 11 + block_end_relative + 4;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    text.push_str(chunk_text);
                 }
                 acp::ContentBlock::Resource(acp::EmbeddedResource {
                     resource: acp::EmbeddedResourceResource::TextResourceContents(resource),
@@ -1289,6 +1337,23 @@ impl MessageEditor {
                 )
             });
         }
+
+        // Fold terminal code blocks
+        for range in terminal_blocks {
+            let anchor = snapshot.anchor_before(MultiBufferOffset(range.start));
+            let _ = insert_crease_for_mention(
+                anchor.excerpt_id,
+                anchor.text_anchor,
+                range.end - range.start,
+                "Terminal".into(),
+                ui::IconName::Terminal.path().into(),
+                None,
+                self.editor.clone(),
+                window,
+                cx,
+            );
+        }
+
         cx.notify();
     }
 
