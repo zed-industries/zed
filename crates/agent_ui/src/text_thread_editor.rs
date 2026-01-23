@@ -3542,6 +3542,7 @@ mod tests {
     fn init_test(cx: &mut App) {
         let settings_store = SettingsStore::test(cx);
         prompt_store::init(cx);
+        editor::init(cx);
         LanguageModelRegistry::test(cx);
         cx.set_global(settings_store);
 
