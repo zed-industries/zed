@@ -31,8 +31,8 @@ use git::stash::GitStash;
 use git::status::StageStatus;
 use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
-    ExpandCommitEditor, GitHostingProviderRegistry, RestoreTrackedFiles, StageAll, StashAll,
-    StashApply, StashPop, TrashUntrackedFiles, UnstageAll,
+    CommitLog, ExpandCommitEditor, GitHostingProviderRegistry, RestoreTrackedFiles, StageAll,
+    StashAll, StashApply, StashPop, TrashUntrackedFiles, UnstageAll,
 };
 use gpui::{
     Action, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, Corner, DismissEvent, Entity,
@@ -172,6 +172,7 @@ fn git_panel_context_menu(
             .action("View Stash", zed_actions::git::ViewStash.boxed_clone())
             .separator()
             .action("Open Diff", project_diff::Diff.boxed_clone())
+            .action("Commit Log", CommitLog.boxed_clone())
             .separator()
             .action_disabled_when(
                 !state.has_tracked_changes,
