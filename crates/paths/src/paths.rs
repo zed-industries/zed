@@ -502,8 +502,10 @@ fn vscode_user_data_paths() -> Vec<PathBuf> {
     // https://github.com/microsoft/vscode/blob/23e7148cdb6d8a27f0109ff77e5b1e019f8da051/src/vs/platform/environment/node/userDataPath.ts#L45
     const VSCODE_PRODUCT_NAMES: &[&str] = &[
         "Code",
+        "Code - Insiders",
         "Code - OSS",
         "VSCodium",
+        "VSCodium - Insiders",
         "Code Dev",
         "Code - OSS Dev",
         "code-oss-dev",

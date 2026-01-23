@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
 use collections::HashMap;
@@ -9,21 +9,83 @@ use futures::AsyncReadExt;
 use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
 use http_client::{AsyncBody, HttpClient};
 use serde::Deserialize;
+use settings::Settings;
+
+use crate::agent_server_store::{AllAgentServersSettings, CustomAgentServerSettings};
 
 const REGISTRY_URL: &str =
     "https://github.com/agentclientprotocol/registry/releases/latest/download/registry.json";
-const REGISTRY_REFRESH_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const REFRESH_THROTTLE_DURATION: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone, Debug)]
-pub struct RegistryAgent {
+pub struct RegistryAgentMetadata {
     pub id: SharedString,
     pub name: SharedString,
     pub description: SharedString,
     pub version: SharedString,
     pub repository: Option<SharedString>,
     pub icon_path: Option<SharedString>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RegistryBinaryAgent {
+    pub metadata: RegistryAgentMetadata,
     pub targets: HashMap<String, RegistryTargetConfig>,
     pub supports_current_platform: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct RegistryNpxAgent {
+    pub metadata: RegistryAgentMetadata,
+    pub package: SharedString,
+    pub args: Vec<String>,
+    pub env: HashMap<String, String>,
+}
+
+#[derive(Clone, Debug)]
+pub enum RegistryAgent {
+    Binary(RegistryBinaryAgent),
+    Npx(RegistryNpxAgent),
+}
+
+impl RegistryAgent {
+    pub fn metadata(&self) -> &RegistryAgentMetadata {
+        match self {
+            RegistryAgent::Binary(agent) => &agent.metadata,
+            RegistryAgent::Npx(agent) => &agent.metadata,
+        }
+    }
+
+    pub fn id(&self) -> &SharedString {
+        &self.metadata().id
+    }
+
+    pub fn name(&self) -> &SharedString {
+        &self.metadata().name
+    }
+
+    pub fn description(&self) -> &SharedString {
+        &self.metadata().description
+    }
+
+    pub fn version(&self) -> &SharedString {
+        &self.metadata().version
+    }
+
+    pub fn repository(&self) -> Option<&SharedString> {
+        self.metadata().repository.as_ref()
+    }
+
+    pub fn icon_path(&self) -> Option<&SharedString> {
+        self.metadata().icon_path.as_ref()
+    }
+
+    pub fn supports_current_platform(&self) -> bool {
+        match self {
+            RegistryAgent::Binary(agent) => agent.supports_current_platform,
+            RegistryAgent::Npx(_) => true,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -46,10 +108,16 @@ pub struct AgentRegistryStore {
     is_fetching: bool,
     fetch_error: Option<SharedString>,
     pending_refresh: Option<Task<()>>,
-    _poll_task: Task<Result<()>>,
+    last_refresh: Option<Instant>,
 }
 
 impl AgentRegistryStore {
+    /// Initialize the global AgentRegistryStore.
+    ///
+    /// This loads the cached registry from disk. If the cache is empty but there
+    /// are registry agents configured in settings, it will trigger a network fetch.
+    /// Otherwise, call `refresh()` explicitly when you need fresh data
+    /// (e.g., when opening the Agent Registry page).
     pub fn init_global(cx: &mut App) -> Entity<Self> {
         if let Some(store) = Self::try_global(cx) {
             return store;
@@ -59,11 +127,21 @@ impl AgentRegistryStore {
         let http_client: Arc<dyn HttpClient> = cx.http_client();
 
         let store = cx.new(|cx| Self::new(fs, http_client, cx));
-        store.update(cx, |store, cx| {
-            store.refresh(cx);
-            store.start_polling(cx);
-        });
         cx.set_global(GlobalAgentRegistryStore(store.clone()));
+
+        let has_registry_agents_in_settings = AllAgentServersSettings::get_global(cx)
+            .custom
+            .values()
+            .any(|s| matches!(s, CustomAgentServerSettings::Registry { .. }));
+
+        if has_registry_agents_in_settings {
+            store.update(cx, |store, cx| {
+                if store.agents.is_empty() {
+                    store.refresh(cx);
+                }
+            });
+        }
+
         store
     }
 
@@ -81,7 +159,7 @@ impl AgentRegistryStore {
     }
 
     pub fn agent(&self, id: &str) -> Option<&RegistryAgent> {
-        self.agents.iter().find(|agent| agent.id == id)
+        self.agents.iter().find(|agent| agent.id().as_ref() == id)
     }
 
     pub fn is_fetching(&self) -> bool {
@@ -92,6 +170,9 @@ impl AgentRegistryStore {
         self.fetch_error.clone()
     }
 
+    /// Refresh the registry from the network.
+    ///
+    /// This will fetch the latest registry data and update the cache.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         if self.pending_refresh.is_some() {
             return;
@@ -99,6 +180,7 @@ impl AgentRegistryStore {
 
         self.is_fetching = true;
         self.fetch_error = None;
+        self.last_refresh = Some(Instant::now());
         cx.notify();
 
         let fs = self.fs.clone();
@@ -131,6 +213,22 @@ impl AgentRegistryStore {
         }));
     }
 
+    /// Refresh the registry if it hasn't been refreshed recently.
+    ///
+    /// This is useful to call when using a registry-based agent to check for
+    /// updates without making too many network requests. The refresh is
+    /// throttled to at most once per hour.
+    pub fn refresh_if_stale(&mut self, cx: &mut Context<Self>) {
+        let should_refresh = self
+            .last_refresh
+            .map(|last| last.elapsed() >= REFRESH_THROTTLE_DURATION)
+            .unwrap_or(true);
+
+        if should_refresh {
+            self.refresh(cx);
+        }
+    }
+
     fn new(fs: Arc<dyn Fs>, http_client: Arc<dyn HttpClient>, cx: &mut Context<Self>) -> Self {
         let mut store = Self {
             fs: fs.clone(),
@@ -139,7 +237,7 @@ impl AgentRegistryStore {
             is_fetching: false,
             fetch_error: None,
             pending_refresh: None,
-            _poll_task: Task::ready(Ok(())),
+            last_refresh: None,
         };
 
         store.load_cached_registry(fs, store.http_client.clone(), cx);
@@ -176,17 +274,6 @@ impl AgentRegistryStore {
             Ok(())
         })
         .detach_and_log_err(cx);
-    }
-
-    fn start_polling(&mut self, cx: &mut Context<Self>) {
-        self._poll_task = cx.spawn(async move |this, cx| -> Result<()> {
-            loop {
-                this.update(cx, |this, cx| this.refresh(cx))?;
-                cx.background_executor()
-                    .timer(REGISTRY_REFRESH_INTERVAL)
-                    .await;
-            }
-        });
     }
 }
 
@@ -247,32 +334,6 @@ async fn build_registry_agents(
 
     let mut agents = Vec::new();
     for entry in index.agents {
-        let Some(binary) = entry.distribution.binary.as_ref() else {
-            continue;
-        };
-
-        if binary.is_empty() {
-            continue;
-        }
-
-        let mut targets = HashMap::default();
-        for (platform, target) in binary.iter() {
-            targets.insert(
-                platform.clone(),
-                RegistryTargetConfig {
-                    archive: target.archive.clone(),
-                    cmd: target.cmd.clone(),
-                    args: target.args.clone(),
-                    sha256: None,
-                    env: target.env.clone(),
-                },
-            );
-        }
-
-        let supports_current_platform = current_platform
-            .as_ref()
-            .is_some_and(|platform| targets.contains_key(*platform));
-
         let icon_path = resolve_icon_path(
             &entry,
             &icons_dir,
@@ -282,16 +343,66 @@ async fn build_registry_agents(
         )
         .await?;
 
-        agents.push(RegistryAgent {
+        let metadata = RegistryAgentMetadata {
             id: entry.id.into(),
             name: entry.name.into(),
             description: entry.description.into(),
             version: entry.version.into(),
             repository: entry.repository.map(Into::into),
             icon_path,
-            targets,
-            supports_current_platform,
+        };
+
+        let binary_agent = entry.distribution.binary.as_ref().and_then(|binary| {
+            if binary.is_empty() {
+                return None;
+            }
+
+            let mut targets = HashMap::default();
+            for (platform, target) in binary.iter() {
+                targets.insert(
+                    platform.clone(),
+                    RegistryTargetConfig {
+                        archive: target.archive.clone(),
+                        cmd: target.cmd.clone(),
+                        args: target.args.clone(),
+                        sha256: None,
+                        env: target.env.clone(),
+                    },
+                );
+            }
+
+            let supports_current_platform = current_platform
+                .as_ref()
+                .is_some_and(|platform| targets.contains_key(*platform));
+
+            Some(RegistryBinaryAgent {
+                metadata: metadata.clone(),
+                targets,
+                supports_current_platform,
+            })
         });
+
+        let npx_agent = entry.distribution.npx.as_ref().map(|npx| RegistryNpxAgent {
+            metadata: metadata.clone(),
+            package: npx.package.clone().into(),
+            args: npx.args.clone(),
+            env: npx.env.clone(),
+        });
+
+        let agent = match (binary_agent, npx_agent) {
+            (Some(binary_agent), Some(npx_agent)) => {
+                if binary_agent.supports_current_platform {
+                    RegistryAgent::Binary(binary_agent)
+                } else {
+                    RegistryAgent::Npx(npx_agent)
+                }
+            }
+            (Some(binary_agent), None) => RegistryAgent::Binary(binary_agent),
+            (None, Some(npx_agent)) => RegistryAgent::Npx(npx_agent),
+            (None, None) => continue,
+        };
+
+        agents.push(agent);
     }
 
     Ok(agents)
@@ -447,12 +558,23 @@ struct RegistryEntry {
 struct RegistryDistribution {
     #[serde(default)]
     binary: Option<HashMap<String, RegistryBinaryTarget>>,
+    #[serde(default)]
+    npx: Option<RegistryNpxDistribution>,
 }
 
 #[derive(Deserialize)]
 struct RegistryBinaryTarget {
     archive: String,
     cmd: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    env: HashMap<String, String>,
+}
+
+#[derive(Deserialize)]
+struct RegistryNpxDistribution {
+    package: String,
     #[serde(default)]
     args: Vec<String>,
     #[serde(default)]

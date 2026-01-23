@@ -30,8 +30,9 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
-        GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
-        ResetMode, UpstreamTrackingStatus, Worktree as GitWorktree,
+        GitRepository, GitRepositoryCheckpoint, GraphCommitData, InitialGraphCommitData, LogOrder,
+        LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        UpstreamTrackingStatus, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -252,6 +253,12 @@ pub struct MergeDetails {
     pub heads: Vec<Option<SharedString>>,
 }
 
+#[derive(Clone)]
+pub enum CommitDataState {
+    Loading,
+    Loaded(Arc<GraphCommitData>),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
@@ -275,6 +282,17 @@ pub struct JobInfo {
     pub message: SharedString,
 }
 
+struct GraphCommitDataHandler {
+    _task: Task<()>,
+    commit_data_request: smol::channel::Sender<Oid>,
+}
+
+enum GraphCommitHandlerState {
+    Starting,
+    Open(GraphCommitDataHandler),
+    Closed,
+}
+
 pub struct Repository {
     this: WeakEntity<Self>,
     snapshot: RepositorySnapshot,
@@ -290,6 +308,15 @@ pub struct Repository {
     askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
     latest_askpass_id: u64,
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
+    pub initial_graph_data: HashMap<
+        (LogOrder, LogSource),
+        (
+            Task<Result<(), SharedString>>,
+            Vec<Arc<InitialGraphCommitData>>,
+        ),
+    >,
+    graph_commit_data_handler: GraphCommitHandlerState,
+    commit_data: HashMap<Oid, CommitDataState>,
 }
 
 impl std::ops::Deref for Repository {
@@ -367,6 +394,7 @@ pub enum RepositoryEvent {
     BranchChanged,
     StashEntriesChanged,
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
+    GitGraphCountUpdated((LogOrder, LogSource), usize),
 }
 
 #[derive(Clone, Debug)]
@@ -375,6 +403,7 @@ pub struct JobsUpdated;
 #[derive(Debug)]
 pub enum GitStoreEvent {
     ActiveRepositoryChanged(Option<RepositoryId>),
+    /// Bool is true when the repository that's updated is the active repository
     RepositoryUpdated(RepositoryId, RepositoryEvent, bool),
     RepositoryAdded,
     RepositoryRemoved(RepositoryId),
@@ -3115,7 +3144,7 @@ impl BufferGitState {
                         unstaged_diff.read(cx).update_diff(
                             buffer.clone(),
                             index,
-                            index_changed,
+                            index_changed.then_some(false),
                             language.clone(),
                             cx,
                         )
@@ -3138,7 +3167,7 @@ impl BufferGitState {
                             uncommitted_diff.read(cx).update_diff(
                                 buffer.clone(),
                                 head,
-                                head_changed,
+                                head_changed.then_some(true),
                                 language.clone(),
                                 cx,
                             )
@@ -3586,6 +3615,14 @@ impl Repository {
             })
             .shared();
 
+        cx.subscribe_self(|this, event: &RepositoryEvent, _| match event {
+            RepositoryEvent::BranchChanged | RepositoryEvent::MergeHeadsChanged => {
+                this.initial_graph_data.clear();
+            }
+            _ => {}
+        })
+        .detach();
+
         Repository {
             this: cx.weak_entity(),
             git_store,
@@ -3599,6 +3636,9 @@ impl Repository {
             job_sender,
             job_id: 0,
             active_jobs: Default::default(),
+            initial_graph_data: Default::default(),
+            commit_data: Default::default(),
+            graph_commit_data_handler: GraphCommitHandlerState::Closed,
         }
     }
 
@@ -3628,6 +3668,9 @@ impl Repository {
             latest_askpass_id: 0,
             active_jobs: Default::default(),
             job_id: 0,
+            initial_graph_data: Default::default(),
+            commit_data: Default::default(),
+            graph_commit_data_handler: GraphCommitHandlerState::Closed,
         }
     }
 
@@ -4189,6 +4232,208 @@ impl Repository {
                 }
             }
         })
+    }
+
+    pub fn graph_data(
+        &mut self,
+        log_source: LogSource,
+        log_order: LogOrder,
+        range: Range<usize>,
+        cx: &mut Context<Self>,
+    ) -> &[Arc<InitialGraphCommitData>] {
+        let initial_commit_data = &self
+            .initial_graph_data
+            .entry((log_order, log_source.clone()))
+            .or_insert_with(|| {
+                let state = self.repository_state.clone();
+                let log_source = log_source.clone();
+                (
+                    cx.spawn(async move |repository, cx| {
+                        let state = state.await;
+                        match state {
+                            Ok(RepositoryState::Local(LocalRepositoryState {
+                                backend, ..
+                            })) => {
+                                Self::local_git_graph_data(
+                                    repository, backend, log_source, log_order, cx,
+                                )
+                                .await
+                            }
+                            Ok(RepositoryState::Remote(_)) => {
+                                Err("Git graph is not supported for collab yet".into())
+                            }
+                            Err(e) => Err(SharedString::from(e)),
+                        }
+                    }),
+                    vec![],
+                )
+            })
+            .1;
+
+        let max_start = initial_commit_data.len().saturating_sub(1);
+        let max_end = initial_commit_data.len();
+        &initial_commit_data[range.start.min(max_start)..range.end.min(max_end)]
+    }
+
+    async fn local_git_graph_data(
+        this: WeakEntity<Self>,
+        backend: Arc<dyn GitRepository>,
+        log_source: LogSource,
+        log_order: LogOrder,
+        cx: &mut AsyncApp,
+    ) -> Result<(), SharedString> {
+        let (request_tx, request_rx) =
+            smol::channel::unbounded::<Vec<Arc<InitialGraphCommitData>>>();
+
+        let task = cx.background_executor().spawn({
+            let log_source = log_source.clone();
+            async move {
+                backend
+                    .initial_graph_data(log_source, log_order, request_tx)
+                    .await
+                    .map_err(|err| SharedString::from(err.to_string()))
+            }
+        });
+
+        let graph_data_key = (log_order, log_source.clone());
+
+        while let Ok(initial_graph_commit_data) = request_rx.recv().await {
+            this.update(cx, |repository, cx| {
+                let graph_data = repository
+                    .initial_graph_data
+                    .get_mut(&graph_data_key)
+                    .map(|(_, graph_data)| graph_data);
+                debug_assert!(
+                    graph_data.is_some(),
+                    "This task should be dropped if data doesn't exist"
+                );
+
+                if let Some(graph_data) = graph_data {
+                    graph_data.extend(initial_graph_commit_data);
+                    cx.emit(RepositoryEvent::GitGraphCountUpdated(
+                        graph_data_key.clone(),
+                        graph_data.len(),
+                    ));
+                }
+            })
+            .ok();
+        }
+
+        task.await?;
+
+        Ok(())
+    }
+
+    pub fn fetch_commit_data(&mut self, sha: Oid, cx: &mut Context<Self>) -> &CommitDataState {
+        if !self.commit_data.contains_key(&sha) {
+            match &self.graph_commit_data_handler {
+                GraphCommitHandlerState::Open(handler) => {
+                    if handler.commit_data_request.try_send(sha).is_ok() {
+                        let old_value = self.commit_data.insert(sha, CommitDataState::Loading);
+                        debug_assert!(old_value.is_none(), "We should never overwrite commit data");
+                    }
+                }
+                GraphCommitHandlerState::Closed => {
+                    self.open_graph_commit_data_handler(cx);
+                }
+                GraphCommitHandlerState::Starting => {}
+            }
+        }
+
+        self.commit_data
+            .get(&sha)
+            .unwrap_or(&CommitDataState::Loading)
+    }
+
+    fn open_graph_commit_data_handler(&mut self, cx: &mut Context<Self>) {
+        self.graph_commit_data_handler = GraphCommitHandlerState::Starting;
+
+        let state = self.repository_state.clone();
+        let (result_tx, result_rx) = smol::channel::bounded::<(Oid, GraphCommitData)>(64);
+        let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
+
+        let foreground_task = cx.spawn(async move |this, cx| {
+            while let Ok((sha, commit_data)) = result_rx.recv().await {
+                let result = this.update(cx, |this, cx| {
+                    let old_value = this
+                        .commit_data
+                        .insert(sha, CommitDataState::Loaded(Arc::new(commit_data)));
+                    debug_assert!(
+                        !matches!(old_value, Some(CommitDataState::Loaded(_))),
+                        "We should never overwrite commit data"
+                    );
+
+                    cx.notify();
+                });
+                if result.is_err() {
+                    break;
+                }
+            }
+
+            this.update(cx, |this, _cx| {
+                this.graph_commit_data_handler = GraphCommitHandlerState::Closed;
+            })
+            .ok();
+        });
+
+        let request_tx_for_handler = request_tx;
+        let background_executor = cx.background_executor().clone();
+
+        cx.background_spawn(async move {
+            let backend = match state.await {
+                Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => backend,
+                Ok(RepositoryState::Remote(_)) => {
+                    log::error!("commit_data_reader not supported for remote repositories");
+                    return;
+                }
+                Err(error) => {
+                    log::error!("failed to get repository state: {error}");
+                    return;
+                }
+            };
+
+            let reader = match backend.commit_data_reader() {
+                Ok(reader) => reader,
+                Err(error) => {
+                    log::error!("failed to create commit data reader: {error:?}");
+                    return;
+                }
+            };
+
+            loop {
+                let timeout = background_executor.timer(std::time::Duration::from_secs(10));
+
+                futures::select_biased! {
+                    sha = futures::FutureExt::fuse(request_rx.recv()) => {
+                        let Ok(sha) = sha else {
+                            break;
+                        };
+
+                        match reader.read(sha).await {
+                            Ok(commit_data) => {
+                                if result_tx.send((sha, commit_data)).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(error) => {
+                                log::error!("failed to read commit data for {sha}: {error:?}");
+                            }
+                        }
+                    }
+                    _ = futures::FutureExt::fuse(timeout) => {
+                        break;
+                    }
+                }
+            }
+
+            drop(result_tx);
+        })
+        .detach();
+
+        self.graph_commit_data_handler = GraphCommitHandlerState::Open(GraphCommitDataHandler {
+            _task: foreground_task,
+            commit_data_request: request_tx_for_handler,
+        });
     }
 
     fn buffer_store(&self, cx: &App) -> Option<Entity<BufferStore>> {

@@ -15,7 +15,7 @@ use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity
 use itertools::Itertools;
 use language::{
     Buffer, ContextLocation, ContextProvider, File, Language, LanguageToolchainStore, Location,
-    language_settings::language_settings,
+    language_settings::LanguageSettings,
 };
 use lsp::{LanguageServerId, LanguageServerName};
 use paths::{debug_task_file_name, task_file_name};
@@ -302,17 +302,15 @@ impl Inventory {
         let last_scheduled_scenarios = self.last_scheduled_scenarios.iter().cloned().collect();
 
         let adapter = task_contexts.location().and_then(|location| {
-            let (file, language) = {
-                let buffer = location.buffer.read(cx);
-                (buffer.file(), buffer.language())
-            };
-            let language_name = language.as_ref().map(|l| l.name());
-            let adapter = language_settings(language_name, file, cx)
+            let buffer = location.buffer.read(cx);
+            let adapter = LanguageSettings::for_buffer(&buffer, cx)
                 .debuggers
                 .first()
                 .map(SharedString::from)
                 .or_else(|| {
-                    language.and_then(|l| l.config().debuggers.first().map(SharedString::from))
+                    buffer
+                        .language()
+                        .and_then(|l| l.config().debuggers.first().map(SharedString::from))
                 });
             adapter.map(|adapter| (adapter, DapRegistry::global(cx).locators()))
         });
@@ -350,19 +348,18 @@ impl Inventory {
         label: &str,
         cx: &App,
     ) -> Task<Option<TaskTemplate>> {
-        let (buffer_worktree_id, file, language) = buffer
+        let (buffer_worktree_id, language) = buffer
+            .as_ref()
             .map(|buffer| {
                 let buffer = buffer.read(cx);
-                let file = buffer.file().cloned();
                 (
-                    file.as_ref().map(|file| file.worktree_id(cx)),
-                    file,
+                    buffer.file().as_ref().map(|file| file.worktree_id(cx)),
                     buffer.language().cloned(),
                 )
             })
-            .unwrap_or((None, None, None));
+            .unwrap_or((None, None));
 
-        let tasks = self.list_tasks(file, language, worktree_id.or(buffer_worktree_id), cx);
+        let tasks = self.list_tasks(buffer, language, worktree_id.or(buffer_worktree_id), cx);
         let label = label.to_owned();
         cx.background_spawn(async move {
             tasks
@@ -378,7 +375,7 @@ impl Inventory {
     /// and global tasks last. No specific order inside source kinds groups.
     pub fn list_tasks(
         &self,
-        file: Option<Arc<dyn File>>,
+        buffer: Option<Entity<Buffer>>,
         language: Option<Arc<Language>>,
         worktree: Option<WorktreeId>,
         cx: &App,
@@ -394,14 +391,18 @@ impl Inventory {
         });
         let language_tasks = language
             .filter(|language| {
-                language_settings(Some(language.name()), file.as_ref(), cx)
-                    .tasks
-                    .enabled
+                LanguageSettings::resolve(
+                    buffer.as_ref().map(|b| b.read(cx)),
+                    Some(&language.name()),
+                    cx,
+                )
+                .tasks
+                .enabled
             })
             .and_then(|language| {
                 language
                     .context_provider()
-                    .map(|provider| provider.associated_tasks(file, cx))
+                    .map(|provider| provider.associated_tasks(buffer, cx))
             });
         cx.background_spawn(async move {
             if let Some(t) = language_tasks {
@@ -435,7 +436,7 @@ impl Inventory {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name().into(),
         });
-        let file = location.and_then(|location| location.buffer.read(cx).file().cloned());
+        let buffer = location.map(|location| location.buffer.clone());
 
         let mut task_labels_to_ids = HashMap::<String, HashSet<TaskId>>::default();
         let mut lru_score = 0_u32;
@@ -478,14 +479,18 @@ impl Inventory {
         let global_tasks = self.global_templates_from_settings().collect::<Vec<_>>();
         let associated_tasks = language
             .filter(|language| {
-                language_settings(Some(language.name()), file.as_ref(), cx)
-                    .tasks
-                    .enabled
+                LanguageSettings::resolve(
+                    buffer.as_ref().map(|b| b.read(cx)),
+                    Some(&language.name()),
+                    cx,
+                )
+                .tasks
+                .enabled
             })
             .and_then(|language| {
                 language
                     .context_provider()
-                    .map(|provider| provider.associated_tasks(file, cx))
+                    .map(|provider| provider.associated_tasks(buffer, cx))
             });
         let worktree_tasks = worktree
             .into_iter()
@@ -1075,7 +1080,7 @@ impl ContextProviderWithTasks {
 }
 
 impl ContextProvider for ContextProviderWithTasks {
-    fn associated_tasks(&self, _: Option<Arc<dyn File>>, _: &App) -> Task<Option<TaskTemplates>> {
+    fn associated_tasks(&self, _: Option<Entity<Buffer>>, _: &App) -> Task<Option<TaskTemplates>> {
         Task::ready(Some(self.templates.clone()))
     }
 }

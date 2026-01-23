@@ -9,7 +9,8 @@ use crate::{
 };
 use async_trait::async_trait;
 use buffer_diff::{
-    BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind, assert_hunks,
+    BufferDiffEvent, DiffChanged, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind,
+    assert_hunks,
 };
 use fs::FakeFs;
 use futures::{StreamExt, future};
@@ -19,14 +20,14 @@ use git::{
     status::{StatusCode, TrackedStatus},
 };
 use git2::RepositoryInitOptions;
-use gpui::{App, BackgroundExecutor, FutureExt, UpdateGlobal};
+use gpui::{App, BackgroundExecutor, FutureExt, TestAppContext, UpdateGlobal};
 use itertools::Itertools;
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticEntryRef, DiagnosticSet, DiagnosticSourceKind,
     DiskState, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageName, LineEnding,
     ManifestName, ManifestProvider, ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainList,
     ToolchainLister,
-    language_settings::{LanguageSettingsContent, language_settings},
+    language_settings::{LanguageSettings, LanguageSettingsContent},
     markdown_lang, rust_lang, tree_sitter_typescript,
 };
 use lsp::{
@@ -200,48 +201,39 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 
     cx.executor().run_until_parked();
 
-    cx.update(|cx| {
-        let tree = worktree.read(cx);
-        let settings_for = |path: &str| {
-            let file_entry = tree.entry_for_path(rel_path(path)).unwrap().clone();
-            let file = File::for_entry(file_entry, worktree.clone());
-            let file_language = project
-                .read(cx)
-                .languages()
-                .load_language_for_file_path(file.path.as_std_path());
-            let file_language = cx
-                .foreground_executor()
-                .block_on(file_language)
-                .expect("Failed to get file language");
-            let file = file as _;
-            language_settings(Some(file_language.name()), Some(&file), cx).into_owned()
-        };
+    let settings_for = async |path: &str, cx: &mut TestAppContext| -> LanguageSettings {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree.read(cx).id(), rel_path(path)), cx)
+            })
+            .await
+            .unwrap();
+        cx.update(|cx| LanguageSettings::for_buffer(&buffer.read(cx), cx).into_owned())
+    };
 
-        let settings_a = settings_for("a.rs");
-        let settings_b = settings_for("b/b.rs");
-        let settings_c = settings_for("c.js");
-        let settings_readme = settings_for("README.json");
+    let settings_a = settings_for("a.rs", cx).await;
+    let settings_b = settings_for("b/b.rs", cx).await;
+    let settings_c = settings_for("c.js", cx).await;
+    let settings_readme = settings_for("README.json", cx).await;
+    // .editorconfig overrides .zed/settings
+    assert_eq!(Some(settings_a.tab_size), NonZeroU32::new(3));
+    assert_eq!(settings_a.hard_tabs, true);
+    assert_eq!(settings_a.ensure_final_newline_on_save, true);
+    assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
+    assert_eq!(settings_a.preferred_line_length, 120);
 
-        // .editorconfig overrides .zed/settings
-        assert_eq!(Some(settings_a.tab_size), NonZeroU32::new(3));
-        assert_eq!(settings_a.hard_tabs, true);
-        assert_eq!(settings_a.ensure_final_newline_on_save, true);
-        assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
-        assert_eq!(settings_a.preferred_line_length, 120);
+    // .editorconfig in b/ overrides .editorconfig in root
+    assert_eq!(Some(settings_b.tab_size), NonZeroU32::new(2));
 
-        // .editorconfig in b/ overrides .editorconfig in root
-        assert_eq!(Some(settings_b.tab_size), NonZeroU32::new(2));
+    // "indent_size" is not set, so "tab_width" is used
+    assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
 
-        // "indent_size" is not set, so "tab_width" is used
-        assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
+    // When max_line_length is "off", default to .zed/settings.json
+    assert_eq!(settings_b.preferred_line_length, 64);
+    assert_eq!(settings_c.preferred_line_length, 64);
 
-        // When max_line_length is "off", default to .zed/settings.json
-        assert_eq!(settings_b.preferred_line_length, 64);
-        assert_eq!(settings_c.preferred_line_length, 64);
-
-        // README.md should not be affected by .editorconfig's globe "*.rs"
-        assert_eq!(Some(settings_readme.tab_size), NonZeroU32::new(8));
-    });
+    // README.md should not be affected by .editorconfig's globe "*.rs"
+    assert_eq!(Some(settings_readme.tab_size), NonZeroU32::new(8));
 }
 
 #[gpui::test]
@@ -275,37 +267,28 @@ async fn test_external_editorconfig_support(cx: &mut gpui::TestAppContext) {
     let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
 
     cx.executor().run_until_parked();
+    let settings_for = async |path: &str, cx: &mut TestAppContext| -> LanguageSettings {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree.read(cx).id(), rel_path(path)), cx)
+            })
+            .await
+            .unwrap();
+        cx.update(|cx| LanguageSettings::for_buffer(&buffer.read(cx), cx).into_owned())
+    };
 
-    cx.update(|cx| {
-        let tree = worktree.read(cx);
-        let settings_for = |path: &str| {
-            let file_entry = tree.entry_for_path(rel_path(path)).unwrap().clone();
-            let file = File::for_entry(file_entry, worktree.clone());
-            let file_language = project
-                .read(cx)
-                .languages()
-                .load_language_for_file_path(file.path.as_std_path());
-            let file_language = cx
-                .foreground_executor()
-                .block_on(file_language)
-                .expect("Failed to get file language");
-            let file = file as _;
-            language_settings(Some(file_language.name()), Some(&file), cx).into_owned()
-        };
+    let settings_rs = settings_for("main.rs", cx).await;
+    let settings_md = settings_for("README.md", cx).await;
+    let settings_txt = settings_for("other.txt", cx).await;
 
-        let settings_rs = settings_for("main.rs");
-        let settings_md = settings_for("README.md");
-        let settings_txt = settings_for("other.txt");
+    // main.rs gets indent_size = 2 from parent's external .editorconfig
+    assert_eq!(Some(settings_rs.tab_size), NonZeroU32::new(2));
 
-        // main.rs gets indent_size = 2 from parent's external .editorconfig
-        assert_eq!(Some(settings_rs.tab_size), NonZeroU32::new(2));
+    // README.md gets indent_size = 3 from internal worktree .editorconfig
+    assert_eq!(Some(settings_md.tab_size), NonZeroU32::new(3));
 
-        // README.md gets indent_size = 3 from internal worktree .editorconfig
-        assert_eq!(Some(settings_md.tab_size), NonZeroU32::new(3));
-
-        // other.txt gets indent_size = 4 from grandparent's external .editorconfig
-        assert_eq!(Some(settings_txt.tab_size), NonZeroU32::new(4));
-    });
+    // other.txt gets indent_size = 4 from grandparent's external .editorconfig
+    assert_eq!(Some(settings_txt.tab_size), NonZeroU32::new(4));
 }
 
 #[gpui::test]
@@ -334,20 +317,15 @@ async fn test_external_editorconfig_root_stops_traversal(cx: &mut gpui::TestAppC
 
     cx.executor().run_until_parked();
 
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("file.rs")), cx)
+        })
+        .await
+        .unwrap();
+
     cx.update(|cx| {
-        let tree = worktree.read(cx);
-        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
-        let file = File::for_entry(file_entry, worktree.clone());
-        let file_language = project
-            .read(cx)
-            .languages()
-            .load_language_for_file_path(file.path.as_std_path());
-        let file_language = cx
-            .foreground_executor()
-            .block_on(file_language)
-            .expect("Failed to get file language");
-        let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
         // file.rs gets indent_size = 2 from worktree's root config, NOT 99 from parent
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(2));
@@ -382,20 +360,15 @@ async fn test_external_editorconfig_root_in_parent_stops_traversal(cx: &mut gpui
 
     cx.executor().run_until_parked();
 
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("file.rs")), cx)
+        })
+        .await
+        .unwrap();
+
     cx.update(|cx| {
-        let tree = worktree.read(cx);
-        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
-        let file = File::for_entry(file_entry, worktree.clone());
-        let file_language = project
-            .read(cx)
-            .languages()
-            .load_language_for_file_path(file.path.as_std_path());
-        let file_language = cx
-            .foreground_executor()
-            .block_on(file_language)
-            .expect("Failed to get file language");
-        let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
         // file.rs gets indent_size = 4 from parent's root config, NOT 99 from grandparent
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(4));
@@ -438,30 +411,24 @@ async fn test_external_editorconfig_shared_across_worktrees(cx: &mut gpui::TestA
 
     cx.executor().run_until_parked();
 
-    cx.update(|cx| {
-        let worktrees: Vec<_> = project.read(cx).worktrees(cx).collect();
-        assert_eq!(worktrees.len(), 2);
+    let worktrees: Vec<_> = cx.update(|cx| project.read(cx).worktrees(cx).collect());
+    assert_eq!(worktrees.len(), 2);
 
-        for worktree in worktrees {
-            let tree = worktree.read(cx);
-            let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
-            let file = File::for_entry(file_entry, worktree.clone());
-            let file_language = project
-                .read(cx)
-                .languages()
-                .load_language_for_file_path(file.path.as_std_path());
-            let file_language = cx
-                .foreground_executor()
-                .block_on(file_language)
-                .expect("Failed to get file language");
-            let file = file as _;
-            let settings =
-                language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+    for worktree in worktrees {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree.read(cx).id(), rel_path("file.rs")), cx)
+            })
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
             // Both worktrees should get indent_size = 5 from shared parent .editorconfig
             assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
-        }
-    });
+        });
+    }
 }
 
 #[gpui::test]
@@ -491,20 +458,15 @@ async fn test_external_editorconfig_not_loaded_without_internal_config(
 
     cx.executor().run_until_parked();
 
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("file.rs")), cx)
+        })
+        .await
+        .unwrap();
+
     cx.update(|cx| {
-        let tree = worktree.read(cx);
-        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
-        let file = File::for_entry(file_entry, worktree.clone());
-        let file_language = project
-            .read(cx)
-            .languages()
-            .load_language_for_file_path(file.path.as_std_path());
-        let file_language = cx
-            .foreground_executor()
-            .block_on(file_language)
-            .expect("Failed to get file language");
-        let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
         // file.rs should have default tab_size = 4, NOT 99 from parent's external .editorconfig
         // because without an internal .editorconfig, external configs are not loaded
@@ -538,20 +500,15 @@ async fn test_external_editorconfig_modification_triggers_refresh(cx: &mut gpui:
 
     cx.executor().run_until_parked();
 
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("file.rs")), cx)
+        })
+        .await
+        .unwrap();
+
     cx.update(|cx| {
-        let tree = worktree.read(cx);
-        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
-        let file = File::for_entry(file_entry, worktree.clone());
-        let file_language = project
-            .read(cx)
-            .languages()
-            .load_language_for_file_path(file.path.as_std_path());
-        let file_language = cx
-            .foreground_executor()
-            .block_on(file_language)
-            .expect("Failed to get file language");
-        let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
         // Test initial settings: tab_size = 4 from parent's external .editorconfig
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(4));
@@ -566,20 +523,15 @@ async fn test_external_editorconfig_modification_triggers_refresh(cx: &mut gpui:
 
     cx.executor().run_until_parked();
 
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("file.rs")), cx)
+        })
+        .await
+        .unwrap();
+
     cx.update(|cx| {
-        let tree = worktree.read(cx);
-        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
-        let file = File::for_entry(file_entry, worktree.clone());
-        let file_language = project
-            .read(cx)
-            .languages()
-            .load_language_for_file_path(file.path.as_std_path());
-        let file_language = cx
-            .foreground_executor()
-            .block_on(file_language)
-            .expect("Failed to get file language");
-        let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
         // Test settings updated: tab_size = 8
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(8));
@@ -614,21 +566,16 @@ async fn test_adding_worktree_discovers_external_editorconfigs(cx: &mut gpui::Te
 
     cx.executor().run_until_parked();
 
+    let buffer = project
+        .update(cx, |project, cx| {
+            let id = project.worktrees(cx).next().unwrap().read(cx).id();
+            project.open_buffer((id, rel_path("file.rs")), cx)
+        })
+        .await
+        .unwrap();
+
     cx.update(|cx| {
-        let worktree = project.read(cx).worktrees(cx).next().unwrap();
-        let tree = worktree.read(cx);
-        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
-        let file = File::for_entry(file_entry, worktree.clone());
-        let file_language = project
-            .read(cx)
-            .languages()
-            .load_language_for_file_path(file.path.as_std_path());
-        let file_language = cx
-            .foreground_executor()
-            .block_on(file_language)
-            .expect("Failed to get file language");
-        let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx).into_owned();
 
         // Test existing worktree has tab_size = 7
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(7));
@@ -643,20 +590,15 @@ async fn test_adding_worktree_discovers_external_editorconfigs(cx: &mut gpui::Te
 
     cx.executor().run_until_parked();
 
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((new_worktree.read(cx).id(), rel_path("file.rs")), cx)
+        })
+        .await
+        .unwrap();
+
     cx.update(|cx| {
-        let tree = new_worktree.read(cx);
-        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
-        let file = File::for_entry(file_entry, new_worktree.clone());
-        let file_language = project
-            .read(cx)
-            .languages()
-            .load_language_for_file_path(file.path.as_std_path());
-        let file_language = cx
-            .foreground_executor()
-            .block_on(file_language)
-            .expect("Failed to get file language");
-        let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
         // Verify new worktree also has tab_size = 7 from shared parent editorconfig
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(7));
@@ -797,20 +739,15 @@ async fn test_shared_external_editorconfig_cleanup_with_multiple_worktrees(
         assert_eq!(watcher_paths.len(), 1);
     });
 
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_b.read(cx).id(), rel_path("file.rs")), cx)
+        })
+        .await
+        .unwrap();
+
     cx.update(|cx| {
-        let tree = worktree_b.read(cx);
-        let file_entry = tree.entry_for_path(rel_path("file.rs")).unwrap().clone();
-        let file = File::for_entry(file_entry, worktree_b.clone());
-        let file_language = project
-            .read(cx)
-            .languages()
-            .load_language_for_file_path(file.path.as_std_path());
-        let file_language = cx
-            .foreground_executor()
-            .block_on(file_language)
-            .expect("Failed to get file language");
-        let file = file as _;
-        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
         // Test worktree_b still has correct settings
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
@@ -937,26 +874,28 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         id_base: "local worktree tasks from directory \".zed\"".into(),
     };
 
-    let all_tasks = cx
-        .update(|cx| {
-            let tree = worktree.read(cx);
-
-            let file_a = File::for_entry(
-                tree.entry_for_path(rel_path("a/a.rs")).unwrap().clone(),
-                worktree.clone(),
-            ) as _;
-            let settings_a = language_settings(None, Some(&file_a), cx);
-            let file_b = File::for_entry(
-                tree.entry_for_path(rel_path("b/b.rs")).unwrap().clone(),
-                worktree.clone(),
-            ) as _;
-            let settings_b = language_settings(None, Some(&file_b), cx);
-
-            assert_eq!(settings_a.tab_size.get(), 8);
-            assert_eq!(settings_b.tab_size.get(), 2);
-
-            get_all_tasks(&project, task_contexts.clone(), cx)
+    let buffer_a = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("a/a.rs")), cx)
         })
+        .await
+        .unwrap();
+    let buffer_b = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("b/b.rs")), cx)
+        })
+        .await
+        .unwrap();
+    cx.update(|cx| {
+        let settings_a = LanguageSettings::for_buffer(&buffer_a.read(cx), cx);
+        let settings_b = LanguageSettings::for_buffer(&buffer_b.read(cx), cx);
+
+        assert_eq!(settings_a.tab_size.get(), 8);
+        assert_eq!(settings_b.tab_size.get(), 2);
+    });
+
+    let all_tasks = cx
+        .update(|cx| get_all_tasks(&project, task_contexts.clone(), cx))
         .await
         .into_iter()
         .map(|(source_kind, task)| {
@@ -8159,10 +8098,11 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         BufferDiffEvent::HunksStagedOrUnstaged(_)
     ));
     let event = diff_events.next().await.unwrap();
-    if let BufferDiffEvent::DiffChanged {
+    if let BufferDiffEvent::DiffChanged(DiffChanged {
         changed_range: Some(changed_range),
         base_text_changed_range: _,
-    } = event
+        extended_range: _,
+    }) = event
     {
         let changed_range = changed_range.to_point(&snapshot);
         assert_eq!(changed_range, Point::new(1, 0)..Point::new(2, 0));
@@ -8202,10 +8142,11 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
 
     // The diff emits a change event for the changed index text.
     let event = diff_events.next().await.unwrap();
-    if let BufferDiffEvent::DiffChanged {
+    if let BufferDiffEvent::DiffChanged(DiffChanged {
         changed_range: Some(changed_range),
         base_text_changed_range: _,
-    } = event
+        extended_range: _,
+    }) = event
     {
         let changed_range = changed_range.to_point(&snapshot);
         assert_eq!(changed_range, Point::new(0, 0)..Point::new(4, 0));
@@ -8260,10 +8201,11 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         BufferDiffEvent::HunksStagedOrUnstaged(_)
     ));
     let event = diff_events.next().await.unwrap();
-    if let BufferDiffEvent::DiffChanged {
+    if let BufferDiffEvent::DiffChanged(DiffChanged {
         changed_range: Some(changed_range),
         base_text_changed_range: _,
-    } = event
+        extended_range: _,
+    }) = event
     {
         let changed_range = changed_range.to_point(&snapshot);
         assert_eq!(changed_range, Point::new(3, 0)..Point::new(4, 0));
@@ -8302,10 +8244,11 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     });
 
     let event = diff_events.next().await.unwrap();
-    if let BufferDiffEvent::DiffChanged {
+    if let BufferDiffEvent::DiffChanged(DiffChanged {
         changed_range: Some(changed_range),
         base_text_changed_range: _,
-    } = event
+        extended_range: _,
+    }) = event
     {
         let changed_range = changed_range.to_point(&snapshot);
         assert_eq!(changed_range, Point::new(0, 0)..Point::new(5, 0));

@@ -121,7 +121,6 @@ impl AgentThreadPane {
                 Some(thread_store),
                 prompt_store,
                 history,
-                true,
                 window,
                 cx,
             )

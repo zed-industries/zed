@@ -144,6 +144,15 @@ impl EditFileTool {
         }
     }
 
+    pub fn with_thread(&self, new_thread: WeakEntity<Thread>) -> Self {
+        Self {
+            project: self.project.clone(),
+            thread: new_thread,
+            language_registry: self.language_registry.clone(),
+            templates: self.templates.clone(),
+        }
+    }
+
     fn authorize(
         &self,
         input: &EditFileToolInput,
@@ -398,7 +407,6 @@ impl AgentTool for EditFileTool {
                 })
                 .await;
 
-
             let (output, mut events) = if matches!(input.mode, EditFileMode::Edit) {
                 edit_agent.edit(
                     buffer.clone(),
@@ -460,14 +468,11 @@ impl AgentTool for EditFileTool {
             }
 
             // If format_on_save is enabled, format the buffer
-            let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
-                let settings = language_settings::language_settings(
-                    buffer.language().map(|l| l.name()),
-                    buffer.file(),
-                    cx,
-                );
-                settings.format_on_save != FormatOnSave::Off
-            });
+            let format_on_save_enabled = buffer
+                .read_with(cx, |buffer, cx| {
+                    let settings = language_settings::LanguageSettings::for_buffer(buffer, cx);
+                    settings.format_on_save != FormatOnSave::Off
+                });
 
             let edit_agent_output = output.await?;
 
@@ -574,6 +579,13 @@ impl AgentTool for EditFileTool {
             )
         }));
         Ok(())
+    }
+
+    fn rebind_thread(
+        &self,
+        new_thread: gpui::WeakEntity<crate::Thread>,
+    ) -> Option<std::sync::Arc<dyn crate::AnyAgentTool>> {
+        Some(self.with_thread(new_thread).erase())
     }
 }
 

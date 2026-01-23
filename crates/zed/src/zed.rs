@@ -93,7 +93,8 @@ use workspace::{
     open_new,
 };
 use workspace::{
-    CloseIntent, CloseWindow, NotificationFrame, RestoreBanner, with_active_or_new_workspace,
+    CloseIntent, CloseProject, CloseWindow, NotificationFrame, RestoreBanner,
+    with_active_or_new_workspace,
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
@@ -1137,6 +1138,43 @@ fn register_actions(
         })
         .register_action({
             let app_state = Arc::downgrade(&app_state);
+            move |_, _: &CloseProject, window, cx| {
+                let Some(window_handle) = window.window_handle().downcast::<Workspace>() else {
+                    return;
+                };
+                if let Some(app_state) = app_state.upgrade() {
+                    open_new(
+                        workspace::OpenOptions {
+                            replace_window: Some(window_handle),
+                            ..Default::default()
+                        },
+                        app_state,
+                        cx,
+                        |workspace, window, cx| {
+                            cx.activate(true);
+                            // Create buffer synchronously to avoid flicker
+                            let project = workspace.project().clone();
+                            let buffer = project.update(cx, |project, cx| {
+                                project.create_local_buffer("", None, true, cx)
+                            });
+                            let editor = cx.new(|cx| {
+                                Editor::for_buffer(buffer, Some(project), window, cx)
+                            });
+                            workspace.add_item_to_active_pane(
+                                Box::new(editor),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            );
+                        },
+                    )
+                    .detach();
+                }
+            }
+        })
+        .register_action({
+            let app_state = Arc::downgrade(&app_state);
             move |_, _: &NewFile, _, cx| {
                 if let Some(app_state) = app_state.upgrade() {
                     open_new(
@@ -1241,6 +1279,8 @@ fn initialize_pane(
             toolbar.add_item(agent_diff_toolbar, window, cx);
             let basedpyright_banner = cx.new(|cx| BasedPyrightBanner::new(workspace, cx));
             toolbar.add_item(basedpyright_banner, window, cx);
+            let image_view_toolbar = cx.new(|_| image_viewer::ImageViewToolbarControls::new());
+            toolbar.add_item(image_view_toolbar, window, cx);
         })
     });
 }
@@ -4789,11 +4829,13 @@ mod tests {
                 "feedback",
                 "file_finder",
                 "git",
+                "git_graph",
                 "git_onboarding",
                 "git_panel",
                 "git_picker",
                 "go_to_line",
                 "icon_theme_selector",
+                "image_viewer",
                 "inline_assistant",
                 "journal",
                 "keymap_editor",
@@ -4984,6 +5026,7 @@ mod tests {
             language_model::init(app_state.client.clone(), cx);
             language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             web_search::init(cx);
+            git_graph::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
             project::AgentRegistryStore::init_global(cx);

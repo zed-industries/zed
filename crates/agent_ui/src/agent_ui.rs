@@ -21,6 +21,7 @@ mod terminal_inline_assistant;
 mod text_thread_editor;
 mod text_thread_history;
 mod ui;
+mod user_slash_command;
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -29,7 +30,7 @@ use agent_settings::{AgentProfileId, AgentSettings};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
-use feature_flags::{AcpBetaFeatureFlag, AgentV2FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
 use gpui::{Action, App, Context, Entity, SharedString, Window, actions};
 use language::{
@@ -278,9 +279,6 @@ pub fn init(
                   _: &zed_actions::AgentRegistry,
                   window: &mut Window,
                   cx: &mut Context<Workspace>| {
-                if !cx.has_flag::<AcpBetaFeatureFlag>() {
-                    return;
-                }
                 let existing = workspace
                     .active_pane()
                     .read(cx)

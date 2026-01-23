@@ -721,6 +721,44 @@ impl LanguageRegistry {
             .cloned()
     }
 
+    /// Look up a language by its modeline name (vim filetype or emacs mode).
+    ///
+    /// This performs a case-insensitive match against:
+    /// 1. Explicit modeline aliases defined in the language config
+    /// 2. The language's grammar name
+    /// 3. The language name itself
+    pub fn available_language_for_modeline_name(
+        self: &Arc<Self>,
+        modeline_name: &str,
+    ) -> Option<AvailableLanguage> {
+        let modeline_name_lower = modeline_name.to_lowercase();
+        let state = self.state.read();
+
+        state
+            .available_languages
+            .iter()
+            .find(|lang| {
+                lang.matcher
+                    .modeline_aliases
+                    .iter()
+                    .any(|alias| alias.to_lowercase() == modeline_name_lower)
+            })
+            .or_else(|| {
+                state.available_languages.iter().find(|lang| {
+                    lang.grammar
+                        .as_ref()
+                        .is_some_and(|g| g.to_lowercase() == modeline_name_lower)
+                })
+            })
+            .or_else(|| {
+                state
+                    .available_languages
+                    .iter()
+                    .find(|lang| lang.name.0.to_lowercase() == modeline_name_lower)
+            })
+            .cloned()
+    }
+
     pub fn language_for_file(
         self: &Arc<Self>,
         file: &Arc<dyn File>,
