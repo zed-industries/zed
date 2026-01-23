@@ -3992,10 +3992,12 @@ impl AcpThreadView {
         let files_changed = changed_buffers.len();
         let diff_stats = DiffStats::all_files(&changed_buffers, cx);
 
-        let is_running = matches!(
-            tool_call_status,
-            ToolCallStatus::Pending | ToolCallStatus::InProgress
-        );
+        // Check the individual subagent thread's status, not the parent tool call.
+        // A single subagent tool call can spawn multiple subagents, and each should
+        // show its own completion status independently.
+        let is_running = thread_read.status() == ThreadStatus::Generating
+            || thread_read.has_in_progress_tool_calls();
+        // If the parent tool call failed/was rejected/canceled, mark all subagents as failed
         let is_failed = matches!(
             tool_call_status,
             ToolCallStatus::Failed | ToolCallStatus::Rejected | ToolCallStatus::Canceled
