@@ -60,7 +60,10 @@
     ] @item)
 
 (function_definition
-    (type_qualifier)? @context
+    [
+        (storage_class_specifier)
+        (type_qualifier)
+    ]* @context
     type: (_)? @context
     declarator: [
         (function_declarator
@@ -95,7 +98,10 @@
     (type_qualifier)? @context) @item
 
 (declaration
-    (type_qualifier)? @context
+    [
+        (storage_class_specifier)
+        (type_qualifier)
+    ]* @context
     type: (_)? @context
     declarator: [
         (field_identifier) @name
