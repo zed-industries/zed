@@ -91,7 +91,7 @@ const TOKEN_THRESHOLD: u64 = 250;
 struct SubagentBreadcrumb {
     thread: Entity<AcpThread>,
     title: SharedString,
-    _subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1079,26 +1079,31 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) {
         let title = subagent_thread.read(cx).title();
-        let entry_count = subagent_thread.read(cx).entries().len();
 
-        let subscription = cx.subscribe(&subagent_thread, |this, _, event, cx| match event {
-            AcpThreadEvent::TitleUpdated => {
-                cx.notify();
-            }
-            AcpThreadEvent::NewEntry | AcpThreadEvent::EntryUpdated(_) => {
-                this.sync_list_state_with_displayed_thread(cx);
-                cx.notify();
-            }
-            _ => {}
+        let event_subscription =
+            cx.subscribe(&subagent_thread, |this, _, event, cx| match event {
+                AcpThreadEvent::TitleUpdated => {
+                    cx.notify();
+                }
+                AcpThreadEvent::NewEntry | AcpThreadEvent::EntryUpdated(_) => {
+                    this.sync_list_state_with_displayed_thread(cx);
+                    cx.notify();
+                }
+                _ => {}
+            });
+
+        let observe_subscription = cx.observe(&subagent_thread, |this, _, cx| {
+            this.sync_list_state_with_displayed_thread(cx);
+            cx.notify();
         });
 
         self.subagent_navigation_stack.push(SubagentBreadcrumb {
             thread: subagent_thread,
             title,
-            _subscription: subscription,
+            _subscriptions: vec![event_subscription, observe_subscription],
         });
 
-        self.list_state.reset(entry_count);
+        self.sync_list_state_with_displayed_thread(cx);
         cx.notify();
     }
 
@@ -8686,6 +8691,15 @@ impl Render for AcpThreadView {
                             .into_any(),
                         )
                         .vertical_scrollbar_for(&self.list_state, window, cx)
+                        .into_any()
+                    } else if self.is_viewing_subagent() {
+                        this.child(
+                            v_flex()
+                                .size_full()
+                                .items_center()
+                                .justify_center()
+                                .child(SpinnerLabel::new().size(LabelSize::Large)),
+                        )
                         .into_any()
                     } else {
                         this.child(self.render_recent_history(cx)).into_any()
