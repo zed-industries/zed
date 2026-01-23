@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use base64::write::EncoderWriter;
-use cloud_llm_client::{CompletionIntent, CompletionMode};
+use cloud_llm_client::CompletionIntent;
 use gpui::{
     App, AppContext as _, DevicePixels, Image, ImageFormat, ObjectFit, SharedString, Size, Task,
     point, px, size,
@@ -92,6 +92,9 @@ const DEFAULT_IMAGE_MAX_BYTES: usize = 5 * 1024 * 1024;
 const MAX_IMAGE_DOWNSCALE_PASSES: usize = 8;
 
 impl LanguageModelImage {
+    // All language model images are encoded as PNGs.
+    pub const FORMAT: ImageFormat = ImageFormat::Png;
+
     pub fn empty() -> Self {
         Self {
             source: "".into(),
@@ -442,7 +445,6 @@ pub struct LanguageModelRequest {
     pub thread_id: Option<String>,
     pub prompt_id: Option<String>,
     pub intent: Option<CompletionIntent>,
-    pub mode: Option<CompletionMode>,
     pub messages: Vec<LanguageModelRequestMessage>,
     pub tools: Vec<LanguageModelRequestTool>,
     pub tool_choice: Option<LanguageModelToolChoice>,

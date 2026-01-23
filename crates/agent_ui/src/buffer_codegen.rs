@@ -6,7 +6,6 @@ use uuid::Uuid;
 use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
-use feature_flags::{FeatureFlagAppExt as _, InlineAssistantUseToolFeatureFlag};
 use futures::{
     SinkExt, Stream, StreamExt, TryStreamExt as _,
     channel::mpsc,
@@ -303,7 +302,7 @@ impl CodegenAlternative {
         let snapshot = buffer.read(cx).snapshot(cx);
 
         let (old_buffer, _, _) = snapshot
-            .range_to_buffer_ranges(range.clone())
+            .range_to_buffer_ranges(range.start..=range.end)
             .pop()
             .unwrap();
         let old_buffer = cx.new(|cx| {
@@ -401,7 +400,6 @@ impl CodegenAlternative {
 
     pub fn use_streaming_tools(model: &dyn LanguageModel, cx: &App) -> bool {
         model.supports_streaming_tools()
-            && cx.has_flag::<InlineAssistantUseToolFeatureFlag>()
             && AgentSettings::get_global(cx).inline_assistant_use_streaming_tools
     }
 
@@ -540,7 +538,6 @@ impl CodegenAlternative {
                 thread_id: None,
                 prompt_id: None,
                 intent: Some(CompletionIntent::InlineAssist),
-                mode: None,
                 tools,
                 tool_choice,
                 stop: Vec::new(),
@@ -619,7 +616,6 @@ impl CodegenAlternative {
                 thread_id: None,
                 prompt_id: None,
                 intent: Some(CompletionIntent::InlineAssist),
-                mode: None,
                 tools: Vec::new(),
                 tool_choice: None,
                 stop: Vec::new(),
@@ -681,7 +677,7 @@ impl CodegenAlternative {
         let language_name = {
             let multibuffer = self.buffer.read(cx);
             let snapshot = multibuffer.snapshot(cx);
-            let ranges = snapshot.range_to_buffer_ranges(self.range.clone());
+            let ranges = snapshot.range_to_buffer_ranges(self.range.start..=self.range.end);
             ranges
                 .first()
                 .and_then(|(buffer, _, _)| buffer.language())

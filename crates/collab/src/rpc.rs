@@ -6,7 +6,8 @@ use crate::{
     db::{
         self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser, Database,
         InviteMemberResult, MembershipUpdated, NotificationId, ProjectId, RejoinedProject,
-        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, User, UserId,
+        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, SharedThreadId, User,
+        UserId,
     },
     executor::Executor,
 };
@@ -465,7 +466,10 @@ impl Server {
             .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
             .add_message_handler(update_context)
             .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
-            .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>);
+            .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>)
+            .add_request_handler(share_agent_thread)
+            .add_request_handler(get_shared_agent_thread)
+            .add_request_handler(forward_project_search_chunk);
 
         Arc::new(server)
     }
@@ -1551,6 +1555,7 @@ fn notify_rejoined_projects(
                         path: settings_file.path,
                         content: Some(settings_file.content),
                         kind: Some(settings_file.kind.to_proto().into()),
+                        outside_worktree: Some(settings_file.outside_worktree),
                     },
                 )?;
             }
@@ -1983,6 +1988,7 @@ async fn join_project(
                     path: settings_file.path,
                     content: Some(settings_file.content),
                     kind: Some(settings_file.kind.to_proto() as i32),
+                    outside_worktree: Some(settings_file.outside_worktree),
                 },
             )?;
         }
@@ -2420,6 +2426,20 @@ async fn update_context(message: proto::UpdateContext, session: MessageContext) 
         },
     );
 
+    Ok(())
+}
+
+async fn forward_project_search_chunk(
+    message: proto::FindSearchCandidatesChunk,
+    response: Response<proto::FindSearchCandidatesChunk>,
+    session: MessageContext,
+) -> Result<()> {
+    let peer_id = message.peer_id.context("missing peer_id")?;
+    let payload = session
+        .peer
+        .forward_request(session.connection_id, peer_id.into(), message)
+        .await?;
+    response.send(payload)?;
     Ok(())
 }
 
@@ -4014,6 +4034,54 @@ fn project_left(project: &db::LeftProject, session: &Session) {
                 .trace_err();
         }
     }
+}
+
+async fn share_agent_thread(
+    request: proto::ShareAgentThread,
+    response: Response<proto::ShareAgentThread>,
+    session: MessageContext,
+) -> Result<()> {
+    let user_id = session.user_id();
+
+    let share_id = SharedThreadId::from_proto(request.session_id.clone())
+        .ok_or_else(|| anyhow!("Invalid session ID format"))?;
+
+    session
+        .db()
+        .await
+        .upsert_shared_thread(share_id, user_id, &request.title, request.thread_data)
+        .await?;
+
+    response.send(proto::Ack {})?;
+
+    Ok(())
+}
+
+async fn get_shared_agent_thread(
+    request: proto::GetSharedAgentThread,
+    response: Response<proto::GetSharedAgentThread>,
+    session: MessageContext,
+) -> Result<()> {
+    let share_id = SharedThreadId::from_proto(request.session_id)
+        .ok_or_else(|| anyhow!("Invalid session ID format"))?;
+
+    let result = session.db().await.get_shared_thread(share_id).await?;
+
+    match result {
+        Some((thread, username)) => {
+            response.send(proto::GetSharedAgentThreadResponse {
+                title: thread.title,
+                thread_data: thread.data,
+                sharer_username: username,
+                created_at: thread.created_at.and_utc().to_rfc3339(),
+            })?;
+        }
+        None => {
+            return Err(anyhow!("Shared thread not found").into());
+        }
+    }
+
+    Ok(())
 }
 
 pub trait ResultExt {

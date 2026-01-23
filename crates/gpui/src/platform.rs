@@ -20,6 +20,9 @@ mod blade;
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+mod visual_test;
+
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -39,10 +42,9 @@ use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
-    Point, Priority, RealtimePriority, RenderGlyphParams, RenderImage, RenderImageParams,
-    RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
-    SystemWindowTab, Task, TaskLabel, TaskTiming, ThreadTaskTimings, Window, WindowControlArea,
-    hash, point, px, size,
+    Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
+    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, TaskTiming,
+    ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -52,6 +54,7 @@ use image::RgbaImage;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+pub use scheduler::RunnableMeta;
 use schemars::JsonSchema;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
@@ -89,6 +92,9 @@ pub use linux::layer_shell;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
+
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+pub use visual_test::VisualTestPlatform;
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -584,40 +590,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
 }
 
-/// This type is public so that our test macro can generate and use it, but it should not
-/// be considered part of our public API.
+/// Type alias for runnables with metadata.
+/// Previously an enum with a single variant, now simplified to a direct type alias.
 #[doc(hidden)]
-pub struct RunnableMeta {
-    /// Location of the runnable
-    pub location: &'static core::panic::Location<'static>,
-    /// Weak reference to check if the app is still alive before running this task
-    pub app: Option<std::sync::Weak<()>>,
-}
-
-impl std::fmt::Debug for RunnableMeta {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RunnableMeta")
-            .field("location", &self.location)
-            .field("app_alive", &self.is_app_alive())
-            .finish()
-    }
-}
-
-impl RunnableMeta {
-    /// Returns true if the app is still alive (or if no app tracking is configured).
-    pub fn is_app_alive(&self) -> bool {
-        match &self.app {
-            Some(weak) => weak.strong_count() > 0,
-            None => true,
-        }
-    }
-}
-
-#[doc(hidden)]
-pub enum RunnableVariant {
-    Meta(Runnable<RunnableMeta>),
-    Compat(Runnable),
-}
+pub type RunnableVariant = Runnable<RunnableMeta>;
 
 /// This type is public so that our test macro can generate and use it, but it should not
 /// be considered part of our public API.
@@ -626,10 +602,10 @@ pub trait PlatformDispatcher: Send + Sync {
     fn get_all_timings(&self) -> Vec<ThreadTaskTimings>;
     fn get_current_thread_timings(&self) -> Vec<TaskTiming>;
     fn is_main_thread(&self) -> bool;
-    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>, priority: Priority);
+    fn dispatch(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
-    fn spawn_realtime(&self, priority: RealtimePriority, f: Box<dyn FnOnce() + Send>);
+    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>);
 
     fn now(&self) -> Instant {
         Instant::now()

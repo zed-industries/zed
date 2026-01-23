@@ -36,11 +36,11 @@ pub use visual_test_context::*;
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::InspectorElementRegistry;
 use crate::{
-    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
-    AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
-    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
+    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Arena,
+    Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase,
+    DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding,
+    KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels,
+    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
     PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, Window, WindowAppearance,
@@ -584,7 +584,6 @@ impl GpuiMode {
 /// You need a reference to an `App` to access the state of a [Entity].
 pub struct App {
     pub(crate) this: Weak<AppCell>,
-    pub(crate) liveness: std::sync::Arc<()>,
     pub(crate) platform: Rc<dyn Platform>,
     pub(crate) mode: GpuiMode,
     text_system: Arc<TextSystem>,
@@ -640,6 +639,9 @@ pub struct App {
     pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
     quit_mode: QuitMode,
     quitting: bool,
+    /// Per-App element arena. This isolates element allocations between different
+    /// App instances (important for tests where multiple Apps run concurrently).
+    pub(crate) element_arena: RefCell<Arena>,
 }
 
 impl App {
@@ -649,10 +651,10 @@ impl App {
         asset_source: Arc<dyn AssetSource>,
         http_client: Arc<dyn HttpClient>,
     ) -> Rc<AppCell> {
-        let executor = platform.background_executor();
+        let background_executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
         assert!(
-            executor.is_main_thread(),
+            background_executor.is_main_thread(),
             "must construct App on main thread"
         );
 
@@ -664,7 +666,6 @@ impl App {
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(App {
                 this: this.clone(),
-                liveness: std::sync::Arc::new(()),
                 platform: platform.clone(),
                 text_system,
                 text_rendering_mode: Rc::new(Cell::new(TextRenderingMode::default())),
@@ -673,7 +674,7 @@ impl App {
                 flushing_effects: false,
                 pending_updates: 0,
                 active_drag: None,
-                background_executor: executor,
+                background_executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 loading_assets: Default::default(),
@@ -718,6 +719,7 @@ impl App {
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
+                element_arena: RefCell::new(Arena::new(1024 * 1024)),
             }),
         });
 
@@ -764,7 +766,7 @@ impl App {
 
         let futures = futures::future::join_all(futures);
         if self
-            .background_executor
+            .foreground_executor
             .block_with_timeout(SHUTDOWN_TIMEOUT, futures)
             .is_err()
         {
@@ -1494,7 +1496,6 @@ impl App {
     pub fn to_async(&self) -> AsyncApp {
         AsyncApp {
             app: self.this.clone(),
-            liveness_token: std::sync::Arc::downgrade(&self.liveness),
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
         }
@@ -2231,8 +2232,6 @@ impl App {
 }
 
 impl AppContext for App {
-    type Result<T> = T;
-
     /// Builds an entity that is owned by the application.
     ///
     /// The given function will be invoked with a [`Context`] and must return an object representing the entity. An
@@ -2254,7 +2253,7 @@ impl AppContext for App {
         })
     }
 
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<Reservation<T>> {
+    fn reserve_entity<T: 'static>(&mut self) -> Reservation<T> {
         Reservation(self.entities.reserve())
     }
 
@@ -2262,7 +2261,7 @@ impl AppContext for App {
         &mut self,
         reservation: Reservation<T>,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    ) -> Entity<T> {
         self.update(|cx| {
             let slot = reservation.0;
             let entity = build_entity(&mut Context::new_context(cx, slot.downgrade()));
@@ -2295,11 +2294,7 @@ impl AppContext for App {
         GpuiBorrow::new(handle.clone(), self)
     }
 
-    fn read_entity<T, R>(
-        &self,
-        handle: &Entity<T>,
-        read: impl FnOnce(&T, &App) -> R,
-    ) -> Self::Result<R>
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
     {
@@ -2344,7 +2339,7 @@ impl AppContext for App {
         self.background_executor.spawn(future)
     }
 
-    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> R
     where
         G: Global,
     {
@@ -2541,6 +2536,13 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
         self.app.notify(lease.id);
         self.app.entities.end_lease(lease);
         self.app.finish_update();
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        self.foreground_executor.close();
+        self.background_executor.close();
     }
 }
 

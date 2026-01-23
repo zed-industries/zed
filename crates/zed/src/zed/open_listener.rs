@@ -49,6 +49,9 @@ pub enum OpenRequestKind {
         extension_id: String,
     },
     AgentPanel,
+    SharedAgentThread {
+        session_id: String,
+    },
     DockMenuAction {
         index: usize,
     },
@@ -107,6 +110,14 @@ impl OpenRequest {
                 });
             } else if url == "zed://agent" {
                 this.kind = Some(OpenRequestKind::AgentPanel);
+            } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
+                if uuid::Uuid::parse_str(session_id_str).is_ok() {
+                    this.kind = Some(OpenRequestKind::SharedAgentThread {
+                        session_id: session_id_str.to_string(),
+                    });
+                } else {
+                    log::error!("Invalid session ID in URL: {}", session_id_str);
+                }
             } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
@@ -330,7 +341,7 @@ pub async fn open_paths_with_positions(
         .collect::<Vec<_>>();
 
     let (workspace, mut items) = cx
-        .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))?
+        .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))
         .await?;
 
     for diff_pair in diff_paths {
@@ -338,9 +349,10 @@ pub async fn open_paths_with_positions(
         let new_path = Path::new(&diff_pair[1]).canonicalize()?;
         if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
             FileDiffView::open(old_path, new_path, workspace, window, cx)
-        }) && let Some(diff_view) = diff_view.await.log_err()
-        {
-            items.push(Some(Ok(Box::new(diff_view))))
+        }) {
+            if let Some(diff_view) = diff_view.await.log_err() {
+                items.push(Some(Ok(Box::new(diff_view))))
+            }
         }
     }
 
@@ -410,8 +422,7 @@ pub async fn handle_cli_connection(
                                 responses.send(CliResponse::Exit { status: 1 }).log_err();
                             }
                         };
-                    })
-                    .log_err();
+                    });
                     return;
                 }
 
@@ -446,27 +457,31 @@ async fn open_workspaces(
     env: Option<collections::HashMap<String, String>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let grouped_locations = if paths.is_empty() && diff_paths.is_empty() {
-        // If no paths are provided, restore from previous workspaces unless a new workspace is requested with -n
-        if open_new_workspace == Some(true) {
-            Vec::new()
+    let grouped_locations: Vec<(SerializedWorkspaceLocation, PathList)> =
+        if paths.is_empty() && diff_paths.is_empty() {
+            if open_new_workspace == Some(true) {
+                Vec::new()
+            } else {
+                // The workspace_id from the database is not used;
+                // open_paths will assign a new WorkspaceId when opening the workspace.
+                restorable_workspace_locations(cx, &app_state)
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(_workspace_id, location, paths)| (location, paths))
+                    .collect()
+            }
         } else {
-            restorable_workspace_locations(cx, &app_state)
-                .await
-                .unwrap_or_default()
-        }
-    } else {
-        vec![(
-            SerializedWorkspaceLocation::Local,
-            PathList::new(&paths.into_iter().map(PathBuf::from).collect::<Vec<_>>()),
-        )]
-    };
+            vec![(
+                SerializedWorkspaceLocation::Local,
+                PathList::new(&paths.into_iter().map(PathBuf::from).collect::<Vec<_>>()),
+            )]
+        };
 
     if grouped_locations.is_empty() {
         // If we have no paths to open, show the welcome screen if this is the first launch
         if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-            cx.update(|cx| show_onboarding_view(app_state, cx).detach())
-                .log_err();
+            cx.update(|cx| show_onboarding_view(app_state, cx).detach());
         }
         // If not the first launch, show an empty window with empty editor
         else {
@@ -479,8 +494,7 @@ async fn open_workspaces(
                     Editor::new_file(workspace, &Default::default(), window, cx)
                 })
                 .detach();
-            })
-            .log_err();
+            });
         }
     } else {
         // If there are paths to open, open a workspace for each grouping of paths
@@ -518,7 +532,7 @@ async fn open_workspaces(
                         cx.update(|cx| {
                             RemoteSettings::get_global(cx)
                                 .fill_connection_options_from_settings(options)
-                        })?;
+                        });
                     }
                     cx.spawn(async move |cx| {
                         open_remote_project(
@@ -560,9 +574,7 @@ async fn open_local_workspace(
     let (open_new_workspace, replace_window) = if reuse {
         (
             Some(true),
-            cx.update(|cx| workspace::local_workspace_windows(cx).into_iter().next())
-                .ok()
-                .flatten(),
+            cx.update(|cx| workspace::local_workspace_windows(cx).into_iter().next()),
         )
     } else {
         (open_new_workspace, None)
@@ -626,14 +638,14 @@ async fn open_local_workspace(
                 if wait {
                     let (release_tx, release_rx) = oneshot::channel();
                     item_release_futures.push(release_rx);
-                    subscriptions.push(cx.update(|cx| {
+                    subscriptions.push(Ok(cx.update(|cx| {
                         item.on_release(
                             cx,
                             Box::new(move |_| {
                                 release_tx.send(()).ok();
                             }),
                         )
-                    }));
+                    })));
                 }
             }
             Some(Err(err)) => {

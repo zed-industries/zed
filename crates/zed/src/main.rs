@@ -4,6 +4,8 @@
 mod reliability;
 mod zed;
 
+use agent::{SharedThread, ThreadStore};
+use agent_client_protocol;
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Error, Result};
 use clap::Parser;
@@ -33,6 +35,7 @@ use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::{project_settings::ProjectSettings, trusted_worktrees};
+use proto;
 use recent_projects::{RemoteSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
@@ -51,8 +54,8 @@ use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
-    AppState, PathList, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceSettings,
-    WorkspaceStore, notifications::NotificationId,
+    AppState, PathList, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceId,
+    WorkspaceSettings, WorkspaceStore, notifications::NotificationId,
 };
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
@@ -125,7 +128,7 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
 }
 
 fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncApp) {
-    cx.update(|cx| fail_to_open_window(e, cx)).log_err();
+    cx.update(|cx| fail_to_open_window(e, cx));
 }
 
 fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
@@ -358,17 +361,17 @@ fn main() {
     }
 
     let fs = Arc::new(RealFs::new(git_binary_path, app.background_executor()));
-    let user_settings_file_rx = watch_config_file(
+    let (user_settings_file_rx, user_settings_watcher) = watch_config_file(
         &app.background_executor(),
         fs.clone(),
         paths::settings_file().clone(),
     );
-    let global_settings_file_rx = watch_config_file(
+    let (global_settings_file_rx, global_settings_watcher) = watch_config_file(
         &app.background_executor(),
         fs.clone(),
         paths::global_settings_file().clone(),
     );
-    let user_keymap_file_rx = watch_config_file(
+    let (user_keymap_file_rx, user_keymap_watcher) = watch_config_file(
         &app.background_executor(),
         fs.clone(),
         paths::keymap_file().clone(),
@@ -420,7 +423,7 @@ fn main() {
                 HashMap::default()
             }
         };
-        trusted_worktrees::init(db_trusted_paths, None, None, cx);
+        trusted_worktrees::init(db_trusted_paths, cx);
         menu::init();
         zed_actions::init();
 
@@ -431,8 +434,14 @@ fn main() {
         }
         settings::init(cx);
         zlog_settings::init(cx);
-        handle_settings_file_changes(user_settings_file_rx, global_settings_file_rx, cx);
-        handle_keymap_file_changes(user_keymap_file_rx, cx);
+        handle_settings_file_changes(
+            user_settings_file_rx,
+            user_settings_watcher,
+            global_settings_file_rx,
+            global_settings_watcher,
+            cx,
+        );
+        handle_keymap_file_changes(user_keymap_file_rx, user_keymap_watcher, cx);
 
         let user_agent = format!(
             "Zed/{} ({}; {})",
@@ -526,9 +535,9 @@ fn main() {
         debugger_tools::init(cx);
         client::init(&client, cx);
 
-        let system_id = cx.background_executor().block(system_id).ok();
-        let installation_id = cx.background_executor().block(installation_id).ok();
-        let session = cx.background_executor().block(session);
+        let system_id = cx.foreground_executor().block_on(system_id).ok();
+        let installation_id = cx.foreground_executor().block_on(installation_id).ok();
+        let session = cx.foreground_executor().block_on(session);
 
         let telemetry = client.telemetry();
         telemetry.start(
@@ -587,24 +596,34 @@ fn main() {
             cx.background_executor().clone(),
         );
         command_palette::init(cx);
-        let copilot_language_server_id = app_state.languages.next_language_server_id();
-        copilot::init(
-            copilot_language_server_id,
+        let copilot_chat_configuration = copilot_chat::CopilotChatConfiguration {
+            enterprise_uri: language::language_settings::all_language_settings(None, cx)
+                .edit_predictions
+                .copilot
+                .enterprise_uri
+                .clone(),
+        };
+        copilot_chat::init(
             app_state.fs.clone(),
             app_state.client.http_client(),
-            app_state.node_runtime.clone(),
+            copilot_chat_configuration,
             cx,
         );
+
+        copilot_ui::init(&app_state, cx);
         supermaven::init(app_state.client.clone(), cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         acp_tools::init(cx);
+        zed::telemetry_log::init(cx);
+        zed::remote_debug::init(cx);
         edit_prediction_ui::init(cx);
         web_search::init(cx);
         web_search_providers::init(app_state.client.clone(), cx);
         snippet_provider::init(cx);
         edit_prediction_registry::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
+        project::AgentRegistryStore::init_global(cx);
         agent_ui::init(
             app_state.fs.clone(),
             app_state.client.clone(),
@@ -616,6 +635,7 @@ fn main() {
         agent_ui_v2::agents_panel::init(cx);
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
+        dev_container::init(cx);
 
         load_embedded_fonts(cx);
 
@@ -652,6 +672,7 @@ fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);
+        git_graph::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
         svg_preview::init(cx);
@@ -794,8 +815,7 @@ fn main() {
                     if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
                         handle_open_request(request, app_state.clone(), cx);
                     }
-                })
-                .ok();
+                });
             }
         })
         .detach();
@@ -837,6 +857,76 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 })
                 .detach_and_log_err(cx);
             }
+            OpenRequestKind::SharedAgentThread { session_id } => {
+                cx.spawn(async move |cx| {
+                    let workspace =
+                        workspace::get_any_active_workspace(app_state.clone(), cx.clone()).await?;
+
+                    let (client, thread_store) =
+                        workspace.update(cx, |workspace, _window, cx| {
+                            let client = workspace.project().read(cx).client();
+                            let thread_store: Option<gpui::Entity<ThreadStore>> = workspace
+                                .panel::<AgentPanel>(cx)
+                                .map(|panel| panel.read(cx).thread_store().clone());
+                            (client, thread_store)
+                        })?;
+
+                    let Some(thread_store): Option<gpui::Entity<ThreadStore>> = thread_store else {
+                        anyhow::bail!("Agent panel not available");
+                    };
+
+                    let response = client
+                        .request(proto::GetSharedAgentThread {
+                            session_id: session_id.clone(),
+                        })
+                        .await
+                        .context("Failed to fetch shared thread")?;
+
+                    let shared_thread = SharedThread::from_bytes(&response.thread_data)?;
+                    let db_thread = shared_thread.to_db_thread();
+                    let session_id = agent_client_protocol::SessionId::new(session_id);
+
+                    let save_session_id = session_id.clone();
+
+                    thread_store
+                        .update(&mut cx.clone(), |store, cx| {
+                            store.save_thread(save_session_id.clone(), db_thread, cx)
+                        })
+                        .await?;
+
+                    let thread_metadata = acp_thread::AgentSessionInfo {
+                        session_id,
+                        cwd: None,
+                        title: Some(format!("🔗 {}", response.title).into()),
+                        updated_at: Some(chrono::Utc::now()),
+                        meta: None,
+                    };
+
+                    workspace.update(cx, |workspace, window, cx| {
+                        if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                            panel.update(cx, |panel, cx| {
+                                panel.open_thread(thread_metadata, window, cx);
+                            });
+                            panel.focus_handle(cx).focus(window, cx);
+                        }
+                    })?;
+
+                    workspace.update(cx, |workspace, _window, cx| {
+                        struct ImportedThreadToast;
+                        workspace.show_toast(
+                            Toast::new(
+                                NotificationId::unique::<ImportedThreadToast>(),
+                                format!("Imported shared thread from {}", response.sharer_username),
+                            )
+                            .autohide(),
+                            cx,
+                        );
+                    })?;
+
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+            }
             OpenRequestKind::DockMenuAction { index } => {
                 cx.perform_dock_menu_action(index);
             }
@@ -850,28 +940,26 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                     .project()
                                     .update(cx, |project, _| project.lsp_store())
                             })?;
+                            let uri = format!("zed://schemas/{}", schema_path);
                             let json_schema_content =
-                                json_schema_store::resolve_schema_request_inner(
-                                    &app_state.languages,
-                                    lsp_store,
-                                    &schema_path,
-                                    cx,
-                                )
-                                .await?;
+                                json_schema_store::handle_schema_request(lsp_store, uri, cx)
+                                    .await?;
+                            let json_schema_value: serde_json::Value =
+                                serde_json::from_str(&json_schema_content)
+                                    .context("Failed to parse JSON Schema")?;
                             let json_schema_content =
-                                serde_json::to_string_pretty(&json_schema_content)
+                                serde_json::to_string_pretty(&json_schema_value)
                                     .context("Failed to serialize JSON Schema as JSON")?;
                             let buffer_task = workspace.update(cx, |workspace, cx| {
-                                workspace
-                                    .project()
-                                    .update(cx, |project, cx| project.create_buffer(false, cx))
+                                workspace.project().update(cx, |project, cx| {
+                                    project.create_buffer(json, false, cx)
+                                })
                             })?;
 
                             let buffer = buffer_task.await?;
 
                             workspace.update_in(cx, |workspace, window, cx| {
                                 buffer.update(cx, |buffer, cx| {
-                                    buffer.set_language(json, cx);
                                     buffer.edit([(0..0, json_schema_content)], None, cx);
                                     buffer.edit(
                                         [(0..0, format!("// {} JSON Schema\n", schema_path))],
@@ -1055,7 +1143,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                             None,
                             cx,
                         )
-                    })?
+                    })
                     .await?;
                 }
 
@@ -1153,14 +1241,29 @@ async fn installation_id() -> Result<IdType> {
 
 async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
     if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
-        let use_system_window_tabs = cx
-            .update(|cx| WorkspaceSettings::get_global(cx).use_system_window_tabs)
-            .unwrap_or(false);
+        let use_system_window_tabs =
+            cx.update(|cx| WorkspaceSettings::get_global(cx).use_system_window_tabs);
         let mut results: Vec<Result<(), Error>> = Vec::new();
         let mut tasks = Vec::new();
 
-        for (index, (location, paths)) in locations.into_iter().enumerate() {
+        for (index, (workspace_id, location, paths)) in locations.into_iter().enumerate() {
             match location {
+                SerializedWorkspaceLocation::Local if paths.is_empty() => {
+                    // Restore empty workspace by ID (has items like drafts but no folders)
+                    let app_state = app_state.clone();
+                    let task = cx.spawn(async move |cx| {
+                        let open_task = cx.update(|cx| {
+                            workspace::open_workspace_by_id(workspace_id, app_state, cx)
+                        });
+                        open_task.await.map(|_| ())
+                    });
+
+                    if use_system_window_tabs && index == 0 {
+                        results.push(task.await);
+                    } else {
+                        tasks.push(task);
+                    }
+                }
                 SerializedWorkspaceLocation::Local => {
                     let app_state = app_state.clone();
                     let task = cx.spawn(async move |cx| {
@@ -1171,7 +1274,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                                 workspace::OpenOptions::default(),
                                 cx,
                             )
-                        })?;
+                        });
                         open_task.await.map(|_| ())
                     });
 
@@ -1189,7 +1292,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                         cx.update(|cx| {
                             RemoteSettings::get_global(cx)
                                 .fill_connection_options_from_settings(options)
-                        })?;
+                        });
                     }
                     let task = cx.spawn(async move |cx| {
                         recent_projects::open_remote_project(
@@ -1230,24 +1333,20 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
             };
 
             // Try to find an active workspace to show the toast
-            let toast_shown = cx
-                .update(|cx| {
-                    if let Some(window) = cx.active_window()
-                        && let Some(workspace) = window.downcast::<Workspace>()
-                    {
-                        workspace
-                            .update(cx, |workspace, _, cx| {
-                                workspace.show_toast(
-                                    Toast::new(NotificationId::unique::<()>(), message),
-                                    cx,
-                                )
-                            })
-                            .ok();
-                        return true;
-                    }
-                    false
-                })
-                .unwrap_or(false);
+            let toast_shown = cx.update(|cx| {
+                if let Some(window) = cx.active_window()
+                    && let Some(workspace) = window.downcast::<Workspace>()
+                {
+                    workspace
+                        .update(cx, |workspace, _, cx| {
+                            workspace
+                                .show_toast(Toast::new(NotificationId::unique::<()>(), message), cx)
+                        })
+                        .ok();
+                    return true;
+                }
+                false
+            });
 
             // If we couldn't show a toast (no windows opened successfully),
             // we've already logged the errors above, so the user can check logs
@@ -1258,7 +1357,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
             }
         }
     } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-        cx.update(|cx| show_onboarding_view(app_state, cx))?.await?;
+        cx.update(|cx| show_onboarding_view(app_state, cx)).await?;
     } else {
         cx.update(|cx| {
             workspace::open_new(
@@ -1275,7 +1374,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                     }
                 },
             )
-        })?
+        })
         .await?;
     }
 
@@ -1285,22 +1384,18 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
 pub(crate) async fn restorable_workspace_locations(
     cx: &mut AsyncApp,
     app_state: &Arc<AppState>,
-) -> Option<Vec<(SerializedWorkspaceLocation, PathList)>> {
-    let mut restore_behavior = cx
-        .update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)
-        .ok()?;
+) -> Option<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
+    let mut restore_behavior = cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup);
 
     let session_handle = app_state.session.clone();
-    let (last_session_id, last_session_window_stack) = cx
-        .update(|cx| {
-            let session = session_handle.read(cx);
+    let (last_session_id, last_session_window_stack) = cx.update(|cx| {
+        let session = session_handle.read(cx);
 
-            (
-                session.last_session_id().map(|id| id.to_string()),
-                session.last_session_window_stack(),
-            )
-        })
-        .ok()?;
+        (
+            session.last_session_id().map(|id| id.to_string()),
+            session.last_session_window_stack(),
+        )
+    });
 
     if last_session_id.is_none()
         && matches!(
@@ -1471,6 +1566,7 @@ fn parse_url_arg(arg: &str, cx: &App) -> String {
         Ok(path) => format!("file://{}", path.display()),
         Err(_) => {
             if arg.starts_with("file://")
+                || arg.starts_with("zed://")
                 || arg.starts_with("zed-cli://")
                 || arg.starts_with("ssh://")
                 || parse_zed_link(arg, cx).is_some()
@@ -1489,7 +1585,7 @@ fn load_embedded_fonts(cx: &App) {
     let embedded_fonts = Mutex::new(Vec::new());
     let executor = cx.background_executor();
 
-    executor.block(executor.scoped(|scope| {
+    cx.foreground_executor().block_on(executor.scoped(|scope| {
         for font_path in &font_paths {
             if !font_path.ends_with(".ttf") {
                 continue;
@@ -1512,27 +1608,26 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     cx.spawn({
         let fs = fs.clone();
         async move |cx| {
-            if let Some(theme_registry) = cx.update(|cx| ThemeRegistry::global(cx)).log_err() {
-                let themes_dir = paths::themes_dir().as_ref();
-                match fs
-                    .metadata(themes_dir)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|m| m.is_dir)
-                {
-                    Some(is_dir) => {
-                        anyhow::ensure!(is_dir, "Themes dir path {themes_dir:?} is not a directory")
-                    }
-                    None => {
-                        fs.create_dir(themes_dir).await.with_context(|| {
-                            format!("Failed to create themes dir at path {themes_dir:?}")
-                        })?;
-                    }
+            let theme_registry = cx.update(|cx| ThemeRegistry::global(cx));
+            let themes_dir = paths::themes_dir().as_ref();
+            match fs
+                .metadata(themes_dir)
+                .await
+                .ok()
+                .flatten()
+                .map(|m| m.is_dir)
+            {
+                Some(is_dir) => {
+                    anyhow::ensure!(is_dir, "Themes dir path {themes_dir:?} is not a directory")
                 }
-                theme_registry.load_user_themes(themes_dir, fs).await?;
-                cx.update(GlobalTheme::reload_theme)?;
+                None => {
+                    fs.create_dir(themes_dir).await.with_context(|| {
+                        format!("Failed to create themes dir at path {themes_dir:?}")
+                    })?;
+                }
             }
+            theme_registry.load_user_themes(themes_dir, fs).await?;
+            cx.update(GlobalTheme::reload_theme);
             anyhow::Ok(())
         }
     })
@@ -1549,15 +1644,16 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut App) {
 
         while let Some(paths) = events.next().await {
             for event in paths {
-                if fs.metadata(&event.path).await.ok().flatten().is_some()
-                    && let Some(theme_registry) =
-                        cx.update(|cx| ThemeRegistry::global(cx)).log_err()
-                    && let Some(()) = theme_registry
+                if fs.metadata(&event.path).await.ok().flatten().is_some() {
+                    let theme_registry = cx.update(|cx| ThemeRegistry::global(cx));
+                    if theme_registry
                         .load_user_theme(&event.path, fs.clone())
                         .await
                         .log_err()
-                {
-                    cx.update(GlobalTheme::reload_theme).log_err();
+                        .is_some()
+                    {
+                        cx.update(GlobalTheme::reload_theme);
+                    }
                 }
             }
         }

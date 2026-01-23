@@ -27,6 +27,8 @@ impl LspInstaller for CLspAdapter {
         pre_release: bool,
         _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
+        ensure_arch_compatibility()?;
+
         let release =
             latest_github_release("clangd/clangd", true, pre_release, delegate.http_client())
                 .await?;
@@ -70,6 +72,8 @@ impl LspInstaller for CLspAdapter {
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
+        ensure_arch_compatibility()?;
+
         let GitHubLspBinaryVersion {
             name,
             url,
@@ -145,6 +149,16 @@ impl LspInstaller for CLspAdapter {
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir).await
     }
+}
+
+fn ensure_arch_compatibility() -> Result<()> {
+    let arch = consts::ARCH;
+    if consts::OS == "linux" && !["x86_64", "x86"].contains(&arch) {
+        anyhow::bail!(
+            "Clangd does not provide prebuilt binaries for {arch} to fetch from GitHub. Consider installing the binary manually."
+        )
+    }
+    Ok(())
 }
 
 #[async_trait(?Send)]

@@ -199,8 +199,8 @@ impl DispatchTree {
                 if let Some(context) = node.context.clone() {
                     self.context_stack.push(context);
                 }
-                if node.view_id.is_some() {
-                    self.view_stack.push(node.view_id.unwrap());
+                if let Some(view_id) = node.view_id {
+                    self.view_stack.push(view_id);
                 }
                 self.node_stack.push(node_id);
                 current_node_id = node.parent;
@@ -1101,5 +1101,49 @@ mod tests {
         });
         cx.simulate_keystrokes("ctrl-b [");
         test.update(cx, |test, _| assert_eq!(test.text.borrow().as_str(), "["))
+    }
+
+    #[crate::test]
+    fn test_focus_preserved_across_window_activation(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let focus_handle = cx.update(|window, cx| {
+            let handle = cx.focus_handle();
+            window.focus(&handle, cx);
+            window.activate_window();
+            handle
+        });
+        cx.run_until_parked();
+
+        cx.update(|window, _| {
+            assert!(window.is_window_active(), "Window should be active");
+            assert!(
+                focus_handle.is_focused(window),
+                "Element should be focused after window.focus() call"
+            );
+        });
+
+        cx.deactivate_window();
+
+        cx.update(|window, _| {
+            assert!(!window.is_window_active(), "Window should not be active");
+            assert!(
+                !focus_handle.is_focused(window),
+                "Element should not appear focused when window is inactive"
+            );
+        });
+
+        cx.update(|window, _| {
+            window.activate_window();
+        });
+        cx.run_until_parked();
+
+        cx.update(|window, _| {
+            assert!(window.is_window_active(), "Window should be active again");
+            assert!(
+                focus_handle.is_focused(window),
+                "Element should be focused after window reactivation"
+            );
+        });
     }
 }
