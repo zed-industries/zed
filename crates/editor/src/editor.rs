@@ -196,8 +196,8 @@ use std::{
 use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
 use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _};
 use theme::{
-    AccentColors, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, Theme, ThemeSettings,
-    observe_buffer_font_size_adjustment,
+    AccentColors, ActiveTheme, GlobalTheme, PlayerColor, StatusColors, SyntaxTheme, Theme,
+    ThemeSettings, observe_buffer_font_size_adjustment,
 };
 use ui::{
     Avatar, ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape,
@@ -2488,6 +2488,7 @@ impl Editor {
                         cx.observe_in(&display_map, window, Self::on_display_map_changed),
                         cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
+                        cx.observe_global_in::<GlobalTheme>(window, Self::theme_changed),
                         observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
                         cx.observe_window_activation(window, |editor, window, cx| {
                             let active = window.is_window_active();
@@ -23989,6 +23990,18 @@ impl Editor {
         }
 
         cx.notify();
+    }
+
+    fn theme_changed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.mode.is_full() {
+            return;
+        }
+
+        let new_accents = self.fetch_accent_data(cx);
+        if new_accents != self.accent_data {
+            self.accent_data = new_accents;
+            self.colorize_brackets(true, cx);
+        }
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
