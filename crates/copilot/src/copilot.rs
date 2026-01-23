@@ -9,12 +9,13 @@ use ::fs::Fs;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
+use futures::future;
 use futures::{Future, FutureExt, TryFutureExt, channel::oneshot, future::Shared, select_biased};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
     WeakEntity, actions,
 };
-use language::language_settings::CopilotSettings;
+use language::language_settings::{AllLanguageSettings, CopilotSettings};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16, ToPointUtf16,
     language_settings::{EditPredictionProvider, all_language_settings},
@@ -928,21 +929,63 @@ impl Copilot {
         let hard_tabs = settings.hard_tabs;
         drop(settings);
 
+        let nes_enabled = AllLanguageSettings::get_global(cx)
+            .edit_predictions
+            .copilot
+            .enabled_next_edit_suggestions
+            .unwrap_or(true);
+
         cx.background_spawn(async move {
             let (version, snapshot) = pending_snapshot.await?;
             let lsp_position = point_to_lsp(position);
 
-            let nes_request = lsp
-                .request::<NextEditSuggestions>(request::NextEditSuggestionsParams {
+            let nes_fut = if nes_enabled {
+                lsp.request::<NextEditSuggestions>(request::NextEditSuggestionsParams {
                     text_document: lsp::VersionedTextDocumentIdentifier {
                         uri: uri.clone(),
                         version,
                     },
                     position: lsp_position,
                 })
-                .fuse();
+                .map(|resp| {
+                    resp.into_response()
+                        .ok()
+                        .map(|result| {
+                            result
+                                .edits
+                                .into_iter()
+                                .map(|completion| {
+                                    let start = snapshot.clip_point_utf16(
+                                        point_from_lsp(completion.range.start),
+                                        Bias::Left,
+                                    );
+                                    let end = snapshot.clip_point_utf16(
+                                        point_from_lsp(completion.range.end),
+                                        Bias::Left,
+                                    );
+                                    CopilotEditPrediction {
+                                        buffer: buffer_entity.clone(),
+                                        range: snapshot.anchor_before(start)
+                                            ..snapshot.anchor_after(end),
+                                        text: completion.text,
+                                        command: completion.command,
+                                        snapshot: snapshot.clone(),
+                                        source: CompletionSource::NextEditSuggestion,
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default()
+                })
+                .left_future()
+                .fuse()
+            } else {
+                future::ready(Vec::<CopilotEditPrediction>::new())
+                    .right_future()
+                    .fuse()
+            };
 
-            let inline_request = lsp
+            let inline_fut = lsp
                 .request::<InlineCompletions>(request::InlineCompletionsParams {
                     text_document: lsp::VersionedTextDocumentIdentifier {
                         uri: uri.clone(),
@@ -957,74 +1000,56 @@ impl Copilot {
                         insert_spaces: !hard_tabs,
                     }),
                 })
+                .map(|resp| {
+                    resp.into_response()
+                        .ok()
+                        .map(|result| {
+                            result
+                                .items
+                                .into_iter()
+                                .map(|item| {
+                                    let start = snapshot.clip_point_utf16(
+                                        point_from_lsp(item.range.start),
+                                        Bias::Left,
+                                    );
+                                    let end = snapshot.clip_point_utf16(
+                                        point_from_lsp(item.range.end),
+                                        Bias::Left,
+                                    );
+                                    CopilotEditPrediction {
+                                        buffer: buffer_entity.clone(),
+                                        range: snapshot.anchor_before(start)
+                                            ..snapshot.anchor_after(end),
+                                        text: item.insert_text,
+                                        command: item.command,
+                                        snapshot: snapshot.clone(),
+                                        source: CompletionSource::InlineCompletion,
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default()
+                })
                 .fuse();
 
-            futures::pin_mut!(nes_request, inline_request);
-
-            let convert_nes =
-                |result: request::NextEditSuggestionsResult| -> Vec<CopilotEditPrediction> {
-                    result
-                        .edits
-                        .into_iter()
-                        .map(|completion| {
-                            let start = snapshot.clip_point_utf16(
-                                point_from_lsp(completion.range.start),
-                                Bias::Left,
-                            );
-                            let end = snapshot
-                                .clip_point_utf16(point_from_lsp(completion.range.end), Bias::Left);
-                            CopilotEditPrediction {
-                                buffer: buffer_entity.clone(),
-                                range: snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                                text: completion.text,
-                                command: completion.command,
-                                snapshot: snapshot.clone(),
-                                source: CompletionSource::NextEditSuggestion,
-                            }
-                        })
-                        .collect()
-                };
-
-            let convert_inline =
-                |result: request::InlineCompletionsResult| -> Vec<CopilotEditPrediction> {
-                    result
-                        .items
-                        .into_iter()
-                        .map(|item| {
-                            let start = snapshot
-                                .clip_point_utf16(point_from_lsp(item.range.start), Bias::Left);
-                            let end = snapshot
-                                .clip_point_utf16(point_from_lsp(item.range.end), Bias::Left);
-                            CopilotEditPrediction {
-                                buffer: buffer_entity.clone(),
-                                range: snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                                text: item.insert_text,
-                                command: item.command,
-                                snapshot: snapshot.clone(),
-                                source: CompletionSource::InlineCompletion,
-                            }
-                        })
-                        .collect()
-                };
+            futures::pin_mut!(nes_fut, inline_fut);
 
             let mut nes_result: Option<Vec<CopilotEditPrediction>> = None;
             let mut inline_result: Option<Vec<CopilotEditPrediction>> = None;
 
             loop {
                 select_biased! {
-                    nes = nes_request => {
-                        let completions = nes.into_response().ok().map(convert_nes).unwrap_or_default();
-                        if !completions.is_empty() {
-                            return Ok(completions);
+                    nes = nes_fut => {
+                        if !nes.is_empty() {
+                            return Ok(nes);
                         }
-                        nes_result = Some(completions);
+                        nes_result = Some(nes);
                     }
-                    inline = inline_request => {
-                        let completions = inline.into_response().ok().map(convert_inline).unwrap_or_default();
-                        if !completions.is_empty() {
-                            return Ok(completions);
+                    inline = inline_fut => {
+                        if !inline.is_empty() {
+                            return Ok(inline);
                         }
-                        inline_result = Some(completions);
+                        inline_result = Some(inline);
                     }
                     complete => break,
                 }
