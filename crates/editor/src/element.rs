@@ -24,7 +24,7 @@ use crate::{
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
     hover_popover::{
         self, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
-        POPOVER_RIGHT_OFFSET, hover_at,
+        POPOVER_RIGHT_OFFSET, hover_at, should_keep_diagnostic_hover,
     },
     inlay_hint_settings,
     items::BufferSearchHighlights,
@@ -1460,7 +1460,11 @@ impl EditorElement {
                     .anchor_before(point.to_offset(&position_map.snapshot, Bias::Left));
                 hover_at(editor, Some(anchor), window, cx);
                 Self::update_visible_cursor(editor, point, position_map, window, cx);
-            } else {
+            } else if !should_keep_diagnostic_hover(
+                editor,
+                &position_map.snapshot,
+                point_for_position.previous_valid.row(),
+            ) {
                 editor.update_inlay_link_and_hover_points(
                     &position_map.snapshot,
                     point_for_position,

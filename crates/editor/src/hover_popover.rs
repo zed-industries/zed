@@ -575,6 +575,34 @@ fn same_diagnostic_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anc
         .unwrap_or(false)
 }
 
+/// Check if we should keep the current diagnostic hover visible when the mouse
+/// is at a position that doesn't have a valid text offset (e.g., past the end of a line).
+/// This prevents the diagnostic popover from disappearing when the user moves their mouse
+/// to the empty area after a line within a multi-line diagnostic range.
+pub fn should_keep_diagnostic_hover(
+    editor: &Editor,
+    snapshot: &EditorSnapshot,
+    row: DisplayRow,
+) -> bool {
+    editor
+        .hover_state
+        .diagnostic_popover
+        .as_ref()
+        .map(|diagnostic| {
+            let hover_range = diagnostic
+                .local_diagnostic
+                .range
+                .to_point(&snapshot.buffer_snapshot());
+            let row_as_u32 = row.0;
+            let start_row = hover_range.start.row;
+            let end_row = hover_range.end.row;
+
+            // Keep the hover visible if the mouse is on a row that intersects with the diagnostic range
+            row_as_u32 >= start_row && row_as_u32 <= end_row
+        })
+        .unwrap_or(false)
+}
+
 async fn parse_blocks(
     blocks: &[HoverBlock],
     language_registry: Option<&Arc<LanguageRegistry>>,
