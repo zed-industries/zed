@@ -93,7 +93,10 @@ pub use invisibles::{is_invisible, replacement};
 
 use collections::{HashMap, HashSet};
 use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
-use language::{Point, Subscription as BufferSubscription, language_settings::language_settings};
+use language::{
+    Point, Subscription as BufferSubscription,
+    language_settings::{AllLanguageSettings, LanguageSettings},
+};
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
     MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
@@ -101,6 +104,7 @@ use multi_buffer::{
 use project::InlayId;
 use project::project_settings::DiagnosticSeverity;
 use serde::Deserialize;
+use settings::Settings;
 use sum_tree::{Bias, TreeMap};
 use text::{BufferId, LineIndent};
 use ui::{SharedString, px};
@@ -699,11 +703,11 @@ impl DisplayMap {
 
     #[instrument(skip_all)]
     fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
-        let mut language_settings = language_settings(cx);
         if let Some(buffer) = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx)) {
-            language_settings = language_settings.buffer(buffer)
+            LanguageSettings::for_buffer(buffer, cx).tab_size
+        } else {
+            AllLanguageSettings::get_global(cx).defaults.tab_size
         }
-        language_settings.get().tab_size
     }
 
     #[cfg(test)]

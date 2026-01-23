@@ -6,7 +6,7 @@ use futures::lock::OwnedMutexGuard;
 use futures::{AsyncBufReadExt, StreamExt as _};
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
-use language::language_settings::language_settings;
+use language::language_settings::LanguageSettings;
 use language::{Buffer, ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
@@ -923,14 +923,9 @@ impl ContextProvider for PythonContextProvider {
 
 fn selected_test_runner(location: Option<&Entity<Buffer>>, cx: &App) -> TestRunner {
     const TEST_RUNNER_VARIABLE: &str = "TEST_RUNNER";
-    let mut settings = language_settings(cx);
-    if let Some(buffer) = location {
-        settings = settings.buffer(&buffer.read(cx))
-    }
-
+    let language = LanguageName::new_static("Python");
+    let settings = LanguageSettings::resolve(location.map(|b| b.read(cx)), Some(&language), cx);
     settings
-        .language(Some(LanguageName::new_static("Python")))
-        .get()
         .tasks
         .variables
         .get(TEST_RUNNER_VARIABLE)

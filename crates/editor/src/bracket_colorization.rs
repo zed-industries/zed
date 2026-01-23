@@ -8,7 +8,7 @@ use crate::Editor;
 use collections::HashMap;
 use gpui::{Context, HighlightStyle};
 use itertools::Itertools;
-use language::language_settings;
+use language::language_settings::LanguageSettings;
 use multi_buffer::{Anchor, ExcerptId};
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
 
@@ -46,12 +46,9 @@ impl Editor {
         let bracket_matches_by_accent = self.visible_excerpts(false, cx).into_iter().fold(
             HashMap::default(),
             |mut acc, (excerpt_id, (buffer, _, buffer_range))| {
-                let buffer_snapshot = buffer.read(cx).snapshot();
-                if language_settings::language_settings(cx)
-                    .buffer_snapshot(&buffer_snapshot)
-                    .get()
-                    .colorize_brackets
-                {
+                let buffer = buffer.read(cx);
+                let buffer_snapshot = buffer.snapshot();
+                if LanguageSettings::for_buffer(&buffer, cx).colorize_brackets {
                     let fetched_chunks = self
                         .fetched_tree_sitter_chunks
                         .entry(excerpt_id)

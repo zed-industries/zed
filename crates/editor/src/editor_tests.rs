@@ -30046,10 +30046,11 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
 
     cx.read(|cx| {
         assert_eq!(
-            language::language_settings::language_settings(cx)
-                .buffer(buffer_before_approval.read(cx))
-                .get()
-                .language_servers,
+            language::language_settings::LanguageSettings::for_buffer(
+                buffer_before_approval.read(cx),
+                cx
+            )
+            .language_servers,
             ["...".to_string()],
             "local .zed/settings.json must not apply before trust approval"
         )
@@ -30078,10 +30079,11 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
 
     cx.read(|cx| {
         assert_eq!(
-            language::language_settings::language_settings(cx)
-                .buffer(buffer_before_approval.read(cx))
-                .get()
-                .language_servers,
+            language::language_settings::LanguageSettings::for_buffer(
+                buffer_before_approval.read(cx),
+                cx
+            )
+            .language_servers,
             ["override-rust-analyzer".to_string()],
             "local .zed/settings.json should apply after trust approval"
         )

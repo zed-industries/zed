@@ -1277,9 +1277,7 @@ impl PickerDelegate for DebugDelegate {
         let buffer = location.buffer.read(cx);
         let language = buffer.language();
         let Some(adapter): Option<DebugAdapterName> =
-            language::language_settings::language_settings(cx)
-                .buffer(buffer)
-                .get()
+            language::language_settings::LanguageSettings::for_buffer(buffer, cx)
                 .debuggers
                 .first()
                 .map(SharedString::from)

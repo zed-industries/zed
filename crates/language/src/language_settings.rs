@@ -22,78 +22,6 @@ use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
 use text::ToOffset;
 
-pub struct LanguageSettingsBuilder<'a> {
-    cx: &'a App,
-    language: Option<LanguageName>,
-    file: Option<&'a Arc<dyn File>>,
-    modeline: Option<&'a ModelineSettings>,
-}
-
-impl<'a> LanguageSettingsBuilder<'a> {
-    pub fn language(mut self, language: Option<LanguageName>) -> Self {
-        self.language = language;
-        self
-    }
-
-    pub fn buffer(mut self, buffer: &'a Buffer) -> Self {
-        self.language = buffer.language().map(|l| l.name());
-        self.file = buffer.file();
-        self.modeline = buffer.modeline().map(|arc| arc.as_ref());
-        self
-    }
-
-    pub fn buffer_at<D: ToOffset>(mut self, buffer: &'a Buffer, position: D) -> Self {
-        self.language = buffer.language_at(position).map(|l| l.name());
-        self.file = buffer.file();
-        self
-    }
-
-    pub fn buffer_snapshot(mut self, buffer: &'a BufferSnapshot) -> Self {
-        self.language = buffer.language().map(|l| l.name());
-        self.file = buffer.file();
-        self.modeline = buffer.modeline().map(|arc| arc.as_ref());
-        self
-    }
-
-    pub fn buffer_snapshot_at<D: ToOffset>(
-        mut self,
-        buffer: &'a BufferSnapshot,
-        position: D,
-    ) -> Self {
-        self.language = buffer.language_at(position).map(|l| l.name());
-        self.file = buffer.file();
-        self
-    }
-
-    pub fn get(self) -> Cow<'a, LanguageSettings> {
-        let location = self.file.map(|f| SettingsLocation {
-            worktree_id: f.worktree_id(self.cx),
-            path: f.path().as_ref(),
-        });
-        let mut settings = AllLanguageSettings::get(location, self.cx).language(
-            location,
-            self.language.as_ref(),
-            self.cx,
-        );
-
-        if let Some(modeline) = self.modeline {
-            merge_with_modeline(settings.to_mut(), modeline);
-        }
-
-        settings
-    }
-}
-
-/// Returns the settings for the specified language from the provided file.
-pub fn language_settings<'a>(cx: &'a App) -> LanguageSettingsBuilder<'a> {
-    LanguageSettingsBuilder {
-        cx,
-        language: None,
-        file: None,
-        modeline: None,
-    }
-}
-
 /// Returns the settings for all languages from the provided file.
 pub fn all_language_settings<'a>(
     file: Option<&'a Arc<dyn File>>,
@@ -320,6 +248,74 @@ pub struct PrettierSettings {
 impl LanguageSettings {
     /// A token representing the rest of the available language servers.
     const REST_OF_LANGUAGE_SERVERS: &'static str = "...";
+
+    pub fn for_buffer<'a>(buffer: &'a Buffer, cx: &'a App) -> Cow<'a, LanguageSettings> {
+        Self::resolve(Some(buffer), None, cx)
+    }
+
+    pub fn for_buffer_at<'a, D: ToOffset>(
+        buffer: &'a Buffer,
+        position: D,
+        cx: &'a App,
+    ) -> Cow<'a, LanguageSettings> {
+        let language = buffer.language_at(position);
+        Self::resolve(Some(buffer), language.map(|l| l.name()).as_ref(), cx)
+    }
+
+    pub fn for_buffer_snapshot<'a>(
+        buffer: &'a BufferSnapshot,
+        offset: Option<usize>,
+        cx: &'a App,
+    ) -> Cow<'a, LanguageSettings> {
+        let location = buffer.file().map(|f| SettingsLocation {
+            worktree_id: f.worktree_id(cx),
+            path: f.path().as_ref(),
+        });
+
+        let language = if let Some(offset) = offset {
+            buffer.language_at(offset)
+        } else {
+            buffer.language()
+        };
+
+        let mut settings = AllLanguageSettings::get(location, cx).language(
+            location,
+            language.map(|l| l.name()).as_ref(),
+            cx,
+        );
+
+        if let Some(modeline) = buffer.modeline() {
+            merge_with_modeline(settings.to_mut(), modeline);
+        }
+
+        settings
+    }
+
+    pub fn resolve<'a, 'b>(
+        buffer: Option<&'a Buffer>,
+        override_language: Option<&'b LanguageName>,
+        cx: &'a App,
+    ) -> Cow<'a, LanguageSettings> {
+        let Some(buffer) = buffer else {
+            return AllLanguageSettings::get(None, cx).language(None, override_language, cx);
+        };
+        let location = buffer.file().map(|f| SettingsLocation {
+            worktree_id: f.worktree_id(cx),
+            path: f.path().as_ref(),
+        });
+        let all = AllLanguageSettings::get(location, cx);
+        let mut settings = if override_language.is_none() {
+            all.language(location, buffer.language().map(|l| l.name()).as_ref(), cx)
+        } else {
+            all.language(location, override_language, cx)
+        };
+
+        if let Some(modeline) = buffer.modeline() {
+            merge_with_modeline(settings.to_mut(), modeline);
+        }
+
+        settings
+    }
 
     /// Returns the customized list of language servers from the list of
     /// available language servers.

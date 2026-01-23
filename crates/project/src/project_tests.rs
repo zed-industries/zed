@@ -27,7 +27,7 @@ use language::{
     DiskState, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageName, LineEnding,
     ManifestName, ManifestProvider, ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainList,
     ToolchainLister,
-    language_settings::{LanguageSettings, LanguageSettingsContent, language_settings},
+    language_settings::{LanguageSettings, LanguageSettingsContent},
     rust_lang, tree_sitter_typescript,
 };
 use lsp::{
@@ -208,12 +208,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             })
             .await
             .unwrap();
-        cx.update(|cx| {
-            language_settings(cx)
-                .buffer(&buffer.read(cx))
-                .get()
-                .into_owned()
-        })
+        cx.update(|cx| LanguageSettings::for_buffer(&buffer.read(cx), cx).into_owned())
     };
 
     let settings_a = settings_for("a.rs", cx).await;
@@ -374,8 +369,8 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         .await
         .unwrap();
     cx.update(|cx| {
-        let settings_a = language_settings(cx).buffer(&buffer_a.read(cx)).get();
-        let settings_b = language_settings(cx).buffer(&buffer_b.read(cx)).get();
+        let settings_a = LanguageSettings::for_buffer(&buffer_a.read(cx), cx);
+        let settings_b = LanguageSettings::for_buffer(&buffer_b.read(cx), cx);
 
         assert_eq!(settings_a.tab_size.get(), 8);
         assert_eq!(settings_b.tab_size.get(), 2);

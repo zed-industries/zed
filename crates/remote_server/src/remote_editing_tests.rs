@@ -16,7 +16,7 @@ use gpui::{AppContext as _, Entity, SharedString, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
-    language_settings::{AllLanguageSettings, language_settings},
+    language_settings::{AllLanguageSettings, LanguageSettings},
 };
 use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, LanguageServerName};
 use node_runtime::NodeRuntime;
@@ -372,10 +372,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
 
     cx.read(|cx| {
         assert_eq!(
-            language_settings(cx)
-                .buffer(buffer.read(cx))
-                .get()
-                .language_servers,
+            LanguageSettings::for_buffer(buffer.read(cx), cx).language_servers,
             ["override-rust-analyzer".to_string()]
         )
     });
@@ -522,10 +519,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     cx.read(|cx| {
         assert_eq!(
-            language_settings(cx)
-                .buffer(buffer.read(cx))
-                .get()
-                .language_servers,
+            LanguageSettings::for_buffer(buffer.read(cx), cx).language_servers,
             ["rust-analyzer".to_string(), "fake-analyzer".to_string()]
         )
     });

@@ -15,7 +15,7 @@ use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity
 use itertools::Itertools;
 use language::{
     Buffer, ContextLocation, ContextProvider, File, Language, LanguageToolchainStore, Location,
-    language_settings::language_settings,
+    language_settings::LanguageSettings,
 };
 use lsp::{LanguageServerId, LanguageServerName};
 use paths::{debug_task_file_name, task_file_name};
@@ -303,9 +303,7 @@ impl Inventory {
 
         let adapter = task_contexts.location().and_then(|location| {
             let buffer = location.buffer.read(cx);
-            let adapter = language_settings(cx)
-                .buffer(buffer)
-                .get()
+            let adapter = LanguageSettings::for_buffer(&buffer, cx)
                 .debuggers
                 .first()
                 .map(SharedString::from)
@@ -393,11 +391,13 @@ impl Inventory {
         });
         let language_tasks = language
             .filter(|language| {
-                let mut settings = language_settings(cx);
-                if let Some(buffer) = &buffer {
-                    settings = settings.buffer(&buffer.read(cx))
-                }
-                settings.language(Some(language.name())).get().tasks.enabled
+                LanguageSettings::resolve(
+                    buffer.as_ref().map(|b| b.read(cx)),
+                    Some(&language.name()),
+                    cx,
+                )
+                .tasks
+                .enabled
             })
             .and_then(|language| {
                 language
@@ -478,12 +478,14 @@ impl Inventory {
         let not_used_score = post_inc(&mut lru_score);
         let global_tasks = self.global_templates_from_settings().collect::<Vec<_>>();
         let associated_tasks = language
-            .filter(|_| {
-                let mut settings = language_settings(cx);
-                if let Some(buffer) = &buffer {
-                    settings = settings.buffer(&buffer.read(cx))
-                }
-                settings.get().tasks.enabled
+            .filter(|language| {
+                LanguageSettings::resolve(
+                    buffer.as_ref().map(|b| b.read(cx)),
+                    Some(&language.name()),
+                    cx,
+                )
+                .tasks
+                .enabled
             })
             .and_then(|language| {
                 language

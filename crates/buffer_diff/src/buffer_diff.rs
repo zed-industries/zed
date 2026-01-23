@@ -3,7 +3,7 @@ use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as 
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task, TaskLabel};
 use language::{
     BufferRow, Capability, DiffOptions, Language, LanguageName, LanguageRegistry,
-    language_settings::language_settings, word_diff_ranges,
+    language_settings::LanguageSettings, word_diff_ranges,
 };
 use rope::Rope;
 use std::{
@@ -786,9 +786,7 @@ fn build_diff_options(
         }
     }
 
-    language_settings(cx)
-        .language(language)
-        .get()
+    LanguageSettings::resolve(None, language.as_ref(), cx)
         .word_diff_enabled
         .then_some(DiffOptions {
             language_scope,
