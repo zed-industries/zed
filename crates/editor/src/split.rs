@@ -32,8 +32,11 @@ use workspace::{
 };
 
 use crate::{
-    Autoscroll, DisplayMap, Editor, EditorEvent, ToggleCodeActions, ToggleSoftWrap,
-    actions::{DisableBreakpoint, EditLogBreakpoint, EnableBreakpoint, ToggleBreakpoint},
+    Autoscroll, DisplayMap, Editor, EditorEvent, EditorSettings, ToggleCodeActions, ToggleSoftWrap,
+    actions::{
+        DisableBreakpoint, EditLogBreakpoint, EnableBreakpoint, ExpandExcerpts, ExpandExcerptsDown,
+        ExpandExcerptsUp, ToggleBreakpoint,
+    },
     display_map::Companion,
 };
 use zed_actions::assistant::InlineAssist;
@@ -358,7 +361,12 @@ impl SplittableEditor {
                     lines,
                     direction,
                 } => {
-                    this.expand_excerpts(excerpt_ids.iter().copied(), *lines, *direction, cx);
+                    this.expand_excerpts_without_scroll(
+                        excerpt_ids.iter().copied(),
+                        *lines,
+                        *direction,
+                        cx,
+                    );
                 }
                 EditorEvent::SelectionsChanged { .. } => {
                     if let Some(secondary) = &mut this.secondary {
@@ -465,7 +473,12 @@ impl SplittableEditor {
                                 primary_display_map.companion_excerpt_to_my_excerpt(*id, cx)
                             })
                             .collect();
-                        this.expand_excerpts(primary_ids.into_iter(), *lines, *direction, cx);
+                        this.expand_excerpts_without_scroll(
+                            primary_ids.into_iter(),
+                            *lines,
+                            *direction,
+                            cx,
+                        );
                     }
                 }
                 EditorEvent::SelectionsChanged { .. } => {
@@ -827,6 +840,87 @@ impl SplittableEditor {
         }
     }
 
+    fn handle_expand_excerpts(
+        &mut self,
+        action: &ExpandExcerpts,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.secondary.is_none() {
+            cx.propagate();
+            return;
+        }
+        cx.stop_propagation();
+        let (excerpt_ids, lines) = self.collect_expand_excerpt_info(action.lines, cx);
+        self.expand_excerpts(excerpt_ids.into_iter(), lines, ExpandExcerptDirection::UpAndDown, window, cx);
+    }
+
+    fn handle_expand_excerpts_up(
+        &mut self,
+        action: &ExpandExcerptsUp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.secondary.is_none() {
+            cx.propagate();
+            return;
+        }
+        cx.stop_propagation();
+        let (excerpt_ids, lines) = self.collect_expand_excerpt_info(action.lines, cx);
+        self.expand_excerpts(excerpt_ids.into_iter(), lines, ExpandExcerptDirection::Up, window, cx);
+    }
+
+    fn handle_expand_excerpts_down(
+        &mut self,
+        action: &ExpandExcerptsDown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.secondary.is_none() {
+            cx.propagate();
+            return;
+        }
+        cx.stop_propagation();
+        let (excerpt_ids, lines) = self.collect_expand_excerpt_info(action.lines, cx);
+        self.expand_excerpts(excerpt_ids.into_iter(), lines, ExpandExcerptDirection::Down, window, cx);
+    }
+
+    fn collect_expand_excerpt_info(&self, lines: u32, cx: &App) -> (Vec<ExcerptId>, u32) {
+        let lines = if lines == 0 {
+            EditorSettings::get_global(cx).expand_excerpt_lines
+        } else {
+            lines
+        };
+
+        let (editor, needs_mapping) = if let Some(secondary) = &self.secondary
+            && secondary.has_latest_selection
+        {
+            (&secondary.editor, true)
+        } else {
+            (&self.primary_editor, false)
+        };
+
+        let editor_ref = editor.read(cx);
+        let selections = editor_ref.selections.disjoint_anchors();
+        let snapshot = editor_ref.buffer().read(cx).snapshot(cx);
+        let mut excerpt_ids: Vec<ExcerptId> = selections
+            .iter()
+            .flat_map(|selection| snapshot.excerpt_ids_for_range(selection.range()))
+            .collect();
+        excerpt_ids.sort();
+        excerpt_ids.dedup();
+
+        if needs_mapping {
+            let primary_display_map = self.primary_editor.read(cx).display_map.read(cx);
+            excerpt_ids = excerpt_ids
+                .into_iter()
+                .filter_map(|id| primary_display_map.companion_excerpt_to_my_excerpt(id, cx))
+                .collect();
+        }
+
+        (excerpt_ids, lines)
+    }
+
     fn toggle_soft_wrap(
         &mut self,
         _: &ToggleSoftWrap,
@@ -964,6 +1058,44 @@ impl SplittableEditor {
         excerpt_ids: impl Iterator<Item = ExcerptId> + Clone,
         lines: u32,
         direction: ExpandExcerptDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current_scroll_position =
+            self.primary_editor
+                .update(cx, |editor, cx| editor.scroll_position(cx));
+        let scroll = self.compute_expand_scroll(
+            excerpt_ids.clone(),
+            lines,
+            direction,
+            current_scroll_position,
+            cx,
+        );
+
+        self.expand_excerpts_internal(excerpt_ids, lines, direction, cx);
+
+        if let Some(new_scroll_position) = scroll {
+            self.primary_editor.update(cx, |editor, cx| {
+                editor.set_scroll_position(new_scroll_position, window, cx);
+            });
+        }
+    }
+
+    fn expand_excerpts_without_scroll(
+        &mut self,
+        excerpt_ids: impl Iterator<Item = ExcerptId> + Clone,
+        lines: u32,
+        direction: ExpandExcerptDirection,
+        cx: &mut Context<Self>,
+    ) {
+        self.expand_excerpts_internal(excerpt_ids, lines, direction, cx);
+    }
+
+    fn expand_excerpts_internal(
+        &mut self,
+        excerpt_ids: impl Iterator<Item = ExcerptId> + Clone,
+        lines: u32,
+        direction: ExpandExcerptDirection,
         cx: &mut Context<Self>,
     ) {
         let mut corresponding_paths = HashMap::default();
@@ -997,6 +1129,50 @@ impl SplittableEditor {
                 );
             }
         }
+    }
+
+    fn compute_expand_scroll(
+        &self,
+        excerpt_ids: impl Iterator<Item = ExcerptId>,
+        lines: u32,
+        direction: ExpandExcerptDirection,
+        current_scroll_position: gpui::Point<f64>,
+        cx: &App,
+    ) -> Option<gpui::Point<f64>> {
+        let multibuffer = self.primary_multibuffer.read(cx);
+        let snapshot = multibuffer.snapshot(cx);
+
+        for excerpt_id in excerpt_ids {
+            if direction == ExpandExcerptDirection::Down
+                || direction == ExpandExcerptDirection::UpAndDown
+            {
+                if let Some(buffer_id) = snapshot.buffer_id_for_excerpt(excerpt_id)
+                    && let Some(buffer) = multibuffer.buffer(buffer_id)
+                    && let Some(excerpt_range) = snapshot.context_range_for_excerpt(excerpt_id)
+                {
+                    let buffer_snapshot = buffer.read(cx).snapshot();
+                    let excerpt_end_row = excerpt_range.end.to_point(&buffer_snapshot).row;
+                    let last_row = buffer_snapshot.max_point().row;
+                    let lines_below = last_row.saturating_sub(excerpt_end_row);
+                    if lines_below >= lines {
+                        return Some(
+                            current_scroll_position + gpui::Point::new(0.0, lines as f64),
+                        );
+                    }
+                }
+            }
+
+            if (direction == ExpandExcerptDirection::Up
+                || direction == ExpandExcerptDirection::UpAndDown)
+                && snapshot.excerpt_before(excerpt_id).is_none()
+            {
+                return Some(
+                    current_scroll_position + gpui::Point::new(0.0, lines as f64),
+                );
+            }
+        }
+
+        None
     }
 
     pub fn remove_excerpts_for_path(&mut self, path: PathKey, cx: &mut Context<Self>) {
@@ -1450,7 +1626,7 @@ impl SplittableEditor {
 
                 log::info!("Expanding excerpts {excerpts:?} by {line_count} lines");
 
-                self.expand_excerpts(
+                self.expand_excerpts_internal(
                     excerpts.iter().cloned(),
                     line_count,
                     ExpandExcerptDirection::UpAndDown,
@@ -1564,6 +1740,9 @@ impl Render for SplittableEditor {
             .on_action(cx.listener(Self::intercept_disable_breakpoint))
             .on_action(cx.listener(Self::intercept_edit_log_breakpoint))
             .on_action(cx.listener(Self::intercept_inline_assist))
+            .capture_action(cx.listener(Self::handle_expand_excerpts))
+            .capture_action(cx.listener(Self::handle_expand_excerpts_up))
+            .capture_action(cx.listener(Self::handle_expand_excerpts_down))
             .capture_action(cx.listener(Self::toggle_soft_wrap))
             .size_full()
             .child(inner)

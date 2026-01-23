@@ -424,9 +424,9 @@ impl EditorElement {
         register_action(editor, window, Editor::undo_selection);
         register_action(editor, window, Editor::redo_selection);
         if editor.read(cx).buffer_kind(cx) == ItemBufferKind::Multibuffer {
-            register_action(editor, window, Editor::expand_excerpts);
-            register_action(editor, window, Editor::expand_excerpts_up);
-            register_action(editor, window, Editor::expand_excerpts_down);
+            register_expand_excerpt_action(editor, window, Editor::expand_excerpts);
+            register_expand_excerpt_action(editor, window, Editor::expand_excerpts_up);
+            register_expand_excerpt_action(editor, window, Editor::expand_excerpts_down);
         }
         register_action(editor, window, Editor::go_to_diagnostic);
         register_action(editor, window, Editor::go_to_prev_diagnostic);
@@ -12047,6 +12047,25 @@ pub fn register_action<T: Action>(
             editor.update(cx, |editor, cx| {
                 listener(editor, action, window, cx);
             })
+        }
+    })
+}
+
+fn register_expand_excerpt_action<T: Action>(
+    editor: &Entity<Editor>,
+    window: &mut Window,
+    listener: impl Fn(&mut Editor, &T, &mut Window, &mut Context<Editor>) + 'static,
+) {
+    let editor = editor.clone();
+    window.on_action(TypeId::of::<T>(), move |action, phase, window, cx| {
+        let action = action.downcast_ref().unwrap();
+        if phase == DispatchPhase::Bubble {
+            let should_delegate = editor.read(cx).delegate_expand_excerpts;
+            if !should_delegate {
+                editor.update(cx, |editor, cx| {
+                    listener(editor, action, window, cx);
+                })
+            }
         }
     })
 }

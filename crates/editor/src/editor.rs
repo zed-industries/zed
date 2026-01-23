@@ -17042,19 +17042,12 @@ impl Editor {
     ) {
         let lines_to_expand = EditorSettings::get_global(cx).expand_excerpt_lines;
 
-        if self.delegate_expand_excerpts {
-            cx.emit(EditorEvent::ExpandExcerptsRequested {
-                excerpt_ids: vec![excerpt],
-                lines: lines_to_expand,
-                direction,
-            });
-            return;
-        }
-
         let current_scroll_position = self.scroll_position(cx);
         let mut scroll = None;
 
-        if direction == ExpandExcerptDirection::Down {
+        if direction == ExpandExcerptDirection::Down
+            || direction == ExpandExcerptDirection::UpAndDown
+        {
             let multi_buffer = self.buffer.read(cx);
             let snapshot = multi_buffer.snapshot(cx);
             if let Some(buffer_id) = snapshot.buffer_id_for_excerpt(excerpt)
@@ -17073,7 +17066,8 @@ impl Editor {
                 }
             }
         }
-        if direction == ExpandExcerptDirection::Up
+        if (direction == ExpandExcerptDirection::Up
+            || direction == ExpandExcerptDirection::UpAndDown)
             && self
                 .buffer
                 .read(cx)
@@ -17081,7 +17075,21 @@ impl Editor {
                 .excerpt_before(excerpt)
                 .is_none()
         {
-            scroll = Some(current_scroll_position);
+            scroll = Some(
+                current_scroll_position + gpui::Point::new(0.0, lines_to_expand as ScrollOffset),
+            );
+        }
+
+        if self.delegate_expand_excerpts {
+            if let Some(new_scroll_position) = scroll {
+                self.set_scroll_position(new_scroll_position, window, cx);
+            }
+            cx.emit(EditorEvent::ExpandExcerptsRequested {
+                excerpt_ids: vec![excerpt],
+                lines: lines_to_expand,
+                direction,
+            });
+            return;
         }
 
         self.buffer.update(cx, |buffer, cx| {
