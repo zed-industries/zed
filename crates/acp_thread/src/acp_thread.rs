@@ -1274,6 +1274,23 @@ impl AcpThread {
         false
     }
 
+    pub fn has_failed_tool_calls(&self) -> bool {
+        for entry in self.entries.iter().rev() {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => return false,
+                AgentThreadEntry::ToolCall(ToolCall {
+                    status: ToolCallStatus::Failed,
+                    ..
+                }) => {
+                    return true;
+                }
+                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+            }
+        }
+
+        false
+    }
+
     pub fn tool_call_status_for_subagent(
         &self,
         subagent_thread: &Entity<AcpThread>,

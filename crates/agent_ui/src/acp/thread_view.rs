@@ -3997,11 +3997,13 @@ impl AcpThreadView {
         // show its own completion status independently.
         let is_running = thread_read.status() == ThreadStatus::Generating
             || thread_read.has_in_progress_tool_calls();
-        // If the parent tool call failed/was rejected/canceled, mark all subagents as failed
+        // Show error if:
+        // - The parent tool call failed/was rejected/canceled (affects all subagents)
+        // - OR this specific subagent thread has failed tool calls (e.g., upstream provider error)
         let is_failed = matches!(
             tool_call_status,
             ToolCallStatus::Failed | ToolCallStatus::Rejected | ToolCallStatus::Canceled
-        );
+        ) || thread_read.has_failed_tool_calls();
 
         let card_header_id =
             SharedString::from(format!("subagent-header-{}-{}", entry_ix, context_ix));
