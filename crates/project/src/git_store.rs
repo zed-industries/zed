@@ -4377,6 +4377,7 @@ impl Repository {
         });
 
         let request_tx_for_handler = request_tx;
+        let background_executor = cx.background_executor().clone();
 
         cx.background_spawn(async move {
             let backend = match state.await {
@@ -4400,7 +4401,7 @@ impl Repository {
             };
 
             loop {
-                let timeout = smol::Timer::after(std::time::Duration::from_secs(10));
+                let timeout = background_executor.timer(std::time::Duration::from_secs(10));
 
                 futures::select_biased! {
                     sha = futures::FutureExt::fuse(request_rx.recv()) => {
