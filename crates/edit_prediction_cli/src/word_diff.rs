@@ -11,46 +11,33 @@ pub fn unified_to_word_diff(unified_diff: &str) -> String {
     let mut old_lines: Vec<&str> = Vec::new();
     let mut new_lines: Vec<&str> = Vec::new();
 
-    let flush_changes = |old_lines: &mut Vec<&str>,
-                             new_lines: &mut Vec<&str>,
-                             result: &mut String| {
-        if old_lines.is_empty() && new_lines.is_empty() {
-            return;
-        }
+    let flush_changes =
+        |old_lines: &mut Vec<&str>, new_lines: &mut Vec<&str>, result: &mut String| {
+            if old_lines.is_empty() && new_lines.is_empty() {
+                return;
+            }
 
-        // Strip the leading '-' or '+' from each line
-        let old_text: String = old_lines
-            .iter()
-            .map(|line| {
-                if line.len() > 1 {
-                    &line[1..]
-                } else {
-                    ""
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+            // Strip the leading '-' or '+' from each line
+            let old_text: String = old_lines
+                .iter()
+                .map(|line| if line.len() > 1 { &line[1..] } else { "" })
+                .collect::<Vec<_>>()
+                .join("\n");
 
-        let new_text: String = new_lines
-            .iter()
-            .map(|line| {
-                if line.len() > 1 {
-                    &line[1..]
-                } else {
-                    ""
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+            let new_text: String = new_lines
+                .iter()
+                .map(|line| if line.len() > 1 { &line[1..] } else { "" })
+                .collect::<Vec<_>>()
+                .join("\n");
 
-        if !old_text.is_empty() || !new_text.is_empty() {
-            let word_diff = compute_word_diff(&old_text, &new_text);
-            result.push_str(&word_diff);
-        }
+            if !old_text.is_empty() || !new_text.is_empty() {
+                let word_diff = compute_word_diff(&old_text, &new_text);
+                result.push_str(&word_diff);
+            }
 
-        old_lines.clear();
-        new_lines.clear();
-    };
+            old_lines.clear();
+            new_lines.clear();
+        };
 
     for line in lines {
         if line.starts_with("---") || line.starts_with("+++") {

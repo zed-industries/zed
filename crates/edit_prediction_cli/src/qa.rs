@@ -7,8 +7,8 @@ use crate::anthropic_client::AnthropicClient;
 use crate::example::Example;
 use crate::paths::CACHE_DIR;
 use crate::word_diff::unified_to_word_diff;
-use anyhow::Result;
 use anthropic::{Message, RequestContent, Role};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
@@ -332,7 +332,8 @@ pub async fn run_qa(
     }
 
     // Build results map by index
-    let mut results_by_idx: std::collections::HashMap<usize, QaResult> = std::collections::HashMap::new();
+    let mut results_by_idx: std::collections::HashMap<usize, QaResult> =
+        std::collections::HashMap::new();
     for (idx, result) in results {
         if let Some(r) = result {
             results_by_idx.insert(idx, r);
