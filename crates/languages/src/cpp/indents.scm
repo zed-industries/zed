@@ -1,12 +1,21 @@
 [
     (field_expression)
-    (assignment_expression)
     (if_statement)
     (for_statement)
     (while_statement)
     (do_statement)
     (else_clause)
 ] @indent
+
+; Handle multi-line declarations - indent continuation but reset after semicolon
+(declaration
+    declarator: (init_declarator) @indent
+    ";" @end) @indent
+
+; Handle multi-line assignment expressions within expression statements
+(expression_statement
+    (assignment_expression) @indent
+    ";" @end) @indent
 
 (_ "{" "}" @end) @indent
 (_ "(" ")" @end) @indent
