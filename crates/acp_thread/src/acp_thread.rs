@@ -2631,6 +2631,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -2705,6 +2706,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -2791,6 +2793,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     vec![],
+                    PathStyle::local(),
                 )
             })
             .await
@@ -4080,6 +4083,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -4126,6 +4130,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -4186,6 +4191,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
