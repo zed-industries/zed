@@ -1596,6 +1596,13 @@ impl GitRepository for RealGitRepository {
                     commit_delimiter
                 );
 
+                // We intentionally don't use `--follow` here. While `--follow`
+                // would track file history across renames, it breaks pagination
+                // because `--skip` counts all commits walked in the graph, not
+                // just commits touching the file.
+                //
+                // For more information on this, please refer to:
+                // https://github.com/zed-industries/zed/issues/47487#issuecomment-3792148562
                 let mut args = vec!["--no-optional-locks", "log", &format_string];
 
                 let skip_str;
