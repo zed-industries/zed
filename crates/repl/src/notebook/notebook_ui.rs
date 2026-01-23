@@ -243,7 +243,7 @@ impl NotebookEditor {
             cell_order: cell_order.clone(),
             original_cell_order: cell_order.clone(),
             cell_map: cell_map.clone(),
-            kernel: Kernel::StartingKernel(Task::ready(()).shared()),
+            kernel: Kernel::Shutdown, // TODO: use recommended kernel after the implementation is done in repl
             kernel_specification: None,
             execution_requests: HashMap::default(),
             kernel_picker_handle: PopoverMenuHandle::default(),
