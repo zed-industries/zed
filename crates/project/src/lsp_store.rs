@@ -125,7 +125,7 @@ use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, ToPoint as _};
 
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
-    paths::{PathStyle, SanitizedPath},
+    paths::{PathStyle, SanitizedPath, UrlExt},
     post_inc,
     redact::redact_command,
     rel_path::RelPath,
@@ -8780,20 +8780,15 @@ impl LspStore {
         language_server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
+        let path_style = self.worktree_store.read(cx).path_style();
         cx.spawn(async move |lsp_store, cx| {
             // Escape percent-encoded string.
             let current_scheme = abs_path.scheme().to_owned();
             // Uri is immutable, so we can't modify the scheme
-            let abs_path = match abs_path.to_file_path() {
-                Ok(path) => path,
-                Err(_) => {
-                    if current_scheme == "file" {
-                        PathBuf::from(abs_path.path())
-                    } else {
-                        return Err(anyhow!("can't convert URI to path"));
-                    }
-                }
-            };
+
+            let abs_path = abs_path
+                .to_file_path_ext(path_style)
+                .map_err(|()| anyhow!("can't convert URI to path"))?;
             let p = abs_path.clone();
             let yarn_worktree = lsp_store
                 .update(cx, move |lsp_store, cx| match lsp_store.as_local() {
