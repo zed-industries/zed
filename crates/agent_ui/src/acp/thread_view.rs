@@ -1071,6 +1071,57 @@ impl AcpThreadView {
         !self.subagent_navigation_stack.is_empty()
     }
 
+    /// Returns (is_running, is_failed) for the currently displayed subagent's tool call.
+    /// Returns (true, false) if viewing the root thread or status cannot be determined.
+    fn displayed_subagent_status(&self, cx: &App) -> (bool, bool) {
+        let Some(current) = self.subagent_navigation_stack.last() else {
+            return (false, false);
+        };
+        let parent_thread = if self.subagent_navigation_stack.len() > 1 {
+            self.subagent_navigation_stack
+                .get(self.subagent_navigation_stack.len() - 2)
+                .map(|b| &b.thread)
+        } else {
+            self.thread()
+        };
+
+        parent_thread
+            .and_then(|parent| {
+                parent
+                    .read(cx)
+                    .tool_call_status_for_subagent(&current.thread)
+            })
+            .map(|status| {
+                let is_running =
+                    matches!(status, ToolCallStatus::Pending | ToolCallStatus::InProgress);
+                let is_failed = matches!(
+                    status,
+                    ToolCallStatus::Failed | ToolCallStatus::Rejected | ToolCallStatus::Canceled
+                );
+                (is_running, is_failed)
+            })
+            .unwrap_or((true, false))
+    }
+
+    /// Returns true if the displayed thread is still generating content.
+    /// For the root thread, this checks the thread's status.
+    /// For subagents, this checks the parent's tool call status.
+    fn is_displayed_thread_generating(&self, cx: &App) -> bool {
+        if self.is_viewing_subagent() {
+            self.displayed_subagent_status(cx).0
+        } else {
+            // For root thread, check the thread's own status
+            self.thread()
+                .map(|t| t.read(cx).status() == ThreadStatus::Generating)
+                .unwrap_or(false)
+        }
+    }
+
+    /// Returns true if the displayed subagent has failed.
+    fn is_displayed_subagent_failed(&self, cx: &App) -> bool {
+        self.displayed_subagent_status(cx).1
+    }
+
     /// Navigates into a subagent thread, pushing it onto the navigation stack.
     fn navigate_to_subagent(
         &mut self,
@@ -1080,27 +1131,44 @@ impl AcpThreadView {
     ) {
         let title = subagent_thread.read(cx).title();
 
-        let event_subscription =
-            cx.subscribe(&subagent_thread, |this, _, event, cx| match event {
-                AcpThreadEvent::TitleUpdated => {
-                    cx.notify();
-                }
-                AcpThreadEvent::NewEntry | AcpThreadEvent::EntryUpdated(_) => {
-                    this.sync_list_state_with_displayed_thread(cx);
-                    cx.notify();
-                }
-                _ => {}
-            });
+        let mut subscriptions = Vec::new();
 
-        let observe_subscription = cx.observe(&subagent_thread, |this, _, cx| {
+        // Subscribe to the subagent thread for content updates
+        subscriptions.push(cx.subscribe(&subagent_thread, |this, _, event, cx| match event {
+            AcpThreadEvent::TitleUpdated => {
+                cx.notify();
+            }
+            AcpThreadEvent::NewEntry | AcpThreadEvent::EntryUpdated(_) => {
+                this.sync_list_state_with_displayed_thread(cx);
+                cx.notify();
+            }
+            _ => {}
+        }));
+
+        subscriptions.push(cx.observe(&subagent_thread, |this, _, cx| {
             this.sync_list_state_with_displayed_thread(cx);
             cx.notify();
-        });
+        }));
+
+        // Subscribe to the parent thread to get notified when the subagent's
+        // tool call status changes (e.g., when the subagent completes)
+        let parent_thread = if self.subagent_navigation_stack.is_empty() {
+            self.thread().cloned()
+        } else {
+            self.subagent_navigation_stack.last().map(|b| b.thread.clone())
+        };
+        if let Some(parent) = parent_thread {
+            subscriptions.push(cx.subscribe(&parent, |_this, _, event, cx| {
+                if matches!(event, AcpThreadEvent::EntryUpdated(_)) {
+                    cx.notify();
+                }
+            }));
+        }
 
         self.subagent_navigation_stack.push(SubagentBreadcrumb {
             thread: subagent_thread,
             title,
-            _subscriptions: vec![event_subscription, observe_subscription],
+            _subscriptions: subscriptions,
         });
 
         self.sync_list_state_with_displayed_thread(cx);
@@ -2908,10 +2976,6 @@ impl AcpThreadView {
             false
         };
 
-        let Some(thread) = self.thread() else {
-            return primary;
-        };
-
         let primary = if entry_ix == total_entries - 1 {
             v_flex()
                 .w_full()
@@ -2919,8 +2983,18 @@ impl AcpThreadView {
                 .map(|this| {
                     if needs_confirmation {
                         this.child(self.render_generating(true, cx))
-                    } else {
+                    } else if self.is_viewing_subagent() {
+                        // For subagents, show spinner based on parent's tool call status
+                        if self.is_displayed_thread_generating(cx) {
+                            this.child(self.render_generating(false, cx))
+                        } else {
+                            // Subagent is done - don't show controls (no message editor for subagents)
+                            this
+                        }
+                    } else if let Some(thread) = self.thread() {
                         this.child(self.render_thread_controls(&thread, cx))
+                    } else {
+                        this
                     }
                 })
                 .when_some(
@@ -3785,34 +3859,8 @@ impl AcpThreadView {
                         }),
                 )
                 .when_some(self.subagent_navigation_stack.last(), |this, current| {
-                    let parent_thread = if self.subagent_navigation_stack.len() > 1 {
-                        self.subagent_navigation_stack
-                            .get(self.subagent_navigation_stack.len() - 2)
-                            .map(|b| &b.thread)
-                    } else {
-                        self.thread()
-                    };
-
-                    let (is_running, is_failed) = parent_thread
-                        .and_then(|parent| {
-                            parent
-                                .read(cx)
-                                .tool_call_status_for_subagent(&current.thread)
-                        })
-                        .map(|status| {
-                            let running = matches!(
-                                status,
-                                ToolCallStatus::Pending | ToolCallStatus::InProgress
-                            );
-                            let failed = matches!(
-                                status,
-                                ToolCallStatus::Failed
-                                    | ToolCallStatus::Rejected
-                                    | ToolCallStatus::Canceled
-                            );
-                            (running, failed)
-                        })
-                        .unwrap_or((true, false));
+                    let is_running = self.is_displayed_thread_generating(cx);
+                    let is_failed = self.is_displayed_subagent_failed(cx);
 
                     this.child(
                         h_flex()
