@@ -44,11 +44,6 @@ impl FileDiffView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        log::trace!(
-            "FileDiffView::open({}=>{})",
-            old_path.display(),
-            new_path.display()
-        );
         let workspace = workspace.weak_handle();
         window.spawn(cx, async move |cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
@@ -175,7 +170,6 @@ async fn build_buffer_diff(
     language_registry: Arc<LanguageRegistry>,
     cx: &mut AsyncApp,
 ) -> Result<Entity<BufferDiff>> {
-    log::trace!("build_buffer_diff");
     let old_buffer_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.snapshot());
     let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot());
 

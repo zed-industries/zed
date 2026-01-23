@@ -3026,7 +3026,6 @@ impl BufferGitState {
 
     #[ztracing::instrument(skip_all)]
     fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        log::trace!("buffer_language_changed");
         self.language = buffer.read(cx).language().cloned();
         self.language_changed = true;
         let _ = self.recalculate_diffs(buffer.read(cx).text_snapshot(), cx);
