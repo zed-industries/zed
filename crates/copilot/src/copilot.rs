@@ -932,7 +932,7 @@ impl Copilot {
         let nes_enabled = AllLanguageSettings::get_global(cx)
             .edit_predictions
             .copilot
-            .enabled_next_edit_suggestions
+            .enable_next_edit_suggestions
             .unwrap_or(true);
 
         cx.background_spawn(async move {
