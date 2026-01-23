@@ -3780,8 +3780,34 @@ impl AcpThreadView {
                         }),
                 )
                 .when_some(self.subagent_navigation_stack.last(), |this, current| {
-                    let thread = current.thread.read(cx);
-                    let is_running = thread.status() == ThreadStatus::Generating;
+                    let parent_thread = if self.subagent_navigation_stack.len() > 1 {
+                        self.subagent_navigation_stack
+                            .get(self.subagent_navigation_stack.len() - 2)
+                            .map(|b| &b.thread)
+                    } else {
+                        self.thread()
+                    };
+
+                    let (is_running, is_failed) = parent_thread
+                        .and_then(|parent| {
+                            parent
+                                .read(cx)
+                                .tool_call_status_for_subagent(&current.thread)
+                        })
+                        .map(|status| {
+                            let running = matches!(
+                                status,
+                                ToolCallStatus::Pending | ToolCallStatus::InProgress
+                            );
+                            let failed = matches!(
+                                status,
+                                ToolCallStatus::Failed
+                                    | ToolCallStatus::Rejected
+                                    | ToolCallStatus::Canceled
+                            );
+                            (running, failed)
+                        })
+                        .unwrap_or((true, false));
 
                     this.child(
                         h_flex()
@@ -3795,6 +3821,11 @@ impl AcpThreadView {
                             .child(if is_running {
                                 SpinnerLabel::new()
                                     .size(LabelSize::Small)
+                                    .into_any_element()
+                            } else if is_failed {
+                                Icon::new(IconName::XCircle)
+                                    .color(Color::Error)
+                                    .size(IconSize::Small)
                                     .into_any_element()
                             } else {
                                 Icon::new(IconName::Check)

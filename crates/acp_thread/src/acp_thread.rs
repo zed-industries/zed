@@ -1274,6 +1274,20 @@ impl AcpThread {
         false
     }
 
+    pub fn tool_call_status_for_subagent(
+        &self,
+        subagent_thread: &Entity<AcpThread>,
+    ) -> Option<&ToolCallStatus> {
+        for entry in &self.entries {
+            if let AgentThreadEntry::ToolCall(tool_call) = entry {
+                if tool_call.subagent_thread() == Some(subagent_thread) {
+                    return Some(&tool_call.status);
+                }
+            }
+        }
+        None
+    }
+
     pub fn used_tools_since_last_user_message(&self) -> bool {
         for entry in self.entries.iter().rev() {
             match entry {

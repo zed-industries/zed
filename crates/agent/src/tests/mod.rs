@@ -3986,6 +3986,84 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
 }
 
 #[gpui::test]
+async fn test_subagent_gets_subagent_tool_when_depth_allows(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+
+    let subagent_context = SubagentContext {
+        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
+        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
+        depth: 1,
+        summary_prompt: "Summarize".to_string(),
+        context_low_prompt: "Context low".to_string(),
+    };
+
+    // Create a fake parent thread to hold the SubagentTool
+    let parent = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            project_context.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        )
+    });
+
+    // Create parent tools that include the subagent tool
+    // The subagent tool at depth 0 should be inherited by subagents at depth 1
+    let mut parent_tools: std::collections::BTreeMap<
+        gpui::SharedString,
+        Arc<dyn crate::AnyAgentTool>,
+    > = std::collections::BTreeMap::new();
+
+    let subagent_tool = SubagentTool::new(
+        parent.downgrade(),
+        project.clone(),
+        project_context.clone(),
+        context_server_registry.clone(),
+        Templates::new(),
+        0, // Parent is at depth 0
+        std::collections::BTreeMap::new(),
+    );
+    parent_tools.insert("subagent".into(), subagent_tool.erase());
+
+    let subagent = cx.new(|cx| {
+        Thread::new_subagent(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            model.clone(),
+            subagent_context,
+            parent_tools,
+            cx,
+        )
+    });
+
+    subagent.read_with(cx, |thread, _| {
+        assert_eq!(thread.depth(), 1);
+        assert!(
+            thread.has_registered_tool("subagent"),
+            "subagent tool should be present at depth 1 (below max depth {})",
+            MAX_SUBAGENT_DEPTH
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_subagent_receives_task_prompt(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();

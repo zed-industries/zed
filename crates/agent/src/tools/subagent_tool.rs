@@ -103,8 +103,9 @@ pub struct SubagentTool {
     templates: Arc<Templates>,
     current_depth: u8,
     /// The tools available to the parent thread, captured before SubagentTool was added.
-    /// Subagents inherit from this set (or a subset via `allowed_tools` in the config).
-    /// This is captured early so subagents don't get the subagent tool themselves.
+    /// Subagents inherit from this set (or a subset via `allowed_tools` in the config),
+    /// plus they get their own SubagentTool instance (with incremented depth) if they
+    /// haven't reached MAX_SUBAGENT_DEPTH.
     parent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
 }
 
@@ -144,12 +145,17 @@ impl SubagentTool {
 
         // Collect all invalid tools across all subagents
         let mut all_invalid_tools: Vec<String> = Vec::new();
+        let subagent_depth = self.current_depth + 1;
+        let subagent_can_spawn = subagent_depth < MAX_SUBAGENT_DEPTH;
+
         for config in subagents {
             if let Some(ref tools) = config.allowed_tools {
                 for tool in tools {
-                    if !self.parent_tools.contains_key(tool.as_str())
-                        && !all_invalid_tools.contains(tool)
-                    {
+                    let is_subagent_tool = tool == acp_thread::SUBAGENT_TOOL_NAME;
+                    let is_valid = self.parent_tools.contains_key(tool.as_str())
+                        || (is_subagent_tool && subagent_can_spawn);
+
+                    if !is_valid && !all_invalid_tools.contains(tool) {
                         all_invalid_tools.push(tool.clone());
                     }
                 }
@@ -255,6 +261,26 @@ impl AgentTool for SubagentTool {
         let current_depth = self.current_depth;
         let parent_thread_weak = self.parent_thread.clone();
 
+        // Create a SubagentTool that subagents can use to spawn their own subagents
+        // (if depth allows). This will be rebound to each subagent's thread.
+        let subagent_tool_for_children: Option<Arc<dyn AnyAgentTool>> =
+            if current_depth + 1 < MAX_SUBAGENT_DEPTH {
+                Some(
+                    SubagentTool::new(
+                        self.parent_thread.clone(),
+                        self.project.clone(),
+                        self.project_context.clone(),
+                        self.context_server_registry.clone(),
+                        self.templates.clone(),
+                        current_depth,
+                        self.parent_tools.clone(),
+                    )
+                    .erase(),
+                )
+            } else {
+                None
+            };
+
         // Spawn all subagents in parallel
         let subagent_configs = input.subagents;
 
@@ -278,7 +304,7 @@ impl AgentTool for SubagentTool {
                 };
 
                 // Determine which tools this subagent gets
-                let subagent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>> =
+                let mut subagent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>> =
                     if let Some(ref allowed) = config.allowed_tools {
                         let allowed_set: HashSet<&str> =
                             allowed.iter().map(|s| s.as_str()).collect();
@@ -290,6 +316,19 @@ impl AgentTool for SubagentTool {
                     } else {
                         parent_tools.clone()
                     };
+
+                // Add the subagent tool if depth allows, so subagents can spawn their own subagents.
+                // The tool will be rebound to point to the subagent's thread in Thread::new_subagent.
+                // Only add it if allowed_tools is None (all tools allowed) or explicitly includes "subagent".
+                if let Some(ref tool) = subagent_tool_for_children {
+                    let should_include = config
+                        .allowed_tools
+                        .as_ref()
+                        .is_none_or(|allowed| allowed.iter().any(|t| t == acp_thread::SUBAGENT_TOOL_NAME));
+                    if should_include {
+                        subagent_tools.insert(acp_thread::SUBAGENT_TOOL_NAME.into(), tool.clone());
+                    }
+                }
 
                 let label = config.label.clone();
                 let task_prompt = config.task_prompt.clone();
@@ -401,6 +440,24 @@ impl AgentTool for SubagentTool {
 
             Ok(output.trim().to_string())
         })
+    }
+
+    fn rebind_thread(
+        &self,
+        new_thread: WeakEntity<Thread>,
+    ) -> Option<Arc<dyn AnyAgentTool>> {
+        Some(
+            Self {
+                parent_thread: new_thread,
+                project: self.project.clone(),
+                project_context: self.project_context.clone(),
+                context_server_registry: self.context_server_registry.clone(),
+                templates: self.templates.clone(),
+                current_depth: self.current_depth + 1,
+                parent_tools: self.parent_tools.clone(),
+            }
+            .erase(),
+        )
     }
 }
 
