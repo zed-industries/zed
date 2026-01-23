@@ -31000,11 +31000,26 @@ fn test_comments_stored_for_multiple_hunks(cx: &mut TestAppContext) {
         };
 
         // Add comments to first hunk
-        editor.add_review_comment(key1.clone(), "Comment 1 for file1".to_string(), anchor..anchor, cx);
-        editor.add_review_comment(key1.clone(), "Comment 2 for file1".to_string(), anchor..anchor, cx);
+        editor.add_review_comment(
+            key1.clone(),
+            "Comment 1 for file1".to_string(),
+            anchor..anchor,
+            cx,
+        );
+        editor.add_review_comment(
+            key1.clone(),
+            "Comment 2 for file1".to_string(),
+            anchor..anchor,
+            cx,
+        );
 
         // Add comment to second hunk
-        editor.add_review_comment(key2.clone(), "Comment for file2".to_string(), anchor..anchor, cx);
+        editor.add_review_comment(
+            key2.clone(),
+            "Comment for file2".to_string(),
+            anchor..anchor,
+            cx,
+        );
 
         // Verify total count
         assert_eq!(editor.total_review_comment_count(), 3);
@@ -31156,7 +31171,7 @@ fn test_diff_review_multiline_selection(cx: &mut TestAppContext) {
     // Test showing overlay with a multi-line selection (lines 1-3, which are rows 0-2)
     editor
         .update(cx, |editor, window, cx| {
-            editor.show_diff_review_overlay(DisplayRow(0).. DisplayRow(2), window, cx);
+            editor.show_diff_review_overlay(DisplayRow(0)..DisplayRow(2), window, cx);
         })
         .unwrap();
 

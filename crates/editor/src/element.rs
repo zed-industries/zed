@@ -9700,7 +9700,8 @@ impl Element for EditorElement {
                         let range = drag_state.row_range(&snapshot.display_snapshot);
                         let start_row = range.start().0;
                         let end_row = range.end().0;
-                        let drag_highlight_color = cx.theme().colors().editor_active_line_background;
+                        let drag_highlight_color =
+                            cx.theme().colors().editor_active_line_background;
                         let drag_highlight = LineHighlight {
                             background: solid_background(drag_highlight_color),
                             border: Some(cx.theme().colors().border_focused),
@@ -9708,7 +9709,9 @@ impl Element for EditorElement {
                             type_id: None,
                         };
                         for row_num in start_row..=end_row {
-                            highlighted_rows.entry(DisplayRow(row_num)).or_insert(drag_highlight);
+                            highlighted_rows
+                                .entry(DisplayRow(row_num))
+                                .or_insert(drag_highlight);
                         }
                     }
 
@@ -10480,7 +10483,12 @@ impl Element for EditorElement {
                         + 1;
 
                     let diff_review_button = self
-                        .should_render_diff_review_button(start_row..end_row, &row_infos, &snapshot, cx)
+                        .should_render_diff_review_button(
+                            start_row..end_row,
+                            &row_infos,
+                            &snapshot,
+                            cx,
+                        )
                         .map(|(display_row, buffer_row)| {
                             let is_wide = max_line_number_length
                                 >= EditorSettings::get_global(cx).gutter.min_line_number_digits

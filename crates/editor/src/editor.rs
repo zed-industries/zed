@@ -1044,7 +1044,7 @@ impl DiffReviewDragState {
     pub fn row_range(&self, snapshot: &DisplaySnapshot) -> std::ops::RangeInclusive<DisplayRow> {
         let start = self.start_anchor.to_display_point(snapshot).row();
         let current = self.current_anchor.to_display_point(snapshot).row();
-        
+
         (start..=current).sorted()
     }
 }
@@ -21191,7 +21191,10 @@ impl Editor {
         let end_multi_buffer_row = MultiBufferRow(end_point.row);
 
         // Create anchor range for the selected lines (start of first line to end of last line)
-        let line_end = Point::new(end_point.row, buffer_snapshot.line_len(end_multi_buffer_row));
+        let line_end = Point::new(
+            end_point.row,
+            buffer_snapshot.line_len(end_multi_buffer_row),
+        );
         let anchor_range =
             buffer_snapshot.anchor_after(start_point)..buffer_snapshot.anchor_before(line_end);
 
@@ -21638,8 +21641,7 @@ impl Editor {
         // Also clean up individual comments with invalid anchor ranges
         for (_, comments) in &mut self.stored_review_comments {
             comments.retain(|comment| {
-                comment.range.start.is_valid(&snapshot)
-                    && comment.range.end.is_valid(&snapshot)
+                comment.range.start.is_valid(&snapshot) && comment.range.end.is_valid(&snapshot)
             });
         }
 
@@ -21949,40 +21951,48 @@ impl Editor {
         let theme = cx.theme();
         let colors = theme.colors();
 
-        let (comments, comments_expanded, inline_editors, user_avatar_uri, line_ranges) = editor_handle
-            .upgrade()
-            .map(|editor| {
-                let editor = editor.read(cx);
-                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                let comments = editor.comments_for_hunk(hunk_key, &snapshot).to_vec();
-                let (expanded, editors, avatar_uri, line_ranges) = editor
-                    .diff_review_overlays
-                    .iter()
-                    .find(|overlay| Editor::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot))
-                    .map(|o| {
-                        let start_point = o.anchor_range.start.to_point(&snapshot);
-                        let end_point = o.anchor_range.end.to_point(&snapshot);
-                        // Get line ranges per excerpt to detect discontinuities
-                        let buffer_ranges = snapshot.range_to_buffer_ranges(start_point..end_point);
-                        let ranges: Vec<(u32, u32)> = buffer_ranges
-                            .iter()
-                            .map(|(buffer, range, _)| {
-                                let start = buffer.offset_to_point(range.start.0).row;
-                                let end = buffer.offset_to_point(range.end.0).row;
-                                (start, end)
-                            })
-                            .collect();
-                        (
-                            o.comments_expanded,
-                            o.inline_edit_editors.clone(),
-                            o.user_avatar_uri.clone(),
-                            if ranges.is_empty() { None } else { Some(ranges) },
-                        )
-                    })
-                    .unwrap_or((true, HashMap::default(), None, None));
-                (comments, expanded, editors, avatar_uri, line_ranges)
-            })
-            .unwrap_or((Vec::new(), true, HashMap::default(), None, None));
+        let (comments, comments_expanded, inline_editors, user_avatar_uri, line_ranges) =
+            editor_handle
+                .upgrade()
+                .map(|editor| {
+                    let editor = editor.read(cx);
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    let comments = editor.comments_for_hunk(hunk_key, &snapshot).to_vec();
+                    let (expanded, editors, avatar_uri, line_ranges) = editor
+                        .diff_review_overlays
+                        .iter()
+                        .find(|overlay| {
+                            Editor::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot)
+                        })
+                        .map(|o| {
+                            let start_point = o.anchor_range.start.to_point(&snapshot);
+                            let end_point = o.anchor_range.end.to_point(&snapshot);
+                            // Get line ranges per excerpt to detect discontinuities
+                            let buffer_ranges =
+                                snapshot.range_to_buffer_ranges(start_point..end_point);
+                            let ranges: Vec<(u32, u32)> = buffer_ranges
+                                .iter()
+                                .map(|(buffer, range, _)| {
+                                    let start = buffer.offset_to_point(range.start.0).row;
+                                    let end = buffer.offset_to_point(range.end.0).row;
+                                    (start, end)
+                                })
+                                .collect();
+                            (
+                                o.comments_expanded,
+                                o.inline_edit_editors.clone(),
+                                o.user_avatar_uri.clone(),
+                                if ranges.is_empty() {
+                                    None
+                                } else {
+                                    Some(ranges)
+                                },
+                            )
+                        })
+                        .unwrap_or((true, HashMap::default(), None, None));
+                    (comments, expanded, editors, avatar_uri, line_ranges)
+                })
+                .unwrap_or((Vec::new(), true, HashMap::default(), None, None));
 
         let comment_count = comments.len();
         let avatar_size = px(20.);

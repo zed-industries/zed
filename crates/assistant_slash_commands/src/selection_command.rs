@@ -320,7 +320,10 @@ mod tests {
     #[gpui::test]
     fn test_selections_creases_single_excerpt(cx: &mut TestAppContext) {
         let buffer = cx.update(|cx| {
-            MultiBuffer::build_multi([("a\nb\nc\n", vec![Point::new(0, 0)..Point::new(3, 0)])], cx)
+            MultiBuffer::build_multi(
+                [("a\nb\nc\n", vec![Point::new(0, 0)..Point::new(3, 0)])],
+                cx,
+            )
         });
         let creases = cx.update(|cx| {
             let snapshot = buffer.read(cx).snapshot(cx);
