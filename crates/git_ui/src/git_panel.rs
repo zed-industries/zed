@@ -4271,10 +4271,10 @@ impl GitPanel {
                     .child(
                         div()
                             .pr_2p5()
-                            .on_action(|&editor::actions::MoveUp, _, cx| {
+                            .on_action(|&zed_actions::editor::MoveUp, _, cx| {
                                 cx.stop_propagation();
                             })
-                            .on_action(|&editor::actions::MoveDown, _, cx| {
+                            .on_action(|&zed_actions::editor::MoveDown, _, cx| {
                                 cx.stop_propagation();
                             })
                             .child(EditorElement::new(&self.commit_editor, panel_editor_style)),

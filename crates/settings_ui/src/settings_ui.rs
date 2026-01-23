@@ -14,6 +14,7 @@ use gpui::{
 };
 
 use language::Buffer;
+use platform_title_bar::PlatformTitleBar;
 use project::{Project, ProjectPath, Worktree, WorktreeId};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
@@ -32,20 +33,19 @@ use std::{
     time::Duration,
 };
 use theme::ThemeSettings;
-use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
     Banner, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
     KeybindingHint, PopoverMenu, Scrollbars, Switch, Tooltip, TreeViewItem, WithScrollbar,
     prelude::*,
 };
-use ui_input::{NumberField, NumberFieldMode, NumberFieldType};
+
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::{AppState, OpenOptions, OpenVisible, Workspace, client_side_decorations};
 use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
 use crate::components::{
-    EnumVariantDropdown, SettingsInputField, SettingsSectionHeader, font_picker, icon_theme_picker,
-    theme_picker,
+    EnumVariantDropdown, NumberField, NumberFieldMode, NumberFieldType, SettingsInputField,
+    SettingsSectionHeader, font_picker, icon_theme_picker, theme_picker,
 };
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
