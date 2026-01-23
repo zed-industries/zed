@@ -824,7 +824,9 @@ impl DisplayMap {
         if let Some((_, companion_entity)) = &self.companion {
             companion_entity.update(cx, |companion, _| {
                 if self.entity_id == companion.rhs_display_map_id {
-                    companion.rhs_folded_buffers.extend(buffer_ids.iter().copied());
+                    companion
+                        .rhs_folded_buffers
+                        .extend(buffer_ids.iter().copied());
                 } else {
                     let rhs_ids = buffer_ids
                         .iter()
