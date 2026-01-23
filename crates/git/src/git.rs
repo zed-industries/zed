@@ -101,6 +101,8 @@ actions!(
         Clone,
         /// Adds a file to .gitignore.
         AddToGitignore,
+        /// Shows the commit history for the current repository.
+        CommitLog,
     ]
 );
 
