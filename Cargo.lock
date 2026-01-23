@@ -3700,6 +3700,7 @@ dependencies = [
  "sum_tree",
  "theme",
  "util",
+ "workspace",
  "zlog",
 ]
 
@@ -3730,10 +3731,12 @@ dependencies = [
  "anyhow",
  "copilot",
  "gpui",
+ "language",
  "log",
  "lsp",
  "menu",
  "serde_json",
+ "settings",
  "ui",
  "util",
  "workspace",
