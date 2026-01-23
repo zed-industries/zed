@@ -678,11 +678,16 @@ impl SshRemoteConnection {
             _ => Ok(Some(AppVersion::global(cx))),
         })?;
 
-        let tmp_path_gz = remote_server_dir_relative().join(
+        let tmp_path_compressed = remote_server_dir_relative().join(
             RelPath::unix(&format!(
-                "{}-download-{}.gz",
+                "{}-download-{}.{}",
                 binary_name,
-                std::process::id()
+                std::process::id(),
+                if self.ssh_platform.os.is_windows() {
+                    "zip"
+                } else {
+                    "gz"
+                }
             ))
             .unwrap(),
         );
@@ -697,11 +702,11 @@ impl SshRemoteConnection {
                 .await?
         {
             match self
-                .download_binary_on_server(&url, &tmp_path_gz, delegate, cx)
+                .download_binary_on_server(&url, &tmp_path_compressed, delegate, cx)
                 .await
             {
                 Ok(_) => {
-                    self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
+                    self.extract_server_binary(&dst_path, &tmp_path_compressed, delegate, cx)
                         .await
                         .context("extracting server binary")?;
                     return Ok(dst_path);
@@ -723,10 +728,10 @@ impl SshRemoteConnection {
             )
             .await
             .context("downloading server binary locally")?;
-        self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
+        self.upload_local_server_binary(&src_path, &tmp_path_compressed, delegate, cx)
             .await
             .context("uploading server binary")?;
-        self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
+        self.extract_server_binary(&dst_path, &tmp_path_compressed, delegate, cx)
             .await
             .context("extracting server binary")?;
         Ok(dst_path)
@@ -735,11 +740,11 @@ impl SshRemoteConnection {
     async fn download_binary_on_server(
         &self,
         url: &str,
-        tmp_path_gz: &RelPath,
+        tmp_path: &RelPath,
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        if let Some(parent) = tmp_path_gz.parent() {
+        if let Some(parent) = tmp_path.parent() {
             let res = self
                 .socket
                 .run_command(
@@ -776,7 +781,7 @@ impl SshRemoteConnection {
                     &connection_timeout,
                     url,
                     "-o",
-                    &tmp_path_gz.display(self.path_style()),
+                    &tmp_path.display(self.path_style()),
                 ],
                 true,
             )
@@ -806,7 +811,7 @@ impl SshRemoteConnection {
                             "1",
                             url,
                             "-O",
-                            &tmp_path_gz.display(self.path_style()),
+                            &tmp_path.display(self.path_style()),
                         ],
                         true,
                     )
@@ -835,11 +840,11 @@ impl SshRemoteConnection {
     async fn upload_local_server_binary(
         &self,
         src_path: &Path,
-        tmp_path_gz: &RelPath,
+        tmp_path: &RelPath,
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        if let Some(parent) = tmp_path_gz.parent() {
+        if let Some(parent) = tmp_path.parent() {
             let res = self
                 .socket
                 .run_command(
@@ -864,10 +869,10 @@ impl SshRemoteConnection {
         delegate.set_status(Some("Uploading remote development server"), cx);
         log::info!(
             "uploading remote development server to {:?} ({}kb)",
-            tmp_path_gz,
+            tmp_path,
             size / 1024
         );
-        self.upload_file(src_path, tmp_path_gz)
+        self.upload_file(src_path, tmp_path)
             .await
             .context("failed to upload server binary")?;
         log::info!("uploaded remote development server in {:?}", t0.elapsed());
