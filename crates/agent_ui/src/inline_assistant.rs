@@ -2103,7 +2103,7 @@ pub mod test {
             gpui_tokio::init(cx);
             settings::init(cx);
             client::init(&client, cx);
-            workspace::init(app_state.clone(), cx);
+            workspace::init(cx);
             let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
             language_model::init(client.clone(), cx);
             language_models::init(user_store, client.clone(), cx);

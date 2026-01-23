@@ -69,7 +69,7 @@ pub fn run_component_preview() {
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
-        workspace::init(app_state.clone(), cx);
+        workspace::init(cx);
         init(app_state.clone(), cx);
 
         let size = size(px(1200.), px(800.));

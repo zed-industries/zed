@@ -9,7 +9,7 @@ use settings::{ProjectPanelAutoOpenSettings, SettingsStore};
 use std::path::{Path, PathBuf};
 use util::{path, paths::PathStyle, rel_path::rel_path};
 use workspace::{
-    AppState, ItemHandle, Pane,
+    ItemHandle, Pane,
     item::{Item, ProjectItem},
     register_project_item,
 };
@@ -8193,12 +8193,10 @@ fn init_test(cx: &mut TestAppContext) {
 
 fn init_test_with_editor(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        let app_state = AppState::test(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
         crate::init(cx);
-        workspace::init(app_state, cx);
-
+        workspace::init(cx);
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
                 settings
