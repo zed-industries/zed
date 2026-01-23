@@ -89,6 +89,7 @@ async fn test_sharing_an_ssh_remote_project(
     let remote_http_client = Arc::new(BlockedHttpClient);
     let node = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+    languages.add(rust_lang());
     let _headless_project = server_cx.new(|cx| {
         HeadlessProject::new(
             HeadlessAppState {
@@ -118,6 +119,7 @@ async fn test_sharing_an_ssh_remote_project(
 
     // User B joins the project.
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    project_b.update(cx_b, |project, _| project.languages().add(rust_lang()));
     let worktree_b = project_b
         .update(cx_b, |project, cx| project.worktree_for_id(worktree_id, cx))
         .unwrap();
@@ -173,7 +175,6 @@ async fn test_sharing_an_ssh_remote_project(
         assert_eq!(
             language_settings(cx)
                 .buffer(buffer_b.read(cx))
-                .language(Some("Rust".into()))
                 .get()
                 .language_servers,
             ["override-rust-analyzer".to_string()]
@@ -1033,7 +1034,6 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
         assert_eq!(
             language_settings(cx)
                 .buffer(buffer_before_approval.read(cx))
-                .language(Some("Rust".into()))
                 .get()
                 .language_servers,
             ["...".to_string()],

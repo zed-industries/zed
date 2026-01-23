@@ -350,19 +350,18 @@ impl Inventory {
         label: &str,
         cx: &App,
     ) -> Task<Option<TaskTemplate>> {
-        let (buffer_worktree_id, file, language) = buffer
+        let (buffer_worktree_id, language) = buffer
+            .as_ref()
             .map(|buffer| {
                 let buffer = buffer.read(cx);
-                let file = buffer.file().cloned();
                 (
-                    file.as_ref().map(|file| file.worktree_id(cx)),
-                    file,
+                    buffer.file().as_ref().map(|file| file.worktree_id(cx)),
                     buffer.language().cloned(),
                 )
             })
-            .unwrap_or((None, None, None));
+            .unwrap_or((None, None));
 
-        let tasks = self.list_tasks(file, language, worktree_id.or(buffer_worktree_id), cx);
+        let tasks = self.list_tasks(buffer, language, worktree_id.or(buffer_worktree_id), cx);
         let label = label.to_owned();
         cx.background_spawn(async move {
             tasks
@@ -378,7 +377,7 @@ impl Inventory {
     /// and global tasks last. No specific order inside source kinds groups.
     pub fn list_tasks(
         &self,
-        file: Option<Arc<dyn File>>,
+        buffer: Option<Entity<Buffer>>,
         language: Option<Arc<Language>>,
         worktree: Option<WorktreeId>,
         cx: &App,
@@ -394,17 +393,16 @@ impl Inventory {
         });
         let language_tasks = language
             .filter(|language| {
-                language_settings(cx)
-                    .language(Some(language.name()))
-                    .file(file.as_ref())
-                    .get()
-                    .tasks
-                    .enabled
+                let mut settings = language_settings(cx);
+                if let Some(buffer) = &buffer {
+                    settings = settings.buffer(&buffer.read(cx))
+                }
+                settings.language(Some(language.name())).get().tasks.enabled
             })
             .and_then(|language| {
                 language
                     .context_provider()
-                    .map(|provider| provider.associated_tasks(file, cx))
+                    .map(|provider| provider.associated_tasks(buffer, cx))
             });
         cx.background_spawn(async move {
             if let Some(t) = language_tasks {
@@ -438,7 +436,7 @@ impl Inventory {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name().into(),
         });
-        let file = location.and_then(|location| location.buffer.read(cx).file().cloned());
+        let buffer = location.map(|location| location.buffer.clone());
 
         let mut task_labels_to_ids = HashMap::<String, HashSet<TaskId>>::default();
         let mut lru_score = 0_u32;
@@ -480,18 +478,17 @@ impl Inventory {
         let not_used_score = post_inc(&mut lru_score);
         let global_tasks = self.global_templates_from_settings().collect::<Vec<_>>();
         let associated_tasks = language
-            .filter(|language| {
-                language_settings(cx)
-                    .language(Some(language.name()))
-                    .file(file.as_ref())
-                    .get()
-                    .tasks
-                    .enabled
+            .filter(|_| {
+                let mut settings = language_settings(cx);
+                if let Some(buffer) = &buffer {
+                    settings = settings.buffer(&buffer.read(cx))
+                }
+                settings.get().tasks.enabled
             })
             .and_then(|language| {
                 language
                     .context_provider()
-                    .map(|provider| provider.associated_tasks(file, cx))
+                    .map(|provider| provider.associated_tasks(buffer, cx))
             });
         let worktree_tasks = worktree
             .into_iter()
@@ -1081,7 +1078,7 @@ impl ContextProviderWithTasks {
 }
 
 impl ContextProvider for ContextProviderWithTasks {
-    fn associated_tasks(&self, _: Option<Arc<dyn File>>, _: &App) -> Task<Option<TaskTemplates>> {
+    fn associated_tasks(&self, _: Option<Entity<Buffer>>, _: &App) -> Task<Option<TaskTemplates>> {
         Task::ready(Some(self.templates.clone()))
     }
 }

@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use futures::lock::OwnedMutexGuard;
-use gpui::{App, AppContext, AsyncApp, SharedString, Task};
+use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
@@ -881,16 +881,17 @@ impl ContextProvider for RustContextProvider {
 
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn language::File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         const CUSTOM_TARGET_DIR: &str = "RUST_TARGET_DIR";
 
-        let language_sets = language_settings(cx)
-            .language(Some("Rust".into()))
-            .file(file.as_ref())
-            .get();
+        let mut language_sets = language_settings(cx);
+        if let Some(buffer) = buffer {
+            language_sets = language_sets.buffer(&buffer.read(cx))
+        }
+        let language_sets = language_sets.language(Some("Rust".into())).get();
         let package_to_run = language_sets
             .tasks
             .variables

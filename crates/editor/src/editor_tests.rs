@@ -30048,7 +30048,6 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
         assert_eq!(
             language::language_settings::language_settings(cx)
                 .buffer(buffer_before_approval.read(cx))
-                .language(Some("Rust".into()))
                 .get()
                 .language_servers,
             ["...".to_string()],
@@ -30081,7 +30080,6 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
         assert_eq!(
             language::language_settings::language_settings(cx)
                 .buffer(buffer_before_approval.read(cx))
-                .language(Some("Rust".into()))
                 .get()
                 .language_servers,
             ["override-rust-analyzer".to_string()],

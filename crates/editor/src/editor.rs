@@ -5600,8 +5600,7 @@ impl Editor {
             .language_at(buffer_position.text_anchor)
             .map(|language| language.name());
         let language_settings = language_settings(cx)
-            .language(language.clone())
-            .file(buffer_snapshot.file())
+            .buffer_snapshot_at(&buffer_snapshot, buffer_position.text_anchor)
             .get();
         let completion_settings = language_settings.completions.clone();
 
@@ -16503,17 +16502,17 @@ impl Editor {
         runnable: &mut Runnable,
         cx: &mut App,
     ) -> Task<Vec<(TaskSourceKind, TaskTemplate)>> {
-        let (inventory, worktree_id, file) = project.read_with(cx, |project, cx| {
-            let (worktree_id, file) = project
-                .buffer_for_id(runnable.buffer, cx)
+        let (inventory, worktree_id, buffer) = project.read_with(cx, |project, cx| {
+            let buffer = project.buffer_for_id(runnable.buffer, cx);
+            let worktree_id = buffer
+                .as_ref()
                 .and_then(|buffer| buffer.read(cx).file())
-                .map(|file| (file.worktree_id(cx), file.clone()))
-                .unzip();
+                .map(|file| file.worktree_id(cx));
 
             (
                 project.task_store().read(cx).task_inventory().cloned(),
                 worktree_id,
-                file,
+                buffer,
             )
         });
 
@@ -16524,7 +16523,12 @@ impl Editor {
             if let Some(inventory) = inventory {
                 for RunnableTag(tag) in tags {
                     let new_tasks = inventory.update(cx, |inventory, cx| {
-                        inventory.list_tasks(file.clone(), Some(language.clone()), worktree_id, cx)
+                        inventory.list_tasks(
+                            buffer.clone(),
+                            Some(language.clone()),
+                            worktree_id,
+                            cx,
+                        )
                     });
                     templates_with_tags.extend(new_tasks.await.into_iter().filter(
                         move |(_, template)| {

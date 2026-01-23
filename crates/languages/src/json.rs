@@ -4,10 +4,10 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{App, AsyncApp, Task};
+use gpui::{App, AsyncApp, Entity, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
-    ContextProvider, LanguageName, LanguageRegistry, LocalFile as _, LspAdapter,
+    Buffer, ContextProvider, LanguageName, LanguageRegistry, LocalFile as _, LspAdapter,
     LspAdapterDelegate, LspInstaller, Toolchain,
 };
 use lsp::{LanguageServerBinary, LanguageServerName, Uri};
@@ -42,10 +42,11 @@ pub(crate) struct JsonTaskProvider;
 impl ContextProvider for JsonTaskProvider {
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn language::File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> gpui::Task<Option<TaskTemplates>> {
-        let Some(file) = project::File::from_dyn(file.as_ref()).cloned() else {
+        let file = buffer.as_ref().and_then(|buf| buf.read(cx).file());
+        let Some(file) = project::File::from_dyn(file).cloned() else {
             return Task::ready(None);
         };
         let is_package_json = file.path.ends_with(RelPath::unix("package.json").unwrap());

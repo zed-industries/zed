@@ -4,10 +4,10 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::lock::OwnedMutexGuard;
 use futures::{AsyncBufReadExt, StreamExt as _};
-use gpui::{App, AsyncApp, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
 use language::language_settings::language_settings;
-use language::{ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller};
+use language::{Buffer, ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
@@ -770,11 +770,10 @@ impl ContextProvider for PythonContextProvider {
         toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<task::TaskVariables>> {
-        let test_target =
-            match selected_test_runner(location.file_location.buffer.read(cx).file(), cx) {
-                TestRunner::UNITTEST => self.build_unittest_target(variables),
-                TestRunner::PYTEST => self.build_pytest_target(variables),
-            };
+        let test_target = match selected_test_runner(Some(&location.file_location.buffer), cx) {
+            TestRunner::UNITTEST => self.build_unittest_target(variables),
+            TestRunner::PYTEST => self.build_pytest_target(variables),
+        };
 
         let module_target = self.build_module_target(variables);
         let location_file = location.file_location.buffer.read(cx).file().cloned();
@@ -812,10 +811,10 @@ impl ContextProvider for PythonContextProvider {
 
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn language::File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
-        let test_runner = selected_test_runner(file.as_ref(), cx);
+        let test_runner = selected_test_runner(buffer.as_ref(), cx);
 
         let mut tasks = vec![
             // Execute a selection
@@ -922,11 +921,15 @@ impl ContextProvider for PythonContextProvider {
     }
 }
 
-fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &App) -> TestRunner {
+fn selected_test_runner(location: Option<&Entity<Buffer>>, cx: &App) -> TestRunner {
     const TEST_RUNNER_VARIABLE: &str = "TEST_RUNNER";
-    language_settings(cx)
+    let mut settings = language_settings(cx);
+    if let Some(buffer) = location {
+        settings = settings.buffer(&buffer.read(cx))
+    }
+
+    settings
         .language(Some(LanguageName::new_static("Python")))
-        .file(location)
         .get()
         .tasks
         .variables
