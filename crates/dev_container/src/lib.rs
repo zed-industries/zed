@@ -1,6 +1,8 @@
 use gpui::AppContext;
 use gpui::Entity;
 use gpui::Task;
+use http::request;
+use http_client::anyhow;
 use picker::Picker;
 use picker::PickerDelegate;
 use settings::RegisterSetting;
@@ -994,7 +996,9 @@ impl StatefulModal for DevContainerModal {
         let new_state = match message {
             DevContainerMessage::SearchTemplates => {
                 cx.spawn_in(window, async move |this, cx| {
-                    let client = cx.update(|_, cx| cx.http_client()).unwrap();
+                    let Some(client) = cx.update(|_, cx| cx.http_client()).log_err() else {
+                        return;
+                    };
                     match get_templates(client).await {
                         Ok(templates) => {
                             let message =
@@ -1158,7 +1162,9 @@ impl StatefulModal for DevContainerModal {
             }
             DevContainerMessage::TemplateOptionsCompleted(template_entry) => {
                 cx.spawn_in(window, async move |this, cx| {
-                    let client = cx.update(|_, cx| cx.http_client()).unwrap();
+                    let Some(client) = cx.update(|_, cx| cx.http_client()).log_err() else {
+                        return;
+                    };
                     let Some(features) = get_features(client).await.log_err() else {
                         return;
                     };
@@ -1471,7 +1477,11 @@ fn dispatch_apply_templates(
             {
                 let Some(workspace_task) = workspace
                     .update_in(cx, |workspace, window, cx| {
-                        let path = RelPath::unix(".devcontainer/devcontainer.json").unwrap();
+                        let Ok(path) = RelPath::unix(".devcontainer/devcontainer.json") else {
+                            return Task::ready(Err(anyhow!(
+                                "Couldn't create path for .devcontainer/devcontainer.json"
+                            )));
+                        };
                         workspace.open_path((tree_id, path), None, true, window, cx)
                     })
                     .log_err()
@@ -1484,7 +1494,7 @@ fn dispatch_apply_templates(
             this.update_in(cx, |this, window, cx| {
                 this.dismiss(&menu::Cancel, window, cx);
             })
-            .unwrap();
+            .ok();
         } else {
             return;
         }
@@ -1597,11 +1607,14 @@ async fn get_deserialized_response<T>(
 where
     T: for<'de> Deserialize<'de>,
 {
-    let request = Request::get(url)
+    let request = match Request::get(url)
         .header("Authorization", format!("Bearer {}", token))
         .header("Accept", "application/vnd.oci.image.manifest.v1+json")
         .body(AsyncBody::default())
-        .unwrap();
+    {
+        Ok(request) => request,
+        Err(e) => return Err(format!("Failed to create request: {}", e)),
+    };
     let response = match client.send(request).await {
         Ok(response) => response,
         Err(e) => {
