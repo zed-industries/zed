@@ -20,10 +20,7 @@ use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
 use smol::{channel::Sender, future::FutureExt as _};
-use std::{
-    path::PathBuf,
-    sync::{Arc},
-};
+use std::{path::PathBuf, sync::Arc};
 use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
 
