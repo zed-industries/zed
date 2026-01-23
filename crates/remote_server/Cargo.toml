@@ -78,6 +78,9 @@ fork.workspace = true
 libc.workspace = true
 minidumper.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+
 [dev-dependencies]
 action_log.workspace = true
 agent = { workspace = true, features = ["test-support"] }

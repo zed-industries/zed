@@ -2,6 +2,9 @@ mod headless_project;
 
 pub mod unix;
 
+#[cfg(windows)]
+pub mod windows;
+
 #[cfg(test)]
 mod remote_editing_tests;
 

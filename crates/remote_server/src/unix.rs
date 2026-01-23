@@ -800,6 +800,64 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     }
 
     let binary_name = std::env::current_exe().map_err(SpawnServerError::CurrentExe)?;
+
+    #[cfg(windows)]
+    {
+        spawn_server_windows(&binary_name, paths)?;
+    }
+
+    #[cfg(not(windows))]
+    {
+        spawn_server_normal(&binary_name, paths)?;
+    }
+
+    let mut total_time_waited = std::time::Duration::from_secs(0);
+    let wait_duration = std::time::Duration::from_millis(20);
+    while !paths.stdout_socket.exists()
+        || !paths.stdin_socket.exists()
+        || !paths.stderr_socket.exists()
+    {
+        log::debug!("waiting for server to be ready to accept connections...");
+        std::thread::sleep(wait_duration);
+        total_time_waited += wait_duration;
+        if total_time_waited > std::time::Duration::from_secs(10) {
+            return Err(SpawnServerError::Timeout);
+        }
+    }
+
+    log::info!(
+        "server ready to accept connections. total time waited: {:?}",
+        total_time_waited
+    );
+
+    Ok(())
+}
+
+#[cfg(windows)]
+fn spawn_server_windows(binary_name: &Path, paths: &ServerPaths) -> Result<(), SpawnServerError> {
+    let binary_path = binary_name.to_string_lossy().to_string();
+    let parameters = format!(
+        "run --log-file \"{}\" --pid-file \"{}\" --stdin-socket \"{}\" --stdout-socket \"{}\" --stderr-socket \"{}\"",
+        paths.log_file.to_string_lossy(),
+        paths.pid_file.to_string_lossy(),
+        paths.stdin_socket.to_string_lossy(),
+        paths.stdout_socket.to_string_lossy(),
+        paths.stderr_socket.to_string_lossy()
+    );
+
+    let directory = binary_name
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    crate::windows::shell_execute_from_explorer(&binary_path, &parameters, &directory)
+        .map_err(|e| SpawnServerError::ProcessStatus(std::io::Error::other(e)))?;
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn spawn_server_normal(binary_name: &Path, paths: &ServerPaths) -> Result<(), SpawnServerError> {
     let mut server_process = new_smol_command(binary_name);
     server_process
         .stdin(std::process::Stdio::null())
@@ -820,25 +878,6 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     server_process
         .spawn()
         .map_err(SpawnServerError::ProcessStatus)?;
-
-    let mut total_time_waited = std::time::Duration::from_secs(0);
-    let wait_duration = std::time::Duration::from_millis(20);
-    while !paths.stdout_socket.exists()
-        || !paths.stdin_socket.exists()
-        || !paths.stderr_socket.exists()
-    {
-        log::debug!("waiting for server to be ready to accept connections...");
-        std::thread::sleep(wait_duration);
-        total_time_waited += wait_duration;
-        if total_time_waited > std::time::Duration::from_secs(10) {
-            return Err(SpawnServerError::Timeout);
-        }
-    }
-
-    log::info!(
-        "server ready to accept connections. total time waited: {:?}",
-        total_time_waited
-    );
 
     Ok(())
 }
