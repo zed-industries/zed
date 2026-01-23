@@ -323,12 +323,13 @@ impl PickerDelegate for AcpModelPickerDelegate {
             AcpModelPickerEntry::Separator(title) => {
                 Some(ModelSelectorHeader::new(title, ix > 1).into_any_element())
             }
-            AcpModelPickerEntry::Model(model_info, is_favorite) => {
+            AcpModelPickerEntry::Model(model_info, is_favorite_entry) => {
                 let is_selected = Some(model_info) == self.selected_model.as_ref();
                 let default_model = self.agent_server.default_model(cx);
                 let is_default = default_model.as_ref() == Some(&model_info.id);
 
-                let is_favorite = *is_favorite;
+                let is_favorite_entry = *is_favorite_entry;
+                let is_favorite = self.favorites.contains(&model_info.id);
                 let handle_action_click = {
                     let model_id = model_info.id.clone();
                     let fs = self.fs.clone();
@@ -360,6 +361,8 @@ impl PickerDelegate for AcpModelPickerDelegate {
                         })
                         .child(
                             ModelSelectorListItem::new(ix, model_info.name.clone())
+                                .provider_name(model_info.provider_name.clone())
+                                .show_provider_name(is_favorite_entry)
                                 .map(|this| match &model_info.icon {
                                     Some(AgentModelIcon::Path(path)) => this.icon_path(path.clone()),
                                     Some(AgentModelIcon::Named(icon)) => this.icon(*icon),
@@ -550,6 +553,7 @@ mod tests {
                         .map(|model| acp_thread::AgentModelInfo {
                             id: acp::ModelId::new(model.to_string()),
                             name: model.to_string().into(),
+                            provider_name: None,
                             description: None,
                             icon: None,
                         })
@@ -772,12 +776,14 @@ mod tests {
             acp_thread::AgentModelInfo {
                 id: acp::ModelId::new("zed/claude".to_string()),
                 name: "Claude".into(),
+                provider_name: Some("Anthropic".into()),
                 description: None,
                 icon: None,
             },
             acp_thread::AgentModelInfo {
                 id: acp::ModelId::new("zed/gemini".to_string()),
                 name: "Gemini".into(),
+                provider_name: Some("Google".into()),
                 description: None,
                 icon: None,
             },
@@ -818,12 +824,14 @@ mod tests {
             acp_thread::AgentModelInfo {
                 id: acp::ModelId::new("favorite-model".to_string()),
                 name: "Favorite".into(),
+                provider_name: None,
                 description: None,
                 icon: None,
             },
             acp_thread::AgentModelInfo {
                 id: acp::ModelId::new("regular-model".to_string()),
                 name: "Regular".into(),
+                provider_name: None,
                 description: None,
                 icon: None,
             },

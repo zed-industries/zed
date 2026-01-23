@@ -159,6 +159,7 @@ impl LanguageModels {
         acp_thread::AgentModelInfo {
             id: Self::model_id(model),
             name: model.name().0,
+            provider_name: Some(provider.name().0),
             description: None,
             icon: Some(match provider.icon() {
                 IconOrSvg::Svg(path) => acp_thread::AgentModelIcon::Path(path),
@@ -1728,6 +1729,7 @@ mod internal_tests {
                 vec![AgentModelInfo {
                     id: acp::ModelId::new("fake/fake"),
                     name: "Fake".into(),
+                    provider_name: Some("Fake".into()),
                     description: None,
                     icon: Some(acp_thread::AgentModelIcon::Named(
                         ui::IconName::ZedAssistant

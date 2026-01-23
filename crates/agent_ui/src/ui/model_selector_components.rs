@@ -47,6 +47,8 @@ impl RenderOnce for ModelSelectorHeader {
 pub struct ModelSelectorListItem {
     index: usize,
     title: SharedString,
+    provider_name: Option<SharedString>,
+    show_provider_name: bool,
     icon: Option<ModelIcon>,
     is_selected: bool,
     is_focused: bool,
@@ -59,12 +61,24 @@ impl ModelSelectorListItem {
         Self {
             index,
             title: title.into(),
+            provider_name: None,
+            show_provider_name: false,
             icon: None,
             is_selected: false,
             is_focused: false,
             is_favorite: false,
             on_toggle_favorite: None,
         }
+    }
+
+    pub fn provider_name(mut self, provider_name: Option<SharedString>) -> Self {
+        self.provider_name = provider_name;
+        self
+    }
+
+    pub fn show_provider_name(mut self, show: bool) -> Self {
+        self.show_provider_name = show;
+        self
     }
 
     pub fn icon(mut self, icon: IconName) -> Self {
@@ -134,23 +148,42 @@ impl RenderOnce for ModelSelectorListItem {
             .end_slot(div().pr_2().when(self.is_selected, |this| {
                 this.child(Icon::new(IconName::Check).color(Color::Accent))
             }))
-            .end_hover_slot(div().pr_1p5().when_some(self.on_toggle_favorite, {
-                |this, handle_click| {
-                    let (icon, color, tooltip) = if is_favorite {
-                        (IconName::StarFilled, Color::Accent, "Unfavorite Model")
-                    } else {
-                        (IconName::Star, Color::Default, "Favorite Model")
-                    };
-                    this.child(
-                        IconButton::new(("toggle-favorite", self.index), icon)
-                            .layer(ElevationIndex::ElevatedSurface)
-                            .icon_color(color)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text(tooltip))
-                            .on_click(move |event, window, cx| (handle_click)(event, window, cx)),
+            .end_hover_slot(
+                h_flex()
+                    .gap_2()
+                    .pr_1p5()
+                    .when_some(
+                        if self.show_provider_name {
+                            self.provider_name
+                        } else {
+                            None
+                        },
+                        |this, provider_name| {
+                            this.child(
+                                Label::new(provider_name)
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                        },
                     )
-                }
-            }))
+                    .when_some(self.on_toggle_favorite, |this, handle_click| {
+                        let (icon, color, tooltip) = if is_favorite {
+                            (IconName::StarFilled, Color::Accent, "Unfavorite Model")
+                        } else {
+                            (IconName::Star, Color::Default, "Favorite Model")
+                        };
+                        this.child(
+                            IconButton::new(("toggle-favorite", self.index), icon)
+                                .layer(ElevationIndex::ElevatedSurface)
+                                .icon_color(color)
+                                .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::text(tooltip))
+                                .on_click(move |event, window, cx| {
+                                    (handle_click)(event, window, cx)
+                                }),
+                        )
+                    }),
+            )
     }
 }
 

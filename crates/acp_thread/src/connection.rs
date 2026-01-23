@@ -350,6 +350,7 @@ pub enum AgentModelIcon {
 pub struct AgentModelInfo {
     pub id: acp::ModelId,
     pub name: SharedString,
+    pub provider_name: Option<SharedString>,
     pub description: Option<SharedString>,
     pub icon: Option<AgentModelIcon>,
 }
@@ -359,7 +360,8 @@ impl From<acp::ModelInfo> for AgentModelInfo {
         Self {
             id: info.model_id,
             name: info.name.into(),
-            description: info.description.map(|desc| desc.into()),
+            provider_name: None,
+            description: info.description.map(Into::into),
             icon: None,
         }
     }
@@ -712,6 +714,7 @@ mod test_support {
                 selected_model: Arc::new(Mutex::new(AgentModelInfo {
                     id: acp::ModelId::new("visual-test-model"),
                     name: "Visual Test Model".into(),
+                    provider_name: Some("Zed".into()),
                     description: Some("A stub model for visual testing".into()),
                     icon: Some(AgentModelIcon::Named(ui::IconName::ZedAssistant)),
                 })),
