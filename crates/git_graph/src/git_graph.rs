@@ -1116,6 +1116,7 @@ impl GitGraph {
                     .border_t_1()
                     .border_color(cx.theme().colors().border)
                     .p_3()
+                    .min_w_0()
                     .child(
                         v_flex()
                             .gap_2()
