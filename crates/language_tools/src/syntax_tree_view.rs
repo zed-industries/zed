@@ -259,7 +259,7 @@ impl SyntaxTreeView {
             let multi_buffer = editor.buffer().read(cx);
             let (buffer, range, excerpt_id) = snapshot
                 .buffer_snapshot()
-                .range_to_buffer_ranges(selection_range)
+                .range_to_buffer_ranges(selection_range.start..=selection_range.end)
                 .pop()?;
             let buffer = multi_buffer.buffer(buffer.remote_id()).unwrap();
             Some((buffer, range, excerpt_id))
@@ -659,7 +659,7 @@ impl SyntaxTreeToolbarItemView {
             buffer_state.active_layer = Some(layer.to_owned());
             view.selected_descendant_ix = None;
             cx.notify();
-            view.focus_handle.focus(window);
+            view.focus_handle.focus(window, cx);
             Some(())
         })
     }

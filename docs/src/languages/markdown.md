@@ -23,12 +23,46 @@ def fib(n):
 
 ### Format
 
-Zed supports using Prettier to automatically re-format Markdown documents. You can trigger this manually via the {#action editor::Format} action or via the {#kb editor::Format} keyboard shortcut. Alternately, you can automatically format by enabling [`format_on_save`](../configuring-zed.md#format-on-save) in your settings.json:
+Zed supports using Prettier to automatically re-format Markdown documents. You can trigger this manually via the {#action editor::Format} action or via the {#kb editor::Format} keyboard shortcut. Alternately, you can automatically format by enabling [`format_on_save`](../reference/all-settings.md#format-on-save) in your settings.json:
 
 ```json [settings]
   "languages": {
     "Markdown": {
       "format_on_save": "on"
+    }
+  },
+```
+
+### List Continuation
+
+Zed automatically continues lists when you press Enter at the end of a list item. Supported list types:
+
+- Unordered lists (`-`, `*`, or `+` markers)
+- Ordered lists (numbers are auto-incremented)
+- Task lists (`- [ ]` and `- [x]`)
+
+Pressing Enter on an empty list item removes the marker and exits the list.
+
+To disable this behavior:
+
+```json [settings]
+  "languages": {
+    "Markdown": {
+      "extend_list_on_newline": false
+    }
+  },
+```
+
+### List Indentation
+
+Zed indents list items when you press Tab while the cursor is on a line containing only a list marker. This allows you to quickly create nested lists.
+
+To disable this behavior:
+
+```json [settings]
+  "languages": {
+    "Markdown": {
+      "indent_list_on_tab": false
     }
   },
 ```

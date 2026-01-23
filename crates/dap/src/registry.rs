@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use collections::FxHashMap;
-use gpui::{App, Global, SharedString};
+use gpui::{App, BackgroundExecutor, Global, SharedString};
 use language::LanguageName;
 use parking_lot::RwLock;
 use task::{
@@ -23,7 +23,11 @@ pub trait DapLocator: Send + Sync {
         adapter: &DebugAdapterName,
     ) -> Option<DebugScenario>;
 
-    async fn run(&self, build_config: SpawnInTerminal) -> Result<DebugRequest>;
+    async fn run(
+        &self,
+        build_config: SpawnInTerminal,
+        executor: BackgroundExecutor,
+    ) -> Result<DebugRequest>;
 }
 
 #[derive(Default)]

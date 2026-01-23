@@ -1,16 +1,20 @@
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
-use gpui::SharedString;
+use gpui::{BackgroundExecutor, SharedString};
 use serde_json::{Value, json};
-use smol::{Timer, io::AsyncReadExt, process::Stdio};
+use smol::{io::AsyncReadExt, process::Stdio};
 use std::time::Duration;
 use task::{BuildTaskDefinition, DebugScenario, ShellBuilder, SpawnInTerminal, TaskTemplate};
 use util::command::new_smol_command;
 
 pub(crate) struct CargoLocator;
 
-async fn find_best_executable(executables: &[String], test_name: &str) -> Option<String> {
+async fn find_best_executable(
+    executables: &[String],
+    test_name: &str,
+    executor: BackgroundExecutor,
+) -> Option<String> {
     if executables.len() == 1 {
         return executables.first().cloned();
     }
@@ -32,7 +36,7 @@ async fn find_best_executable(executables: &[String], test_name: &str) -> Option
                 Ok(())
             },
             async {
-                Timer::after(Duration::from_secs(3)).await;
+                executor.timer(Duration::from_secs(3)).await;
                 anyhow::bail!("Timed out waiting for executable stdout")
             },
         );
@@ -109,24 +113,27 @@ impl DapLocator for CargoLocator {
         })
     }
 
-    async fn run(&self, build_config: SpawnInTerminal) -> Result<DebugRequest> {
+    async fn run(
+        &self,
+        build_config: SpawnInTerminal,
+        executor: BackgroundExecutor,
+    ) -> Result<DebugRequest> {
         let cwd = build_config
             .cwd
             .clone()
             .context("Couldn't get cwd from debug config which is needed for locators")?;
         let builder = ShellBuilder::new(&build_config.shell, cfg!(windows)).non_interactive();
-        let (program, args) = builder.build(
-            Some("cargo".into()),
-            &build_config
-                .args
-                .iter()
-                .cloned()
-                .take_while(|arg| arg != "--")
-                .chain(Some("--message-format=json".to_owned()))
-                .collect::<Vec<_>>(),
-        );
-        let mut child = util::command::new_smol_command(program)
-            .args(args)
+        let mut child = builder
+            .build_smol_command(
+                Some("cargo".into()),
+                &build_config
+                    .args
+                    .iter()
+                    .cloned()
+                    .take_while(|arg| arg != "--")
+                    .chain(Some("--message-format=json".to_owned()))
+                    .collect::<Vec<_>>(),
+            )
             .envs(build_config.env.iter().map(|(k, v)| (k.clone(), v.clone())))
             .current_dir(cwd)
             .stdout(Stdio::piped())
@@ -191,7 +198,7 @@ impl DapLocator for CargoLocator {
                     .map(|name| build_config.env.get(name))
                     .unwrap_or(Some(name))
             }) {
-                find_best_executable(&executables, name).await
+                find_best_executable(&executables, name, executor).await
             } else {
                 None
             }

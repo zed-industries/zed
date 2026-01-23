@@ -21,8 +21,10 @@ acp_tools.workspace = true
 acp_thread.workspace = true
 action_log.workspace = true
 agent-client-protocol.workspace = true
+feature_flags.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+chrono.workspace = true
 client.workspace = true
 collections.workspace = true
 env_logger = { workspace = true, optional = true }

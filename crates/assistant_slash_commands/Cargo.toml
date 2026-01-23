@@ -22,7 +22,6 @@ feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
-globset.workspace = true
 gpui.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
@@ -42,6 +41,7 @@ worktree.workspace = true
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+multi_buffer = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }

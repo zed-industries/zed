@@ -89,7 +89,7 @@ impl SearchQuery {
     /// Create a text query
     ///
     /// If `match_full_paths` is true, include/exclude patterns will always be matched against fully qualified project paths beginning with a project root.
-    /// If `match_full_paths` is false, patterns will be matched against full paths only when the project has multiple roots.
+    /// If `match_full_paths` is false, patterns will be matched against worktree-relative paths.
     pub fn text(
         query: impl ToString,
         whole_word: bool,
@@ -180,6 +180,10 @@ impl SearchQuery {
         }
 
         let multiline = query.contains('\n') || query.contains("\\n");
+        if multiline {
+            query.insert_str(0, "(?m)");
+        }
+
         let regex = RegexBuilder::new(&query)
             .case_insensitive(!case_sensitive)
             .build()?;
@@ -286,7 +290,7 @@ impl SearchQuery {
                 message.include_ignored,
                 PathMatcher::new(files_to_include, path_style)?,
                 PathMatcher::new(files_to_exclude, path_style)?,
-                false,
+                message.match_full_paths,
                 None, // search opened only don't need search remote
             )
         }
@@ -326,39 +330,65 @@ impl SearchQuery {
         }
     }
 
-    pub(crate) fn detect(
+    pub(crate) async fn detect(
         &self,
         mut reader: BufReader<Box<dyn Read + Send + Sync>>,
     ) -> Result<bool> {
+        let query_str = self.as_str();
+        let needle_len = query_str.len();
+        if needle_len == 0 {
+            return Ok(false);
+        }
         if self.as_str().is_empty() {
             return Ok(false);
         }
 
+        let mut text = String::new();
+        let mut bytes_read = 0;
+        // Yield from this function every 128 bytes scanned.
+        const YIELD_THRESHOLD: usize = 128;
         match self {
             Self::Text { search, .. } => {
-                let mat = search.stream_find_iter(reader).next();
-                match mat {
-                    Some(Ok(_)) => Ok(true),
-                    Some(Err(err)) => Err(err.into()),
-                    None => Ok(false),
+                if query_str.contains('\n') {
+                    reader.read_to_string(&mut text)?;
+                    Ok(search.is_match(&text))
+                } else {
+                    // Yield from this function every 128 bytes scanned.
+                    const YIELD_THRESHOLD: usize = 128;
+                    while reader.read_line(&mut text)? > 0 {
+                        if search.is_match(&text) {
+                            return Ok(true);
+                        }
+                        bytes_read += text.len();
+                        if bytes_read >= YIELD_THRESHOLD {
+                            bytes_read = 0;
+                            smol::future::yield_now().await;
+                        }
+                        text.clear();
+                    }
+                    Ok(false)
                 }
             }
             Self::Regex {
                 regex, multiline, ..
             } => {
                 if *multiline {
-                    let mut text = String::new();
                     if let Err(err) = reader.read_to_string(&mut text) {
                         Err(err.into())
                     } else {
-                        Ok(regex.find(&text)?.is_some())
+                        Ok(regex.is_match(&text)?)
                     }
                 } else {
-                    for line in reader.lines() {
-                        let line = line?;
-                        if regex.find(&line)?.is_some() {
+                    while reader.read_line(&mut text)? > 0 {
+                        if regex.is_match(&text)? {
                             return Ok(true);
                         }
+                        bytes_read += text.len();
+                        if bytes_read >= YIELD_THRESHOLD {
+                            bytes_read = 0;
+                            smol::future::yield_now().await;
+                        }
+                        text.clear();
                     }
                     Ok(false)
                 }
@@ -728,5 +758,30 @@ mod tests {
             false,
             "Case sensitivity should not be enabled when \\C pattern item is preceded by a backslash."
         );
+    }
+
+    #[gpui::test]
+    async fn test_multiline_regex(cx: &mut gpui::TestAppContext) {
+        let search_query = SearchQuery::regex(
+            "^hello$\n",
+            false,
+            false,
+            false,
+            false,
+            Default::default(),
+            Default::default(),
+            false,
+            None,
+        )
+        .expect("Should be able to create a regex SearchQuery");
+
+        use language::Buffer;
+        let text = crate::Rope::from("hello\nworld\nhello\nworld");
+        let snapshot = cx
+            .update(|app| Buffer::build_snapshot(text, None, None, None, app))
+            .await;
+
+        let results = search_query.search(&snapshot, None).await;
+        assert_eq!(results, vec![0..6, 12..18]);
     }
 }

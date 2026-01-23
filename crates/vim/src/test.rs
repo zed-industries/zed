@@ -20,13 +20,18 @@ use language::{CursorShape, Language, LanguageConfig, Point};
 pub use neovim_backed_test_context::*;
 use settings::SettingsStore;
 use ui::Pixels;
-use util::test::marked_text_ranges;
+use util::{path, test::marked_text_ranges};
 pub use vim_test_context::*;
 
+use gpui::VisualTestContext;
 use indoc::indoc;
+use project::FakeFs;
 use search::BufferSearchBar;
+use search::{ProjectSearchView, project_search};
+use serde_json::json;
+use workspace::DeploySearch;
 
-use crate::{PushSneak, PushSneakBackward, insert::NormalBefore, motion, state::Mode};
+use crate::{PushSneak, PushSneakBackward, VimAddon, insert::NormalBefore, motion, state::Mode};
 
 use util_macros::perf;
 
@@ -1303,6 +1308,39 @@ async fn test_mouse_selection(cx: &mut TestAppContext) {
     cx.assert_state("one «ˇtwo» three", Mode::Visual)
 }
 
+#[gpui::test]
+async fn test_mouse_drag_across_anchor_does_not_drift(cx: &mut TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state("ˇone two three four", Mode::Normal);
+
+    let click_pos = cx.pixel_position("one ˇtwo three four");
+    let drag_left = cx.pixel_position("ˇone two three four");
+    let anchor_pos = cx.pixel_position("one tˇwo three four");
+
+    cx.simulate_mouse_down(click_pos, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    cx.simulate_mouse_move(drag_left, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    cx.assert_state("«ˇone t»wo three four", Mode::Visual);
+
+    cx.simulate_mouse_move(anchor_pos, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    cx.simulate_mouse_move(drag_left, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    cx.assert_state("«ˇone t»wo three four", Mode::Visual);
+
+    cx.simulate_mouse_move(anchor_pos, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    cx.simulate_mouse_move(drag_left, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    cx.assert_state("«ˇone t»wo three four", Mode::Visual);
+
+    cx.simulate_mouse_up(drag_left, MouseButton::Left, Modifiers::none());
+}
+
 #[perf]
 #[gpui::test]
 async fn test_lowercase_marks(cx: &mut TestAppContext) {
@@ -2399,7 +2437,7 @@ async fn test_clipping_on_mode_change(cx: &mut gpui::TestAppContext) {
             .end;
         editor.last_bounds().unwrap().origin
             + editor
-                .display_to_pixel_point(current_head, &snapshot, window)
+                .display_to_pixel_point(current_head, &snapshot, window, cx)
                 .unwrap()
     });
     pixel_position.x += px(100.);
@@ -2499,5 +2537,59 @@ async fn test_deactivate(cx: &mut gpui::TestAppContext) {
 
     cx.update_editor(|editor, _window, _cx| {
         assert_eq!(editor.cursor_shape(), CursorShape::Underline);
+    });
+}
+
+#[gpui::test]
+async fn test_project_search_opens_in_normal_mode(cx: &mut gpui::TestAppContext) {
+    VimTestContext::init(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file_a.rs": "// File A.",
+            "file_b.rs": "// File B.",
+        }),
+    )
+    .await;
+
+    let project = project::Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let workspace =
+        cx.add_window(|window, cx| workspace::Workspace::test_new(project.clone(), window, cx));
+
+    cx.update(|cx| {
+        VimTestContext::init_keybindings(true, cx);
+    });
+
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    workspace
+        .update(cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(workspace, &DeploySearch::default(), window, cx)
+        })
+        .unwrap();
+
+    let search_view = workspace
+        .update(cx, |workspace, _, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .items()
+                .find_map(|item| item.downcast::<ProjectSearchView>())
+                .expect("Project search view should be active")
+        })
+        .unwrap();
+
+    project_search::perform_project_search(&search_view, "File A", cx);
+
+    search_view.update(cx, |search_view, cx| {
+        let vim_mode = search_view
+            .results_editor()
+            .read(cx)
+            .addon::<VimAddon>()
+            .map(|addon| addon.entity.read(cx).mode);
+
+        assert_eq!(vim_mode, Some(Mode::Normal));
     });
 }

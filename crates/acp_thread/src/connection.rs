@@ -1,12 +1,20 @@
 use crate::AcpThread;
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use collections::IndexMap;
 use gpui::{Entity, SharedString, Task};
 use language_model::LanguageModelProviderId;
 use project::Project;
 use serde::{Deserialize, Serialize};
-use std::{any::Any, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
+use std::{
+    any::Any,
+    error::Error,
+    fmt,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+};
 use ui::{App, IconName};
 use uuid::Uuid;
 
@@ -20,7 +28,7 @@ impl UserMessageId {
 }
 
 pub trait AgentConnection {
-    fn telemetry_id(&self) -> &'static str;
+    fn telemetry_id(&self) -> SharedString;
 
     fn new_thread(
         self: Rc<Self>,
@@ -28,6 +36,45 @@ pub trait AgentConnection {
         cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>>;
+
+    /// Whether this agent supports loading existing sessions.
+    fn supports_load_session(&self, _cx: &App) -> bool {
+        false
+    }
+
+    /// Load an existing session by ID.
+    fn load_session(
+        self: Rc<Self>,
+        _session: AgentSessionInfo,
+        _project: Entity<Project>,
+        _cwd: &Path,
+        _cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")))
+    }
+
+    /// Whether this agent supports resuming existing sessions without loading history.
+    fn supports_resume_session(&self, _cx: &App) -> bool {
+        false
+    }
+
+    /// Resume an existing session by ID without replaying previous messages.
+    fn resume_session(
+        self: Rc<Self>,
+        _session: AgentSessionInfo,
+        _project: Entity<Project>,
+        _cwd: &Path,
+        _cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        Task::ready(Err(anyhow::Error::msg(
+            "Resuming sessions is not supported",
+        )))
+    }
+
+    /// Whether this agent supports showing session history.
+    fn supports_session_history(&self, cx: &App) -> bool {
+        self.supports_load_session(cx) || self.supports_resume_session(cx)
+    }
 
     fn auth_methods(&self) -> &[acp::AuthMethod];
 
@@ -40,11 +87,7 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
 
-    fn resume(
-        &self,
-        _session_id: &acp::SessionId,
-        _cx: &App,
-    ) -> Option<Rc<dyn AgentSessionResume>> {
+    fn retry(&self, _session_id: &acp::SessionId, _cx: &App) -> Option<Rc<dyn AgentSessionRetry>> {
         None
     }
 
@@ -86,6 +129,18 @@ pub trait AgentConnection {
         None
     }
 
+    fn session_config_options(
+        &self,
+        _session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn AgentSessionConfigOptions>> {
+        None
+    }
+
+    fn session_list(&self, _cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
+        None
+    }
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 }
 
@@ -99,7 +154,7 @@ pub trait AgentSessionTruncate {
     fn run(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
 }
 
-pub trait AgentSessionResume {
+pub trait AgentSessionRetry {
     fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>>;
 }
 
@@ -123,6 +178,112 @@ pub trait AgentSessionModes {
     fn all_modes(&self) -> Vec<acp::SessionMode>;
 
     fn set_mode(&self, mode: acp::SessionModeId, cx: &mut App) -> Task<Result<()>>;
+}
+
+pub trait AgentSessionConfigOptions {
+    /// Get all current config options with their state
+    fn config_options(&self) -> Vec<acp::SessionConfigOption>;
+
+    /// Set a config option value
+    /// Returns the full updated list of config options
+    fn set_config_option(
+        &self,
+        config_id: acp::SessionConfigId,
+        value: acp::SessionConfigValueId,
+        cx: &mut App,
+    ) -> Task<Result<Vec<acp::SessionConfigOption>>>;
+
+    /// Whenever the config options are updated the receiver will be notified.
+    /// Optional for agents that don't update their config options dynamically.
+    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+        None
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AgentSessionListRequest {
+    pub cwd: Option<PathBuf>,
+    pub cursor: Option<String>,
+    pub meta: Option<acp::Meta>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentSessionListResponse {
+    pub sessions: Vec<AgentSessionInfo>,
+    pub next_cursor: Option<String>,
+    pub meta: Option<acp::Meta>,
+}
+
+impl AgentSessionListResponse {
+    pub fn new(sessions: Vec<AgentSessionInfo>) -> Self {
+        Self {
+            sessions,
+            next_cursor: None,
+            meta: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentSessionInfo {
+    pub session_id: acp::SessionId,
+    pub cwd: Option<PathBuf>,
+    pub title: Option<SharedString>,
+    pub updated_at: Option<DateTime<Utc>>,
+    pub meta: Option<acp::Meta>,
+}
+
+impl AgentSessionInfo {
+    pub fn new(session_id: impl Into<acp::SessionId>) -> Self {
+        Self {
+            session_id: session_id.into(),
+            cwd: None,
+            title: None,
+            updated_at: None,
+            meta: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SessionListUpdate {
+    Refresh,
+    SessionInfo {
+        session_id: acp::SessionId,
+        update: acp::SessionInfoUpdate,
+    },
+}
+
+pub trait AgentSessionList {
+    fn list_sessions(
+        &self,
+        request: AgentSessionListRequest,
+        cx: &mut App,
+    ) -> Task<Result<AgentSessionListResponse>>;
+
+    fn supports_delete(&self) -> bool {
+        false
+    }
+
+    fn delete_session(&self, _session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::anyhow!("delete_session not supported")))
+    }
+
+    fn delete_sessions(&self, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::anyhow!("delete_sessions not supported")))
+    }
+
+    fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
+        None
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
+}
+
+impl dyn AgentSessionList {
+    pub fn downcast<T: 'static + AgentSessionList + Sized>(self: Rc<Self>) -> Option<Rc<T>> {
+        self.into_any().downcast().ok()
+    }
 }
 
 #[derive(Debug)]
@@ -204,12 +365,21 @@ pub trait AgentModelSelector: 'static {
     }
 }
 
+/// Icon for a model in the model selector.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentModelIcon {
+    /// A built-in icon from Zed's icon set.
+    Named(IconName),
+    /// Path to a custom SVG icon file.
+    Path(SharedString),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentModelInfo {
     pub id: acp::ModelId,
     pub name: SharedString,
     pub description: Option<SharedString>,
-    pub icon: Option<IconName>,
+    pub icon: Option<AgentModelIcon>,
 }
 
 impl From<acp::ModelInfo> for AgentModelInfo {
@@ -239,10 +409,71 @@ impl AgentModelList {
             AgentModelList::Grouped(groups) => groups.is_empty(),
         }
     }
+
+    pub fn is_flat(&self) -> bool {
+        matches!(self, AgentModelList::Flat(_))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PermissionOptionChoice {
+    pub allow: acp::PermissionOption,
+    pub deny: acp::PermissionOption,
+}
+
+impl PermissionOptionChoice {
+    pub fn label(&self) -> SharedString {
+        self.allow.name.clone().into()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum PermissionOptions {
+    Flat(Vec<acp::PermissionOption>),
+    Dropdown(Vec<PermissionOptionChoice>),
+}
+
+impl PermissionOptions {
+    pub fn is_empty(&self) -> bool {
+        match self {
+            PermissionOptions::Flat(options) => options.is_empty(),
+            PermissionOptions::Dropdown(options) => options.is_empty(),
+        }
+    }
+
+    pub fn first_option_of_kind(
+        &self,
+        kind: acp::PermissionOptionKind,
+    ) -> Option<&acp::PermissionOption> {
+        match self {
+            PermissionOptions::Flat(options) => options.iter().find(|option| option.kind == kind),
+            PermissionOptions::Dropdown(options) => options.iter().find_map(|choice| {
+                if choice.allow.kind == kind {
+                    Some(&choice.allow)
+                } else if choice.deny.kind == kind {
+                    Some(&choice.deny)
+                } else {
+                    None
+                }
+            }),
+        }
+    }
+
+    pub fn allow_once_option_id(&self) -> Option<acp::PermissionOptionId> {
+        self.first_option_of_kind(acp::PermissionOptionKind::AllowOnce)
+            .map(|option| option.option_id.clone())
+    }
 }
 
 #[cfg(feature = "test-support")]
 mod test_support {
+    //! Test-only stubs and helpers for acp_thread.
+    //!
+    //! This module is gated by the `test-support` feature and is not included
+    //! in production builds. It provides:
+    //! - `StubAgentConnection` for mocking agent connections in tests
+    //! - `create_test_png_base64` for generating test images
+
     use std::sync::Arc;
 
     use action_log::ActionLog;
@@ -253,10 +484,36 @@ mod test_support {
 
     use super::*;
 
+    /// Creates a PNG image encoded as base64 for testing.
+    ///
+    /// Generates a solid-color PNG of the specified dimensions and returns
+    /// it as a base64-encoded string suitable for use in `ImageContent`.
+    pub fn create_test_png_base64(width: u32, height: u32, color: [u8; 4]) -> String {
+        use image::ImageEncoder as _;
+
+        let mut png_data = Vec::new();
+        {
+            let encoder = image::codecs::png::PngEncoder::new(&mut png_data);
+            let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+            for _ in 0..(width * height) {
+                pixels.extend_from_slice(&color);
+            }
+            encoder
+                .write_image(&pixels, width, height, image::ExtendedColorType::Rgba8)
+                .expect("Failed to encode PNG");
+        }
+
+        use image::EncodableLayout as _;
+        base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            png_data.as_bytes(),
+        )
+    }
+
     #[derive(Clone, Default)]
     pub struct StubAgentConnection {
         sessions: Arc<Mutex<HashMap<acp::SessionId, Session>>>,
-        permission_requests: HashMap<acp::ToolCallId, Vec<acp::PermissionOption>>,
+        permission_requests: HashMap<acp::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<acp::SessionUpdate>>>,
     }
 
@@ -280,7 +537,7 @@ mod test_support {
 
         pub fn with_permission_requests(
             mut self,
-            permission_requests: HashMap<acp::ToolCallId, Vec<acp::PermissionOption>>,
+            permission_requests: HashMap<acp::ToolCallId, PermissionOptions>,
         ) -> Self {
             self.permission_requests = permission_requests;
             self
@@ -322,12 +579,19 @@ mod test_support {
     }
 
     impl AgentConnection for StubAgentConnection {
-        fn telemetry_id(&self) -> &'static str {
-            "stub"
+        fn telemetry_id(&self) -> SharedString {
+            "stub".into()
         }
 
         fn auth_methods(&self) -> &[acp::AuthMethod] {
             &[]
+        }
+
+        fn model_selector(
+            &self,
+            _session_id: &acp::SessionId,
+        ) -> Option<Rc<dyn AgentModelSelector>> {
+            Some(self.model_selector_impl())
         }
 
         fn new_thread(
@@ -462,6 +726,47 @@ mod test_support {
     impl AgentSessionTruncate for StubAgentSessionEditor {
         fn run(&self, _: UserMessageId, _: &mut App) -> Task<Result<()>> {
             Task::ready(Ok(()))
+        }
+    }
+
+    #[derive(Clone)]
+    struct StubModelSelector {
+        selected_model: Arc<Mutex<AgentModelInfo>>,
+    }
+
+    impl StubModelSelector {
+        fn new() -> Self {
+            Self {
+                selected_model: Arc::new(Mutex::new(AgentModelInfo {
+                    id: acp::ModelId::new("visual-test-model"),
+                    name: "Visual Test Model".into(),
+                    description: Some("A stub model for visual testing".into()),
+                    icon: Some(AgentModelIcon::Named(ui::IconName::ZedAssistant)),
+                })),
+            }
+        }
+    }
+
+    impl AgentModelSelector for StubModelSelector {
+        fn list_models(&self, _cx: &mut App) -> Task<Result<AgentModelList>> {
+            let model = self.selected_model.lock().clone();
+            Task::ready(Ok(AgentModelList::Flat(vec![model])))
+        }
+
+        fn select_model(&self, model_id: acp::ModelId, _cx: &mut App) -> Task<Result<()>> {
+            self.selected_model.lock().id = model_id;
+            Task::ready(Ok(()))
+        }
+
+        fn selected_model(&self, _cx: &mut App) -> Task<Result<AgentModelInfo>> {
+            Task::ready(Ok(self.selected_model.lock().clone()))
+        }
+    }
+
+    impl StubAgentConnection {
+        /// Returns a model selector for this stub connection.
+        pub fn model_selector_impl(&self) -> Rc<dyn AgentModelSelector> {
+            Rc::new(StubModelSelector::new())
         }
     }
 }

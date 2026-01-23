@@ -68,7 +68,6 @@ messages!(
     (Error, Foreground),
     (ExpandProjectEntry, Foreground),
     (ExpandProjectEntryResponse, Foreground),
-    (FindSearchCandidatesResponse, Background),
     (FindSearchCandidates, Background),
     (FlushBufferedMessages, Foreground),
     (ExpandAllForProjectEntry, Foreground),
@@ -115,8 +114,6 @@ messages!(
     (GetReferencesResponse, Background),
     (GetSignatureHelp, Background),
     (GetSignatureHelpResponse, Background),
-    (GetSupermavenApiKey, Background),
-    (GetSupermavenApiKeyResponse, Background),
     (GetTypeDefinition, Background),
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
@@ -276,7 +273,6 @@ messages!(
     (UpdateDiffBases, Foreground),
     (UpdateFollowers, Foreground),
     (UpdateGitBranch, Background),
-    (UpdateInviteInfo, Foreground),
     (UpdateLanguageServer, Foreground),
     (UpdateNotification, Foreground),
     (UpdateParticipantLocation, Foreground),
@@ -310,6 +306,8 @@ messages!(
     (GitCreateBranch, Background),
     (GitChangeBranch, Background),
     (GitRenameBranch, Background),
+    (TrustWorktrees, Background),
+    (RestrictWorktrees, Background),
     (CheckForPushedCommits, Background),
     (CheckForPushedCommitsResponse, Background),
     (GitDiff, Background),
@@ -336,6 +334,8 @@ messages!(
     (DirectoryEnvironment, Background),
     (GetAgentServerCommand, Background),
     (AgentServerCommand, Background),
+    (GetContextServerCommand, Background),
+    (ContextServerCommand, Background),
     (ExternalAgentsUpdated, Background),
     (ExternalExtensionAgentsUpdated, Background),
     (ExternalAgentLoadingStatusUpdated, Background),
@@ -343,7 +343,12 @@ messages!(
     (RemoteStarted, Background),
     (GitGetWorktrees, Background),
     (GitWorktreesResponse, Background),
-    (GitCreateWorktree, Background)
+    (GitCreateWorktree, Background),
+    (ShareAgentThread, Foreground),
+    (GetSharedAgentThread, Foreground),
+    (GetSharedAgentThreadResponse, Foreground),
+    (FindSearchCandidatesChunk, Background),
+    (FindSearchCandidatesCancelled, Background),
 );
 
 request_messages!(
@@ -386,7 +391,6 @@ request_messages!(
     (GetSignatureHelp, GetSignatureHelpResponse),
     (OpenUnstagedDiff, OpenUnstagedDiffResponse),
     (OpenUncommittedDiff, OpenUncommittedDiffResponse),
-    (GetSupermavenApiKey, GetSupermavenApiKeyResponse),
     (GetTypeDefinition, GetTypeDefinitionResponse),
     (LinkedEditingRange, LinkedEditingRangeResponse),
     (ListRemoteDirectory, ListRemoteDirectoryResponse),
@@ -439,10 +443,12 @@ request_messages!(
     (RespondToContactRequest, Ack),
     (SaveBuffer, BufferSaved),
     (Stage, Ack),
-    (FindSearchCandidates, FindSearchCandidatesResponse),
+    (FindSearchCandidates, Ack),
     (SendChannelMessage, SendChannelMessageResponse),
     (SetChannelMemberRole, Ack),
     (SetChannelVisibility, Ack),
+    (ShareAgentThread, Ack),
+    (GetSharedAgentThread, GetSharedAgentThreadResponse),
     (ShareProject, ShareProjectResponse),
     (SynchronizeBuffers, SynchronizeBuffersResponse),
     (TaskContextForLocation, TaskContext),
@@ -527,9 +533,13 @@ request_messages!(
     (GetDirectoryEnvironment, DirectoryEnvironment),
     (GetProcesses, GetProcessesResponse),
     (GetAgentServerCommand, AgentServerCommand),
+    (GetContextServerCommand, ContextServerCommand),
     (RemoteStarted, Ack),
     (GitGetWorktrees, GitWorktreesResponse),
-    (GitCreateWorktree, Ack)
+    (GitCreateWorktree, Ack),
+    (TrustWorktrees, Ack),
+    (RestrictWorktrees, Ack),
+    (FindSearchCandidatesChunk, Ack),
 );
 
 lsp_messages!(
@@ -697,12 +707,17 @@ entity_messages!(
     GetBlobContent,
     GitClone,
     GetAgentServerCommand,
+    GetContextServerCommand,
     ExternalAgentsUpdated,
     ExternalExtensionAgentsUpdated,
     ExternalAgentLoadingStatusUpdated,
     NewExternalAgentVersionAvailable,
     GitGetWorktrees,
-    GitCreateWorktree
+    GitCreateWorktree,
+    TrustWorktrees,
+    RestrictWorktrees,
+    FindSearchCandidatesChunk,
+    FindSearchCandidatesCancelled,
 );
 
 entity_messages!(

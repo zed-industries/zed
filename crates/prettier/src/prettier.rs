@@ -2,8 +2,8 @@ use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncApp, Entity};
-use language::language_settings::PrettierSettings;
-use language::{Buffer, Diff, Language, language_settings::language_settings};
+use language::language_settings::{LanguageSettings, PrettierSettings};
+use language::{Buffer, Diff, Language};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
@@ -329,7 +329,7 @@ impl Prettier {
                     settings: Default::default(),
                 };
                 executor.spawn(server.initialize(params, configuration.into(), cx))
-            })?
+            })
             .await
             .context("prettier server initialization")?;
         Ok(Self::Real(RealPrettier {
@@ -351,7 +351,7 @@ impl Prettier {
                 let params = buffer
                     .update(cx, |buffer, cx| {
                         let buffer_language = buffer.language().map(|language| language.as_ref());
-                        let language_settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
+                        let language_settings = LanguageSettings::for_buffer(&buffer, cx);
                         let prettier_settings = &language_settings.prettier;
                         anyhow::ensure!(
                             prettier_settings.allowed,
@@ -475,7 +475,7 @@ impl Prettier {
                                 ignore_path,
                             },
                         })
-                })?
+                })
                 .context("building prettier request")?;
 
                 let response = local
@@ -483,7 +483,7 @@ impl Prettier {
                     .request::<Format>(params)
                     .await
                     .into_response()?;
-                let diff_task = buffer.update(cx, |buffer, cx| buffer.diff(response.text, cx))?;
+                let diff_task = buffer.update(cx, |buffer, cx| buffer.diff(response.text, cx));
                 Ok(diff_task.await)
             }
             #[cfg(any(test, feature = "test-support"))]
@@ -500,11 +500,7 @@ impl Prettier {
 
                             let buffer_language =
                                 buffer.language().map(|language| language.as_ref());
-                            let language_settings = language_settings(
-                                buffer_language.map(|l| l.name()),
-                                buffer.file(),
-                                cx,
-                            );
+                            let language_settings = LanguageSettings::for_buffer(buffer, cx);
                             let prettier_settings = &language_settings.prettier;
                             let parser = prettier_parser_name(
                                 buffer_path.as_deref(),
@@ -520,7 +516,7 @@ impl Prettier {
                         }
                         None => panic!("Should not format buffer without a language with prettier"),
                     }
-                })??
+                })?
                 .await),
         }
     }

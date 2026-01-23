@@ -3,15 +3,16 @@ use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use collections::HashMap;
 use futures::future::join_all;
-use gpui::{App, AppContext, AsyncApp, Task};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use itertools::Itertools as _;
 use language::{
-    ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
-    LspAdapterDelegate, LspInstaller, Toolchain,
+    Buffer, ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore,
+    LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
+use semver::Version;
 use serde_json::{Value, json};
 use smol::lock::RwLock;
 use std::{
@@ -54,6 +55,9 @@ const TYPESCRIPT_JASMINE_PACKAGE_PATH_VARIABLE: VariableName =
 
 const TYPESCRIPT_BUN_PACKAGE_PATH_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_BUN_PACKAGE_PATH"));
+
+const TYPESCRIPT_BUN_TEST_NAME_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_BUN_TEST_NAME"));
 
 const TYPESCRIPT_NODE_PACKAGE_PATH_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_NODE_PACKAGE_PATH"));
@@ -111,8 +115,7 @@ impl PackageJsonData {
                     "--".to_owned(),
                     "vitest".to_owned(),
                     "run".to_owned(),
-                    "--poolOptions.forks.minForks=0".to_owned(),
-                    "--poolOptions.forks.maxForks=1".to_owned(),
+                    "--no-file-parallelism".to_owned(),
                     VariableName::File.template_value(),
                 ],
                 cwd: Some(TYPESCRIPT_VITEST_PACKAGE_PATH_VARIABLE.template_value()),
@@ -130,8 +133,7 @@ impl PackageJsonData {
                     "--".to_owned(),
                     "vitest".to_owned(),
                     "run".to_owned(),
-                    "--poolOptions.forks.minForks=0".to_owned(),
-                    "--poolOptions.forks.maxForks=1".to_owned(),
+                    "--no-file-parallelism".to_owned(),
                     "--testNamePattern".to_owned(),
                     format!(
                         "\"{}\"",
@@ -238,7 +240,7 @@ impl PackageJsonData {
                 args: vec![
                     "test".to_owned(),
                     "--test-name-pattern".to_owned(),
-                    format!("\"{}\"", VariableName::Symbol.template_value()),
+                    format!("\"{}\"", TYPESCRIPT_BUN_TEST_NAME_VARIABLE.template_value()),
                     VariableName::File.template_value(),
                 ],
                 tags: vec![
@@ -423,10 +425,11 @@ async fn detect_package_manager(
 impl ContextProvider for TypeScriptContextProvider {
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
-        let Some(file) = project::File::from_dyn(file.as_ref()).cloned() else {
+        let file = buffer.and_then(|buffer| buffer.read(cx).file());
+        let Some(file) = project::File::from_dyn(file).cloned() else {
             return Task::ready(None);
         };
         let Some(worktree_root) = file.worktree.read(cx).root_dir() else {
@@ -487,6 +490,10 @@ impl ContextProvider for TypeScriptContextProvider {
             );
             vars.insert(
                 TYPESCRIPT_VITEST_TEST_NAME_VARIABLE,
+                replace_test_name_parameters(symbol),
+            );
+            vars.insert(
+                TYPESCRIPT_BUN_TEST_NAME_VARIABLE,
                 replace_test_name_parameters(symbol),
             );
         }
@@ -599,14 +606,19 @@ pub struct TypeScriptLspAdapter {
 }
 
 impl TypeScriptLspAdapter {
-    const OLD_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.js";
-    const NEW_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
-    const SERVER_NAME: LanguageServerName =
-        LanguageServerName::new_static("typescript-language-server");
+    const OLD_SERVER_PATH: &str = "node_modules/typescript-language-server/lib/cli.js";
+    const NEW_SERVER_PATH: &str = "node_modules/typescript-language-server/lib/cli.mjs";
+
     const PACKAGE_NAME: &str = "typescript";
+    const SERVER_PACKAGE_NAME: &str = "typescript-language-server";
+
+    const SERVER_NAME: LanguageServerName =
+        LanguageServerName::new_static(Self::SERVER_PACKAGE_NAME);
+
     pub fn new(node: NodeRuntime, fs: Arc<dyn Fs>) -> Self {
         TypeScriptLspAdapter { fs, node }
     }
+
     async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
             .read_text_file(RelPath::unix(".yarn/sdks/typescript/lib/typescript.js").unwrap())
@@ -632,8 +644,8 @@ impl TypeScriptLspAdapter {
 }
 
 pub struct TypeScriptVersions {
-    typescript_version: String,
-    server_version: String,
+    typescript_version: Version,
+    server_version: Version,
 }
 
 impl LspInstaller for TypeScriptLspAdapter {
@@ -644,48 +656,63 @@ impl LspInstaller for TypeScriptLspAdapter {
         _: &dyn LspAdapterDelegate,
         _: bool,
         _: &mut AsyncApp,
-    ) -> Result<TypeScriptVersions> {
+    ) -> Result<Self::BinaryVersion> {
         Ok(TypeScriptVersions {
-            typescript_version: self.node.npm_package_latest_version("typescript").await?,
+            typescript_version: self
+                .node
+                .npm_package_latest_version(Self::PACKAGE_NAME)
+                .await?,
             server_version: self
                 .node
-                .npm_package_latest_version("typescript-language-server")
+                .npm_package_latest_version(Self::SERVER_PACKAGE_NAME)
                 .await?,
         })
     }
 
     async fn check_if_version_installed(
         &self,
-        version: &TypeScriptVersions,
+        version: &Self::BinaryVersion,
         container_dir: &PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
-        let should_install_language_server = self
+        if self
             .node
             .should_install_npm_package(
                 Self::PACKAGE_NAME,
                 &server_path,
                 container_dir,
-                VersionStrategy::Latest(version.typescript_version.as_str()),
+                VersionStrategy::Latest(&version.typescript_version),
             )
-            .await;
-
-        if should_install_language_server {
-            None
-        } else {
-            Some(LanguageServerBinary {
-                path: self.node.binary_path().await.ok()?,
-                env: None,
-                arguments: typescript_server_binary_arguments(&server_path),
-            })
+            .await
+        {
+            return None;
         }
+
+        if self
+            .node
+            .should_install_npm_package(
+                Self::SERVER_PACKAGE_NAME,
+                &server_path,
+                container_dir,
+                VersionStrategy::Latest(&version.server_version),
+            )
+            .await
+        {
+            return None;
+        }
+
+        Some(LanguageServerBinary {
+            path: self.node.binary_path().await.ok()?,
+            env: None,
+            arguments: typescript_server_binary_arguments(&server_path),
+        })
     }
 
     async fn fetch_server_binary(
         &self,
-        latest_version: TypeScriptVersions,
+        latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
@@ -697,11 +724,11 @@ impl LspInstaller for TypeScriptLspAdapter {
                 &[
                     (
                         Self::PACKAGE_NAME,
-                        latest_version.typescript_version.as_str(),
+                        &latest_version.typescript_version.to_string(),
                     ),
                     (
-                        "typescript-language-server",
-                        latest_version.server_version.as_str(),
+                        Self::SERVER_PACKAGE_NAME,
+                        &latest_version.server_version.to_string(),
                     ),
                 ],
             )
@@ -809,7 +836,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         let override_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
-        })?;
+        });
         if let Some(options) = override_options {
             return Ok(options);
         }
@@ -822,9 +849,9 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     fn language_ids(&self) -> HashMap<LanguageName, String> {
         HashMap::from_iter([
-            (LanguageName::new("TypeScript"), "typescript".into()),
-            (LanguageName::new("JavaScript"), "javascript".into()),
-            (LanguageName::new("TSX"), "typescriptreact".into()),
+            (LanguageName::new_static("TypeScript"), "typescript".into()),
+            (LanguageName::new_static("JavaScript"), "javascript".into()),
+            (LanguageName::new_static("TSX"), "typescriptreact".into()),
         ])
     }
 }
@@ -1027,6 +1054,7 @@ mod tests {
             .unindent();
 
             let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+            cx.run_until_parked();
             let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
             assert_eq!(
                 outline

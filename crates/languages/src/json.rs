@@ -4,21 +4,24 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{App, AsyncApp, Task};
+use gpui::{App, AsyncApp, Entity, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
-    ContextProvider, LanguageName, LanguageRegistry, LocalFile as _, LspAdapter,
+    Buffer, ContextProvider, LanguageName, LanguageRegistry, LocalFile as _, LspAdapter,
     LspAdapterDelegate, LspInstaller, Toolchain,
 };
 use lsp::{LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::lsp_store::language_server_settings;
+use semver::Version;
 use serde_json::{Value, json};
+use settings::SettingsLocation;
 use smol::{
     fs::{self},
     io::BufReader,
 };
 use std::{
+    borrow::Cow,
     env::consts,
     ffi::OsString,
     path::{Path, PathBuf},
@@ -28,7 +31,7 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{
     ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into,
-    rel_path::RelPath,
+    paths::PathStyle, rel_path::RelPath,
 };
 
 use crate::PackageJsonData;
@@ -41,10 +44,11 @@ pub(crate) struct JsonTaskProvider;
 impl ContextProvider for JsonTaskProvider {
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn language::File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> gpui::Task<Option<TaskTemplates>> {
-        let Some(file) = project::File::from_dyn(file.as_ref()).cloned() else {
+        let file = buffer.as_ref().and_then(|buf| buf.read(cx).file());
+        let Some(file) = project::File::from_dyn(file).cloned() else {
             return Task::ready(None);
         };
         let is_package_json = file.path.ends_with(RelPath::unix("package.json").unwrap());
@@ -57,10 +61,9 @@ impl ContextProvider for JsonTaskProvider {
             let contents = file
                 .worktree
                 .update(cx, |this, cx| this.load_file(&file.path, cx))
-                .ok()?
                 .await
                 .ok()?;
-            let path = cx.update(|cx| file.abs_path(cx)).ok()?.as_path().into();
+            let path = cx.update(|cx| file.abs_path(cx)).as_path().into();
 
             let task_templates = if is_package_json {
                 let package_json = serde_json_lenient::from_str::<
@@ -142,14 +145,14 @@ impl JsonLspAdapter {
 }
 
 impl LspInstaller for JsonLspAdapter {
-    type BinaryVersion = String;
+    type BinaryVersion = Version;
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
         _: bool,
         _: &mut AsyncApp,
-    ) -> Result<String> {
+    ) -> Result<Self::BinaryVersion> {
         self.node
             .npm_package_latest_version(Self::PACKAGE_NAME)
             .await
@@ -175,7 +178,7 @@ impl LspInstaller for JsonLspAdapter {
 
     async fn check_if_version_installed(
         &self,
-        version: &String,
+        version: &Self::BinaryVersion,
         container_dir: &PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
@@ -204,11 +207,12 @@ impl LspInstaller for JsonLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: String,
+        latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let server_path = container_dir.join(SERVER_PATH);
+        let latest_version = latest_version.to_string();
 
         self.node
             .npm_install_packages(
@@ -252,11 +256,30 @@ impl LspAdapter for JsonLspAdapter {
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
-        _: Option<Uri>,
+        requested_uri: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
+        let requested_path = requested_uri.as_ref().and_then(|uri| {
+            (uri.scheme() == "file")
+                .then(|| uri.to_file_path().ok())
+                .flatten()
+        });
+        let path_in_worktree = requested_path
+            .as_ref()
+            .and_then(|abs_path| {
+                let rel_path = abs_path.strip_prefix(delegate.worktree_root_path()).ok()?;
+                RelPath::new(rel_path, PathStyle::local()).ok()
+            })
+            .unwrap_or_else(|| Cow::Borrowed(RelPath::empty()));
         let mut config = cx.update(|cx| {
-            let schemas = json_schema_store::all_schema_file_associations(&self.languages, cx);
+            let schemas = json_schema_store::all_schema_file_associations(
+                &self.languages,
+                Some(SettingsLocation {
+                    worktree_id: delegate.worktree_id(),
+                    path: path_in_worktree.as_ref(),
+                }),
+                cx,
+            );
 
             // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
             // `Server Info`
@@ -271,11 +294,11 @@ impl LspAdapter for JsonLspAdapter {
                     "schemas": schemas
                 }
             })
-        })?;
+        });
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &self.name(), cx)
                 .and_then(|s| s.settings.clone())
-        })?;
+        });
 
         if let Some(override_options) = project_options {
             merge_json_value_into(override_options, &mut config);
@@ -286,8 +309,8 @@ impl LspAdapter for JsonLspAdapter {
 
     fn language_ids(&self) -> HashMap<LanguageName, String> {
         [
-            (LanguageName::new("JSON"), "json".into()),
-            (LanguageName::new("JSONC"), "jsonc".into()),
+            (LanguageName::new_static("JSON"), "json".into()),
+            (LanguageName::new_static("JSONC"), "jsonc".into()),
         ]
         .into_iter()
         .collect()

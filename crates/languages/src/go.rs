@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{App, AsyncApp, Task};
+use gpui::{App, AsyncApp, Entity, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
 use language::{LanguageToolchainStore, LspAdapterDelegate, LspInstaller};
@@ -71,9 +71,11 @@ impl LspInstaller for GoLspAdapter {
             {
                 cx.update(|cx| {
                     delegate.show_notification(NOTIFICATION_MESSAGE, cx);
-                })?
+                });
             }
-            anyhow::bail!("cannot install gopls");
+            anyhow::bail!(
+                "Could not install the Go language server `gopls`, because `go` was not found."
+            );
         }
 
         let release =
@@ -542,7 +544,7 @@ impl ContextProvider for GoContextProvider {
         )))
     }
 
-    fn associated_tasks(&self, _: Option<Arc<dyn File>>, _: &App) -> Task<Option<TaskTemplates>> {
+    fn associated_tasks(&self, _: Option<Entity<Buffer>>, _: &App) -> Task<Option<TaskTemplates>> {
         let package_cwd = if GO_PACKAGE_TASK_VARIABLE.template_value() == "." {
             None
         } else {

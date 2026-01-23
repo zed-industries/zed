@@ -209,9 +209,8 @@ impl RunningMode {
             }
         });
 
-        let client = if let Some(client) = parent_session
-            .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
-            .flatten()
+        let client = if let Some(client) =
+            parent_session.and_then(|session| cx.update(|cx| session.read(cx).adapter_client()))
         {
             client
                 .create_child_connection(session_id, binary.clone(), message_handler, cx)
@@ -466,7 +465,7 @@ impl RunningMode {
                     })?;
                 initialized_rx.await?;
                 let errors_by_path = cx
-                    .update(|cx| this.send_source_breakpoints(false, &breakpoint_store, cx))?
+                    .update(|cx| this.send_source_breakpoints(false, &breakpoint_store, cx))
                     .await;
 
                 dap_store.update(cx, |_, cx| {
@@ -1454,11 +1453,7 @@ impl Session {
         }
 
         self.selected_snapshot_index = ix;
-
-        if ix.is_some() {
-            cx.emit(SessionEvent::HistoricSnapshotSelected);
-        }
-
+        cx.emit(SessionEvent::HistoricSnapshotSelected);
         cx.notify();
     }
 
@@ -2862,7 +2857,7 @@ impl Session {
         let mut console_output = self.console_output(cx);
         let task = cx.spawn(async move |this, cx| {
             let forward_ports_process = if remote_client
-                .read_with(cx, |client, _| client.shares_network_interface())?
+                .read_with(cx, |client, _| client.shares_network_interface())
             {
                 request.other.insert(
                     "proxyUri".into(),
@@ -2894,7 +2889,7 @@ impl Session {
                         .spawn()
                         .context("spawning port forwarding process")?;
                     anyhow::Ok(child)
-                })??;
+                })?;
                 Some(child)
             };
 
@@ -3122,10 +3117,11 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
             .await
             .context("getting installed companion version")?
             .context("companion was not installed")?;
-        smol::fs::rename(temp_dir.path(), dir.join(&version))
+        let version_folder = dir.join(version.to_string());
+        smol::fs::rename(temp_dir.path(), &version_folder)
             .await
             .context("moving companion package into place")?;
-        Ok(dir.join(version))
+        Ok(version_folder)
     }
 
     let dir = paths::debug_adapters_dir().join("js-debug-companion");
@@ -3138,19 +3134,23 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
                     .await
                     .context("creating companion installation directory")?;
 
-                let mut children = smol::fs::read_dir(&dir)
+                let children = smol::fs::read_dir(&dir)
                     .await
                     .context("reading companion installation directory")?
                     .try_collect::<Vec<_>>()
                     .await
                     .context("reading companion installation directory entries")?;
-                children
-                    .sort_by_key(|child| semver::Version::parse(child.file_name().to_str()?).ok());
 
-                let latest_installed_version = children.last().and_then(|child| {
-                    let version = child.file_name().into_string().ok()?;
-                    Some((child.path(), version))
-                });
+                let latest_installed_version = children
+                    .iter()
+                    .filter_map(|child| {
+                        Some((
+                            child.path(),
+                            semver::Version::parse(child.file_name().to_str()?).ok()?,
+                        ))
+                    })
+                    .max_by_key(|(_, version)| version.clone());
+
                 let latest_version = node
                     .npm_package_latest_version(PACKAGE_NAME)
                     .await

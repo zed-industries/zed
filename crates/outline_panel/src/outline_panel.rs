@@ -75,6 +75,16 @@ actions!(
         OpenSelectedEntry,
         /// Reveals the selected item in the system file manager.
         RevealInFileManager,
+        /// Scroll half a page upwards
+        ScrollUp,
+        /// Scroll half a page downwards
+        ScrollDown,
+        /// Scroll until the cursor displays at the center
+        ScrollCursorCenter,
+        /// Scroll until the cursor displays at the top
+        ScrollCursorTop,
+        /// Scroll until the cursor displays at the bottom
+        ScrollCursorBottom,
         /// Selects the parent of the current entry.
         SelectParent,
         /// Toggles the pin status of the active editor.
@@ -100,6 +110,7 @@ pub struct OutlinePanel {
     active: bool,
     pinned: bool,
     scroll_handle: UniformListScrollHandle,
+    rendered_entries_len: usize,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     focus_handle: FocusHandle,
     pending_serialization: Task<Option<()>>,
@@ -839,6 +850,7 @@ impl OutlinePanel {
                 fs: workspace.app_state().fs.clone(),
                 max_width_item_index: None,
                 scroll_handle,
+                rendered_entries_len: 0,
                 focus_handle,
                 filter_editor,
                 fs_entries: Vec::new(),
@@ -986,9 +998,9 @@ impl OutlinePanel {
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         } else {
-            self.filter_editor.focus_handle(cx).focus(window);
+            self.filter_editor.focus_handle(cx).focus(window, cx);
         }
 
         if self.context_menu.is_some() {
@@ -1141,10 +1153,74 @@ impl OutlinePanel {
                 }
 
                 if change_focus {
-                    active_editor.focus_handle(cx).focus(window);
+                    active_editor.focus_handle(cx).focus(window, cx);
                 } else {
-                    self.focus_handle.focus(window);
+                    self.focus_handle.focus(window, cx);
                 }
+            }
+        }
+    }
+
+    fn scroll_up(&mut self, _: &ScrollUp, window: &mut Window, cx: &mut Context<Self>) {
+        for _ in 0..self.rendered_entries_len / 2 {
+            window.dispatch_action(SelectPrevious.boxed_clone(), cx);
+        }
+    }
+
+    fn scroll_down(&mut self, _: &ScrollDown, window: &mut Window, cx: &mut Context<Self>) {
+        for _ in 0..self.rendered_entries_len / 2 {
+            window.dispatch_action(SelectNext.boxed_clone(), cx);
+        }
+    }
+
+    fn scroll_cursor_center(
+        &mut self,
+        _: &ScrollCursorCenter,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selected_entry) = self.selected_entry() {
+            let index = self
+                .cached_entries
+                .iter()
+                .position(|cached_entry| &cached_entry.entry == selected_entry);
+            if let Some(index) = index {
+                self.scroll_handle
+                    .scroll_to_item_strict(index, ScrollStrategy::Center);
+                cx.notify();
+            }
+        }
+    }
+
+    fn scroll_cursor_top(&mut self, _: &ScrollCursorTop, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(selected_entry) = self.selected_entry() {
+            let index = self
+                .cached_entries
+                .iter()
+                .position(|cached_entry| &cached_entry.entry == selected_entry);
+            if let Some(index) = index {
+                self.scroll_handle
+                    .scroll_to_item_strict(index, ScrollStrategy::Top);
+                cx.notify();
+            }
+        }
+    }
+
+    fn scroll_cursor_bottom(
+        &mut self,
+        _: &ScrollCursorBottom,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selected_entry) = self.selected_entry() {
+            let index = self
+                .cached_entries
+                .iter()
+                .position(|cached_entry| &cached_entry.entry == selected_entry);
+            if let Some(index) = index {
+                self.scroll_handle
+                    .scroll_to_item_strict(index, ScrollStrategy::Bottom);
+                cx.notify();
             }
         }
     }
@@ -1362,12 +1438,16 @@ impl OutlinePanel {
 
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
-                .when(cfg!(target_os = "macos"), |menu| {
-                    menu.action("Reveal in Finder", Box::new(RevealInFileManager))
-                })
-                .when(cfg!(not(target_os = "macos")), |menu| {
-                    menu.action("Reveal in File Manager", Box::new(RevealInFileManager))
-                })
+                .action(
+                    if cfg!(target_os = "macos") {
+                        "Reveal in Finder"
+                    } else if cfg!(target_os = "windows") {
+                        "Reveal in File Explorer"
+                    } else {
+                        "Reveal in File Manager"
+                    },
+                    Box::new(RevealInFileManager),
+                )
                 .action("Open in Terminal", Box::new(OpenInTerminal))
                 .when(is_unfoldable, |menu| {
                     menu.action("Unfold Directory", Box::new(UnfoldDirectory))
@@ -1382,7 +1462,7 @@ impl OutlinePanel {
                     Box::new(zed_actions::workspace::CopyRelativePath),
                 )
         });
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe(&context_menu, |outline_panel, _, _: &DismissEvent, cx| {
             outline_panel.context_menu.take();
             cx.notify();
@@ -1936,7 +2016,8 @@ impl OutlinePanel {
             .selected_entry()
             .and_then(|entry| self.abs_path(entry, cx))
         {
-            cx.reveal_path(&abs_path);
+            self.project
+                .update(cx, |project, cx| project.reveal_path(&abs_path, cx));
         }
     }
 
@@ -1960,7 +2041,11 @@ impl OutlinePanel {
 
         if let Some(working_directory) = working_directory {
             window.dispatch_action(
-                workspace::OpenTerminal { working_directory }.boxed_clone(),
+                workspace::OpenTerminal {
+                    working_directory,
+                    local: false,
+                }
+                .boxed_clone(),
                 cx,
             )
         }
@@ -2008,7 +2093,7 @@ impl OutlinePanel {
                             let entry = worktree.read(cx).entry_for_id(entry_id)?.clone();
                             Some((worktree, entry))
                         })
-                })?,
+                }),
                 PanelEntry::Outline(outline_entry) => {
                     let (buffer_id, excerpt_id) = outline_entry.ids();
                     outline_panel.update(cx, |outline_panel, cx| {
@@ -2610,7 +2695,7 @@ impl OutlinePanel {
             })
             .when(
                 is_active && self.focus_handle.contains_focused(window, cx),
-                |div| div.border_color(Color::Selected.color(cx)),
+                |div| div.border_color(cx.theme().colors().panel_focused_border),
             )
     }
 
@@ -4463,7 +4548,7 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) {
         if focus {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         }
         let ix = self
             .cached_entries
@@ -4578,6 +4663,7 @@ impl OutlinePanel {
                     "entries",
                     items_len,
                     cx.processor(move |outline_panel, range: Range<usize>, window, cx| {
+                        outline_panel.rendered_entries_len = range.end - range.start;
                         let entries = outline_panel.cached_entries.get(range);
                         entries
                             .map(|entries| entries.to_vec())
@@ -4722,6 +4808,8 @@ impl OutlinePanel {
             (IconName::Pin, "Pin Active Outline")
         };
 
+        let has_query = self.query(cx).is_some();
+
         h_flex()
             .p_2()
             .h(Tab::container_height(cx))
@@ -4740,12 +4828,32 @@ impl OutlinePanel {
                     .child(self.filter_editor.clone()),
             )
             .child(
-                IconButton::new("pin_button", icon)
-                    .tooltip(Tooltip::text(icon_tooltip))
-                    .shape(IconButtonShape::Square)
-                    .on_click(cx.listener(|outline_panel, _, window, cx| {
-                        outline_panel.toggle_active_editor_pin(&ToggleActiveEditorPin, window, cx);
-                    })),
+                h_flex()
+                    .when(has_query, |this| {
+                        this.child(
+                            IconButton::new("clear_filter", IconName::Close)
+                                .shape(IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Clear Filter"))
+                                .on_click(cx.listener(|outline_panel, _, window, cx| {
+                                    outline_panel.filter_editor.update(cx, |editor, cx| {
+                                        editor.set_text("", window, cx);
+                                    });
+                                    cx.notify();
+                                })),
+                        )
+                    })
+                    .child(
+                        IconButton::new("pin_button", icon)
+                            .tooltip(Tooltip::text(icon_tooltip))
+                            .shape(IconButtonShape::Square)
+                            .on_click(cx.listener(|outline_panel, _, window, cx| {
+                                outline_panel.toggle_active_editor_pin(
+                                    &ToggleActiveEditorPin,
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    ),
             )
     }
 
@@ -4970,7 +5078,12 @@ impl Render for OutlinePanel {
             .key_context(self.dispatch_context(window, cx))
             .on_action(cx.listener(Self::open_selected_entry))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::scroll_up))
+            .on_action(cx.listener(Self::scroll_down))
             .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::scroll_cursor_center))
+            .on_action(cx.listener(Self::scroll_cursor_top))
+            .on_action(cx.listener(Self::scroll_cursor_bottom))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
@@ -6579,11 +6692,13 @@ outline: struct OutlineEntryExcerpt
                 format!(
                     r#"frontend-project/
   public/lottie/
-    syntax-tree.json  <==== selected
+    syntax-tree.json
+      search: {{ "something": "«static»" }}
   src/
     app/(site)/
     components/
-      ErrorBoundary.tsx"#
+      ErrorBoundary.tsx  <==== selected
+        search: «static»"#
                 )
             );
         });
@@ -6625,7 +6740,7 @@ outline: struct OutlineEntryExcerpt
                 format!(
                     r#"frontend-project/
   public/lottie/
-    syntax-tree.json  <==== selected
+    syntax-tree.json
       search: {{ "something": "«static»" }}
   src/
     app/(site)/
@@ -6636,7 +6751,7 @@ outline: struct OutlineEntryExcerpt
         page.tsx
           search: «static»
     components/
-      ErrorBoundary.tsx
+      ErrorBoundary.tsx  <==== selected
         search: «static»"#
                 )
             );

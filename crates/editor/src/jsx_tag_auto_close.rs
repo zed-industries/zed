@@ -5,7 +5,7 @@ use multi_buffer::{BufferOffset, MultiBuffer, ToOffset};
 use std::ops::Range;
 use util::ResultExt as _;
 
-use language::{BufferSnapshot, JsxTagAutoCloseConfig, Node};
+use language::{BufferSnapshot, JsxTagAutoCloseConfig, Node, language_settings::LanguageSettings};
 use text::{Anchor, OffsetRangeExt as _};
 
 use crate::{Editor, SelectionEffects};
@@ -19,7 +19,7 @@ pub struct JsxTagCompletionState {
 /// that corresponds to the tag name
 /// Note that this is not configurable, i.e. we assume the first
 /// named child of a tag node is the tag name
-const TS_NODE_TAG_NAME_CHILD_INDEX: usize = 0;
+const TS_NODE_TAG_NAME_CHILD_INDEX: u32 = 0;
 
 /// Maximum number of parent elements to walk back when checking if an open tag
 /// is already closed.
@@ -323,12 +323,10 @@ pub(crate) fn refresh_enabled_in_any_buffer(
                 if language.config().jsx_tag_auto_close.is_none() {
                     continue;
                 }
-                let language_settings = language::language_settings::language_settings(
-                    Some(language.name()),
-                    snapshot.file(),
-                    cx,
-                );
-                if language_settings.jsx_tag_auto_close {
+                let should_auto_close =
+                    LanguageSettings::resolve(Some(buffer), Some(&language.name()), cx)
+                        .jsx_tag_auto_close;
+                if should_auto_close {
                     found_enabled = true;
                 }
             }
@@ -443,7 +441,7 @@ pub(crate) fn handle_from(
                 };
             }
 
-            let buffer_snapshot = buffer.read_with(cx, |buf, _| buf.snapshot()).ok()?;
+            let buffer_snapshot = buffer.read_with(cx, |buf, _| buf.snapshot());
 
             let Some(edit_behavior_state) =
                 should_auto_close(&buffer_snapshot, &edited_ranges, &jsx_tag_auto_close_config)
@@ -567,11 +565,9 @@ pub(crate) fn handle_from(
                 }
             }
 
-            buffer
-                .update(cx, |buffer, cx| {
-                    buffer.edit(edits, None, cx);
-                })
-                .ok()?;
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
 
             if any_selections_need_update {
                 let multi_buffer_snapshot = this

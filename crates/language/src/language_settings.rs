@@ -1,6 +1,8 @@
 //! Provides `language`-related settings.
 
-use crate::{File, Language, LanguageName, LanguageServerName};
+use crate::{
+    Buffer, BufferSnapshot, File, Language, LanguageName, LanguageServerName, ModelineSettings,
+};
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
     Properties as EditorconfigProperties,
@@ -9,28 +11,17 @@ use ec4rs::{
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers, SharedString};
 use itertools::{Either, Itertools};
+use settings::IntoGpui;
 
 pub use settings::{
     CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
     RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
-use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore};
+use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
-
-/// Returns the settings for the specified language from the provided file.
-pub fn language_settings<'a>(
-    language: Option<LanguageName>,
-    file: Option<&'a Arc<dyn File>>,
-    cx: &'a App,
-) -> Cow<'a, LanguageSettings> {
-    let location = file.map(|f| SettingsLocation {
-        worktree_id: f.worktree_id(cx),
-        path: f.path().as_ref(),
-    });
-    AllLanguageSettings::get(location, cx).language(location, language.as_ref(), cx)
-}
+use text::ToOffset;
 
 /// Returns the settings for all languages from the provided file.
 pub fn all_language_settings<'a>(
@@ -122,6 +113,10 @@ pub struct LanguageSettings {
     pub whitespace_map: WhitespaceMap,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
+    /// Whether to continue markdown lists when pressing enter.
+    pub extend_list_on_newline: bool,
+    /// Whether to indent list items when pressing tab after a list marker.
+    pub indent_list_on_tab: bool,
     /// Inlay hint related settings.
     pub inlay_hints: InlayHintSettings,
     /// Whether to automatically close brackets.
@@ -254,6 +249,74 @@ pub struct PrettierSettings {
 impl LanguageSettings {
     /// A token representing the rest of the available language servers.
     const REST_OF_LANGUAGE_SERVERS: &'static str = "...";
+
+    pub fn for_buffer<'a>(buffer: &'a Buffer, cx: &'a App) -> Cow<'a, LanguageSettings> {
+        Self::resolve(Some(buffer), None, cx)
+    }
+
+    pub fn for_buffer_at<'a, D: ToOffset>(
+        buffer: &'a Buffer,
+        position: D,
+        cx: &'a App,
+    ) -> Cow<'a, LanguageSettings> {
+        let language = buffer.language_at(position);
+        Self::resolve(Some(buffer), language.map(|l| l.name()).as_ref(), cx)
+    }
+
+    pub fn for_buffer_snapshot<'a>(
+        buffer: &'a BufferSnapshot,
+        offset: Option<usize>,
+        cx: &'a App,
+    ) -> Cow<'a, LanguageSettings> {
+        let location = buffer.file().map(|f| SettingsLocation {
+            worktree_id: f.worktree_id(cx),
+            path: f.path().as_ref(),
+        });
+
+        let language = if let Some(offset) = offset {
+            buffer.language_at(offset)
+        } else {
+            buffer.language()
+        };
+
+        let mut settings = AllLanguageSettings::get(location, cx).language(
+            location,
+            language.map(|l| l.name()).as_ref(),
+            cx,
+        );
+
+        if let Some(modeline) = buffer.modeline() {
+            merge_with_modeline(settings.to_mut(), modeline);
+        }
+
+        settings
+    }
+
+    pub fn resolve<'a>(
+        buffer: Option<&'a Buffer>,
+        override_language: Option<&LanguageName>,
+        cx: &'a App,
+    ) -> Cow<'a, LanguageSettings> {
+        let Some(buffer) = buffer else {
+            return AllLanguageSettings::get(None, cx).language(None, override_language, cx);
+        };
+        let location = buffer.file().map(|f| SettingsLocation {
+            worktree_id: f.worktree_id(cx),
+            path: f.path().as_ref(),
+        });
+        let all = AllLanguageSettings::get(location, cx);
+        let mut settings = if override_language.is_none() {
+            all.language(location, buffer.language().map(|l| l.name()).as_ref(), cx)
+        } else {
+            all.language(location, override_language, cx)
+        };
+
+        if let Some(modeline) = buffer.modeline() {
+            merge_with_modeline(settings.to_mut(), modeline);
+        }
+
+        settings
+    }
 
     /// Returns the customized list of language servers from the list of
     /// available language servers.
@@ -388,6 +451,8 @@ pub struct EditPredictionSettings {
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
+    pub examples_dir: Option<Arc<Path>>,
+    pub example_capture_rate: Option<u16>,
 }
 
 impl EditPredictionSettings {
@@ -444,7 +509,9 @@ impl AllLanguageSettings {
 
         let editorconfig_properties = location.and_then(|location| {
             cx.global::<SettingsStore>()
-                .editorconfig_properties(location.worktree_id, location.path)
+                .editorconfig_store
+                .read(cx)
+                .properties(location.worktree_id, location.path)
         });
         if let Some(editorconfig_properties) = editorconfig_properties {
             let mut settings = settings.clone();
@@ -470,6 +537,35 @@ impl AllLanguageSettings {
     pub fn edit_predictions_mode(&self) -> EditPredictionsMode {
         self.edit_predictions.mode
     }
+}
+
+fn merge_with_modeline(settings: &mut LanguageSettings, modeline: &ModelineSettings) {
+    let show_whitespaces = modeline.show_trailing_whitespace.and_then(|v| {
+        if v {
+            Some(ShowWhitespaceSetting::Trailing)
+        } else {
+            None
+        }
+    });
+
+    settings
+        .tab_size
+        .merge_from_option(modeline.tab_size.as_ref());
+    settings
+        .hard_tabs
+        .merge_from_option(modeline.hard_tabs.as_ref());
+    settings
+        .preferred_line_length
+        .merge_from_option(modeline.preferred_line_length.map(u32::from).as_ref());
+    settings
+        .auto_indent
+        .merge_from_option(modeline.auto_indent.as_ref());
+    settings
+        .show_whitespaces
+        .merge_from_option(show_whitespaces.as_ref());
+    settings
+        .ensure_final_newline_on_save
+        .merge_from_option(modeline.ensure_final_newline.as_ref());
 }
 
 fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigProperties) {
@@ -499,22 +595,18 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
             TrimTrailingWs::Value(b) => b,
         })
         .ok();
-    fn merge<T>(target: &mut T, value: Option<T>) {
-        if let Some(value) = value {
-            *target = value;
-        }
-    }
-    merge(&mut settings.preferred_line_length, preferred_line_length);
-    merge(&mut settings.tab_size, tab_size);
-    merge(&mut settings.hard_tabs, hard_tabs);
-    merge(
-        &mut settings.remove_trailing_whitespace_on_save,
-        remove_trailing_whitespace_on_save,
-    );
-    merge(
-        &mut settings.ensure_final_newline_on_save,
-        ensure_final_newline_on_save,
-    );
+
+    settings
+        .preferred_line_length
+        .merge_from_option(preferred_line_length.as_ref());
+    settings.tab_size.merge_from_option(tab_size.as_ref());
+    settings.hard_tabs.merge_from_option(hard_tabs.as_ref());
+    settings
+        .remove_trailing_whitespace_on_save
+        .merge_from_option(remove_trailing_whitespace_on_save.as_ref());
+    settings
+        .ensure_final_newline_on_save
+        .merge_from_option(ensure_final_newline_on_save.as_ref());
 }
 
 impl settings::Settings for AllLanguageSettings {
@@ -567,6 +659,8 @@ impl settings::Settings for AllLanguageSettings {
                     tab: SharedString::new(whitespace_map.tab.unwrap().to_string()),
                 },
                 extend_comment_on_newline: settings.extend_comment_on_newline.unwrap(),
+                extend_list_on_newline: settings.extend_list_on_newline.unwrap(),
+                indent_list_on_tab: settings.indent_list_on_tab.unwrap(),
                 inlay_hints: InlayHintSettings {
                     enabled: inlay_hints.enabled.unwrap(),
                     show_value_hints: inlay_hints.show_value_hints.unwrap(),
@@ -576,7 +670,9 @@ impl settings::Settings for AllLanguageSettings {
                     show_background: inlay_hints.show_background.unwrap(),
                     edit_debounce_ms: inlay_hints.edit_debounce_ms.unwrap(),
                     scroll_debounce_ms: inlay_hints.scroll_debounce_ms.unwrap(),
-                    toggle_on_modifiers_press: inlay_hints.toggle_on_modifiers_press,
+                    toggle_on_modifiers_press: inlay_hints
+                        .toggle_on_modifiers_press
+                        .map(|m| m.into_gpui()),
                 },
                 use_autoclose: settings.use_autoclose.unwrap(),
                 use_auto_surround: settings.use_auto_surround.unwrap(),
@@ -615,7 +711,7 @@ impl settings::Settings for AllLanguageSettings {
             let mut language_settings = all_languages.defaults.clone();
             settings::merge_from::MergeFrom::merge_from(&mut language_settings, settings);
             languages.insert(
-                LanguageName(language_name.clone()),
+                LanguageName(language_name.clone().into()),
                 load_from_content(language_settings),
             );
         }
@@ -693,6 +789,8 @@ impl settings::Settings for AllLanguageSettings {
                 copilot: copilot_settings,
                 codestral: codestral_settings,
                 enabled_in_text_threads,
+                examples_dir: edit_predictions.examples_dir,
+                example_capture_rate: edit_predictions.example_capture_rate,
             },
             defaults: default_language_settings,
             languages,

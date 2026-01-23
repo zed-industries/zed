@@ -9,19 +9,21 @@ use editor::{
     scroll::Autoscroll,
 };
 use gpui::{
-    Action, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render,
-    ScrollStrategy, Task, UniformListScrollHandle, Window, actions, div, list, prelude::*,
-    uniform_list,
+    Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent,
+    Pixels, Render, ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div,
+    list, prelude::*, uniform_list,
 };
 use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{
+    cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
+};
 use theme::ThemeSettings;
 use ui::{
-    Color, Divider, DocumentationAside, DocumentationEdge, DocumentationSide, Label, ListItem,
-    ListItemSpacing, ScrollAxes, Scrollbars, WithScrollbar, prelude::*, utils::WithRemSize, v_flex,
+    Color, Divider, DocumentationAside, DocumentationSide, Label, ListItem, ListItemSpacing,
+    ScrollAxes, Scrollbars, WithScrollbar, prelude::*, utils::WithRemSize, v_flex,
 };
 use workspace::{ModalView, item::Settings};
 
@@ -72,6 +74,10 @@ pub struct Picker<D: PickerDelegate> {
     ///
     /// Set this to `false` when rendering the `Picker` as part of a larger modal.
     is_modal: bool,
+    /// Bounds tracking for the picker container (for aside positioning)
+    picker_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// Bounds tracking for items (for aside positioning) - maps item index to bounds
+    item_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -97,6 +103,18 @@ pub trait PickerDelegate: Sized + 'static {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     );
+
+    /// Called before the picker handles `SelectPrevious` or `SelectNext`. Return `Some(query)` to
+    /// set a new query and prevent the default selection behavior.
+    fn select_history(
+        &mut self,
+        _direction: Direction,
+        _query: &str,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<String> {
+        None
+    }
     fn can_select(
         &mut self,
         _ix: usize,
@@ -231,6 +249,13 @@ pub trait PickerDelegate: Sized + 'static {
     ) -> Option<DocumentationAside> {
         None
     }
+
+    /// Returns the index of the item whose documentation aside should be shown.
+    /// This is used to position the aside relative to that item.
+    /// Typically this is the hovered item, not necessarily the selected item.
+    fn documentation_aside_index(&self) -> Option<usize> {
+        None
+    }
 }
 
 impl<D: PickerDelegate> Focusable for Picker<D> {
@@ -317,6 +342,8 @@ impl<D: PickerDelegate> Picker<D> {
             max_height: Some(rems(24.).into()),
             show_scrollbar: false,
             is_modal: true,
+            picker_bounds: Rc::new(Cell::new(None)),
+            item_bounds: Rc::new(RefCell::new(HashMap::default())),
         };
         this.update_matches("".to_string(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
@@ -372,7 +399,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
     }
 
     /// Handles the selecting an index, and passing the change to the delegate.
@@ -448,6 +475,14 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let query = self.query(cx);
+        if let Some(query) = self
+            .delegate
+            .select_history(Direction::Down, &query, window, cx)
+        {
+            self.set_query(query, window, cx);
+            return;
+        }
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
@@ -467,6 +502,14 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let query = self.query(cx);
+        if let Some(query) = self
+            .delegate
+            .select_history(Direction::Up, &query, window, cx)
+        {
+            self.set_query(query, window, cx);
+            return;
+        }
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
@@ -722,9 +765,23 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
         ix: usize,
     ) -> impl IntoElement + use<D> {
+        let item_bounds = self.item_bounds.clone();
+
         div()
             .id(("item", ix))
             .cursor_pointer()
+            .child(
+                canvas(
+                    move |bounds, _window, _cx| {
+                        item_bounds.borrow_mut().insert(ix, bounds);
+                    },
+                    |_bounds, _state, _window, _cx| {},
+                )
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0(),
+            )
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.handle_click(ix, event.modifiers().secondary(), window, cx)
             }))
@@ -819,11 +876,24 @@ impl<D: PickerDelegate> Render for Picker<D> {
         let aside = self.delegate.documentation_aside(window, cx);
 
         let editor_position = self.delegate.editor_position();
+        let picker_bounds = self.picker_bounds.clone();
         let menu = v_flex()
             .key_context("Picker")
             .size_full()
             .when_some(self.width, |el, width| el.w(width))
             .overflow_hidden()
+            .child(
+                canvas(
+                    move |bounds, _window, _cx| {
+                        picker_bounds.set(Some(bounds));
+                    },
+                    |_bounds, _state, _window, _cx| {},
+                )
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0(),
+            )
             // This is a bit of a hack to remove the modal styling when we're rendering the `Picker`
             // as a part of a modal rather than the entire modal.
             //
@@ -921,21 +991,39 @@ impl<D: PickerDelegate> Render for Picker<D> {
         };
 
         if is_wide_window {
-            div().relative().child(menu).child(
-                h_flex()
-                    .absolute()
-                    .when(aside.side == DocumentationSide::Left, |this| {
-                        this.right_full().mr_1()
-                    })
-                    .when(aside.side == DocumentationSide::Right, |this| {
-                        this.left_full().ml_1()
-                    })
-                    .when(aside.edge == DocumentationEdge::Top, |this| this.top_0())
-                    .when(aside.edge == DocumentationEdge::Bottom, |this| {
-                        this.bottom_0()
-                    })
-                    .child(render_aside(aside, cx)),
-            )
+            let aside_index = self.delegate.documentation_aside_index();
+            let picker_bounds = self.picker_bounds.get();
+            let item_bounds =
+                aside_index.and_then(|ix| self.item_bounds.borrow().get(&ix).copied());
+
+            let item_position = match (picker_bounds, item_bounds) {
+                (Some(picker_bounds), Some(item_bounds)) => {
+                    let relative_top = item_bounds.origin.y - picker_bounds.origin.y;
+                    let height = item_bounds.size.height;
+                    Some((relative_top, height))
+                }
+                _ => None,
+            };
+
+            div()
+                .relative()
+                .child(menu)
+                // Only render the aside once we have bounds to avoid flicker
+                .when_some(item_position, |this, (top, height)| {
+                    this.child(
+                        h_flex()
+                            .absolute()
+                            .when(aside.side == DocumentationSide::Left, |el| {
+                                el.right_full().mr_1()
+                            })
+                            .when(aside.side == DocumentationSide::Right, |el| {
+                                el.left_full().ml_1()
+                            })
+                            .top(top)
+                            .h(height)
+                            .child(render_aside(aside, cx)),
+                    )
+                })
         } else {
             v_flex()
                 .w_full()

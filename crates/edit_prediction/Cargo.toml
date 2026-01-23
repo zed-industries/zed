@@ -12,19 +12,19 @@ workspace = true
 path = "src/edit_prediction.rs"
 
 [features]
-eval-support = []
+cli-support = []
 
 [dependencies]
 ai_onboarding.workspace = true
 anyhow.workspace = true
 arrayvec.workspace = true
 brotli.workspace = true
+buffer_diff.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
-cloud_zeta2_prompt.workspace = true
 collections.workspace = true
 copilot.workspace = true
-credentials_provider.workspace = true
+copilot_ui.workspace = true
 db.workspace = true
 edit_prediction_types.workspace = true
 edit_prediction_context.workspace = true
@@ -43,6 +43,7 @@ open_ai.workspace = true
 postage.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
+pulldown-cmark.workspace = true
 rand.workspace = true
 regex.workspace = true
 release_channel.workspace = true
@@ -50,18 +51,20 @@ semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-smol.workspace = true
-strsim.workspace = true
 strum.workspace = true
 telemetry.workspace = true
 telemetry_events.workspace = true
+text.workspace = true
 thiserror.workspace = true
+time.workspace = true
+toml.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 worktree.workspace = true
 zed_actions.workspace = true
+zeta_prompt.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
@@ -76,4 +79,5 @@ lsp.workspace = true
 parking_lot.workspace = true
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

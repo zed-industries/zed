@@ -1416,9 +1416,9 @@ where
     /// ```
     pub fn contains(&self, point: &Point<T>) -> bool {
         point.x >= self.origin.x
-            && point.x <= self.origin.x.clone() + self.size.width.clone()
+            && point.x < self.origin.x.clone() + self.size.width.clone()
             && point.y >= self.origin.y
-            && point.y <= self.origin.y.clone() + self.size.height.clone()
+            && point.y < self.origin.y.clone() + self.size.height.clone()
     }
 
     /// Checks if this bounds is completely contained within another bounds.
@@ -2645,6 +2645,18 @@ impl Display for Pixels {
 impl Debug for Pixels {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Display::fmt(self, f)
+    }
+}
+
+impl std::iter::Sum for Pixels {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::ZERO, |a, b| a + b)
+    }
+}
+
+impl<'a> std::iter::Sum<&'a Pixels> for Pixels {
+    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        iter.fold(Self::ZERO, |a, b| a + *b)
     }
 }
 

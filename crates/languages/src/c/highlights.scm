@@ -29,6 +29,8 @@
 [
   "#define"
   "#elif"
+  "#elifdef"
+  "#elifndef"
   "#else"
   "#endif"
   "#if"
@@ -97,6 +99,8 @@
   (system_lib_string)
   (char_literal)
 ] @string
+
+(escape_sequence) @string.escape
 
 (comment) @comment
 

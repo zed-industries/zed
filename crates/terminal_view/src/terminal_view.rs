@@ -8,8 +8,8 @@ mod terminal_slash_command;
 use assistant_slash_command::SlashCommandRegistry;
 use editor::{EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
 use gpui::{
-    Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
+    Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
     ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
 };
 use persistence::TERMINAL_DB;
@@ -62,7 +62,6 @@ use std::{
 
 struct ImeState {
     marked_text: String,
-    marked_range_utf16: Option<Range<usize>>,
 }
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -85,7 +84,7 @@ actions!(
     terminal,
     [
         /// Reruns the last executed task in the terminal.
-        RerunTask
+        RerunTask,
     ]
 );
 
@@ -194,13 +193,18 @@ impl TerminalView {
     ///Create a new Terminal in the current working directory or the user's home directory
     pub fn deploy(
         workspace: &mut Workspace,
-        _: &NewCenterTerminal,
+        action: &NewCenterTerminal,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        let local = action.local;
         let working_directory = default_working_directory(workspace, cx);
-        TerminalPanel::add_center_terminal(workspace, window, cx, |project, cx| {
-            project.create_terminal_shell(working_directory, cx)
+        TerminalPanel::add_center_terminal(workspace, window, cx, move |project, cx| {
+            if local {
+                project.create_local_terminal(cx)
+            } else {
+                project.create_terminal_shell(working_directory, cx)
+            }
         })
         .detach_and_log_err(cx);
     }
@@ -322,16 +326,11 @@ impl TerminalView {
     }
 
     /// Sets the marked (pre-edit) text from the IME.
-    pub(crate) fn set_marked_text(
-        &mut self,
-        text: String,
-        range: Option<Range<usize>>,
-        cx: &mut Context<Self>,
-    ) {
-        self.ime_state = Some(ImeState {
-            marked_text: text,
-            marked_range_utf16: range,
-        });
+    pub(crate) fn set_marked_text(&mut self, text: String, cx: &mut Context<Self>) {
+        if text.is_empty() {
+            return self.clear_marked_text(cx);
+        }
+        self.ime_state = Some(ImeState { marked_text: text });
         cx.notify();
     }
 
@@ -339,7 +338,7 @@ impl TerminalView {
     pub(crate) fn marked_text_range(&self) -> Option<Range<usize>> {
         self.ime_state
             .as_ref()
-            .and_then(|state| state.marked_range_utf16.clone())
+            .map(|state| 0..state.marked_text.encode_utf16().count())
     }
 
     /// Clears the marked (pre-edit) text state.
@@ -389,7 +388,7 @@ impl TerminalView {
             .is_some_and(|terminal_panel| terminal_panel.read(cx).assistant_enabled());
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
-                .action("New Terminal", Box::new(NewTerminal))
+                .action("New Terminal", Box::new(NewTerminal::default()))
                 .separator()
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))
@@ -409,7 +408,7 @@ impl TerminalView {
                 )
         });
 
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -687,10 +686,30 @@ impl TerminalView {
 
     ///Attempt to paste the clipboard into the terminal
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(clipboard_string) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.terminal
-                .update(cx, |terminal, _cx| terminal.paste(&clipboard_string));
+        let Some(clipboard) = cx.read_from_clipboard() else {
+            return;
+        };
+
+        if clipboard.entries().iter().any(|entry| match entry {
+            ClipboardEntry::Image(image) => !image.bytes.is_empty(),
+            _ => false,
+        }) {
+            self.forward_ctrl_v(cx);
+            return;
         }
+
+        if let Some(text) = clipboard.text() {
+            self.terminal
+                .update(cx, |terminal, _cx| terminal.paste(&text));
+        }
+    }
+
+    /// Emits a raw Ctrl+V so TUI agents can read the OS clipboard directly
+    /// and attach images using their native workflows.
+    fn forward_ctrl_v(&self, cx: &mut Context<Self>) {
+        self.terminal.update(cx, |term, _| {
+            term.input(vec![0x16]);
+        });
     }
 
     fn send_text(&mut self, text: &SendText, _: &mut Window, cx: &mut Context<Self>) {
@@ -703,14 +722,7 @@ impl TerminalView {
     fn send_keystroke(&mut self, text: &SendKeystroke, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(keystroke) = Keystroke::parse(&text.0).log_err() {
             self.clear_bell(cx);
-            self.terminal.update(cx, |term, cx| {
-                let processed =
-                    term.try_keystroke(&keystroke, TerminalSettings::get_global(cx).option_as_meta);
-                if processed && term.vi_mode_enabled() {
-                    cx.notify();
-                }
-                processed
-            });
+            self.process_keystroke(&keystroke, cx);
         }
     }
 
@@ -990,19 +1002,33 @@ impl ScrollbarVisibility for TerminalScrollbarSettingsWrapper {
 }
 
 impl TerminalView {
+    /// Attempts to process a keystroke in the terminal. Returns true if handled.
+    ///
+    /// In vi mode, explicitly triggers a re-render because vi navigation (like j/k)
+    /// updates the cursor locally without sending data to the shell, so there's no
+    /// shell output to automatically trigger a re-render.
+    fn process_keystroke(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
+        let (handled, vi_mode_enabled) = self.terminal.update(cx, |term, cx| {
+            (
+                term.try_keystroke(keystroke, TerminalSettings::get_global(cx).option_as_meta),
+                term.vi_mode_enabled(),
+            )
+        });
+
+        if handled && vi_mode_enabled {
+            cx.notify();
+        }
+
+        handled
+    }
+
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_bell(cx);
         self.pause_cursor_blinking(window, cx);
 
-        self.terminal.update(cx, |term, cx| {
-            let handled = term.try_keystroke(
-                &event.keystroke,
-                TerminalSettings::get_global(cx).option_as_meta,
-            );
-            if handled {
-                cx.stop_propagation();
-            }
-        });
+        if self.process_keystroke(&event.keystroke, cx) {
+            cx.stop_propagation();
+        }
     }
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1401,7 +1427,7 @@ impl SerializableItem for TerminalView {
                 .flatten();
 
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))?
+                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
                 .await?;
             cx.update(|window, cx| {
                 cx.new(|cx| {
@@ -1560,10 +1586,10 @@ impl SearchableItem for TerminalView {
     }
 }
 
-///Gets the working directory for the given workspace, respecting the user's settings.
-/// None implies "~" on whichever machine we end up on.
+/// Gets the working directory for the given workspace, respecting the user's settings.
+/// Falls back to home directory when no project directory is available.
 pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
-    match &TerminalSettings::get_global(cx).working_directory {
+    let directory = match &TerminalSettings::get_global(cx).working_directory {
         WorkingDirectory::CurrentProjectDirectory => workspace
             .project()
             .read(cx)
@@ -1573,13 +1599,12 @@ pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Opti
             .or_else(|| first_project_directory(workspace, cx)),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
-        WorkingDirectory::Always { directory } => {
-            shellexpand::full(&directory) //TODO handle this better
-                .ok()
-                .map(|dir| Path::new(&dir.to_string()).to_path_buf())
-                .filter(|dir| dir.is_dir())
-        }
-    }
+        WorkingDirectory::Always { directory } => shellexpand::full(directory)
+            .ok()
+            .map(|dir| Path::new(&dir.to_string()).to_path_buf())
+            .filter(|dir| dir.is_dir()),
+    };
+    directory.or_else(dirs::home_dir)
 }
 ///Gets the first project's home directory, or the home directory
 fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
@@ -1617,7 +1642,7 @@ mod tests {
             assert!(workspace.worktrees(cx).next().is_none());
 
             let res = default_working_directory(workspace, cx);
-            assert_eq!(res, None);
+            assert_eq!(res, dirs::home_dir());
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, None);
         });

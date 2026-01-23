@@ -1,6 +1,7 @@
 name = "Markdown"
 grammar = "markdown"
 path_suffixes = ["md", "mdx", "mdwn", "markdown", "MD"]
+modeline_aliases = ["md"]
 completion_query_characters = ["-"]
 block_comment = { start = "<!--", prefix = "", end = "-->", tab_size = 0 }
 autoclose_before = ";:.,=}])>"
@@ -20,9 +21,16 @@ rewrap_prefixes = [
     ">\\s*",
     "[-*+]\\s+\\[[\\sx]\\]\\s+"
 ]
+unordered_list = ["- ", "* ", "+ "]
+ordered_list = [{ pattern = "(\\d+)\\. ", format = "{1}. " }]
+task_list = { prefixes = ["- [ ] ", "- [x] ", "- [X] "], continuation = "- [ ] " }
 
 auto_indent_on_paste = false
 auto_indent_using_last_non_empty_line = false
 tab_size = 2
-decrease_indent_pattern = "^\\s*$"
+decrease_indent_patterns = [
+  { pattern = "^\\s*-",    valid_after = ["list_item"] },
+  { pattern = "^\\s*\\d",    valid_after = ["list_item"] },
+  { pattern = "^\\s*",    valid_after = ["list_item"] },
+]
 prettier_parser_name = "markdown"

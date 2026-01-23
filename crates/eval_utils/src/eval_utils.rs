@@ -40,6 +40,24 @@ pub struct EvalOutput<M> {
     pub metadata: M,
 }
 
+impl<M: Default> EvalOutput<M> {
+    pub fn passed(message: impl Into<String>) -> Self {
+        EvalOutput {
+            outcome: OutcomeKind::Passed,
+            data: message.into(),
+            metadata: M::default(),
+        }
+    }
+
+    pub fn failed(message: impl Into<String>) -> Self {
+        EvalOutput {
+            outcome: OutcomeKind::Failed,
+            data: message.into(),
+            metadata: M::default(),
+        }
+    }
+}
+
 pub struct NoProcessor;
 impl EvalOutputProcessor for NoProcessor {
     type Metadata = ();

@@ -1,3 +1,10 @@
+//! The inlay map. See the [`display_map`][super] docs for an overview of how the inlay map fits
+//! into the rest of the [`DisplayMap`][super::DisplayMap]. Much of the documentation for this
+//! module generalizes to other layers.
+//!
+//! The core of this module is the [`InlayMap`] struct, which maintains a vec of [`Inlay`]s, and
+//! [`InlaySnapshot`], which holds a sum tree of [`Transform`]s.
+
 use crate::{
     ChunkRenderer, HighlightStyles,
     inlays::{Inlay, InlayContent},
@@ -69,7 +76,9 @@ impl sum_tree::Item for Transform {
 
 #[derive(Clone, Debug, Default)]
 struct TransformSummary {
+    /// Summary of the text before inlays have been applied.
     input: MBTextSummary,
+    /// Summary of the text after inlays have been applied.
     output: MBTextSummary,
 }
 
@@ -325,6 +334,33 @@ impl<'a> Iterator for InlayChunks<'a> {
                     }),
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
                     InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
+                    InlayId::ReplResult(_) => {
+                        let text = inlay.text().to_string();
+                        renderer = Some(ChunkRenderer {
+                            id: ChunkRendererId::Inlay(inlay.id),
+                            render: Arc::new(move |cx| {
+                                let colors = cx.theme().colors();
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .child(div().w_4())
+                                    .child(
+                                        div()
+                                            .px_1()
+                                            .rounded_sm()
+                                            .bg(colors.surface_background)
+                                            .text_color(colors.text_muted)
+                                            .text_xs()
+                                            .child(text.trim().to_string()),
+                                    )
+                                    .into_any_element()
+                            }),
+                            constrain_width: false,
+                            measured_width: None,
+                        });
+                        self.highlight_styles.inlay_hint
+                    }
                     InlayId::Color(_) => {
                         if let InlayContent::Color(color) = inlay.content {
                             renderer = Some(ChunkRenderer {

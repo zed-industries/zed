@@ -15,6 +15,7 @@ use gpui::{AsyncWindowContext, Entity, WeakEntity};
 use language::{Toolchain, ToolchainScope};
 use project::{Project, debugger::breakpoint_store::SourceBreakpoint};
 use remote::RemoteConnectionOptions;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -32,6 +33,7 @@ pub(crate) struct RemoteConnectionId(pub u64);
 pub(crate) enum RemoteConnectionKind {
     Ssh,
     Wsl,
+    Docker,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -63,7 +65,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) window_id: Option<u64>,
 }
 
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]
 pub struct DockStructure {
     pub(crate) left: DockData,
     pub(crate) right: DockData,
@@ -75,6 +77,7 @@ impl RemoteConnectionKind {
         match self {
             RemoteConnectionKind::Ssh => "ssh",
             RemoteConnectionKind::Wsl => "wsl",
+            RemoteConnectionKind::Docker => "docker",
         }
     }
 
@@ -82,6 +85,7 @@ impl RemoteConnectionKind {
         match text {
             "ssh" => Some(Self::Ssh),
             "wsl" => Some(Self::Wsl),
+            "docker" => Some(Self::Docker),
             _ => None,
         }
     }
@@ -111,7 +115,7 @@ impl Bind for DockStructure {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]
 pub struct DockData {
     pub(crate) visible: bool,
     pub(crate) active_panel: Option<String>,

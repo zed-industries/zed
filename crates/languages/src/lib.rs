@@ -28,6 +28,7 @@ mod package_json;
 mod python;
 mod rust;
 mod tailwind;
+mod tailwindcss;
 mod typescript;
 mod vtsls;
 mod yaml;
@@ -50,6 +51,7 @@ pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
                 matcher: LanguageMatcher {
                     path_suffixes: vec!["COMMIT_EDITMSG".to_owned()],
                     first_line_pattern: None,
+                    ..LanguageMatcher::default()
                 },
                 line_comments: vec![Arc::from("#")],
                 ..LanguageConfig::default()
@@ -101,6 +103,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
     let tailwind_adapter = Arc::new(tailwind::TailwindLspAdapter::new(node.clone()));
+    let tailwindcss_adapter = Arc::new(tailwindcss::TailwindCssLspAdapter::new(node.clone()));
     let typescript_context = Arc::new(typescript::TypeScriptContextProvider::new(fs.clone()));
     let typescript_lsp_adapter = Arc::new(typescript::TypeScriptLspAdapter::new(
         node.clone(),
@@ -262,6 +265,10 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         tailwind_adapter.clone(),
     );
     languages.register_available_lsp_adapter(
+        LanguageServerName("tailwindcss-intellisense-css".into()),
+        tailwindcss_adapter,
+    );
+    languages.register_available_lsp_adapter(
         LanguageServerName("eslint".into()),
         eslint_adapter.clone(),
     );
@@ -320,7 +327,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
                             )
                             .log_err();
                     });
-                })?;
+                });
                 prev_language_settings = language_settings;
             }
         }

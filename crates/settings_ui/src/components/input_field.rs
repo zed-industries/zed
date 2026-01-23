@@ -9,10 +9,11 @@ use ui::{
 pub struct SettingsInputField {
     initial_text: Option<String>,
     placeholder: Option<&'static str>,
-    confirm: Option<Box<dyn Fn(Option<String>, &mut App)>>,
+    confirm: Option<Box<dyn Fn(Option<String>, &mut Window, &mut App)>>,
     tab_index: Option<isize>,
 }
 
+// TODO: Update the `ui_input::InputField` to use `window.use_state` and `RenceOnce` and remove this component
 impl SettingsInputField {
     pub fn new() -> Self {
         Self {
@@ -33,7 +34,10 @@ impl SettingsInputField {
         self
     }
 
-    pub fn on_confirm(mut self, confirm: impl Fn(Option<String>, &mut App) + 'static) -> Self {
+    pub fn on_confirm(
+        mut self,
+        confirm: impl Fn(Option<String>, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.confirm = Some(Box::new(confirm));
         self
     }
@@ -82,13 +86,13 @@ impl RenderOnce for SettingsInputField {
             .child(editor)
             .when_some(self.confirm, |this, confirm| {
                 this.on_action::<menu::Confirm>({
-                    move |_, _, cx| {
+                    move |_, window, cx| {
                         let Some(editor) = weak_editor.upgrade() else {
                             return;
                         };
                         let new_value = editor.read_with(cx, |editor, cx| editor.text(cx));
                         let new_value = (!new_value.is_empty()).then_some(new_value);
-                        confirm(new_value, cx);
+                        confirm(new_value, window, cx);
                     }
                 })
             })

@@ -5,8 +5,8 @@ use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
-    Focusable, InteractiveElement, ParentElement, Render, SharedString, Styled, Subscription, Task,
-    WeakEntity, Window, rems,
+    Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription, Task, WeakEntity,
+    Window, rems,
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
@@ -526,7 +526,7 @@ impl PickerDelegate for TasksModalDelegate {
         };
 
         Some(
-            ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
+            ListItem::new(format!("tasks-modal-{ix}"))
                 .inset(true)
                 .start_slot::<IconWithIndicator>(icon)
                 .end_slot::<AnyElement>(
