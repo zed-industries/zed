@@ -941,6 +941,11 @@ impl EditPredictionButton {
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
         let all_language_settings = all_language_settings(None, cx);
+        let next_edit_suggestions = all_language_settings
+            .edit_predictions
+            .copilot
+            .enabled_next_edit_suggestions
+            .unwrap_or(true);
         let copilot_config = copilot_chat::CopilotChatConfiguration {
             enterprise_uri: all_language_settings
                 .edit_predictions
@@ -956,6 +961,27 @@ impl EditPredictionButton {
                 self.add_provider_switching_section(menu, EditPredictionProvider::Copilot, cx);
 
             menu.separator()
+                .item(
+                    ContextMenuEntry::new("Copilot: Next Edit Suggestions")
+                        .toggleable(IconPosition::Start, next_edit_suggestions)
+                        .handler({
+                            let fs = self.fs.clone();
+                            move |_, cx| {
+                                update_settings_file(fs.clone(), cx, move |settings, _| {
+                                    settings
+                                        .project
+                                        .all_languages
+                                        .edit_predictions
+                                        .get_or_insert_default()
+                                        .copilot
+                                        .get_or_insert_default()
+                                        .enabled_next_edit_suggestions =
+                                        Some(!next_edit_suggestions);
+                                });
+                            }
+                        }),
+                )
+                .separator()
                 .link(
                     "Go to Copilot Settings",
                     OpenBrowser { url: settings_url }.boxed_clone(),
