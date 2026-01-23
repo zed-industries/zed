@@ -59,9 +59,8 @@ impl CommitLogView {
     ) {
         let commit_log_task = git_store
             .update(cx, |git_store, cx| {
-                repo.upgrade().map(|repo| {
-                    git_store.commit_log_paginated(&repo, 0, Some(PAGE_SIZE), cx)
-                })
+                repo.upgrade()
+                    .map(|repo| git_store.commit_log_paginated(&repo, 0, Some(PAGE_SIZE), cx))
             })
             .ok()
             .flatten();
@@ -88,9 +87,9 @@ impl CommitLogView {
 
                         let pane = workspace.active_pane();
                         pane.update(cx, |pane, cx| {
-                            let ix = pane.items().position(|item| {
-                                item.downcast::<CommitLogView>().is_some()
-                            });
+                            let ix = pane
+                                .items()
+                                .position(|item| item.downcast::<CommitLogView>().is_some());
                             if let Some(ix) = ix {
                                 pane.activate_item(ix, true, true, window, cx);
                             } else {
@@ -171,12 +170,7 @@ impl CommitLogView {
             let commit_log_task = git_store
                 .update(cx, |git_store, cx| {
                     repo.upgrade().map(|repo| {
-                        git_store.commit_log_paginated(
-                            &repo,
-                            current_count,
-                            Some(PAGE_SIZE),
-                            cx,
-                        )
+                        git_store.commit_log_paginated(&repo, current_count, Some(PAGE_SIZE), cx)
                     })
                 })
                 .ok()
@@ -264,10 +258,7 @@ impl CommitLogView {
     }
 
     fn open_commit_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(entry) = self
-            .selected_entry
-            .and_then(|ix| self.entries.get(ix))
-        else {
+        let Some(entry) = self.selected_entry.and_then(|ix| self.entries.get(ix)) else {
             return;
         };
 
@@ -512,26 +503,20 @@ impl Render for CommitLogView {
                     .size_full()
                     .child({
                         let view = cx.weak_entity();
-                        uniform_list(
-                            "commit-log-list",
-                            entry_count,
-                            move |range, window, cx| {
-                                let Some(view) = view.upgrade() else {
-                                    return Vec::new();
-                                };
-                                view.update(cx, |this, cx| {
-                                    let mut items = Vec::with_capacity(range.end - range.start);
-                                    for ix in range {
-                                        if let Some(entry) = this.entries.get(ix) {
-                                            items.push(
-                                                this.render_commit_entry(ix, entry, window, cx),
-                                            );
-                                        }
+                        uniform_list("commit-log-list", entry_count, move |range, window, cx| {
+                            let Some(view) = view.upgrade() else {
+                                return Vec::new();
+                            };
+                            view.update(cx, |this, cx| {
+                                let mut items = Vec::with_capacity(range.end - range.start);
+                                for ix in range {
+                                    if let Some(entry) = this.entries.get(ix) {
+                                        items.push(this.render_commit_entry(ix, entry, window, cx));
                                     }
-                                    items
-                                })
-                            },
-                        )
+                                }
+                                items
+                            })
+                        })
                         .flex_1()
                         .size_full()
                         .track_scroll(&self.scroll_handle)

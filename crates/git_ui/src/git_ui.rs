@@ -33,13 +33,13 @@ use crate::{git_panel::GitPanel, text_diff_view::TextDiffView};
 
 mod askpass_modal;
 pub mod branch_picker;
+pub mod commit_log_view;
 mod commit_modal;
 pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
 pub mod file_diff_view;
 pub mod file_history_view;
-pub mod commit_log_view;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod git_picker;

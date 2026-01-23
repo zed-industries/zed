@@ -4256,9 +4256,9 @@ impl Repository {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.commit_log_paginated(skip, limit).await
                 }
-                RepositoryState::Remote(_) => {
-                    Err(anyhow::anyhow!("commit log not yet supported for remote repositories"))
-                }
+                RepositoryState::Remote(_) => Err(anyhow::anyhow!(
+                    "commit log not yet supported for remote repositories"
+                )),
             }
         })
     }
