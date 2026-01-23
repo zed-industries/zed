@@ -4832,31 +4832,6 @@ impl EditorElement {
 
         let rows = Self::sticky_headers(self.editor.read(cx), snapshot, style, cx);
 
-        // let Some(rem_size) = self.rem_size(cx) else {
-        //     return None;
-        // };
-        // let line_height = &self.style.text.line_height_in_pixels(rem_size);
-        // let clipped_top = (visible_bounds.origin.y - bounds.origin.y).max(px(0.));
-        // let clipped_top_in_lines = f64::from(clipped_top / line_height);
-        // let scroll_position = snapshot.scroll_position();
-        // let max_row = snapshot.max_point().row();
-        // let start_row = cmp::min(DisplayRow(scroll_position.y.floor() as u32), max_row);
-        // let end_row = cmp::min(scroll_position.y.ceil() as u32, max_row.next_row().0);
-        // let end_row = DisplayRow(end_row);
-
-        // let row_infos = snapshot // note we only get the visual range
-        //     .row_infos(start_row)
-        //     .take((start_row..end_row).len())
-        //     .collect::<Vec<RowInfo>>();
-        // let row_infos = snapshot.row_infos(DisplayRow(0)).collect::<Vec<RowInfo>>();
-        let row_infos = snapshot.row_infos(DisplayRow(0)).collect::<Vec<RowInfo>>();
-        dbg!(row_infos.len());
-        // let row_infos = row_infos
-        //     .iter()
-        //     .filter(|row_info| row_info.buffer_id.is_some())
-        //     .collect::<Vec<&RowInfo>>();
-        // dbg!(&row_infos);
-
         let mut lines = Vec::<StickyHeaderLine>::new();
 
         for (
@@ -4875,14 +4850,14 @@ impl EditorElement {
             //     continue;
             // };
             // TODO why is start point wrong then?
-            dbg!(&item.text, &start_point, &point, &sticky_row);
+            // dbg!(&item.text, &start_point, &point, &sticky_row);
 
-            let display_point = snapshot.point_to_display_point(point, Bias::Left);
-            let chars = snapshot.buffer_chars_at(point.to_offset(&snapshot.buffer));
-            dbg!(
-                display_point,
-                chars.collect::<Vec<(char, MultiBufferOffset)>>()
-            );
+            // let display_point = snapshot.point_to_display_point(point, Bias::Left);
+            // let chars = snapshot.buffer_chars_at(point.to_offset(&snapshot.buffer));
+            // dbg!(
+            //     display_point,
+            //     chars.collect::<Vec<(char, MultiBufferOffset)>>()
+            // );
 
             let Some(better_snapshot) = snapshot.buffer_for_excerpt(excerpt_id) else {
                 dbg!("no snapshot for excerpt");
@@ -4896,7 +4871,6 @@ impl EditorElement {
 
             // OOK so if I can figure out the style highligiting I think I am good here
             let chunks = better_snapshot.chunks(better_range, true).map(|c| {
-                dbg!(&c);
                 // TODO definitely encaptulate this somewhere in display_map.rs
                 let highlight_style = c
                     .syntax_highlight_id
@@ -5048,10 +5022,11 @@ impl EditorElement {
         cx: &App,
     ) -> Vec<(StickyHeader, Point, ExcerptId)> {
         let mut scroll_top = snapshot.scroll_position().y;
+        // dbg!(&scroll_top);
         if !snapshot.is_singleton() {
             scroll_top = scroll_top + FILE_HEADER_HEIGHT as f64;
         }
-        // dbg!(&scroll_top);
+        dbg!(&scroll_top);
 
         let mut end_rows = Vec::<DisplayRow>::new();
         let mut rows = Vec::<(StickyHeader, Point, ExcerptId)>::new();
@@ -5069,14 +5044,19 @@ impl EditorElement {
             // Start of the excerpt (visually) in a multibuffer context
             // dbg!(&start_point, &item.text);
 
-            let sticky_row = snapshot
+            let mut sticky_row = snapshot
                 .display_snapshot
                 .point_to_display_point(start_point, Bias::Left)
                 .row();
+            dbg!(&sticky_row, &item.text);
+            // if !snapshot.is_singleton() {
+            //     sticky_row = sticky_row + DisplayRow(FILE_HEADER_HEIGHT);
+            // }
             let end_row = snapshot
                 .display_snapshot
                 .point_to_display_point(end_point, Bias::Left)
                 .row();
+            // TODO does endrow need the same mutation?
             let max_sticky_row = end_row.previous_row();
             if max_sticky_row <= sticky_row {
                 // TODO constraint needs to look at different row definitions in non-singleton cases
@@ -5098,7 +5078,7 @@ impl EditorElement {
             //     adjusted_scroll_top = adjusted_scroll_top + FILE_HEADER_HEIGHT as f64;
             // }
 
-            if sticky_row.as_f64() >= adjusted_scroll_top || end_row.as_f64() <= adjusted_scroll_top
+            if sticky_row.as_f64() > adjusted_scroll_top || end_row.as_f64() <= adjusted_scroll_top
             {
                 // TODO constraint needs to look at different row definitions in non-singleton cases
                 // dbg!(
@@ -5108,7 +5088,11 @@ impl EditorElement {
             }
 
             let max_scroll_offset = max_sticky_row.as_f64() - scroll_top;
-            let offset = (depth as f64).min(max_scroll_offset);
+            let mut offset = (depth as f64).min(max_scroll_offset);
+            if !snapshot.is_singleton() {
+                // Why is this needed if scroll_top is already adjusted for the header height?
+                offset = offset + (MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f64);
+            }
 
             end_rows.push(end_row);
             rows.push((
