@@ -4,6 +4,7 @@ use client::{Client, UserStore};
 use cloud_llm_client::EditPredictionRejectReason;
 use edit_prediction_types::{DataCollectionState, EditPredictionDelegate, SuggestionDisplayType};
 use gpui::{App, Entity, prelude::*};
+use icons::IconName;
 use language::{Buffer, ToPoint as _};
 use project::Project;
 
@@ -56,6 +57,14 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
 
     fn show_tab_accept_marker() -> bool {
         true
+    }
+
+    fn icon(&self, cx: &App) -> IconName {
+        match self.store.read(cx).edit_prediction_model {
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => IconName::ZedPredict,
+            EditPredictionModel::Sweep => IconName::SweepAi,
+            EditPredictionModel::Mercury => IconName::Inception,
+        }
     }
 
     fn data_collection_state(&self, cx: &App) -> DataCollectionState {

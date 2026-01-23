@@ -9682,6 +9682,8 @@ impl Editor {
 
         let keybind = self.render_edit_prediction_accept_keybind(window, cx);
         let has_keybind = keybind.is_some();
+        let provider_icon =
+            Self::get_prediction_provider_icon_name(&self.edit_prediction_provider, cx);
 
         h_flex()
             .id("ep-line-popover")
@@ -9700,7 +9702,20 @@ impl Editor {
                 el.bg(status_colors.error_background)
                     .border_color(status_colors.error.opacity(0.6))
                     .pl_2()
-                    .child(Icon::new(IconName::ZedPredictError).color(Color::Error))
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .child(
+                                Icon::new(provider_icon)
+                                    .size(IconSize::Small)
+                                    .color(Color::Error),
+                            )
+                            .child(
+                                Icon::new(IconName::PredictError)
+                                    .size(IconSize::Small)
+                                    .color(Color::Error),
+                            ),
+                    )
                     .cursor_default()
                     .hoverable_tooltip(move |_window, cx| {
                         cx.new(|_| MissingEditPredictionKeybindingTooltip).into()
@@ -9740,6 +9755,8 @@ impl Editor {
     ) -> Stateful<Div> {
         let keybind = self.render_edit_prediction_accept_keybind(window, cx);
         let has_keybind = keybind.is_some();
+        let provider_icon =
+            Self::get_prediction_provider_icon_name(&self.edit_prediction_provider, cx);
 
         let file_name = snapshot
             .file()
@@ -9762,7 +9779,20 @@ impl Editor {
                 el.bg(status_colors.error_background)
                     .border_color(status_colors.error.opacity(0.6))
                     .pl_2()
-                    .child(Icon::new(IconName::ZedPredictError).color(Color::Error))
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .child(
+                                Icon::new(provider_icon)
+                                    .size(IconSize::Small)
+                                    .color(Color::Error),
+                            )
+                            .child(
+                                Icon::new(IconName::PredictError)
+                                    .size(IconSize::Small)
+                                    .color(Color::Error),
+                            ),
+                    )
                     .cursor_default()
                     .hoverable_tooltip(move |_window, cx| {
                         cx.new(|_| MissingEditPredictionKeybindingTooltip).into()
@@ -9806,13 +9836,10 @@ impl Editor {
     }
     fn get_prediction_provider_icon_name(
         provider: &Option<RegisteredEditPredictionDelegate>,
+        cx: &App,
     ) -> IconName {
         match provider {
-            Some(provider) => match provider.provider.name() {
-                "copilot" => IconName::Copilot,
-                "supermaven" => IconName::Supermaven,
-                _ => IconName::ZedPredict,
-            },
+            Some(provider) => provider.provider.icon(cx),
             None => IconName::ZedPredict,
         }
     }
@@ -9828,7 +9855,8 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         let provider = self.edit_prediction_provider.as_ref()?;
-        let provider_icon = Self::get_prediction_provider_icon_name(&self.edit_prediction_provider);
+        let provider_icon =
+            Self::get_prediction_provider_icon_name(&self.edit_prediction_provider, cx);
 
         let is_refreshing = provider.provider.is_refreshing(cx);
 
@@ -9856,18 +9884,26 @@ impl Editor {
                             .child(div().px_1p5().child(match &prediction.completion {
                                 EditPrediction::MoveWithin { target, snapshot } => {
                                     use text::ToPoint as _;
-                                    if target.text_anchor.to_point(snapshot).row > cursor_point.row
-                                    {
-                                        Icon::new(IconName::ZedPredictDown)
-                                    } else {
-                                        Icon::new(IconName::ZedPredictUp)
-                                    }
+                                    let direction_icon =
+                                        if target.text_anchor.to_point(snapshot).row
+                                            > cursor_point.row
+                                        {
+                                            IconName::PredictJumpDown
+                                        } else {
+                                            IconName::PredictJumpUp
+                                        };
+                                    h_flex()
+                                        .gap_0p5()
+                                        .child(Icon::new(provider_icon).size(IconSize::Small))
+                                        .child(Icon::new(direction_icon).size(IconSize::Small))
+                                        .into_any_element()
                                 }
                                 EditPrediction::MoveOutside { .. } => {
-                                    // TODO [zeta2] custom icon for external jump?
-                                    Icon::new(provider_icon)
+                                    Icon::new(provider_icon).into_any_element()
                                 }
-                                EditPrediction::Edit { .. } => Icon::new(provider_icon),
+                                EditPrediction::Edit { .. } => {
+                                    Icon::new(provider_icon).into_any_element()
+                                }
                             }))
                             .child(
                                 h_flex()
@@ -10048,6 +10084,9 @@ impl Editor {
             .map(|provider| provider.provider.supports_jump_to_edit())
             .unwrap_or(true);
 
+        let provider_icon =
+            Self::get_prediction_provider_icon_name(&self.edit_prediction_provider, cx);
+
         match &completion.completion {
             EditPrediction::MoveWithin {
                 target, snapshot, ..
@@ -10056,17 +10095,23 @@ impl Editor {
                     return None;
                 }
 
+                let direction_icon = if target.text_anchor.to_point(snapshot).row > cursor_point.row
+                {
+                    IconName::PredictJumpDown
+                } else {
+                    IconName::PredictJumpUp
+                };
+
                 Some(
                     h_flex()
                         .px_2()
                         .gap_2()
                         .flex_1()
                         .child(
-                            if target.text_anchor.to_point(snapshot).row > cursor_point.row {
-                                Icon::new(IconName::ZedPredictDown)
-                            } else {
-                                Icon::new(IconName::ZedPredictUp)
-                            },
+                            h_flex()
+                                .gap_0p5()
+                                .child(Icon::new(provider_icon).size(IconSize::Small))
+                                .child(Icon::new(direction_icon).size(IconSize::Small)),
                         )
                         .child(Label::new("Jump to Edit")),
                 )
@@ -10081,7 +10126,7 @@ impl Editor {
                         .px_2()
                         .gap_2()
                         .flex_1()
-                        .child(Icon::new(IconName::ZedPredict))
+                        .child(Icon::new(provider_icon))
                         .child(Label::new(format!("Jump to {file_name}"))),
                 )
             }
@@ -10114,8 +10159,10 @@ impl Editor {
                     render_relative_row_jump("", cursor_point.row, first_edit_row)
                         .into_any_element()
                 } else {
-                    let icon_name =
-                        Editor::get_prediction_provider_icon_name(&self.edit_prediction_provider);
+                    let icon_name = Editor::get_prediction_provider_icon_name(
+                        &self.edit_prediction_provider,
+                        cx,
+                    );
                     Icon::new(icon_name).into_any_element()
                 };
 

@@ -4,6 +4,7 @@ use edit_prediction_types::{EditPrediction, EditPredictionDelegate};
 use futures::AsyncReadExt;
 use gpui::{App, Context, Entity, Task};
 use http_client::HttpClient;
+use icons::IconName;
 use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview, ToPoint,
 };
@@ -170,6 +171,10 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
 
     fn show_predictions_in_menu() -> bool {
         true
+    }
+
+    fn icon(&self, _cx: &App) -> IconName {
+        IconName::AiMistral
     }
 
     fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {

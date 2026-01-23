@@ -15,6 +15,7 @@ edit_prediction.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
+icons.workspace = true
 language.workspace = true
 language_models.workspace = true
 log.workspace = true

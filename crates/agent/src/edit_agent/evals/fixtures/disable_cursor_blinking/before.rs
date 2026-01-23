@@ -7891,7 +7891,7 @@ impl Editor {
                 el.bg(status_colors.error_background)
                     .border_color(status_colors.error.opacity(0.6))
                     .pl_2()
-                    .child(Icon::new(IconName::ZedPredictError).color(Color::Error))
+                    .child(Icon::new(IconName::PredictError).color(Color::Error))
                     .cursor_default()
                     .hoverable_tooltip(move |_window, cx| {
                         cx.new(|_| MissingEditPredictionKeybindingTooltip).into()
@@ -8020,9 +8020,9 @@ impl Editor {
                                     use text::ToPoint as _;
                                     if target.text_anchor.to_point(&snapshot).row > cursor_point.row
                                     {
-                                        Icon::new(IconName::ZedPredictDown)
+                                        Icon::new(IconName::PredictJumpDown)
                                     } else {
-                                        Icon::new(IconName::ZedPredictUp)
+                                        Icon::new(IconName::PredictJumpUp)
                                     }
                                 }
                                 InlineCompletion::Edit { .. } => Icon::new(IconName::ZedPredict),
@@ -8210,9 +8210,9 @@ impl Editor {
                     .flex_1()
                     .child(
                         if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
-                            Icon::new(IconName::ZedPredictDown)
+                            Icon::new(IconName::PredictJumpDown)
                         } else {
-                            Icon::new(IconName::ZedPredictUp)
+                            Icon::new(IconName::PredictJumpUp)
                         },
                     )
                     .child(Label::new("Jump to Edit")),

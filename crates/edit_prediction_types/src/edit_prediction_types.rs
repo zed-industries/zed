@@ -2,6 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
+use icons::IconName;
 use language::{Anchor, Buffer, OffsetRangeExt};
 
 /// The display mode used when showing an edit prediction to the user.
@@ -81,6 +82,8 @@ pub trait EditPredictionDelegate: 'static + Sized {
         true
     }
 
+    fn icon(&self, cx: &App) -> IconName;
+
     fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
         DataCollectionState::Unsupported
     }
@@ -127,6 +130,7 @@ pub trait EditPredictionDelegateHandle {
     fn show_predictions_in_menu(&self) -> bool;
     fn show_tab_accept_marker(&self) -> bool;
     fn supports_jump_to_edit(&self) -> bool;
+    fn icon(&self, cx: &App) -> IconName;
     fn data_collection_state(&self, cx: &App) -> DataCollectionState;
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage>;
     fn toggle_data_collection(&self, cx: &mut App);
@@ -171,6 +175,10 @@ where
 
     fn supports_jump_to_edit(&self) -> bool {
         T::supports_jump_to_edit()
+    }
+
+    fn icon(&self, cx: &App) -> IconName {
+        self.read(cx).icon(cx)
     }
 
     fn data_collection_state(&self, cx: &App) -> DataCollectionState {
