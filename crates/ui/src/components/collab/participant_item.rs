@@ -142,8 +142,6 @@ impl ParticipantItem {
         self.on_screen_click = Some(Box::new(handler));
         self
     }
-
-
 }
 
 impl RenderOnce for ParticipantItem {
@@ -155,16 +153,16 @@ impl RenderOnce for ParticipantItem {
                 .map(|c| c.opacity(0.15))
                 .unwrap_or_else(|| cx.theme().colors().element_selected)
         } else {
-            cx.theme().colors().surface_background
+            cx.theme().colors().elevated_surface_background
         };
 
         let participant_row = h_flex()
             .id(SharedString::from(format!("player-{}", display_name)))
+            .border_b_1()
             .py_1()
             .px_2()
             .w_full()
             .justify_between()
-            .rounded_sm()
             .bg(following_bg)
             .hover(|s| s.bg(cx.theme().colors().element_hover))
             .when(!self.is_current_user, |this| this.cursor_pointer())
@@ -177,13 +175,9 @@ impl RenderOnce for ParticipantItem {
                 h_flex()
                     .gap_2()
                     .child(
-                        Avatar::new(
-                            self.avatar_src
-                                .clone()
-                                .unwrap_or_else(|| {
-                                    "https://avatars.githubusercontent.com/u/1?v=4".into()
-                                }),
-                        )
+                        Avatar::new(self.avatar_src.clone().unwrap_or_else(|| {
+                            "https://avatars.githubusercontent.com/u/1?v=4".into()
+                        }))
                         .when(self.is_following, |this| {
                             if let Some(color) = self.player_color {
                                 this.border_color(color)
@@ -212,26 +206,22 @@ impl RenderOnce for ParticipantItem {
                         )
                     })
                     .when(self.is_muted && !self.is_speaking, |this| {
-                        this.child(
-                            Icon::new(IconName::MicMute)
-                                .size(IconSize::Small)
-                                .color(if self.is_current_user {
-                                    Color::Error
-                                } else {
-                                    Color::Muted
-                                }),
-                        )
+                        this.child(Icon::new(IconName::MicMute).size(IconSize::Small).color(
+                            if self.is_current_user {
+                                Color::Error
+                            } else {
+                                Color::Muted
+                            },
+                        ))
                     })
                     .when(self.is_deafened, |this| {
-                        this.child(
-                            Icon::new(IconName::AudioOff)
-                                .size(IconSize::Small)
-                                .color(if self.is_current_user {
-                                    Color::Error
-                                } else {
-                                    Color::Muted
-                                }),
-                        )
+                        this.child(Icon::new(IconName::AudioOff).size(IconSize::Small).color(
+                            if self.is_current_user {
+                                Color::Error
+                            } else {
+                                Color::Muted
+                            },
+                        ))
                     }),
             );
 
@@ -251,20 +241,16 @@ impl RenderOnce for ParticipantItem {
                 .px_2()
                 .w_full()
                 .gap_2()
+                .border_b_1()
                 .hover(|s| s.bg(cx.theme().colors().element_hover))
                 .child(
-                    h_flex()
-                        .h_5()
-                        .w_4()
-                        .flex_shrink_0()
-                        .justify_center()
-                        .child(
-                            div()
-                                .w_px()
-                                .when(is_last, |this| this.h_2p5())
-                                .when(!is_last, |this| this.h_full())
-                                .bg(cx.theme().colors().border),
-                        ),
+                    h_flex().h_5().w_4().flex_shrink_0().justify_center().child(
+                        div()
+                            .w_px()
+                            .when(is_last, |this| this.h_2p5())
+                            .when(!is_last, |this| this.h_full())
+                            .bg(cx.theme().colors().border),
+                    ),
                 )
                 .child(
                     Icon::new(IconName::Folder)
@@ -279,15 +265,13 @@ impl RenderOnce for ParticipantItem {
 
             if let Some(ref handler) = self.on_project_click {
                 let handler_ptr = handler as *const _;
-                result = result.child(
-                    project_row.on_click(move |event, window, cx| {
-                        let handler = unsafe {
-                            &*(handler_ptr
-                                as *const Box<dyn Fn(usize, &ClickEvent, &mut Window, &mut App)>)
-                        };
-                        handler(index, event, window, cx);
-                    }),
-                );
+                result = result.child(project_row.on_click(move |event, window, cx| {
+                    let handler = unsafe {
+                        &*(handler_ptr
+                            as *const Box<dyn Fn(usize, &ClickEvent, &mut Window, &mut App)>)
+                    };
+                    handler(index, event, window, cx);
+                }));
             } else {
                 result = result.child(project_row);
             }
@@ -301,20 +285,16 @@ impl RenderOnce for ParticipantItem {
                 .px_2()
                 .w_full()
                 .gap_2()
+                .border_b_1()
                 .hover(|s| s.bg(cx.theme().colors().element_hover))
                 .child(
-                    h_flex()
-                        .h_5()
-                        .w_4()
-                        .flex_shrink_0()
-                        .justify_center()
-                        .child(
-                            div()
-                                .w_px()
-                                .when(screen.is_last, |this| this.h_2p5())
-                                .when(!screen.is_last, |this| this.h_full())
-                                .bg(cx.theme().colors().border),
-                        ),
+                    h_flex().h_5().w_4().flex_shrink_0().justify_center().child(
+                        div()
+                            .w_px()
+                            .when(screen.is_last, |this| this.h_2p5())
+                            .when(!screen.is_last, |this| this.h_full())
+                            .bg(cx.theme().colors().border),
+                    ),
                 )
                 .child(
                     Icon::new(IconName::Screen)
@@ -329,15 +309,12 @@ impl RenderOnce for ParticipantItem {
 
             if let Some(ref handler) = self.on_screen_click {
                 let handler_ptr = handler as *const _;
-                result = result.child(
-                    screen_row.on_click(move |event, window, cx| {
-                        let handler = unsafe {
-                            &*(handler_ptr
-                                as *const Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>)
-                        };
-                        handler(event, window, cx);
-                    }),
-                );
+                result = result.child(screen_row.on_click(move |event, window, cx| {
+                    let handler = unsafe {
+                        &*(handler_ptr as *const Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>)
+                    };
+                    handler(event, window, cx);
+                }));
             } else {
                 result = result.child(screen_row);
             }
@@ -378,11 +355,7 @@ impl Component for ParticipantItem {
                     .w_80()
                     .border_1()
                     .border_color(cx.theme().colors().border)
-                    .child(
-                        ParticipantItem::new("You")
-                            .current_user(true)
-                            .muted(true),
-                    )
+                    .child(ParticipantItem::new("You").current_user(true).muted(true))
                     .into_any_element(),
             ),
             single_example(

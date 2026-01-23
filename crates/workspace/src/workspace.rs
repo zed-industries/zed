@@ -6400,7 +6400,10 @@ impl Workspace {
     fn collab_panel_dock_position(&self, cx: &App) -> Option<DockPosition> {
         for dock in self.all_docks() {
             let dock_ref = dock.read(cx);
-            if dock_ref.panel_index_for_persistent_name("CollabPanel", cx).is_some() {
+            if dock_ref
+                .panel_index_for_persistent_name("CollabPanel", cx)
+                .is_some()
+            {
                 return Some(dock_ref.position());
             }
         }
@@ -6450,16 +6453,18 @@ impl Workspace {
                         .children(leader_border),
                 )
                 .when_some(
-                    (has_collab_panel && dock_is_open).then(|| self.collab_overlay_panel.clone()).flatten(),
+                    (has_collab_panel && dock_is_open)
+                        .then(|| self.collab_overlay_panel.clone())
+                        .flatten(),
                     |this, panel| {
                         this.child(
                             border_side(
                                 div()
                                     .flex_none()
                                     .w_full()
-                                    .border_t_1()
                                     .border_color(cx.theme().colors().border)
-                                    .bg(cx.theme().colors().panel_background),
+                                    .bg(cx.theme().colors().panel_background)
+                                    .p_2(),
                             )
                             .child(panel),
                         )

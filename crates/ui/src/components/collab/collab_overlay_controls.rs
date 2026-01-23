@@ -99,9 +99,12 @@ impl RenderOnce for CollabOverlayControls {
             .w_full()
             .gap_1()
             .justify_between()
-            .border_t_1()
+            .border_r_1()
+            .border_l_1()
+            .border_b_1()
             .border_color(cx.theme().colors().border_variant)
-            .bg(cx.theme().colors().surface_background)
+            .rounded_b_sm()
+            .bg(cx.theme().colors().elevated_surface_background)
             .child(
                 h_flex().gap_1().child(Avatar::new(self.avatar)).child(
                     h_flex()

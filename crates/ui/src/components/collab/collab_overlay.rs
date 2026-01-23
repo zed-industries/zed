@@ -34,8 +34,9 @@ impl CollabOverlay {
 }
 
 impl RenderOnce for CollabOverlay {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         v_flex()
+            .bg(cx.theme().colors().elevated_surface_background)
             .w_full()
             .child(self.header)
             .children(self.children)
