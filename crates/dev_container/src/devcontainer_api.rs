@@ -10,7 +10,7 @@ use node_runtime::NodeRuntime;
 use serde::Deserialize;
 use settings::{DevContainerConnection, Settings as _};
 use smol::{fs, process::Command};
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 use crate::{DevContainerFeature, DevContainerSettings, DevContainerTemplate};
 
@@ -506,12 +506,14 @@ fn get_backup_project_name(remote_workspace_folder: &str, container_id: &str) ->
 }
 
 fn project_directory(cx: &mut AsyncWindowContext) -> Option<Arc<Path>> {
-    let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
+    let Some(multi_workspace) = cx.window_handle().downcast::<MultiWorkspace>() else {
         return None;
     };
 
-    match workspace.update(cx, |workspace, _, cx| {
-        workspace.project().read(cx).active_project_directory(cx)
+    match multi_workspace.update(cx, |multi_workspace, _, cx| {
+        multi_workspace.workspace().update(cx, |workspace, cx| {
+            workspace.project().read(cx).active_project_directory(cx)
+        })
     }) {
         Ok(dir) => dir,
         Err(e) => {

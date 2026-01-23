@@ -719,7 +719,7 @@ mod tests {
     use serde_json::json;
     use std::{sync::Arc, task::Poll};
     use util::path;
-    use workspace::{AppState, Workspace};
+    use workspace::{AppState, MultiWorkspace};
 
     #[gpui::test]
     fn test_parse_ssh_url(cx: &mut TestAppContext) {
@@ -855,10 +855,12 @@ mod tests {
         open_workspace_file(path!("/root/dir1"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
-        let workspace = cx.windows()[0].downcast::<Workspace>().unwrap();
-        workspace
-            .update(cx, |workspace, _, cx| {
-                assert!(workspace.active_item_as::<Editor>(cx).is_none())
+        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(workspace.active_item_as::<Editor>(cx).is_none())
+                });
             })
             .unwrap();
 
@@ -866,9 +868,11 @@ mod tests {
         open_workspace_file(path!("/root/dir1/file1.txt"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
-        workspace
-            .update(cx, |workspace, _, cx| {
-                assert!(workspace.active_item_as::<Editor>(cx).is_some());
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(workspace.active_item_as::<Editor>(cx).is_some());
+                });
             })
             .unwrap();
 
@@ -883,12 +887,14 @@ mod tests {
 
         assert_eq!(cx.windows().len(), 2);
 
-        let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
-        workspace_2
-            .update(cx, |workspace, _, cx| {
-                assert!(workspace.active_item_as::<Editor>(cx).is_some());
-                let items = workspace.items(cx).collect::<Vec<_>>();
-                assert_eq!(items.len(), 1, "Workspace should have two items");
+        let multi_workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
+        multi_workspace_2
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(workspace.active_item_as::<Editor>(cx).is_some());
+                    let items = workspace.items(cx).collect::<Vec<_>>();
+                    assert_eq!(items.len(), 1, "Workspace should have two items");
+                });
             })
             .unwrap();
     }
@@ -963,10 +969,12 @@ mod tests {
         open_workspace_file(path!("/root/file5.txt"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
-        let workspace_1 = cx.windows()[0].downcast::<Workspace>().unwrap();
-        workspace_1
-            .update(cx, |workspace, _, cx| {
-                assert!(workspace.active_item_as::<Editor>(cx).is_some())
+        let multi_workspace_1 = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        multi_workspace_1
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(workspace.active_item_as::<Editor>(cx).is_some())
+                });
             })
             .unwrap();
 
@@ -975,10 +983,12 @@ mod tests {
         open_workspace_file(path!("/root/file6.txt"), Some(false), app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
-        workspace_1
-            .update(cx, |workspace, _, cx| {
-                let items = workspace.items(cx).collect::<Vec<_>>();
-                assert_eq!(items.len(), 2, "Workspace should have two items");
+        multi_workspace_1
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let items = workspace.items(cx).collect::<Vec<_>>();
+                    assert_eq!(items.len(), 2, "Workspace should have two items");
+                });
             })
             .unwrap();
 
@@ -987,11 +997,13 @@ mod tests {
         open_workspace_file(path!("/root/file7.txt"), Some(true), app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 2);
-        let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
-        workspace_2
-            .update(cx, |workspace, _, cx| {
-                let items = workspace.items(cx).collect::<Vec<_>>();
-                assert_eq!(items.len(), 1, "Workspace should have two items");
+        let multi_workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
+        multi_workspace_2
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let items = workspace.items(cx).collect::<Vec<_>>();
+                    assert_eq!(items.len(), 1, "Workspace should have two items");
+                });
             })
             .unwrap();
     }

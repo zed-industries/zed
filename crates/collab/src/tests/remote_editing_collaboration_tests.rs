@@ -804,7 +804,10 @@ async fn test_slow_adapter_startup_retries(
     .unwrap();
     cx_a.run_until_parked();
 
-    let client = session.update(cx_a, |session, _| session.adapter_client().unwrap());
+    let client = session.update(
+        cx_a,
+        |session: &mut project::debugger::session::Session, _| session.adapter_client().unwrap(),
+    );
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
             reason: dap::StoppedEventReason::Pause,

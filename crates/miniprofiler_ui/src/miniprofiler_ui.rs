@@ -13,7 +13,7 @@ use gpui::{
 };
 use util::ResultExt;
 use workspace::{
-    Workspace,
+    MultiWorkspace,
     ui::{
         ActiveTheme, Button, ButtonCommon, ButtonStyle, Checkbox, Clickable, Divider,
         ScrollableHandle as _, ToggleState, Tooltip, WithScrollbar, h_flex, v_flex,
@@ -26,8 +26,8 @@ pub fn init(startup_time: Instant, cx: &mut App) {
         workspace.register_action(move |workspace, _: &OpenPerformanceProfiler, window, cx| {
             let window_handle = window
                 .window_handle()
-                .downcast::<Workspace>()
-                .expect("Workspaces are root Windows");
+                .downcast::<MultiWorkspace>()
+                .expect("MultiWorkspace is root Window");
             open_performance_profiler(startup_time, workspace, window_handle, cx);
         });
     })
@@ -37,7 +37,7 @@ pub fn init(startup_time: Instant, cx: &mut App) {
 fn open_performance_profiler(
     startup_time: Instant,
     _workspace: &mut workspace::Workspace,
-    workspace_handle: WindowHandle<Workspace>,
+    workspace_handle: WindowHandle<MultiWorkspace>,
     cx: &mut App,
 ) {
     let existing_window = cx
@@ -97,14 +97,14 @@ pub struct ProfilerWindow {
     include_self_timings: ToggleState,
     autoscroll: bool,
     scroll_handle: UniformListScrollHandle,
-    workspace: Option<WindowHandle<Workspace>>,
+    workspace: Option<WindowHandle<MultiWorkspace>>,
     _refresh: Option<Task<()>>,
 }
 
 impl ProfilerWindow {
     pub fn new(
         startup_time: Instant,
-        workspace_handle: Option<WindowHandle<Workspace>>,
+        workspace_handle: Option<WindowHandle<MultiWorkspace>>,
         cx: &mut App,
     ) -> Entity<Self> {
         let entity = cx.new(|cx| ProfilerWindow {
@@ -280,7 +280,7 @@ impl Render for ProfilerWindow {
                                 Button::new("export-data", "Save")
                                     .style(ButtonStyle::Filled)
                                     .on_click(cx.listener(|this, _, _window, cx| {
-                                        let Some(workspace) = this.workspace else {
+                                        let Some(multi_workspace) = this.workspace else {
                                             return;
                                         };
 
@@ -290,9 +290,12 @@ impl Render for ProfilerWindow {
                                         let timings =
                                             SerializedTaskTiming::convert(this.startup_time, &data);
 
-                                        let active_path = workspace
-                                            .read_with(cx, |workspace, cx| {
-                                                workspace.most_recent_active_path(cx)
+                                        let active_path = multi_workspace
+                                            .read_with(cx, |multi_workspace, cx| {
+                                                multi_workspace
+                                                    .workspace()
+                                                    .read(cx)
+                                                    .most_recent_active_path(cx)
                                             })
                                             .log_err()
                                             .flatten()

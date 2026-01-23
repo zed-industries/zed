@@ -60,7 +60,13 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
     // assert we didn't show the attach modal
     workspace
         .update(cx, |workspace, _window, cx| {
-            assert!(workspace.active_modal::<AttachModal>(cx).is_none());
+            assert!(
+                workspace
+                    .workspace()
+                    .read(cx)
+                    .active_modal::<AttachModal>(cx)
+                    .is_none()
+            );
         })
         .unwrap();
 }
@@ -97,9 +103,9 @@ async fn test_show_attach_modal_and_select_process(
             });
         });
     let attach_modal = workspace
-        .update(cx, |workspace, window, cx| {
-            let workspace_handle = cx.weak_entity();
-            workspace.toggle_modal(window, cx, |window, cx| {
+        .update(cx, |multi, window, cx| {
+            let workspace_handle = multi.workspace().downgrade();
+            multi.toggle_modal(window, cx, |window, cx| {
                 AttachModal::with_processes(
                     workspace_handle,
                     vec![
@@ -133,7 +139,7 @@ async fn test_show_attach_modal_and_select_process(
                 )
             });
 
-            workspace.active_modal::<AttachModal>(cx).unwrap()
+            multi.active_modal::<AttachModal>(cx).unwrap()
         })
         .unwrap();
 

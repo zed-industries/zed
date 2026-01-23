@@ -1113,8 +1113,8 @@ async fn test_stack_frame_filter_persistence(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     workspace
-        .update(cx, |workspace, _, _| {
-            workspace.set_random_database_id();
+        .update(cx, |workspace, _, cx| {
+            workspace.set_random_database_id(cx);
         })
         .unwrap();
 
@@ -1211,7 +1211,7 @@ async fn test_stack_frame_filter_persistence(
     cx.run_until_parked();
 
     let workspace_id = workspace
-        .update(cx, |workspace, _window, _cx| workspace.database_id())
+        .update(cx, |workspace, _window, cx| workspace.database_id(cx))
         .ok()
         .flatten()
         .expect("workspace id has to be some for this test to work properly");

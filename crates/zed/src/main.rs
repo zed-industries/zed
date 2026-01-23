@@ -55,8 +55,8 @@ use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
-    AppState, MultiWorkspace, PathList, SerializedWorkspaceLocation, Toast, Workspace,
-    WorkspaceSettings, WorkspaceStore, notifications::NotificationId,
+    AppState, MultiWorkspace, PathList, SerializedWorkspaceLocation, Toast, WorkspaceSettings,
+    WorkspaceStore, notifications::NotificationId,
 };
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
@@ -1337,12 +1337,16 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
             // Try to find an active workspace to show the toast
             let toast_shown = cx.update(|cx| {
                 if let Some(window) = cx.active_window()
-                    && let Some(workspace) = window.downcast::<Workspace>()
+                    && let Some(multi_workspace) = window.downcast::<MultiWorkspace>()
                 {
-                    workspace
-                        .update(cx, |workspace, _, cx| {
-                            workspace
-                                .show_toast(Toast::new(NotificationId::unique::<()>(), message), cx)
+                    multi_workspace
+                        .update(cx, |multi_workspace, _, cx| {
+                            multi_workspace.workspace().update(cx, |workspace, cx| {
+                                workspace.show_toast(
+                                    Toast::new(NotificationId::unique::<()>(), message),
+                                    cx,
+                                )
+                            });
                         })
                         .ok();
                     return true;

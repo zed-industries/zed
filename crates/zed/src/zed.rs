@@ -12,6 +12,7 @@ pub mod telemetry_log;
 pub mod visual_tests;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
+mod workspace_switcher;
 
 use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
 use agent_ui_v2::agents_panel::AgentsPanel;
@@ -88,9 +89,9 @@ use workspace::notifications::{
 };
 use workspace::utility_pane::utility_slot_for_dock_position;
 use workspace::{
-    AppState, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace, WorkspaceSettings,
-    create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
-    open_new,
+    AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace,
+    WorkspaceSettings, create_and_open_local_file,
+    notifications::simple_message_notification::MessageNotification, open_new,
 };
 use workspace::{
     CloseIntent, CloseWindow, NotificationFrame, RestoreBanner, with_active_or_new_workspace,
@@ -1303,10 +1304,10 @@ fn quit(_: &Quit, cx: &mut App) {
 
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
     cx.spawn(async move |cx| {
-        let mut workspace_windows: Vec<WindowHandle<Workspace>> = cx.update(|cx| {
+        let mut workspace_windows: Vec<WindowHandle<MultiWorkspace>> = cx.update(|cx| {
             cx.windows()
                 .into_iter()
-                .filter_map(|window| window.downcast::<Workspace>())
+                .filter_map(|window| window.downcast::<MultiWorkspace>())
                 .collect::<Vec<_>>()
         });
 
@@ -1316,8 +1317,8 @@ fn quit(_: &Quit, cx: &mut App) {
             workspace_windows.sort_by_key(|window| window.is_active(cx) == Some(false));
         });
 
-        if should_confirm && let Some(workspace) = workspace_windows.first() {
-            let answer = workspace
+        if should_confirm && let Some(multi_workspace) = workspace_windows.first() {
+            let answer = multi_workspace
                 .update(cx, |_, window, cx| {
                     window.prompt(
                         PromptLevel::Info,
@@ -1342,8 +1343,10 @@ fn quit(_: &Quit, cx: &mut App) {
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
             if let Some(should_close) = window
-                .update(cx, |workspace, window, cx| {
-                    workspace.prepare_to_close(CloseIntent::Quit, window, cx)
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.workspace().update(cx, |workspace, cx| {
+                        workspace.prepare_to_close(CloseIntent::Quit, window, cx)
+                    })
                 })
                 .log_err()
             {
@@ -2337,10 +2340,12 @@ mod tests {
         .unwrap();
         assert_eq!(cx.read(|cx| cx.windows().len()), 1);
 
-        let workspace = cx.windows()[0].downcast::<Workspace>().unwrap();
-        workspace
-            .update(cx, |workspace, _, cx| {
-                assert!(workspace.active_item_as::<Editor>(cx).is_some())
+        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(workspace.active_item_as::<Editor>(cx).is_some())
+                });
             })
             .unwrap();
     }
@@ -2401,21 +2406,23 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(cx.read(|cx| cx.windows().len()), 1);
-        let workspace_1 = cx
-            .read(|cx| cx.windows()[0].downcast::<Workspace>())
+        let multi_workspace_1 = cx
+            .read(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
             .unwrap();
         cx.run_until_parked();
-        workspace_1
-            .update(cx, |workspace, window, cx| {
-                assert_eq!(workspace.worktrees(cx).count(), 2);
-                assert!(workspace.left_dock().read(cx).is_open());
-                assert!(
-                    workspace
-                        .active_pane()
-                        .read(cx)
-                        .focus_handle(cx)
-                        .is_focused(window)
-                );
+        multi_workspace_1
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert_eq!(workspace.worktrees(cx).count(), 2);
+                    assert!(workspace.left_dock().read(cx).is_open());
+                    assert!(
+                        workspace
+                            .active_pane()
+                            .read(cx)
+                            .focus_handle(cx)
+                            .is_focused(window)
+                    );
+                });
             })
             .unwrap();
 
@@ -2627,17 +2634,29 @@ mod tests {
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
         // When opening the workspace, the window is not in a edited state.
-        let window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
+        let window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
 
-        let window_is_edited = |window: WindowHandle<Workspace>, cx: &mut TestAppContext| {
-            cx.update(|cx| window.read(cx).unwrap().is_edited())
-        };
+        let window_is_edited =
+            |window: WindowHandle<MultiWorkspace>, cx: &mut TestAppContext| {
+                cx.update(|cx| {
+                    window
+                        .read(cx)
+                        .unwrap()
+                        .workspace()
+                        .read(cx)
+                        .is_edited()
+                })
+            };
         let pane = window
-            .read_with(cx, |workspace, _| workspace.active_pane().clone())
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace.workspace().read(cx).active_pane().clone()
+            })
             .unwrap();
         let editor = window
-            .read_with(cx, |workspace, cx| {
-                workspace
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
                     .active_item(cx)
                     .unwrap()
                     .downcast::<Editor>()
@@ -2710,22 +2729,26 @@ mod tests {
         executor.run_until_parked();
 
         window
-            .update(cx, |workspace, _, cx| {
-                let editor = workspace
-                    .active_item(cx)
-                    .unwrap()
-                    .downcast::<Editor>()
-                    .unwrap();
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let editor = workspace
+                        .active_item(cx)
+                        .unwrap()
+                        .downcast::<Editor>()
+                        .unwrap();
 
-                editor.update(cx, |editor, cx| {
-                    assert_eq!(editor.text(cx), "hey");
+                    editor.update(cx, |editor, cx| {
+                        assert_eq!(editor.text(cx), "hey");
+                    });
                 });
             })
             .unwrap();
 
         let editor = window
-            .read_with(cx, |workspace, cx| {
-                workspace
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
                     .active_item(cx)
                     .unwrap()
                     .downcast::<Editor>()
@@ -2778,15 +2801,25 @@ mod tests {
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
         // When opening the workspace, the window is not in a edited state.
-        let window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
+        let window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
 
-        let window_is_edited = |window: WindowHandle<Workspace>, cx: &mut TestAppContext| {
-            cx.update(|cx| window.read(cx).unwrap().is_edited())
-        };
+        let window_is_edited =
+            |window: WindowHandle<MultiWorkspace>, cx: &mut TestAppContext| {
+                cx.update(|cx| {
+                    window
+                        .read(cx)
+                        .unwrap()
+                        .workspace()
+                        .read(cx)
+                        .is_edited()
+                })
+            };
 
         let editor = window
-            .read_with(cx, |workspace, cx| {
-                workspace
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
                     .active_item(cx)
                     .unwrap()
                     .downcast::<Editor>()
@@ -2833,22 +2866,23 @@ mod tests {
         cx.run_until_parked();
 
         // When opening the workspace, the window is not in a edited state.
-        let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
+        let window =
+            cx.update(|cx| cx.active_window().unwrap().downcast::<MultiWorkspace>().unwrap());
         assert!(window_is_edited(window, cx));
 
         window
-            .update(cx, |workspace, _, cx| {
-                let editor = workspace
-                    .active_item(cx)
-                    .unwrap()
-                    .downcast::<editor::Editor>()
-                    .unwrap();
-                editor.update(cx, |editor, cx| {
-                    assert_eq!(editor.text(cx), "EDIThey");
-                    assert!(editor.is_dirty(cx));
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let editor = workspace
+                        .active_item(cx)
+                        .unwrap()
+                        .downcast::<editor::Editor>()
+                        .unwrap();
+                    editor.update(cx, |editor, cx| {
+                        assert_eq!(editor.text(cx), "EDIThey");
+                        assert!(editor.is_dirty(cx));
+                    });
                 });
-
-                editor
             })
             .unwrap();
     }
@@ -2870,36 +2904,40 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
 
-        let workspace = cx
-            .update(|cx| cx.windows().first().unwrap().downcast::<Workspace>())
+        let multi_workspace = cx
+            .update(|cx| cx.windows().first().unwrap().downcast::<MultiWorkspace>())
             .unwrap();
 
-        let editor = workspace
-            .update(cx, |workspace, _, cx| {
-                let editor = workspace
-                    .active_item(cx)
-                    .unwrap()
-                    .downcast::<editor::Editor>()
-                    .unwrap();
-                editor.update(cx, |editor, cx| {
-                    assert!(editor.text(cx).is_empty());
-                    assert!(!editor.is_dirty(cx));
-                });
+        let editor = multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let editor = workspace
+                        .active_item(cx)
+                        .unwrap()
+                        .downcast::<editor::Editor>()
+                        .unwrap();
+                    editor.update(cx, |editor, cx| {
+                        assert!(editor.text(cx).is_empty());
+                        assert!(!editor.is_dirty(cx));
+                    });
 
-                editor
+                    editor
+                })
             })
             .unwrap();
 
-        let save_task = workspace
-            .update(cx, |workspace, window, cx| {
-                workspace.save_active_item(SaveIntent::Save, window, cx)
+        let save_task = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.save_active_item(SaveIntent::Save, window, cx)
+                })
             })
             .unwrap();
         app_state.fs.create_dir(Path::new("/root")).await.unwrap();
         cx.background_executor.run_until_parked();
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
         save_task.await.unwrap();
-        workspace
+        multi_workspace
             .update(cx, |_, _, cx| {
                 editor.update(cx, |editor, cx| {
                     assert!(!editor.is_dirty(cx));
@@ -3080,8 +3118,10 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
-        let window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
-        let workspace = window.root(cx).unwrap();
+        let window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
 
         #[track_caller]
         fn assert_project_panel_selection(
@@ -3116,17 +3156,19 @@ mod tests {
 
         // Open a file within an existing worktree.
         window
-            .update(cx, |workspace, window, cx| {
-                workspace.open_paths(
-                    vec![path!("/dir1/a.txt").into()],
-                    OpenOptions {
-                        visible: Some(OpenVisible::All),
-                        ..Default::default()
-                    },
-                    None,
-                    window,
-                    cx,
-                )
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.open_paths(
+                        vec![path!("/dir1/a.txt").into()],
+                        OpenOptions {
+                            visible: Some(OpenVisible::All),
+                            ..Default::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
+                })
             })
             .unwrap()
             .await;
@@ -3155,17 +3197,19 @@ mod tests {
 
         // Open a file outside of any existing worktree.
         window
-            .update(cx, |workspace, window, cx| {
-                workspace.open_paths(
-                    vec![path!("/dir2/b.txt").into()],
-                    OpenOptions {
-                        visible: Some(OpenVisible::All),
-                        ..Default::default()
-                    },
-                    None,
-                    window,
-                    cx,
-                )
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.open_paths(
+                        vec![path!("/dir2/b.txt").into()],
+                        OpenOptions {
+                            visible: Some(OpenVisible::All),
+                            ..Default::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
+                })
             })
             .unwrap()
             .await;
@@ -3205,17 +3249,19 @@ mod tests {
 
         // Ensure opening a directory and one of its children only adds one worktree.
         window
-            .update(cx, |workspace, window, cx| {
-                workspace.open_paths(
-                    vec![path!("/dir3").into(), path!("/dir3/c.txt").into()],
-                    OpenOptions {
-                        visible: Some(OpenVisible::All),
-                        ..Default::default()
-                    },
-                    None,
-                    window,
-                    cx,
-                )
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.open_paths(
+                        vec![path!("/dir3").into(), path!("/dir3/c.txt").into()],
+                        OpenOptions {
+                            visible: Some(OpenVisible::All),
+                            ..Default::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
+                })
             })
             .unwrap()
             .await;
@@ -3255,17 +3301,19 @@ mod tests {
 
         // Ensure opening invisibly a file outside an existing worktree adds a new, invisible worktree.
         window
-            .update(cx, |workspace, window, cx| {
-                workspace.open_paths(
-                    vec![path!("/d.txt").into()],
-                    OpenOptions {
-                        visible: Some(OpenVisible::None),
-                        ..Default::default()
-                    },
-                    None,
-                    window,
-                    cx,
-                )
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.open_paths(
+                        vec![path!("/d.txt").into()],
+                        OpenOptions {
+                            visible: Some(OpenVisible::None),
+                            ..Default::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
+                })
             })
             .unwrap()
             .await;
@@ -3359,8 +3407,14 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
-        let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
-        let workspace = window.root(cx).unwrap();
+        let window = cx.add_window({
+            let project = project.clone();
+            |window, cx| {
+                let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+                MultiWorkspace::new(workspace)
+            }
+        });
+        let workspace = window.read_with(cx, |mw, _| mw.workspace().clone()).unwrap();
 
         let initial_entries = cx.read(|cx| workspace.file_project_paths(cx));
         let paths_to_open = [
@@ -3381,7 +3435,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            opened_workspace.root(cx).unwrap().entity_id(),
+            opened_workspace
+                .read_with(cx, |mw, _| mw.workspace().entity_id())
+                .unwrap(),
             workspace.entity_id(),
             "Excluded files in subfolders of a workspace root should be opened in the workspace"
         );
@@ -4875,7 +4931,13 @@ mod tests {
         cx.update(init);
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let _window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let _window = cx.add_window({
+            let project = project.clone();
+            |window, cx| {
+            let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+            MultiWorkspace::new(workspace)
+            }
+        });
 
         cx.update(|cx| {
             cx.dispatch_action(&OpenDefaultSettings);
@@ -4884,10 +4946,12 @@ mod tests {
 
         assert_eq!(cx.read(|cx| cx.windows().len()), 1);
 
-        let workspace = cx.windows()[0].downcast::<Workspace>().unwrap();
-        let active_editor = workspace
-            .update(cx, |workspace, _, cx| {
-                workspace.active_item_as::<Editor>(cx)
+        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        let active_editor = multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.active_item_as::<Editor>(cx)
+                })
             })
             .unwrap();
         assert!(
@@ -4990,6 +5054,7 @@ mod tests {
             debugger_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);
             search::init(cx);
+            workspace_switcher::init(cx);
             app_state
         })
     }
@@ -5180,16 +5245,31 @@ mod tests {
             .await;
 
         let project_a = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window_a =
-            cx.add_window(|window, cx| Workspace::test_new(project_a.clone(), window, cx));
+        let window_a = cx.add_window({
+            let project = project_a.clone();
+            |window, cx| {
+                let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+                MultiWorkspace::new(workspace)
+            }
+        });
 
         let project_b = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window_b =
-            cx.add_window(|window, cx| Workspace::test_new(project_b.clone(), window, cx));
+        let window_b = cx.add_window({
+            let project = project_b.clone();
+            |window, cx| {
+                let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+                MultiWorkspace::new(workspace)
+            }
+        });
 
         let project_c = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window_c =
-            cx.add_window(|window, cx| Workspace::test_new(project_c.clone(), window, cx));
+        let window_c = cx.add_window({
+            let project = project_c.clone();
+            |window, cx| {
+                let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+                MultiWorkspace::new(workspace)
+            }
+        });
 
         for window in [window_a, window_b, window_c] {
             let _ = cx.update_window(*window, |_, window, _| {
@@ -5210,8 +5290,8 @@ mod tests {
             cx.update_window(*window, |_, window, _| assert!(window.is_window_active()))
                 .unwrap();
 
-            let _ = window.read_with(cx, |workspace, cx| {
-                let pane = workspace.active_pane().read(cx);
+            let _ = window.read_with(cx, |multi_workspace, cx| {
+                let pane = multi_workspace.workspace().read(cx).active_pane().read(cx);
                 let project_path = pane.active_item().unwrap().project_path(cx).unwrap();
 
                 assert_eq!(
