@@ -665,6 +665,12 @@ pub trait GitRepository: Send + Sync {
         limit: Option<usize>,
     ) -> BoxFuture<'_, Result<FileHistory>>;
 
+    fn commit_log_paginated(
+        &self,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<CommitLog>>;
+
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
     fn path(&self) -> PathBuf;
