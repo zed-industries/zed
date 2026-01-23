@@ -4184,8 +4184,8 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     // Client B adds breakpoint on line(2)
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.move_down(&editor::actions::MoveDown, window, cx);
-        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
         editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     });
 
@@ -4213,8 +4213,8 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     // Client A removes last added breakpoint from client B
     editor_a.update_in(cx_a, |editor, window, cx| {
-        editor.move_down(&editor::actions::MoveDown, window, cx);
-        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
         editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     });
 
@@ -4242,8 +4242,8 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     // Client B removes first added breakpoint by client A
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.move_up(&editor::actions::MoveUp, window, cx);
-        editor.move_up(&editor::actions::MoveUp, window, cx);
+        editor.move_up(&zed_actions::editor::MoveUp, window, cx);
+        editor.move_up(&zed_actions::editor::MoveUp, window, cx);
         editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     });
 
