@@ -8,6 +8,7 @@ use crate::{
     scroll::{ScrollAnchor, ScrollOffset},
 };
 use anyhow::{Context as _, Result, anyhow};
+use fs::MTime;
 use collections::{HashMap, HashSet};
 use file_icons::FileIcons;
 use futures::future::try_join_all;
@@ -1161,27 +1162,9 @@ impl SerializableItem for Editor {
                                 .await
                                 .context("Failed to open path in project")?;
 
-                            // This is a bit wasteful: we're loading the whole buffer from
-                            // disk and then overwrite the content.
-                            // But for now, it keeps the implementation of the content serialization
-                            // simple, because we don't have to persist all of the metadata that we get
-                            // by loading the file (git diff base, ...).
-                            if let Some(buffer_text) = contents {
+                            if let Some(contents) = contents {
                                 buffer.update(cx, |buffer, cx| {
-                                    // If we did restore an mtime, we want to store it on the buffer
-                                    // so that the next edit will mark the buffer as dirty/conflicted.
-                                    if mtime.is_some() {
-                                        buffer.did_reload(
-                                            buffer.version(),
-                                            buffer.line_ending(),
-                                            mtime,
-                                            cx,
-                                        );
-                                    }
-                                    buffer.set_text(buffer_text, cx);
-                                    if let Some(entry) = buffer.peek_undo_stack() {
-                                        buffer.forget_transaction(entry.transaction_id());
-                                    }
+                                    restore_serialized_buffer_contents(buffer, contents, mtime, cx);
                                 });
                             }
 
@@ -1211,25 +1194,13 @@ impl SerializableItem for Editor {
                                     cx,
                                 )
                             })?;
-                            let editor = open_by_abs_path.await?.downcast::<Editor>().with_context(|| format!("Failed to downcast to Editor after opening abs path {abs_path:?}"))?;
+                            let editor = open_by_abs_path.await?.downcast::<Editor>().with_context(|| format!("path {abs_path:?} cannot be opened as an Editor"))?;
 
-                            // Restore serialized contents if present (hot-exit for files in empty workspaces)
-                            if let Some(buffer_text) = contents {
+                            if let Some(contents) = contents {
                                 editor.update_in(cx, |editor, _window, cx| {
                                     if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                                         buffer.update(cx, |buffer, cx| {
-                                            if mtime.is_some() {
-                                                buffer.did_reload(
-                                                    buffer.version(),
-                                                    buffer.line_ending(),
-                                                    mtime,
-                                                    cx,
-                                                );
-                                            }
-                                            buffer.set_text(buffer_text, cx);
-                                            if let Some(entry) = buffer.peek_undo_stack() {
-                                                buffer.forget_transaction(entry.transaction_id());
-                                            }
+                                            restore_serialized_buffer_contents(buffer, contents, mtime, cx);
                                         });
                                     }
                                 })?;
@@ -1955,6 +1926,27 @@ fn path_for_file<'a>(
             path = path.parent()?;
         }
         Some(path.display(file.path_style(cx)))
+    }
+}
+
+/// Restores serialized buffer contents by overwriting the buffer with saved text.
+/// This is somewhat wasteful since we load the whole buffer from disk then overwrite it,
+/// but keeps implementation simple as we don't need to persist all metadata from loading
+/// (git diff base, etc.).
+fn restore_serialized_buffer_contents(
+    buffer: &mut Buffer,
+    contents: String,
+    mtime: Option<MTime>,
+    cx: &mut Context<Buffer>,
+) {
+    // If we did restore an mtime, store it on the buffer so that
+    // the next edit will mark the buffer as dirty/conflicted.
+    if mtime.is_some() {
+        buffer.did_reload(buffer.version(), buffer.line_ending(), mtime, cx);
+    }
+    buffer.set_text(contents, cx);
+    if let Some(entry) = buffer.peek_undo_stack() {
+        buffer.forget_transaction(entry.transaction_id());
     }
 }
 

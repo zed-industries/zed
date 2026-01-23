@@ -8151,7 +8151,7 @@ pub fn open_workspace_by_id(
     cx.spawn(async move |cx| {
         let serialized_workspace = persistence::DB
             .workspace_for_id(workspace_id)
-            .ok_or_else(|| anyhow::anyhow!("Workspace {} not found", workspace_id.0))?;
+            .with_context(|| format!("Workspace {workspace_id:?} not found"))?;
 
         let window_bounds_override = window_bounds_env_override();
 
