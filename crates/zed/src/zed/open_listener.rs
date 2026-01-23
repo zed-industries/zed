@@ -462,12 +462,13 @@ async fn open_workspaces(
         if open_new_workspace == Some(true) {
             Vec::new()
         } else {
+            // The workspace_id from the database is ignored in the loop below;
+            // open_paths will assign the appropriate ID when opening.
             restorable_workspace_locations(cx, &app_state)
                 .await
                 .unwrap_or_default()
         }
     } else {
-        // For new workspaces opened via CLI, use default WorkspaceId (will be assigned by open_paths)
         vec![(
             WorkspaceId::default(),
             SerializedWorkspaceLocation::Local,
