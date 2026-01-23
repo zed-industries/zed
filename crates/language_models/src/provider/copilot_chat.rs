@@ -307,7 +307,6 @@ impl LanguageModel for CopilotChatLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let bypass_rate_limit = request.bypass_rate_limit;
         let is_user_initiated = request.intent.is_none_or(|intent| match intent {
             CompletionIntent::UserPrompt
             | CompletionIntent::ThreadContextSummarization
@@ -328,14 +327,11 @@ impl LanguageModel for CopilotChatLanguageModel {
                 let request =
                     CopilotChat::stream_response(responses_request, is_user_initiated, cx.clone());
                 request_limiter
-                    .stream_with_bypass(
-                        async move {
-                            let stream = request.await?;
-                            let mapper = CopilotResponsesEventMapper::new();
-                            Ok(mapper.map_stream(stream).boxed())
-                        },
-                        bypass_rate_limit,
-                    )
+                    .stream(async move {
+                        let stream = request.await?;
+                        let mapper = CopilotResponsesEventMapper::new();
+                        Ok(mapper.map_stream(stream).boxed())
+                    })
                     .await
             });
             return async move { Ok(future.await?.boxed()) }.boxed();
@@ -352,16 +348,13 @@ impl LanguageModel for CopilotChatLanguageModel {
             let request =
                 CopilotChat::stream_completion(copilot_request, is_user_initiated, cx.clone());
             request_limiter
-                .stream_with_bypass(
-                    async move {
-                        let response = request.await?;
-                        Ok(map_to_language_model_completion_events(
-                            response,
-                            is_streaming,
-                        ))
-                    },
-                    bypass_rate_limit,
-                )
+                .stream(async move {
+                    let response = request.await?;
+                    Ok(map_to_language_model_completion_events(
+                        response,
+                        is_streaming,
+                    ))
+                })
                 .await
         });
         async move { Ok(future.await?.boxed()) }.boxed()
@@ -936,7 +929,6 @@ fn into_copilot_responses(
         stop: _,
         temperature,
         thinking_allowed: _,
-        bypass_rate_limit: _,
     } = request;
 
     let mut input_items: Vec<responses::ResponseInputItem> = Vec::new();

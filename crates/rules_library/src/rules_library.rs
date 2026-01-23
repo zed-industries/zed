@@ -1100,7 +1100,6 @@ impl RulesLibrary {
                                     stop: Vec::new(),
                                     temperature: None,
                                     thinking_allowed: true,
-                                    bypass_rate_limit: false,
                                 },
                                 cx,
                             )
