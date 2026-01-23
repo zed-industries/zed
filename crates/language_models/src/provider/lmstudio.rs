@@ -382,8 +382,7 @@ impl LmStudioLanguageModel {
         });
 
         let future = self.request_limiter.stream(async move {
-            let request =
-                lmstudio::stream_chat_completion(http_client.as_ref(), &api_url, request);
+            let request = lmstudio::stream_chat_completion(http_client.as_ref(), &api_url, request);
             let response = request.await?;
             Ok(response)
         });

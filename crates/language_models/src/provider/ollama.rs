@@ -489,13 +489,9 @@ impl LanguageModel for OllamaLanguageModel {
         });
 
         let future = self.request_limiter.stream(async move {
-            let stream = stream_chat_completion(
-                http_client.as_ref(),
-                &api_url,
-                api_key.as_deref(),
-                request,
-            )
-            .await?;
+            let stream =
+                stream_chat_completion(http_client.as_ref(), &api_url, api_key.as_deref(), request)
+                    .await?;
             let stream = map_to_language_model_completion_events(stream);
             Ok(stream)
         });

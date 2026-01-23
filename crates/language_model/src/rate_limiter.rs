@@ -68,7 +68,10 @@ impl RateLimiter {
         async move {
             let guard = guard.await;
             let inner = future.await?;
-            Ok(RateLimitGuard { inner, _guard: guard })
+            Ok(RateLimitGuard {
+                inner,
+                _guard: guard,
+            })
         }
     }
 }
