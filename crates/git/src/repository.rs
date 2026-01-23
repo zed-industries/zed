@@ -2681,7 +2681,6 @@ async fn run_commit_data_reader(
     while let Ok(first_request) = request_rx.recv().await {
         let mut pending_requests = vec![first_request];
 
-        // Collect any additional pending requests without blocking
         while pending_requests.len() < MAX_BATCH_SIZE {
             match request_rx.try_recv() {
                 Ok(request) => pending_requests.push(request),
@@ -2689,14 +2688,12 @@ async fn run_commit_data_reader(
             }
         }
 
-        // Write all SHAs to stdin at once
         for request in &pending_requests {
             stdin.write_all(request.sha.to_string().as_bytes()).await?;
             stdin.write_all(b"\n").await?;
         }
         stdin.flush().await?;
 
-        // Read all responses in order
         for request in pending_requests {
             let result = read_single_commit_response(&mut stdout, &request.sha).await;
             request.response_tx.send(result).ok();
