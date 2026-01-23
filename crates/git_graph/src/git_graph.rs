@@ -26,11 +26,11 @@ use workspace::{
     item::{Item, ItemEvent, SerializableItem},
 };
 
-const LANE_WIDTH: Pixels = px(16.0);
-const LINE_WIDTH: Pixels = px(1.5);
 const COMMIT_CIRCLE_RADIUS: Pixels = px(4.5);
 const COMMIT_CIRCLE_STROKE_WIDTH: Pixels = px(1.5);
+const LANE_WIDTH: Pixels = px(16.0);
 const LEFT_PADDING: Pixels = px(12.0);
+const LINE_WIDTH: Pixels = px(1.5);
 
 actions!(
     git_graph,
@@ -585,6 +585,10 @@ impl GitGraph {
         let settings = ThemeSettings::get_global(cx);
         let font_size = settings.buffer_font_size(cx);
         font_size + px(12.0)
+    }
+
+    fn graph_content_width(&self) -> Pixels {
+        (LANE_WIDTH * self.graph_data.max_lanes.min(8) as f32) + LEFT_PADDING * 2.0
     }
 
     pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -1463,14 +1467,13 @@ impl Render for GitGraph {
                 .justify_center()
                 .child(Label::new(message).color(Color::Muted))
         } else {
-            let graph_viewport_width = self.graph_viewport_width;
             div()
                 .size_full()
                 .flex()
                 .flex_row()
                 .child(
                     div()
-                        .w(graph_viewport_width)
+                        .w(self.graph_content_width())
                         .h_full()
                         .flex()
                         .flex_col()
