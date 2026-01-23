@@ -11105,13 +11105,13 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
                 manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
             }
         }
-        async fn activation_script(
+        fn activation_script(
             &self,
             _: &Toolchain,
             _: ShellKind,
-            _: settings::CondaManager,
-        ) -> Vec<String> {
-            vec![]
+            _: &gpui::App,
+        ) -> futures::future::BoxFuture<'static, Vec<String>> {
+            Box::pin(async { vec![] })
         }
     }
     Arc::new(

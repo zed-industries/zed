@@ -12,8 +12,9 @@ use std::{
 use async_trait::async_trait;
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AsyncApp, SharedString};
-use settings::{CondaManager, WorktreeId};
+use futures::future::BoxFuture;
+use gpui::{App, AsyncApp, SharedString};
+use settings::WorktreeId;
 use task::ShellKind;
 use util::rel_path::RelPath;
 
@@ -113,12 +114,12 @@ pub trait ToolchainLister: Send + Sync + 'static {
         fs: &dyn Fs,
     ) -> anyhow::Result<Toolchain>;
 
-    async fn activation_script(
+    fn activation_script(
         &self,
         toolchain: &Toolchain,
         shell: ShellKind,
-        conda_manager: CondaManager,
-    ) -> Vec<String>;
+        cx: &App,
+    ) -> BoxFuture<'static, Vec<String>>;
 
     /// Returns various "static" bits of information about this toolchain lister. This function should be pure.
     fn meta(&self) -> ToolchainMetadata;
