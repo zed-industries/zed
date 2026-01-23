@@ -380,6 +380,7 @@ impl Focusable for NonFocusableHandle {
 struct SettingsFieldMetadata {
     placeholder: Option<&'static str>,
     should_do_titlecase: Option<bool>,
+    step: Option<f64>,
 }
 
 pub fn init(cx: &mut App) {
@@ -3850,7 +3851,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
 fn render_number_field<T: NumberFieldType + Send + Sync>(
     field: SettingField<T>,
     file: SettingsUiFile,
-    _metadata: Option<&SettingsFieldMetadata>,
+    metadata: Option<&SettingsFieldMetadata>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -3862,8 +3863,15 @@ fn render_number_field<T: NumberFieldType + Send + Sync>(
         .map(|p| format!("numeric_stepper_{}", p))
         .unwrap_or_else(|| "numeric_stepper".to_string());
 
-    NumberField::new(id, value, window, cx)
-        .tab_index(0_isize)
+    let mut number_field = NumberField::new(id, value, window, cx).tab_index(0_isize);
+
+    if let Some(step) = metadata.and_then(|m| m.step) {
+        if let Ok(step_value) = step.to_string().parse::<T>() {
+            number_field = number_field.normal_step(step_value);
+        }
+    }
+
+    number_field
         .on_change({
             move |value, window, cx| {
                 let value = *value;

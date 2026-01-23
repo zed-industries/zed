@@ -6658,6 +6658,120 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
+    fn split_diff_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Split Diff"),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Auto Split",
+                    description:
+                        "Automatically switch between side-by-side and stacked diff views based on width.",
+                    field: Box::new(SettingField::<bool> {
+                        json_path: Some("git.split_diff.auto_split$"),
+                        pick: |settings_content| {
+                            static TRUE: bool = true;
+                            static FALSE: bool = false;
+                            let is_enabled = settings_content
+                                .git
+                                .as_ref()?
+                                .split_diff
+                                .as_ref()?
+                                .auto_split
+                                .as_ref()?
+                                .is_enabled();
+                            Some(if is_enabled { &TRUE } else { &FALSE })
+                        },
+                        write: |settings_content, value| {
+                            let Some(enabled) = value else {
+                                if let Some(split_diff) =
+                                    settings_content.git.as_mut().and_then(|g| g.split_diff.as_mut())
+                                {
+                                    split_diff.auto_split = None;
+                                }
+                                return;
+                            };
+                            let auto_split = settings_content
+                                .git
+                                .get_or_insert_default()
+                                .split_diff
+                                .get_or_insert_default()
+                                .auto_split
+                                .get_or_insert_with(|| settings::AutoSplitSetting::Off);
+                            if enabled {
+                                let pixels = match auto_split {
+                                    settings::AutoSplitSetting::WidthThreshold(p) => *p,
+                                    _ => 800.0,
+                                };
+                                *auto_split = settings::AutoSplitSetting::WidthThreshold(pixels);
+                            } else {
+                                *auto_split = settings::AutoSplitSetting::Off;
+                            }
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |settings_content| {
+                    let is_enabled = settings_content
+                        .git
+                        .as_ref()?
+                        .split_diff
+                        .as_ref()?
+                        .auto_split
+                        .as_ref()?
+                        .is_enabled();
+                    Some(if is_enabled { 1 } else { 0 })
+                },
+                fields: vec![
+                    vec![],
+                    vec![SettingItem {
+                        files: USER,
+                        title: "Width Threshold (pixels)",
+                        description: "Minimum width in pixels to use side-by-side diff view.",
+                        field: Box::new(SettingField::<f32> {
+                            json_path: Some("git.split_diff.auto_split.width_threshold"),
+                            pick: |settings_content| {
+                                match settings_content
+                                    .git
+                                    .as_ref()?
+                                    .split_diff
+                                    .as_ref()?
+                                    .auto_split
+                                    .as_ref()
+                                {
+                                    Some(settings::AutoSplitSetting::WidthThreshold(pixels)) => {
+                                        Some(pixels)
+                                    }
+                                    _ => None,
+                                }
+                            },
+                            write: |settings_content, value| {
+                                let Some(value) = value else {
+                                    return;
+                                };
+                                match settings_content
+                                    .git
+                                    .as_mut()
+                                    .and_then(|g| g.split_diff.as_mut())
+                                    .and_then(|s| s.auto_split.as_mut())
+                                {
+                                    Some(settings::AutoSplitSetting::WidthThreshold(pixels)) => {
+                                        *pixels = value
+                                    }
+                                    _ => return,
+                                }
+                            },
+                        }),
+                        metadata: Some(Box::new(SettingsFieldMetadata {
+                            step: Some(100.0),
+                            ..Default::default()
+                        })),
+                    }],
+                ],
+            }),
+        ]
+    }
+
     SettingsPage {
         title: "Version Control",
         items: concat_sections![
@@ -6667,6 +6781,7 @@ fn version_control_page() -> SettingsPage {
             git_blame_view_section(),
             branch_picker_section(),
             git_hunks_section(),
+            split_diff_section(),
         ],
     }
 }

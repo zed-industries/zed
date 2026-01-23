@@ -414,6 +414,8 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: GitPathStyle,
+    /// Settings for the split diff view.
+    pub split_diff: SplitDiffSettings,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -440,6 +442,33 @@ impl From<settings::GitPathStyle> for GitPathStyle {
         match style {
             settings::GitPathStyle::FileNameFirst => GitPathStyle::FileNameFirst,
             settings::GitPathStyle::FilePathFirst => GitPathStyle::FilePathFirst,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SplitDiffSettings {
+    /// Whether to automatically switch between split and unsplit views
+    /// based on the available width.
+    pub auto_split: bool,
+    /// The minimum width in pixels required to use the split view.
+    pub width_threshold: f32,
+}
+
+impl SplitDiffSettings {
+    pub fn from_content(content: Option<&settings::SplitDiffSettings>) -> Self {
+        let Some(split_diff) = content else {
+            return Self::default();
+        };
+        let Some(auto_split) = &split_diff.auto_split else {
+            return Self::default();
+        };
+        match auto_split {
+            settings::AutoSplitSetting::Off => Self::default(),
+            settings::AutoSplitSetting::WidthThreshold(pixels) => Self {
+                auto_split: true,
+                width_threshold: *pixels,
+            },
         }
     }
 }
@@ -603,6 +632,7 @@ impl Settings for ProjectSettings {
             },
             hunk_style: git.hunk_style.unwrap(),
             path_style: git.path_style.unwrap().into(),
+            split_diff: SplitDiffSettings::from_content(git.split_diff.as_ref()),
         };
         Self {
             context_servers: project

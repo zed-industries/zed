@@ -14,9 +14,12 @@ use multi_buffer::{
 use project::Project;
 use rope::Point;
 use text::{OffsetRangeExt as _, ToPoint as _};
+use gpui::{Pixels, canvas};
+use project::project_settings::ProjectSettings;
+use settings::Settings;
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
-    Styled as _, Window, div,
+    Styled as _, Window, div, px,
 };
 
 use crate::{
@@ -277,6 +280,8 @@ pub struct SplittableEditor {
     workspace: WeakEntity<Workspace>,
     split_state: Entity<SplitEditorState>,
     locked_cursors: bool,
+    last_measured_width: Pixels,
+    manual_split_override: Option<bool>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -387,6 +392,8 @@ impl SplittableEditor {
             workspace: workspace.downgrade(),
             split_state,
             locked_cursors: false,
+            last_measured_width: px(0.),
+            manual_split_override: None,
             _subscriptions: subscriptions,
         }
     }
@@ -714,8 +721,10 @@ impl SplittableEditor {
 
     fn toggle_split(&mut self, _: &ToggleSplitDiff, window: &mut Window, cx: &mut Context<Self>) {
         if self.secondary.is_some() {
+            self.manual_split_override = Some(false);
             self.unsplit(&UnsplitDiff, window, cx);
         } else {
+            self.manual_split_override = Some(true);
             self.split(&SplitDiff, window, cx);
         }
     }
@@ -871,6 +880,14 @@ impl SplittableEditor {
             editor.set_on_local_selections_changed(None);
             editor.set_scroll_companion(None);
         });
+        cx.notify();
+    }
+
+    fn handle_width_change(&mut self, width: Pixels, cx: &mut Context<Self>) {
+        if width == self.last_measured_width {
+            return;
+        }
+        self.last_measured_width = width;
         cx.notify();
     }
 
@@ -1494,7 +1511,7 @@ impl Focusable for SplittableEditor {
 impl Render for SplittableEditor {
     fn render(
         &mut self,
-        _window: &mut ui::Window,
+        window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
         let inner = if self.secondary.is_some() {
@@ -1503,6 +1520,36 @@ impl Render for SplittableEditor {
         } else {
             self.primary_editor.clone().into_any_element()
         };
+
+        let split_diff_settings = ProjectSettings::get_global(cx).git.split_diff;
+        let auto_split_enabled = split_diff_settings.auto_split;
+        let width_threshold = px(split_diff_settings.width_threshold);
+        let entity = cx.entity();
+        let last_measured_width = self.last_measured_width;
+
+        if auto_split_enabled
+            && last_measured_width > px(0.)
+            && self.manual_split_override.is_none()
+            && cx.has_flag::<SplitDiffFeatureFlag>()
+        {
+            let should_be_split = last_measured_width >= width_threshold;
+            let is_split = self.secondary.is_some();
+
+            if should_be_split != is_split {
+                let entity = cx.entity();
+                window.defer(cx, move |window, cx| {
+                    entity
+                        .update(cx, |this, cx| {
+                            if should_be_split {
+                                this.split(&SplitDiff, window, cx);
+                            } else {
+                                this.unsplit(&UnsplitDiff, window, cx);
+                            }
+                        });
+                });
+            }
+        }
+
         div()
             .id("splittable-editor")
             .on_action(cx.listener(Self::split))
@@ -1520,6 +1567,19 @@ impl Render for SplittableEditor {
             .capture_action(cx.listener(Self::toggle_soft_wrap))
             .size_full()
             .child(inner)
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |bounds, _, _, cx| {
+                        let width = bounds.size.width;
+                        entity.update(cx, |this, cx| {
+                            this.handle_width_change(width, cx);
+                        });
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
     }
 }
 

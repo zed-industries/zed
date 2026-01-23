@@ -1475,6 +1475,17 @@
     // Should the name or path be displayed first in the git view.
     // "path_style": "file_name_first" or "file_path_first"
     "path_style": "file_name_first",
+    // Settings for the split diff view (side-by-side diff display).
+    "split_diff": {
+      // Whether to automatically switch between split (side-by-side) and
+      // unsplit (stacked) diff views based on the available width.
+      // Can be:
+      // 1. Disabled:
+      //    "auto_split": "off"
+      // 2. Enabled with a width threshold in pixels:
+      //    "auto_split": { "width_threshold": 1000 }
+      "auto_split": "off",
+    },
   },
   // The list of custom Git hosting providers.
   "git_hosting_providers": [

@@ -382,6 +382,8 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: Option<GitPathStyle>,
+    /// Settings for the split diff view (side-by-side diff display).
+    pub split_diff: Option<SplitDiffSettings>,
 }
 
 #[with_fallible_options]
@@ -517,6 +519,48 @@ pub enum GitPathStyle {
     FileNameFirst,
     /// Show full path first
     FilePathFirst,
+}
+
+/// Settings for the split diff view (side-by-side diff display).
+#[with_fallible_options]
+#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct SplitDiffSettings {
+    /// Whether to automatically switch between split (side-by-side) and
+    /// unsplit (stacked) diff views based on the available width.
+    ///
+    /// When enabled, the diff view will automatically use side-by-side
+    /// layout when there is sufficient horizontal space, and switch to
+    /// a stacked layout when space is limited.
+    ///
+    /// Can be set to `false` to disable, or an object with `width_threshold`
+    /// to enable with a custom threshold (in pixels).
+    ///
+    /// Default: false
+    pub auto_split: Option<AutoSplitSetting>,
+}
+
+/// Setting for automatic split/unsplit behavior based on width.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoSplitSetting {
+    /// Disable automatic split/unsplit.
+    #[default]
+    Off,
+    /// Enable automatic split/unsplit when width exceeds the threshold (in pixels).
+    WidthThreshold(f32),
+}
+
+impl AutoSplitSetting {
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, AutoSplitSetting::WidthThreshold(_))
+    }
+
+    pub fn width_threshold(&self) -> Option<f32> {
+        match self {
+            AutoSplitSetting::Off => None,
+            AutoSplitSetting::WidthThreshold(pixels) => Some(*pixels),
+        }
+    }
 }
 
 #[with_fallible_options]
