@@ -2984,8 +2984,16 @@ impl AcpThreadView {
                     if needs_confirmation {
                         this.child(self.render_generating(true, cx))
                     } else if self.is_viewing_subagent() {
-                        // For subagents, show spinner based on parent's tool call status
-                        if self.is_displayed_thread_generating(cx) {
+                        // For subagents, show spinner based on the displayed thread's own status
+                        let is_generating = self
+                            .displayed_thread()
+                            .map(|t| {
+                                let thread = t.read(cx);
+                                thread.status() == ThreadStatus::Generating
+                                    || thread.has_in_progress_tool_calls()
+                            })
+                            .unwrap_or(false);
+                        if is_generating {
                             this.child(self.render_generating(false, cx))
                         } else {
                             // Subagent is done - don't show controls (no message editor for subagents)
