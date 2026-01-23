@@ -24,6 +24,7 @@ pub struct PlatformTitleBar {
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
     system_window_tabs: Entity<SystemWindowTabs>,
+    button_layout: Option<String>,
 }
 
 impl PlatformTitleBar {
@@ -37,6 +38,7 @@ impl PlatformTitleBar {
             children: SmallVec::new(),
             should_move: false,
             system_window_tabs,
+            button_layout: None,
         }
     }
 
@@ -70,6 +72,10 @@ impl PlatformTitleBar {
         self.children = children.into_iter().collect();
     }
 
+    pub fn set_button_layout(&mut self, button_layout: Option<String>) {
+        self.button_layout = button_layout;
+    }
+
     pub fn init(cx: &mut App) {
         SystemWindowTabs::init(cx);
     }
@@ -83,6 +89,19 @@ impl Render for PlatformTitleBar {
         let titlebar_color = self.title_bar_color(window, cx);
         let close_action = Box::new(workspace::CloseWindow);
         let children = mem::take(&mut self.children);
+
+        let button_layout = if self.platform_style == PlatformStyle::Linux
+            && matches!(decorations, Decorations::Client { .. })
+        {
+            Some(
+                self.button_layout
+                    .as_ref()
+                    .map(|layout| gpui::WindowButtonLayout::parse(layout))
+                    .unwrap_or_else(|| window.button_layout()),
+            )
+        } else {
+            None
+        };
 
         let title_bar = h_flex()
             .window_control_area(WindowControlArea::Drag)
@@ -134,6 +153,18 @@ impl Render for PlatformTitleBar {
                     this.pl_2()
                 } else if self.platform_style == PlatformStyle::Mac {
                     this.pl(px(platform_mac::TRAFFIC_LIGHT_PADDING))
+                } else if let Some(ref layout) = button_layout {
+                    if let Some(left_buttons) = platform_linux::render_window_buttons(
+                        &layout.left,
+                        "left",
+                        close_action.as_ref(),
+                        window,
+                        cx,
+                    ) {
+                        this.child(left_buttons)
+                    } else {
+                        this.pl_2()
+                    }
                 } else {
                     this.pl_2()
                 }
@@ -171,14 +202,28 @@ impl Render for PlatformTitleBar {
                     PlatformStyle::Mac => title_bar,
                     PlatformStyle::Linux => {
                         if matches!(decorations, Decorations::Client { .. }) {
-                            title_bar
-                                .child(platform_linux::LinuxWindowControls::new(close_action))
-                                .when(supported_controls.window_menu, |titlebar| {
-                                    titlebar
-                                        .on_mouse_down(MouseButton::Right, move |ev, window, _| {
-                                            window.show_window_menu(ev.position)
-                                        })
+                            let button_layout = self
+                                .button_layout
+                                .as_ref()
+                                .map(|layout| gpui::WindowButtonLayout::parse(layout))
+                                .unwrap_or_else(|| window.button_layout());
+
+                            let mut result = title_bar;
+                            if let Some(right_buttons) = platform_linux::render_window_buttons(
+                                &button_layout.right,
+                                "right",
+                                close_action.as_ref(),
+                                window,
+                                cx,
+                            ) {
+                                result = result.child(right_buttons);
+                            }
+
+                            result.when(supported_controls.window_menu, |titlebar| {
+                                titlebar.on_mouse_down(MouseButton::Right, move |ev, window, _| {
+                                    window.show_window_menu(ev.position)
                                 })
+                            })
                         } else {
                             title_bar
                         }

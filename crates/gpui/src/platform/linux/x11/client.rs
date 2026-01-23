@@ -63,7 +63,8 @@ use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform,
     PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions,
-    ScrollDelta, Size, TouchPhase, WindowParams, X11Window, modifiers_from_xinput_info, point, px,
+    ScrollDelta, Size, TouchPhase, WindowButtonLayout, WindowParams, X11Window,
+    modifiers_from_xinput_info, point, px,
 };
 
 /// Value for DeviceId parameters which selects all devices.
@@ -470,9 +471,17 @@ impl X11Client {
                             window.window.set_appearance(appearance);
                         }
                     }
-                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
-                        // noop, X11 manages this for us.
+                    XDPEvent::ButtonLayout(layout_str) => {
+                        let layout = WindowButtonLayout::parse(&layout_str);
+                        client.with_common(|common| common.button_layout = layout);
+                        for window in client.0.borrow_mut().windows.values_mut() {
+                            window.window.refresh(RequestFrameOptions {
+                                require_presentation: false,
+                                force_render: false,
+                            });
+                        }
                     }
+                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {}
                 }
             })
             .map_err(|err| anyhow!("Failed to initialize XDP event source: {err:?}"))?;

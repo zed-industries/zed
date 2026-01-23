@@ -1398,6 +1398,13 @@ impl PlatformWindow for WaylandWindow {
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.borrow().renderer.gpu_specs().into()
     }
+
+    fn button_layout(&self) -> crate::WindowButtonLayout {
+        let state = self.borrow();
+        let client = state.client.get_client();
+        drop(state);
+        client.borrow().common.button_layout.clone()
+    }
 }
 
 fn update_window(mut state: RefMut<WaylandWindowState>) {

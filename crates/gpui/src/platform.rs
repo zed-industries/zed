@@ -444,6 +444,70 @@ impl Default for WindowControls {
     }
 }
 
+/// A button type in window controls
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WindowButton {
+    /// Minimize button
+    Minimize,
+    /// Maximize button
+    Maximize,
+    /// Close button
+    Close,
+}
+
+/// Window control button layout configuration
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowButtonLayout {
+    /// Buttons displayed on the left side of the titlebar
+    pub left: Vec<WindowButton>,
+    /// Buttons displayed on the right side of the titlebar
+    pub right: Vec<WindowButton>,
+}
+
+impl WindowButtonLayout {
+    /// Parse a GNOME-style button-layout string.
+    /// Format: "button1,button2:button3,button4"
+    /// Left of colon = left side, right of colon = right side
+    pub fn parse(layout_string: &str) -> Self {
+        let (left_str, right_str) = layout_string.split_once(':').unwrap_or(("", layout_string));
+
+        let parse_buttons = |s: &str| -> Vec<WindowButton> {
+            s.split(',')
+                .filter_map(|name| match name.trim() {
+                    "minimize" => Some(WindowButton::Minimize),
+                    "maximize" => Some(WindowButton::Maximize),
+                    "close" => Some(WindowButton::Close),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        Self {
+            left: parse_buttons(left_str),
+            right: parse_buttons(right_str),
+        }
+    }
+
+    /// Returns the default layout matching current Zed behavior.
+    /// All buttons on the right: minimize, maximize, close
+    pub fn default_layout() -> Self {
+        Self {
+            left: vec![],
+            right: vec![
+                WindowButton::Minimize,
+                WindowButton::Maximize,
+                WindowButton::Close,
+            ],
+        }
+    }
+}
+
+impl Default for WindowButtonLayout {
+    fn default() -> Self {
+        Self::default_layout()
+    }
+}
+
 /// A type to describe which sides of the window are currently tiled in some way
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct Tiling {
@@ -570,6 +634,9 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn window_controls(&self) -> WindowControls {
         WindowControls::default()
+    }
+    fn button_layout(&self) -> WindowButtonLayout {
+        WindowButtonLayout::default_layout()
     }
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;

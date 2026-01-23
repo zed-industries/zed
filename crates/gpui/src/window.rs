@@ -16,8 +16,8 @@ use crate::{
     SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
     TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement,
     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    WindowBounds, WindowButtonLayout, WindowControls, WindowDecorations, WindowOptions,
+    WindowParams, WindowTextSystem, point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -1982,6 +1982,11 @@ impl Window {
     /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
     pub fn window_decorations(&self) -> Decorations {
         self.platform_window.window_decorations()
+    }
+
+    /// Returns the button layout for window controls (Linux only)
+    pub fn button_layout(&self) -> WindowButtonLayout {
+        self.platform_window.button_layout()
     }
 
     /// Returns which window controls are currently visible (Wayland)

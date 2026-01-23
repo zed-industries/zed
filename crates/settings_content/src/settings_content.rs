@@ -316,6 +316,20 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: false
     pub show_menus: Option<bool>,
+    /// Window control button layout (Linux only).
+    /// Use "auto" to respect desktop environment settings, or specify a custom layout.
+    /// Format: "button1,button2:button3" where buttons are separated by commas,
+    /// and the colon separates left side from right side.
+    /// Supported buttons: close, minimize, maximize
+    ///
+    /// Examples:
+    /// - "auto" (default) - Use desktop environment settings
+    /// - "close:minimize,maximize" - Close on left, minimize and maximize on right
+    /// - ":minimize,maximize,close" - All buttons on right (Windows-style)
+    /// - "close,minimize,maximize:" - All buttons on left (macOS-style)
+    ///
+    /// Default: "auto"
+    pub button_layout: Option<String>,
 }
 
 /// Configuration of audio in Zed.

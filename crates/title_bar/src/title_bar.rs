@@ -150,7 +150,7 @@ pub struct TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let title_bar_settings = *TitleBarSettings::get_global(cx);
+        let title_bar_settings = TitleBarSettings::get_global(cx).clone();
 
         let show_menus = show_menus(cx);
 
@@ -224,7 +224,9 @@ impl Render for TitleBar {
         );
 
         if show_menus {
+            let button_layout = TitleBarSettings::get_global(cx).button_layout.clone();
             self.platform_titlebar.update(cx, |this, _| {
+                this.set_button_layout(button_layout);
                 this.set_children(
                     self.application_menu
                         .clone()
@@ -251,7 +253,9 @@ impl Render for TitleBar {
                 )
                 .into_any_element()
         } else {
+            let button_layout = TitleBarSettings::get_global(cx).button_layout.clone();
             self.platform_titlebar.update(cx, |this, _| {
+                this.set_button_layout(button_layout);
                 this.set_children(children);
             });
             self.platform_titlebar.clone().into_any_element()
