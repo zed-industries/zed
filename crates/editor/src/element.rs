@@ -5089,9 +5089,14 @@ impl EditorElement {
 
             let max_scroll_offset = max_sticky_row.as_f64() - scroll_top;
             let mut offset = (depth as f64).min(max_scroll_offset);
+
+            let other_offset = FILE_HEADER_HEIGHT as f64 - 4.0;
+            dbg!(&offset);
+            dbg!(other_offset);
+
             if !snapshot.is_singleton() {
                 // Why is this needed if scroll_top is already adjusted for the header height?
-                offset = offset + (MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f64);
+                offset = offset + (FILE_HEADER_HEIGHT as f64);
             }
 
             end_rows.push(end_row);

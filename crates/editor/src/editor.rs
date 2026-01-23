@@ -1961,14 +1961,14 @@ impl Editor {
         let start_row = (multi_buffer_visible_start.row).min(max_row);
         let end_row = (multi_buffer_visible_start.row + 10).min(max_row);
 
-        let excerpt_ids = selections
+        let _excerpt_ids = selections
             .iter()
             .flat_map(|selection| multi_buffer_snapshot.excerpt_ids_for_range(selection.range()))
             .collect::<Vec<ExcerptId>>();
 
         let outline_items = multi_buffer_snapshot
             .excerpts()
-            .filter(|(excerpt_id, _, _)| excerpt_ids.contains(excerpt_id))
+            // .filter(|(excerpt_id, _, _)| excerpt_ids.contains(excerpt_id))
             .flat_map(|(excerpt_id, buffer, range)| {
                 let outline_range = if multi_buffer_snapshot.is_singleton() {
                     Point::new(start_row, 0)..Point::new(end_row, 0)
