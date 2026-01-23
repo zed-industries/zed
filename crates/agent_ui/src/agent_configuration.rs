@@ -15,7 +15,6 @@ use context_server::ContextServerId;
 use editor::{Editor, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
 use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
-use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
 use gpui::{
     Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
@@ -999,26 +998,10 @@ impl AgentConfiguration {
             )
             .menu({
                 move |window, cx| {
-                    Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
-                        if _cx.has_flag::<AcpBetaFeatureFlag>() {
-                            menu = menu.entry("Install from Registry", None, {
-                                |window, cx| {
-                                    window.dispatch_action(Box::new(zed_actions::AgentRegistry), cx)
-                                }
-                            });
-                        }
-                        menu.entry("Install from Extensions", None, {
+                    Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                        menu.entry("Install from Registry", None, {
                             |window, cx| {
-                                window.dispatch_action(
-                                    zed_actions::Extensions {
-                                        category_filter: Some(
-                                            ExtensionCategoryFilter::AgentServers,
-                                        ),
-                                        id: None,
-                                    }
-                                    .boxed_clone(),
-                                    cx,
-                                )
+                                window.dispatch_action(Box::new(zed_actions::AgentRegistry), cx)
                             }
                         })
                         .entry("Add Custom Agent", None, {

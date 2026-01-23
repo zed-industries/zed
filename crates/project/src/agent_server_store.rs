@@ -723,6 +723,45 @@ impl AgentServerStore {
             })
             .unwrap_or_default();
 
+        // Insert extension agents before custom/registry so registry entries override extensions.
+        for (agent_name, ext_id, targets, env, icon_path, display_name) in extension_agents.iter() {
+            let name = ExternalAgentServerName(agent_name.clone().into());
+            let mut env = env.clone();
+            if let Some(settings_env) =
+                new_settings
+                    .custom
+                    .get(agent_name.as_ref())
+                    .and_then(|settings| match settings {
+                        CustomAgentServerSettings::Extension { env, .. } => Some(env.clone()),
+                        _ => None,
+                    })
+            {
+                env.extend(settings_env);
+            }
+            let icon = icon_path
+                .as_ref()
+                .map(|path| SharedString::from(path.clone()));
+
+            self.external_agents.insert(
+                name.clone(),
+                ExternalAgentEntry::new(
+                    Box::new(LocalExtensionArchiveAgent {
+                        fs: fs.clone(),
+                        http_client: http_client.clone(),
+                        node_runtime: node_runtime.clone(),
+                        project_environment: project_environment.clone(),
+                        extension_id: Arc::from(&**ext_id),
+                        targets: targets.clone(),
+                        env,
+                        agent_id: agent_name.clone(),
+                    }) as Box<dyn ExternalAgentServer>,
+                    ExternalAgentSource::Extension,
+                    icon,
+                    display_name.clone(),
+                ),
+            );
+        }
+
         for (name, settings) in &new_settings.custom {
             match settings {
                 CustomAgentServerSettings::Custom { command, .. } => {
@@ -801,44 +840,6 @@ impl AgentServerStore {
                 }
                 CustomAgentServerSettings::Extension { .. } => {}
             }
-        }
-
-        for (agent_name, ext_id, targets, env, icon_path, display_name) in extension_agents.iter() {
-            let name = ExternalAgentServerName(agent_name.clone().into());
-            let mut env = env.clone();
-            if let Some(settings_env) =
-                new_settings
-                    .custom
-                    .get(agent_name.as_ref())
-                    .and_then(|settings| match settings {
-                        CustomAgentServerSettings::Extension { env, .. } => Some(env.clone()),
-                        _ => None,
-                    })
-            {
-                env.extend(settings_env);
-            }
-            let icon = icon_path
-                .as_ref()
-                .map(|path| SharedString::from(path.clone()));
-
-            self.external_agents.insert(
-                name.clone(),
-                ExternalAgentEntry::new(
-                    Box::new(LocalExtensionArchiveAgent {
-                        fs: fs.clone(),
-                        http_client: http_client.clone(),
-                        node_runtime: node_runtime.clone(),
-                        project_environment: project_environment.clone(),
-                        extension_id: Arc::from(&**ext_id),
-                        targets: targets.clone(),
-                        env,
-                        agent_id: agent_name.clone(),
-                    }) as Box<dyn ExternalAgentServer>,
-                    ExternalAgentSource::Extension,
-                    icon,
-                    display_name.clone(),
-                ),
-            );
         }
 
         *old_settings = Some(new_settings);
