@@ -1121,6 +1121,18 @@ impl GitStore {
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 
+    pub fn commit_log_paginated(
+        &self,
+        repo: &Entity<Repository>,
+        skip: usize,
+        limit: Option<usize>,
+        cx: &mut App,
+    ) -> Task<Result<git::repository::CommitLog>> {
+        let rx = repo.update(cx, |repo, _| repo.commit_log_paginated(skip, limit));
+
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+    }
+
     pub fn get_permalink_to_line(
         &self,
         buffer: &Entity<Buffer>,
@@ -4229,6 +4241,23 @@ impl Repository {
                             .collect(),
                         path: RepoPath::from_proto(&response.path)?,
                     })
+                }
+            }
+        })
+    }
+
+    pub fn commit_log_paginated(
+        &mut self,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> oneshot::Receiver<Result<git::repository::CommitLog>> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.commit_log_paginated(skip, limit).await
+                }
+                RepositoryState::Remote(_) => {
+                    Err(anyhow::anyhow!("commit log not yet supported for remote repositories"))
                 }
             }
         })
