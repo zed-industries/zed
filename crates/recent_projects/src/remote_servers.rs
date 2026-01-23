@@ -2678,7 +2678,7 @@ impl RemoteServerProjects {
     }
 }
 
-fn spawn_ssh_config_watch(fs: Arc<dyn Fs>, cx: &Context<RemoteServerProjects>) -> Task<()> {    
+fn spawn_ssh_config_watch(fs: Arc<dyn Fs>, cx: &Context<RemoteServerProjects>) -> Task<()> {
     enum ConfigSource {
         User(String),
         Global(String),
@@ -2690,16 +2690,17 @@ fn spawn_ssh_config_watch(fs: Arc<dyn Fs>, cx: &Context<RemoteServerProjects>) -
     // Setup User Watcher
     let user_path = user_ssh_config_file();
     info!("SSH: Watching User Config at: {:?}", user_path);
-    
+
     // We clone 'fs' here because we might need it again for the global watcher.
     let (user_s, user_t) = watch_config_file(cx.background_executor(), fs.clone(), user_path);
     streams.push(user_s.map(ConfigSource::User).boxed());
     tasks.push(user_t);
 
-    // Setup Global Watcher    
+    // Setup Global Watcher
     if let Some(gp) = global_ssh_config_file() {
-        info!("SSH: Watching Global Config at: {:?}", gp);        
-        let (global_s, global_t) = watch_config_file(cx.background_executor(), fs, gp.to_path_buf());
+        info!("SSH: Watching Global Config at: {:?}", gp);
+        let (global_s, global_t) =
+            watch_config_file(cx.background_executor(), fs, gp.to_path_buf());
         streams.push(global_s.map(ConfigSource::Global).boxed());
         tasks.push(global_t);
     } else {
@@ -2709,7 +2710,7 @@ fn spawn_ssh_config_watch(fs: Arc<dyn Fs>, cx: &Context<RemoteServerProjects>) -
     // Combine into a single stream so that only one is parsed at once.
     let mut merged_stream = futures::stream::select_all(streams);
 
-    cx.spawn(async move |remote_server_projects, cx| {        
+    cx.spawn(async move |remote_server_projects, cx| {
         let _tasks = tasks; // Keeps the background watchers alive
         let mut global_hosts = BTreeSet::default();
         let mut user_hosts = BTreeSet::default();
@@ -2718,21 +2719,25 @@ fn spawn_ssh_config_watch(fs: Arc<dyn Fs>, cx: &Context<RemoteServerProjects>) -
             match event {
                 ConfigSource::Global(content) => {
                     global_hosts = parse_ssh_config_hosts(&content);
-                },
+                }
                 ConfigSource::User(content) => {
                     user_hosts = parse_ssh_config_hosts(&content);
                 }
             }
 
             // Sync to Model
-            if remote_server_projects.update(cx, |project, cx| {
-                project.ssh_config_servers = global_hosts.iter()
-                    .chain(user_hosts.iter())
-                    .map(SharedString::from)
-                    .collect();
-                cx.notify();
-            }).is_err() { 
-                return; 
+            if remote_server_projects
+                .update(cx, |project, cx| {
+                    project.ssh_config_servers = global_hosts
+                        .iter()
+                        .chain(user_hosts.iter())
+                        .map(SharedString::from)
+                        .collect();
+                    cx.notify();
+                })
+                .is_err()
+            {
+                return;
             }
         }
     })
