@@ -250,7 +250,6 @@ fn main() {
     }
 
     zlog::init();
-    zlog::init_output_stdout();
 
     if stdout_is_a_pty() {
         zlog::init_output_stdout();

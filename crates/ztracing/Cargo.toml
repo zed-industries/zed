@@ -14,6 +14,7 @@ tracy = ["tracing-tracy", "tracy-client"]
 [dependencies]
 zlog.workspace = true
 tracing.workspace = true
+tree-sitter.workspace = true
 
 tracing-subscriber = "0.3.22"
 tracing-tracy = { version = "0.11.4", optional = true, features = ["enable", "ondemand"] }

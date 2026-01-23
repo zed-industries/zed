@@ -689,7 +689,6 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         string: &str,
     ) -> impl Future<Output = Result<Arc<Language>>> {
-        log::trace!("language_for_name_or_extension({string})");
         let string = UniCase::new(string);
         let rx = self.get_or_load_language(|name, config, current_best_match| {
             let name_matches = || {
@@ -751,11 +750,6 @@ impl LanguageRegistry {
         let this = self.clone();
         async move {
             if let Some(language) = language {
-                log::info!(
-                    "Loading {} for path {}",
-                    language.name().0.as_str(),
-                    path.display()
-                );
                 this.load_language(&language).await?
             } else {
                 Err(anyhow!(LanguageNotFound))
@@ -1031,7 +1025,7 @@ impl LanguageRegistry {
             let _ = tx.send(Err(anyhow!(LanguageNotFound)));
             return rx;
         };
-        log::trace!("get_or_load_language");
+
         self.load_language(&language)
     }
 

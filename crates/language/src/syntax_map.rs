@@ -416,6 +416,7 @@ impl SyntaxSnapshot {
         self.layers = layers;
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn reparse(
         &mut self,
         text: &BufferSnapshot,
@@ -425,6 +426,7 @@ impl SyntaxSnapshot {
         self.reparse_(text, registry, root_language, None).ok();
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn reparse_with_timeout(
         &mut self,
         text: &BufferSnapshot,
@@ -1511,7 +1513,6 @@ fn get_injections(
 ) {
     let mut query_cursor = QueryCursorHandle::new();
     let mut prev_match = None;
-    log::trace!("get_injections");
 
     // Ensure that a `ParseStep` is created for every combined injection language, even
     // if there currently no matches for that injection.
