@@ -1522,13 +1522,13 @@
     //   "enterprise_uri": "",
     //   "proxy": "",
     //   "proxy_no_verify": false
-    //   "enabled_next_edit_suggestions": true
+    //   "enable_next_edit_suggestions": true
     // },
     "copilot": {
       "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null,
-      "enabled_next_edit_suggestions": true,
+      "enable_next_edit_suggestions": true,
     },
     "codestral": {
       "api_url": "https://codestral.mistral.ai",

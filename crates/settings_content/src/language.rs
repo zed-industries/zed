@@ -213,7 +213,7 @@ pub struct CopilotSettingsContent {
     /// Whether the Copilot Next Edit Suggestions feature is enabled.
     ///
     /// Default: true
-    pub enabled_next_edit_suggestions: Option<bool>,
+    pub enable_next_edit_suggestions: Option<bool>,
 }
 
 #[with_fallible_options]
