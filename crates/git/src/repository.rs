@@ -2606,7 +2606,9 @@ impl GitRepository for RealGitRepository {
                     if !lines.is_empty() {
                         let commits = parse_initial_graph_output(lines.iter().map(|s| s.as_str()));
                         if request_tx.send(commits).await.is_err() {
-                            log::warn!("initial_graph_data: receiver dropped while sending final chunk");
+                            log::warn!(
+                                "initial_graph_data: receiver dropped while sending commits"
+                            );
                         }
                     }
                     break;
