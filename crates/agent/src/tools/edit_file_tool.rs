@@ -419,17 +419,6 @@ impl AgentTool for EditFileTool {
                         EditAgentOutputEvent::AmbiguousEditRange(ranges) => ambiguous_ranges = ranges,
                         EditAgentOutputEvent::ResolvingEditRange(range) => {
                             diff.update(cx, |card, cx| card.reveal_range(range.clone(), cx));
-                            // if !emitted_location {
-                            //     let line = buffer.update(cx, |buffer, _cx| {
-                            //         range.start.to_point(&buffer.snapshot()).row
-                            //     }).ok();
-                            //     if let Some(abs_path) = abs_path.clone() {
-                            //         event_stream.update_fields(ToolCallUpdateFields {
-                            //             locations: Some(vec![ToolCallLocation { path: abs_path, line }]),
-                            //             ..Default::default()
-                            //         });
-                            //     }
-                            // }
                         }
                     }
                 }
@@ -437,9 +426,7 @@ impl AgentTool for EditFileTool {
                 output.await?;
 
                 let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
-                    let settings = language_settings::language_settings(cx)
-                        .buffer(buffer)
-                        .get();
+                    let settings = language_settings::LanguageSettings::for_buffer(buffer, cx);
                     settings.format_on_save != FormatOnSave::Off
                 });
 

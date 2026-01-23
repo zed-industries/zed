@@ -23,7 +23,7 @@ use gpui::{
     VisualTestContext,
 };
 use indoc::indoc;
-use language::{FakeLspAdapter, language_settings::language_settings, rust_lang};
+use language::{FakeLspAdapter, language_settings::LanguageSettings, rust_lang};
 use lsp::DEFAULT_LSP_REQUEST_TIMEOUT;
 use multi_buffer::{AnchorRangeExt as _, MultiBufferRow};
 use pretty_assertions::assert_eq;
@@ -4048,7 +4048,7 @@ async fn test_collaborating_with_external_editorconfig(
 
     // Verify client A sees external editorconfig settings
     cx_a.read(|cx| {
-        let settings = language_settings(cx).buffer(buffer_a.read(cx)).get();
+        let settings = LanguageSettings::for_buffer(buffer_a.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
     });
 
@@ -4065,7 +4065,7 @@ async fn test_collaborating_with_external_editorconfig(
 
     // Verify client B also sees external editorconfig settings
     cx_b.read(|cx| {
-        let settings = language_settings(cx).buffer(buffer_b.read(cx)).get();
+        let settings = LanguageSettings::for_buffer(buffer_b.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
     });
 
@@ -4084,13 +4084,13 @@ async fn test_collaborating_with_external_editorconfig(
 
     // Verify client A sees updated settings
     cx_a.read(|cx| {
-        let settings = language_settings(cx).buffer(buffer_a.read(cx)).get();
+        let settings = LanguageSettings::for_buffer(buffer_a.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(9));
     });
 
     // Verify client B also sees updated settings
     cx_b.read(|cx| {
-        let settings = language_settings(cx).buffer(buffer_b.read(cx)).get();
+        let settings = LanguageSettings::for_buffer(buffer_b.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(9));
     });
 }

@@ -14,7 +14,7 @@ use gpui::{
 use http_client::BlockedHttpClient;
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
-    language_settings::{Formatter, FormatterList, language_settings},
+    language_settings::{Formatter, FormatterList, LanguageSettings},
     rust_lang, tree_sitter_typescript,
 };
 use node_runtime::NodeRuntime;
@@ -176,10 +176,7 @@ async fn test_sharing_an_ssh_remote_project(
 
     cx_b.read(|cx| {
         assert_eq!(
-            language_settings(cx)
-                .buffer(buffer_b.read(cx))
-                .get()
-                .language_servers,
+            LanguageSettings::for_buffer(buffer_b.read(cx), cx).language_servers,
             ["override-rust-analyzer".to_string()]
         )
     });
@@ -1286,10 +1283,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
 
     cx_a.read(|cx| {
         assert_eq!(
-            language_settings(cx)
-                .buffer(buffer_before_approval.read(cx))
-                .get()
-                .language_servers,
+            LanguageSettings::for_buffer(buffer_before_approval.read(cx), cx).language_servers,
             ["...".to_string()],
             "remote .zed/settings.json must not sync before trust approval"
         )
@@ -1317,10 +1311,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
 
     cx_a.read(|cx| {
         assert_eq!(
-            language_settings(cx)
-                .buffer(buffer_before_approval.read(cx))
-                .get()
-                .language_servers,
+            LanguageSettings::for_buffer(buffer_before_approval.read(cx), cx).language_servers,
             ["override-rust-analyzer".to_string()],
             "remote .zed/settings.json should sync after trust approval"
         )

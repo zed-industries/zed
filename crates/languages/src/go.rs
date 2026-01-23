@@ -7,7 +7,7 @@ use http_client::github::latest_github_release;
 pub use language::*;
 use language::{
     LanguageName, LanguageToolchainStore, LspAdapterDelegate, LspInstaller,
-    language_settings::language_settings,
+    language_settings::LanguageSettings,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
 
@@ -211,9 +211,7 @@ impl LspAdapter for GoLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let semantic_tokens_enabled = cx.update(|cx| {
-            language_settings(cx)
-                .language(Some(LanguageName::new("Go")))
-                .get()
+            LanguageSettings::resolve(None, Some(&LanguageName::new("Go")), cx)
                 .semantic_tokens
                 .enabled()
         });

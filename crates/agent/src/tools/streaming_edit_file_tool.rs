@@ -592,9 +592,7 @@ impl EditSession {
         }
 
         let format_on_save_enabled = self.buffer.read_with(cx, |buffer, cx| {
-            let settings = language_settings::language_settings(cx)
-                .buffer(buffer)
-                .get();
+            let settings = language_settings::LanguageSettings::for_buffer(buffer, cx);
             settings.format_on_save != FormatOnSave::Off
         });
 

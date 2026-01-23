@@ -11,7 +11,7 @@ use gpui::{App, Entity, Pixels, Task};
 use itertools::Itertools;
 use language::{
     BufferRow,
-    language_settings::{InlayHintKind, InlayHintSettings, language_settings},
+    language_settings::{InlayHintKind, InlayHintSettings},
 };
 use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId, MultiBufferSnapshot};
@@ -38,14 +38,7 @@ pub fn inlay_hint_settings(
     snapshot: &MultiBufferSnapshot,
     cx: &mut Context<Editor>,
 ) -> InlayHintSettings {
-    if let Some((buffer, offset)) = snapshot.point_to_buffer_offset(location) {
-        language_settings(cx)
-            .buffer_snapshot_at(buffer, offset)
-            .get()
-            .inlay_hints
-    } else {
-        language_settings(cx).get().inlay_hints
-    }
+    snapshot.language_settings_at(location, cx).inlay_hints
 }
 
 #[derive(Debug)]

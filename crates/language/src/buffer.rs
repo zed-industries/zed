@@ -4,7 +4,7 @@ use crate::{
     DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig, PLAIN_TEXT,
     RunnableCapture, RunnableTag, TextObject, TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
-    language_settings::{AutoIndentMode, LanguageSettings, language_settings},
+    language_settings::{AutoIndentMode, LanguageSettings},
     outline::OutlineItem,
     row_chunk::RowChunks,
     syntax_map::{
@@ -2778,10 +2778,12 @@ impl Buffer {
                     } else {
                         // The auto-indent setting is not present in editorconfigs, hence
                         // we can avoid passing the file here.
-                        let auto_indent_mode = language_settings(cx)
-                            .language(language.map(|l| l.name()))
-                            .get()
-                            .auto_indent;
+                        let auto_indent_mode = LanguageSettings::resolve(
+                            None,
+                            language.map(|l| l.name()).as_ref(),
+                            cx,
+                        )
+                        .auto_indent;
                         let apply_syntax_indent = auto_indent_mode == AutoIndentMode::SyntaxAware;
                         previous_setting = Some((language_id, apply_syntax_indent));
                         apply_syntax_indent
@@ -3422,9 +3424,7 @@ impl BufferSnapshot {
     /// Returns [`IndentSize`] for a given position that respects user settings
     /// and language preferences.
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &App) -> IndentSize {
-        let settings = language_settings(cx)
-            .buffer_snapshot_at(self, position)
-            .get();
+        let settings = self.settings_at(position, cx);
         if settings.hard_tabs {
             IndentSize::tab()
         } else {
@@ -3913,9 +3913,7 @@ impl BufferSnapshot {
         position: D,
         cx: &'a App,
     ) -> Cow<'a, LanguageSettings> {
-        language_settings(cx)
-            .buffer_snapshot_at(self, position)
-            .get()
+        LanguageSettings::for_buffer_snapshot(self, Some(position.to_offset(self)), cx)
     }
 
     pub fn char_classifier_at<T: ToOffset>(&self, point: T) -> CharClassifier {

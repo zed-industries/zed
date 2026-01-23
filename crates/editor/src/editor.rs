@@ -136,8 +136,8 @@ use language::{
     OutlineItem, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
     WordsQuery,
     language_settings::{
-        self, LanguageSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
-        all_language_settings, language_settings,
+        self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior,
+        WordsCompletionMode, all_language_settings,
     },
     point_from_lsp, point_to_lsp, text_diff_with_options,
 };
@@ -596,8 +596,8 @@ impl Default for EditorStyle {
 }
 
 pub fn make_inlay_hints_style(cx: &App) -> HighlightStyle {
-    let show_background = language_settings::language_settings(cx)
-        .get()
+    let show_background = AllLanguageSettings::get_global(cx)
+        .defaults
         .inlay_hints
         .show_background;
 
@@ -5936,9 +5936,7 @@ impl Editor {
             .read(cx)
             .text_anchor_for_position(position, cx)?;
 
-        let settings = language_settings::language_settings(cx)
-            .buffer_at(buffer.read(cx), buffer_position)
-            .get();
+        let settings = LanguageSettings::for_buffer_at(&buffer.read(cx), buffer_position, cx);
         if !settings.use_on_type_format {
             return None;
         }
@@ -6052,9 +6050,7 @@ impl Editor {
         let language = buffer_snapshot
             .language_at(buffer_position.text_anchor)
             .map(|language| language.name());
-        let language_settings = language_settings(cx)
-            .buffer_snapshot_at(&buffer_snapshot, buffer_position.text_anchor)
-            .get();
+        let language_settings = multibuffer_snapshot.language_settings_at(buffer_position, cx);
         let completion_settings = language_settings.completions.clone();
 
         let show_completions_on_input = self
@@ -6922,9 +6918,7 @@ impl Editor {
             let resolved_tasks = resolved_tasks.as_ref()?;
             let buffer = buffer.read(cx);
             let language = buffer.language()?;
-            let debug_adapter = language_settings(cx)
-                .buffer(buffer)
-                .get()
+            let debug_adapter = LanguageSettings::for_buffer(&buffer, cx)
                 .debuggers
                 .first()
                 .map(SharedString::from)
@@ -8022,11 +8016,7 @@ impl Editor {
             return EditPredictionSettings::Disabled;
         }
 
-        if !language_settings(cx)
-            .buffer(buffer.read(cx))
-            .get()
-            .show_edit_predictions
-        {
+        if !LanguageSettings::for_buffer(&buffer.read(cx), cx).show_edit_predictions {
             return EditPredictionSettings::Disabled;
         };
 
@@ -24352,7 +24342,7 @@ impl Editor {
                 let buffer = buffer.read(cx);
                 let language = buffer.language().map(|language| language.name());
                 if let hash_map::Entry::Vacant(v) = acc.entry(language) {
-                    v.insert(language_settings(cx).buffer(buffer).get().into_owned());
+                    v.insert(LanguageSettings::for_buffer(&buffer, cx).into_owned());
                 }
                 acc
             },
@@ -25854,9 +25844,7 @@ fn process_completion_for_edit(
                 CompletionIntent::CompleteWithInsert => false,
                 CompletionIntent::CompleteWithReplace => true,
                 CompletionIntent::Complete | CompletionIntent::Compose => {
-                    let insert_mode = language_settings(cx)
-                        .buffer(buffer)
-                        .get()
+                    let insert_mode = LanguageSettings::for_buffer(&buffer, cx)
                         .completions
                         .lsp_insert_mode;
                     match insert_mode {
