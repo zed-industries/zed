@@ -118,6 +118,35 @@ impl MentionSet {
         self.mentions.insert(crease_id, (uri, task));
     }
 
+    /// Creates the appropriate confirmation task for a mention based on its URI type.
+    /// This is used when pasting mention links to properly load their content.
+    pub fn confirm_mention_for_uri(
+        &mut self,
+        mention_uri: MentionUri,
+        supports_images: bool,
+        http_client: Arc<HttpClientWithUrl>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Mention>> {
+        match mention_uri {
+            MentionUri::Fetch { url } => self.confirm_mention_for_fetch(url, http_client, cx),
+            MentionUri::Directory { .. } => Task::ready(Ok(Mention::Link)),
+            MentionUri::Thread { id, .. } => self.confirm_mention_for_thread(id, cx),
+            MentionUri::TextThread { path, .. } => self.confirm_mention_for_text_thread(path, cx),
+            MentionUri::File { abs_path } => {
+                self.confirm_mention_for_file(abs_path, supports_images, cx)
+            }
+            MentionUri::Symbol {
+                abs_path,
+                line_range,
+                ..
+            } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
+            MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
+            MentionUri::PastedImage | MentionUri::Selection { .. } => {
+                Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
+            }
+        }
+    }
+
     pub fn remove_mention(&mut self, crease_id: &CreaseId) {
         self.mentions.remove(crease_id);
     }

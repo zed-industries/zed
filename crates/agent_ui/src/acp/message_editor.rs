@@ -878,7 +878,7 @@ impl MessageEditor {
             }
             return;
         }
-        // Handle text paste with potential markdown mention links
+        // Handle text paste with potential markdown mention links.
         // This must be checked BEFORE paste_images_as_context because that function
         // returns a task even when there are no images in the clipboard.
         if let Some(clipboard_text) = cx
@@ -891,7 +891,7 @@ impl MessageEditor {
         {
             let path_style = workspace.read(cx).project().read(cx).path_style(cx);
 
-            // Parse markdown mention links: [@name](uri)
+            // Parse markdown mention links in format: [@name](uri)
             let parsed_mentions = parse_mention_links(&clipboard_text, path_style);
 
             if !parsed_mentions.is_empty() {
@@ -907,7 +907,10 @@ impl MessageEditor {
                     editor.insert(&clipboard_text, window, cx);
                 });
 
-                // Now create creases for each mention
+                let supports_images = self.prompt_capabilities.borrow().image;
+                let http_client = workspace.read(cx).client().http_client();
+
+                // Now create creases for each mention and load their content
                 let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
                 for (range, mention_uri) in parsed_mentions {
                     let start_offset = insertion_offset.0 + range.start;
@@ -927,15 +930,27 @@ impl MessageEditor {
                     ) else {
                         continue;
                     };
-                    drop(tx);
 
-                    self.mention_set.update(cx, |mention_set, _cx| {
-                        mention_set.insert_mention(
-                            crease_id,
+                    // Create the confirmation task based on the mention URI type.
+                    // This properly loads file content, fetches URLs, etc.
+                    let task = self.mention_set.update(cx, |mention_set, cx| {
+                        mention_set.confirm_mention_for_uri(
                             mention_uri.clone(),
-                            Task::ready(Ok(Mention::Link)).shared(),
+                            supports_images,
+                            http_client.clone(),
+                            cx,
                         )
                     });
+                    let task = cx
+                        .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
+                        .shared();
+
+                    self.mention_set.update(cx, |mention_set, _cx| {
+                        mention_set.insert_mention(crease_id, mention_uri.clone(), task.clone())
+                    });
+
+                    // Drop the tx after inserting to signal the crease is ready
+                    drop(tx);
                 }
                 return;
             }
@@ -1369,12 +1384,13 @@ fn parse_mention_links(text: &str, path_style: PathStyle) -> Vec<(Range<usize>, 
     while let Some(link_start) = text[search_start..].find("[@") {
         let absolute_start = search_start + link_start;
 
-        // Find the closing bracket for the name
-        let Some(name_end_relative) = text[absolute_start + 2..].find("]") else {
+        // Find the matching closing bracket for the name, handling nested brackets.
+        // Start at the '[' character so find_matching_bracket can track depth correctly.
+        let Some(name_end) = find_matching_bracket(&text[absolute_start..], '[', ']') else {
             search_start = absolute_start + 2;
             continue;
         };
-        let name_end = absolute_start + 2 + name_end_relative;
+        let name_end = absolute_start + name_end;
 
         // Check for opening parenthesis immediately after
         if text.get(name_end + 1..name_end + 2) != Some("(") {
@@ -1382,13 +1398,13 @@ fn parse_mention_links(text: &str, path_style: PathStyle) -> Vec<(Range<usize>, 
             continue;
         }
 
-        // Find the closing parenthesis for the URI
+        // Find the matching closing parenthesis for the URI, handling nested parens
         let uri_start = name_end + 2;
-        let Some(uri_end_relative) = text[uri_start..].find(")") else {
+        let Some(uri_end_relative) = find_matching_bracket(&text[name_end + 1..], '(', ')') else {
             search_start = uri_start;
             continue;
         };
-        let uri_end = uri_start + uri_end_relative;
+        let uri_end = name_end + 1 + uri_end_relative;
         let link_end = uri_end + 1;
 
         let uri_str = &text[uri_start..uri_end];
@@ -1402,6 +1418,24 @@ fn parse_mention_links(text: &str, path_style: PathStyle) -> Vec<(Range<usize>, 
     }
 
     mentions
+}
+
+/// Finds the position of the matching closing bracket, handling nested brackets.
+/// The input `text` should start with the opening bracket.
+/// Returns the index of the matching closing bracket relative to `text`.
+fn find_matching_bracket(text: &str, open: char, close: char) -> Option<usize> {
+    let mut depth = 0;
+    for (index, character) in text.char_indices() {
+        if character == open {
+            depth += 1;
+        } else if character == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(index);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1436,7 +1470,7 @@ mod tests {
 
     #[test]
     fn test_parse_mention_links() {
-        // Single mention
+        // Single file mention
         let text = "[@bundle-mac](file:///Users/test/zed/script/bundle-mac)";
         let mentions = parse_mention_links(text, PathStyle::local());
         assert_eq!(mentions.len(), 1);
@@ -1463,6 +1497,67 @@ mod tests {
         let mentions = parse_mention_links(text, PathStyle::local());
         assert_eq!(mentions.len(), 1);
         assert_eq!(mentions[0].0.start, 7);
+
+        // HTTP URL mention (Fetch)
+        let text = "Check out [@docs](https://example.com/docs) for more info";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 1);
+        assert!(matches!(mentions[0].1, MentionUri::Fetch { .. }));
+
+        // Directory mention (trailing slash)
+        let text = "[@src](file:///path/to/src/)";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 1);
+        assert!(matches!(mentions[0].1, MentionUri::Directory { .. }));
+
+        // Multiple different mention types
+        let text = "File [@f](file:///a) and URL [@u](https://b.com) and dir [@d](file:///c/)";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 3);
+        assert!(matches!(mentions[0].1, MentionUri::File { .. }));
+        assert!(matches!(mentions[1].1, MentionUri::Fetch { .. }));
+        assert!(matches!(mentions[2].1, MentionUri::Directory { .. }));
+
+        // Adjacent mentions without separator
+        let text = "[@a](file:///a)[@b](file:///b)";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 2);
+
+        // Regular markdown link (not a mention) should be ignored
+        let text = "[regular link](https://example.com)";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 0);
+
+        // Incomplete mention link patterns
+        let text = "[@name] without url and [@name( malformed";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 0);
+
+        // Nested brackets in name portion
+        let text = "[@name [with brackets]](file:///path/to/file)";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].0, 0..text.len());
+
+        // Deeply nested brackets
+        let text = "[@outer [inner [deep]]](file:///path)";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 1);
+
+        // Unbalanced brackets should fail gracefully
+        let text = "[@unbalanced [bracket](file:///path)";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 0);
+
+        // Nested parentheses in URI (common in URLs with query params)
+        let text = "[@wiki](https://en.wikipedia.org/wiki/Rust_(programming_language))";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 1);
+        if let MentionUri::Fetch { url } = &mentions[0].1 {
+            assert!(url.as_str().contains("Rust_(programming_language)"));
+        } else {
+            panic!("Expected Fetch URI");
+        }
     }
 
     #[gpui::test]
