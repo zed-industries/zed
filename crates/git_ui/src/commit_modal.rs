@@ -1,7 +1,7 @@
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{GitPanel, commit_message_editor};
 use git::repository::CommitOptions;
-use git::{Amend, Commit, GenerateCommitMessage, Signoff};
+use git::{Amend, Commit, GenerateCommitMessage, Hooks, Signoff};
 use panel::{panel_button, panel_editor_style};
 use project::DisableAiSettings;
 use settings::Settings;
@@ -281,6 +281,7 @@ impl CommitModal {
                     let git_panel = git_panel_entity.read(cx);
                     let amend_enabled = git_panel.amend_pending();
                     let signoff_enabled = git_panel.signoff_enabled();
+                    let hooks_enabled = git_panel.hooks_enabled();
                     let has_previous_commit = git_panel.head_commit(cx).is_some();
 
                     Some(ContextMenu::build(window, cx, |context_menu, _, _| {
@@ -320,6 +321,20 @@ impl CommitModal {
                                     }
                                 },
                             )
+                            .toggleable_entry(
+                                "Hooks",
+                                hooks_enabled,
+                                IconPosition::Start,
+                                Some(Box::new(Hooks)),
+                                {
+                                    let git_panel = git_panel_entity.clone();
+                                    move |window, cx| {
+                                        git_panel.update(cx, |git_panel, cx| {
+                                            git_panel.toggle_hooks_enabled(&Hooks, window, cx);
+                                        })
+                                    }
+                                },
+                            )
                     }))
                 }
             })
@@ -337,6 +352,7 @@ impl CommitModal {
             active_repo,
             is_amend_pending,
             is_signoff_enabled,
+            is_hooks_enabled,
             workspace,
         ) = self.git_panel.update(cx, |git_panel, cx| {
             let (can_commit, tooltip) = git_panel.configure_commit_button(cx);
@@ -346,6 +362,7 @@ impl CommitModal {
             let active_repo = git_panel.active_repository.clone();
             let is_amend_pending = git_panel.amend_pending();
             let is_signoff_enabled = git_panel.signoff_enabled();
+            let is_run_hooks = git_panel.hooks_enabled();
             (
                 can_commit,
                 tooltip,
@@ -355,6 +372,7 @@ impl CommitModal {
                 active_repo,
                 is_amend_pending,
                 is_signoff_enabled,
+                is_run_hooks,
                 git_panel.workspace.clone(),
             )
         });
@@ -452,6 +470,7 @@ impl CommitModal {
                                     CommitOptions {
                                         amend: is_amend_pending,
                                         signoff: is_signoff_enabled,
+                                        hooks: is_hooks_enabled,
                                     },
                                     window,
                                     cx,
@@ -472,9 +491,14 @@ impl CommitModal {
                                             &git::Commit
                                         }),
                                         format!(
-                                            "git commit{}{}",
+                                            "git commit{}{}{}",
                                             if is_amend_pending { " --amend" } else { "" },
-                                            if is_signoff_enabled { " --signoff" } else { "" }
+                                            if is_signoff_enabled { " --signoff" } else { "" },
+                                            if !is_hooks_enabled {
+                                                " --no-verify"
+                                            } else {
+                                                ""
+                                            }
                                         ),
                                         &focus_handle.clone(),
                                         cx,

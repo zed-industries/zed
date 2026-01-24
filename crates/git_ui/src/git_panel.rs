@@ -31,7 +31,7 @@ use git::stash::GitStash;
 use git::status::StageStatus;
 use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
-    ExpandCommitEditor, GitHostingProviderRegistry, RestoreTrackedFiles, StageAll, StashAll,
+    ExpandCommitEditor, GitHostingProviderRegistry, Hooks, RestoreTrackedFiles, StageAll, StashAll,
     StashApply, StashPop, TrashUntrackedFiles, UnstageAll,
 };
 use gpui::{
@@ -597,6 +597,7 @@ pub struct GitPanel {
     amend_pending: bool,
     original_commit_message: Option<String>,
     signoff_enabled: bool,
+    hooks_enabled: bool,
     pending_serialization: Task<()>,
     pub(crate) project: Entity<Project>,
     scroll_handle: UniformListScrollHandle,
@@ -763,6 +764,7 @@ impl GitPanel {
                 amend_pending: false,
                 original_commit_message: None,
                 signoff_enabled: false,
+                hooks_enabled: true,
                 pending_serialization: Task::ready(()),
                 single_staged_entry: None,
                 single_tracked_entry: None,
@@ -2073,6 +2075,7 @@ impl GitPanel {
                 CommitOptions {
                     amend: false,
                     signoff: self.signoff_enabled,
+                    hooks: self.hooks_enabled,
                 },
                 window,
                 cx,
@@ -2113,6 +2116,7 @@ impl GitPanel {
                         CommitOptions {
                             amend: true,
                             signoff: self.signoff_enabled,
+                            hooks: self.hooks_enabled,
                         },
                         window,
                         cx,
@@ -4016,6 +4020,7 @@ impl GitPanel {
                 let has_previous_commit = self.head_commit(cx).is_some();
                 let amend = self.amend_pending();
                 let signoff = self.signoff_enabled;
+                let hooks_enabled = self.hooks_enabled;
 
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |context_menu, _, _| {
@@ -4047,6 +4052,13 @@ impl GitPanel {
                                 IconPosition::Start,
                                 Some(Box::new(Signoff)),
                                 move |window, cx| window.dispatch_action(Box::new(Signoff), cx),
+                            )
+                            .toggleable_entry(
+                                "Hooks",
+                                hooks_enabled,
+                                IconPosition::Start,
+                                Some(Box::new(Hooks)),
+                                move |window, cx| window.dispatch_action(Box::new(Hooks), cx),
                             )
                     }))
                 }
@@ -4320,6 +4332,7 @@ impl GitPanel {
         let commit_tooltip_focus_handle = self.commit_editor.focus_handle(cx);
         let amend = self.amend_pending();
         let signoff = self.signoff_enabled;
+        let hooks = self.hooks_enabled;
 
         let label_color = if self.pending_commit.is_some() {
             Color::Disabled
@@ -4353,7 +4366,11 @@ impl GitPanel {
                         git_panel
                             .update(cx, |git_panel, cx| {
                                 git_panel.commit_changes(
-                                    CommitOptions { amend, signoff },
+                                    CommitOptions {
+                                        amend,
+                                        signoff,
+                                        hooks,
+                                    },
                                     window,
                                     cx,
                                 );
@@ -5302,6 +5319,25 @@ impl GitPanel {
         cx.notify();
     }
 
+    pub fn hooks_enabled(&self) -> bool {
+        self.hooks_enabled
+    }
+
+    pub fn set_hooks_enabled(&mut self, value: bool, cx: &mut Context<Self>) {
+        self.hooks_enabled = value;
+        self.serialize(cx);
+        cx.notify();
+    }
+
+    pub fn toggle_hooks_enabled(
+        &mut self,
+        _: &Hooks,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_hooks_enabled(!self.hooks_enabled, cx);
+    }
+
     pub fn signoff_enabled(&self) -> bool {
         self.signoff_enabled
     }
@@ -5431,6 +5467,7 @@ impl Render for GitPanel {
                     .on_action(cx.listener(GitPanel::on_commit))
                     .on_action(cx.listener(GitPanel::on_amend))
                     .on_action(cx.listener(GitPanel::toggle_signoff_enabled))
+                    .on_action(cx.listener(GitPanel::toggle_hooks_enabled))
                     .on_action(cx.listener(Self::stage_all))
                     .on_action(cx.listener(Self::unstage_all))
                     .on_action(cx.listener(Self::stage_selected))
