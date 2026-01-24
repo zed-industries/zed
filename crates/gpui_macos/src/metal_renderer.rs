@@ -437,7 +437,7 @@ impl MetalRenderer {
         // nothing to do
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    pub fn draw(&mut self, scene: &Scene, overlay: Option<&Scene>) {
         let layer = match &self.layer {
             Some(l) => l.clone(),
             None => {
@@ -468,8 +468,13 @@ impl MetalRenderer {
                 .lock()
                 .acquire(&self.device, self.is_unified_memory);
 
-            let command_buffer =
-                self.draw_primitives(scene, &mut instance_buffer, drawable, viewport_size);
+            let command_buffer = self.draw_primitives(
+                scene,
+                overlay,
+                &mut instance_buffer,
+                drawable,
+                viewport_size,
+            );
 
             match command_buffer {
                 Ok(command_buffer) => {
@@ -647,8 +652,13 @@ impl MetalRenderer {
                 .lock()
                 .acquire(&self.device, self.is_unified_memory);
 
-            let command_buffer =
-                self.draw_primitives_to_texture(scene, &mut instance_buffer, &target_texture, size);
+            let command_buffer = self.draw_primitives_to_texture(
+                scene,
+                None,
+                &mut instance_buffer,
+                &target_texture,
+                size,
+            );
 
             match command_buffer {
                 Ok(command_buffer) => {
@@ -732,16 +742,24 @@ impl MetalRenderer {
     fn draw_primitives(
         &mut self,
         scene: &Scene,
+        overlay: Option<&Scene>,
         instance_buffer: &mut InstanceBuffer,
         drawable: &metal::MetalDrawableRef,
         viewport_size: Size<DevicePixels>,
     ) -> Result<metal::CommandBuffer> {
-        self.draw_primitives_to_texture(scene, instance_buffer, drawable.texture(), viewport_size)
+        self.draw_primitives_to_texture(
+            scene,
+            overlay,
+            instance_buffer,
+            drawable.texture(),
+            viewport_size,
+        )
     }
 
     fn draw_primitives_to_texture(
         &mut self,
         scene: &Scene,
+        overlay: Option<&Scene>,
         instance_buffer: &mut InstanceBuffer,
         texture: &metal::TextureRef,
         viewport_size: Size<DevicePixels>,
@@ -761,7 +779,27 @@ impl MetalRenderer {
             },
         );
 
-        for batch in scene.batches() {
+        let overlay_counts = overlay.map(|scene| {
+            (
+                scene.paths.len(),
+                scene.shadows.len(),
+                scene.quads.len(),
+                scene.underlines.len(),
+                scene.monochrome_sprites.len(),
+                scene.polychrome_sprites.len(),
+                scene.surfaces.len(),
+            )
+        });
+        let totals = overlay_counts.unwrap_or_default();
+        let total_paths = scene.paths.len() + totals.0;
+        let total_shadows = scene.shadows.len() + totals.1;
+        let total_quads = scene.quads.len() + totals.2;
+        let total_underlines = scene.underlines.len() + totals.3;
+        let total_mono = scene.monochrome_sprites.len() + totals.4;
+        let total_poly = scene.polychrome_sprites.len() + totals.5;
+        let total_surfaces = scene.surfaces.len() + totals.6;
+
+        for batch in scene.batches_with_overlay(overlay) {
             let ok = match batch {
                 PrimitiveBatch::Shadows(range) => self.draw_shadows(
                     &scene.shadows[range],
@@ -848,13 +886,13 @@ impl MetalRenderer {
                 command_encoder.end_encoding();
                 anyhow::bail!(
                     "scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
-                    scene.paths.len(),
-                    scene.shadows.len(),
-                    scene.quads.len(),
-                    scene.underlines.len(),
-                    scene.monochrome_sprites.len(),
-                    scene.polychrome_sprites.len(),
-                    scene.surfaces.len(),
+                    total_paths,
+                    total_shadows,
+                    total_quads,
+                    total_underlines,
+                    total_mono,
+                    total_poly,
+                    total_surfaces,
                 );
             }
         }
