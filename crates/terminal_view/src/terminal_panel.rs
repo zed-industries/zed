@@ -60,17 +60,7 @@ pub fn init(cx: &mut App) {
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 if is_enabled_in_workspace(workspace, cx) {
                     workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
-                    // Create a terminal if panel is empty when user explicitly opens it
-                    if let Some(panel) = workspace.panel::<TerminalPanel>(cx) {
-                        if panel.read(cx).has_no_terminals(cx) {
-                            panel.update(cx, |panel, cx| {
-                                let kind = default_working_directory(workspace, cx);
-                                panel
-                                    .add_terminal_shell(kind, RevealStrategy::Always, window, cx)
-                                    .detach_and_log_err(cx);
-                            });
-                        }
-                    }
+                    ensure_terminal_if_empty(workspace, window, cx);
                 }
             });
             workspace.register_action(|workspace, _: &Toggle, window, cx| {
@@ -79,28 +69,30 @@ pub fn init(cx: &mut App) {
                     if !did_focus {
                         workspace.close_panel::<TerminalPanel>(window, cx);
                     } else {
-                        // Create a terminal if panel is empty when user explicitly opens it
-                        if let Some(panel) = workspace.panel::<TerminalPanel>(cx) {
-                            if panel.read(cx).has_no_terminals(cx) {
-                                panel.update(cx, |panel, cx| {
-                                    let kind = default_working_directory(workspace, cx);
-                                    panel
-                                        .add_terminal_shell(
-                                            kind,
-                                            RevealStrategy::Always,
-                                            window,
-                                            cx,
-                                        )
-                                        .detach_and_log_err(cx);
-                                });
-                            }
-                        }
+                        ensure_terminal_if_empty(workspace, window, cx);
                     }
                 }
             });
         },
     )
     .detach();
+}
+
+fn ensure_terminal_if_empty(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    if let Some(panel) = workspace.panel::<TerminalPanel>(cx) {
+        if panel.read(cx).has_no_terminals(cx) {
+            panel.update(cx, |panel, cx| {
+                let kind = default_working_directory(workspace, cx);
+                panel
+                    .add_terminal_shell(kind, RevealStrategy::Always, window, cx)
+                    .detach_and_log_err(cx);
+            });
+        }
+    }
 }
 
 pub struct TerminalPanel {
@@ -803,8 +795,8 @@ impl TerminalPanel {
     ) -> Task<Result<WeakEntity<Terminal>>> {
         let workspace = self.workspace.clone();
         let pane = self.active_pane.clone();
-        // Increment synchronously so that has_no_terminals() returns false
-        // before any deferred callbacks run (e.g., in set_active).
+        // Increment synchronously so that has_no_terminals() returns false immediately,
+        // preventing the dock from auto-closing before the terminal is added.
         self.pending_terminals_to_add += 1;
 
         cx.spawn_in(window, async move |terminal_panel, cx| {
@@ -948,6 +940,12 @@ impl TerminalPanel {
                     result
                 }
                 Err(error) => {
+                    terminal_panel
+                        .update(cx, |terminal_panel, _| {
+                            terminal_panel.pending_terminals_to_add =
+                                terminal_panel.pending_terminals_to_add.saturating_sub(1);
+                        })
+                        .ok();
                     pane.update_in(cx, |pane, window, cx| {
                         let focus = pane.has_focus(window, cx);
                         let failed_to_spawn = cx.new(|cx| FailedToSpawnTerminal {
