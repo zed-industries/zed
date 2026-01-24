@@ -129,7 +129,7 @@ function BuildRemoteServer {
     cargo build --release --package remote_server --target $target
 
     # Create zipped remote server binary
-    $remoteServerSrc = ".\$CargoOutDir\remote_server.exe"
+    $remoteServerSrc = (Resolve-Path ".\$CargoOutDir\remote_server.exe").Path
 
     if ($env:CI) {
         Write-Output "Code signing remote_server.exe"

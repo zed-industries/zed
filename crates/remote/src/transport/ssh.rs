@@ -1125,8 +1125,8 @@ impl SshSocket {
             to_run.push(' ');
             to_run.push_str(&shell_kind.try_quote(arg.as_ref()).expect("shell quoting"));
         }
-        let to_run = if cfg!(windows) {
-            to_run
+        let to_run = if shell_kind == ShellKind::Cmd {
+            to_run // 'cd' prints the current directory in CMD
         } else {
             let separator = shell_kind.sequential_commands_separator();
             format!("cd{separator} {to_run}")

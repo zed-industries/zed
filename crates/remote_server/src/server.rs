@@ -664,6 +664,9 @@ pub enum ExecuteProxyError {
         path: PathBuf,
     },
 
+    #[error("Failed to kill existing server with pid '{pid}'")]
+    KillRunningServer { pid: u32 },
+
     #[error("failed to spawn server")]
     SpawnServer(#[source] SpawnServerError),
 
@@ -728,7 +731,7 @@ pub(crate) fn execute_proxy(
                     "proxy found server already running with PID {}. Killing process and cleaning up files...",
                     pid
                 );
-                kill_running_server(pid, &server_paths);
+                kill_running_server(pid, &server_paths)?;
             }
             smol::block_on(spawn_server(&server_paths)).map_err(ExecuteProxyError::SpawnServer)?;
             std::fs::read_to_string(&server_paths.pid_file)
@@ -821,14 +824,17 @@ pub(crate) fn execute_proxy(
     Ok(())
 }
 
-fn kill_running_server(pid: u32, paths: &ServerPaths) {
+fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
     log::info!("killing existing server with PID {}", pid);
     let system = sysinfo::System::new_with_specifics(
         sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::nothing()),
     );
 
     if let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) {
-        process.kill();
+        let killed = process.kill();
+        if !killed {
+            return Err(ExecuteProxyError::KillRunningServer { pid });
+        }
     }
 
     for file in [
@@ -840,6 +846,8 @@ fn kill_running_server(pid: u32, paths: &ServerPaths) {
         log::debug!("cleaning up file {:?} before starting new server", file);
         std::fs::remove_file(file).ok();
     }
+
+    Ok(())
 }
 
 #[derive(Debug, Error)]
