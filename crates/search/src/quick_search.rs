@@ -2061,6 +2061,7 @@ impl PickerDelegate for QuickSearchDelegate {
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .whitespace_nowrap()
+                                .text_buffer(cx)
                                 .child(
                                     StyledText::new(line_text_string)
                                         .with_default_highlights(&text_style, highlights),
