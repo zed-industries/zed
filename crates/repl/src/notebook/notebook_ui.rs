@@ -34,7 +34,7 @@ use crate::kernels::{
     NativeRunningKernel, RemoteRunningKernel,
 };
 use crate::repl_store::ReplStore;
-use editor::actions::{MoveToBeginning, MoveToEnd};
+
 use picker::Picker;
 use runtimelib::{ExecuteRequest, JupyterMessage, JupyterMessageContent};
 use ui::PopoverMenuHandle;
@@ -1174,14 +1174,18 @@ impl Render for NotebookEditor {
                             Cell::Code(cell) => {
                                 let editor = cell.read(cx).editor().clone();
                                 editor.update(cx, |editor, cx| {
-                                    editor.move_to_end(&MoveToEnd, window, cx);
+                                    editor.move_to_end(&Default::default(), window, cx);
                                 });
                                 editor.focus_handle(cx).focus(window, cx);
                             }
                             Cell::Markdown(cell) => {
+                                cell.update(cx, |cell, cx| {
+                                    cell.set_editing(true);
+                                    cx.notify();
+                                });
                                 let editor = cell.read(cx).editor().clone();
                                 editor.update(cx, |editor, cx| {
-                                    editor.move_to_end(&MoveToEnd, window, cx);
+                                    editor.move_to_end(&Default::default(), window, cx);
                                 });
                                 editor.focus_handle(cx).focus(window, cx);
                             }
@@ -1198,14 +1202,18 @@ impl Render for NotebookEditor {
                             Cell::Code(cell) => {
                                 let editor = cell.read(cx).editor().clone();
                                 editor.update(cx, |editor, cx| {
-                                    editor.move_to_beginning(&MoveToBeginning, window, cx);
+                                    editor.move_to_beginning(&Default::default(), window, cx);
                                 });
                                 editor.focus_handle(cx).focus(window, cx);
                             }
                             Cell::Markdown(cell) => {
+                                cell.update(cx, |cell, cx| {
+                                    cell.set_editing(true);
+                                    cx.notify();
+                                });
                                 let editor = cell.read(cx).editor().clone();
                                 editor.update(cx, |editor, cx| {
-                                    editor.move_to_beginning(&MoveToBeginning, window, cx);
+                                    editor.move_to_beginning(&Default::default(), window, cx);
                                 });
                                 editor.focus_handle(cx).focus(window, cx);
                             }
