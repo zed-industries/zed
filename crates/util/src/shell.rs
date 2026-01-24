@@ -504,8 +504,33 @@ impl ShellKind {
         }
     }
 
+    /// Quotes a literal string, returning the original if no quoting is needed.
+    fn quote_literal(&self, s: &str) -> String {
+        self.try_quote(s)
+            .map(|c| c.into_owned())
+            .unwrap_or_else(|| s.to_owned())
+    }
+
     /// Quotes an argument while preserving shell variable references for expansion.
-    /// Variables like $VAR and ${VAR} are left unquoted so the shell expands them.
+    /// Variables like `$VAR` and `${VAR}` are left unquoted so the shell expands them.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use util::shell::ShellKind;
+    ///
+    /// let shell = ShellKind::Posix;
+    ///
+    /// // Variables are preserved unquoted
+    /// assert_eq!(shell.quote_preserving_variables("$HOME"), "$HOME");
+    /// assert_eq!(shell.quote_preserving_variables("${VAR}"), "${VAR}");
+    ///
+    /// // Special characters are quoted
+    /// assert_eq!(shell.quote_preserving_variables("./app/(public)/test.ts"), "'./app/(public)/test.ts'");
+    ///
+    /// // Mixed: special chars quoted, variables preserved
+    /// assert_eq!(shell.quote_preserving_variables("./app/(public)/$FILE.ts"), "'./app/(public)/'$FILE.ts");
+    /// ```
     pub fn quote_preserving_variables(&self, arg: &str) -> String {
         if arg.is_empty() {
             return String::new();
@@ -515,18 +540,12 @@ impl ShellKind {
         // so use the traditional approach of converting then quoting the whole string
         if matches!(self, ShellKind::Nushell) {
             let converted = self.to_shell_variable(arg);
-            return self
-                .try_quote(&converted)
-                .map(|c| c.into_owned())
-                .unwrap_or(converted);
+            return self.quote_literal(&converted);
         }
 
         // No variables - just quote the whole thing
         if !arg.contains('$') {
-            return self
-                .try_quote(arg)
-                .map(|c| c.into_owned())
-                .unwrap_or_else(|| arg.to_owned());
+            return self.quote_literal(arg);
         }
 
         let mut result = String::new();
@@ -555,12 +574,7 @@ impl ShellKind {
                 };
 
                 if !current_literal.is_empty() {
-                    result.push_str(
-                        &self
-                            .try_quote(&current_literal)
-                            .map(|c| c.into_owned())
-                            .unwrap_or_else(|| current_literal.clone()),
-                    );
+                    result.push_str(&self.quote_literal(&current_literal));
                     current_literal.clear();
                 }
                 result.push_str(&self.to_shell_variable(&arg[var_start..end]));
@@ -582,24 +596,14 @@ impl ShellKind {
             let var_end = chars.peek().map(|&(j, _)| j).unwrap_or(arg.len());
 
             if !current_literal.is_empty() {
-                result.push_str(
-                    &self
-                        .try_quote(&current_literal)
-                        .map(|c| c.into_owned())
-                        .unwrap_or_else(|| current_literal.clone()),
-                );
+                result.push_str(&self.quote_literal(&current_literal));
                 current_literal.clear();
             }
             result.push_str(&self.to_shell_variable(&arg[var_start..var_end]));
         }
 
         if !current_literal.is_empty() {
-            result.push_str(
-                &self
-                    .try_quote(&current_literal)
-                    .map(|c| c.into_owned())
-                    .unwrap_or_else(|| current_literal.clone()),
-            );
+            result.push_str(&self.quote_literal(&current_literal));
         }
 
         result
@@ -1191,6 +1195,26 @@ mod tests {
         assert_eq!(
             shell_kind.quote_preserving_variables("$HOME/file.txt"),
             "%HOME%/file.txt"
+        );
+    }
+
+    #[test]
+    fn test_quote_preserving_variables_var_followed_by_dollar() {
+        let shell_kind = ShellKind::Posix;
+        // $VAR followed by lone $ - the $ becomes part of literal
+        assert_eq!(
+            shell_kind.quote_preserving_variables("$VAR$"),
+            "$VAR'$'"
+        );
+        // $VAR followed by $suffix (another variable)
+        assert_eq!(
+            shell_kind.quote_preserving_variables("$VAR$SUFFIX"),
+            "$VAR$SUFFIX"
+        );
+        // Variable followed by special chars then another variable
+        assert_eq!(
+            shell_kind.quote_preserving_variables("$VAR (sep) $OTHER"),
+            "$VAR' (sep) '$OTHER"
         );
     }
 }
