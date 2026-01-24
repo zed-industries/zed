@@ -278,6 +278,3 @@ type: (primitive_type) @type.builtin
 
 (conditional_expression ":" @operator)
 (user_defined_literal (literal_suffix) @operator)
-
-((comment) @comment.doc
-  (#match? @comment.doc "^/[*][*][^*]"))

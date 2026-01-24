@@ -148,6 +148,3 @@
   prefix: (identifier) @attribute)
 (attribute
   name: (identifier) @attribute)
-
-((comment) @comment.doc
-  (#match? @comment.doc "^/[*][*][^*]"))
