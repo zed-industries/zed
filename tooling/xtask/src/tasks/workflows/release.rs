@@ -280,7 +280,7 @@ pub(crate) fn push_release_update_notification(
             elif [ "$AUTO_RELEASE_RESULT" == "failure" ]; then
                 echo "❌ Auto release failed for $TAG: $RUN_URL"
             else
-                echo "👀 Release $TAG is freshly baked and ready to be published: $RELEASE_URL"
+                echo "👀 Release $TAG sitting freshly baked in the oven and waiting to be published: $RELEASE_URL"
             fi
         fi
         "#,
