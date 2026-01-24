@@ -548,7 +548,7 @@ jobs:
     steps:
     - name: release::validate_release_assets
       run: |
-        EXPECTED_ASSETS='["Zed-aarch64.dmg", "Zed-x86_64.dmg", "zed-linux-aarch64.tar.gz", "zed-linux-x86_64.tar.gz", "Zed-x86_64.exe", "Zed-aarch64.exe", "zed-remote-server-macos-aarch64.gz", "zed-remote-server-macos-x86_64.gz", "zed-remote-server-linux-aarch64.gz", "zed-remote-server-linux-x86_64.gz"]'
+        EXPECTED_ASSETS='["Zed-aarch64.dmg", "Zed-x86_64.dmg", "zed-linux-aarch64.tar.gz", "zed-linux-x86_64.tar.gz", "Zed-x86_64.exe", "Zed-aarch64.exe", "zed-remote-server-macos-aarch64.gz", "zed-remote-server-macos-x86_64.gz", "zed-remote-server-linux-aarch64.gz", "zed-remote-server-linux-x86_64.gz", "zed-remote-server-windows-aarch64.zip", "zed-remote-server-windows-x86_64.zip"]'
         TAG="$GITHUB_REF_NAME"
 
         ACTUAL_ASSETS=$(gh release view "$TAG" --repo=zed-industries/zed --json assets -q '[.assets[].name]')
