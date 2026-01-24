@@ -41,7 +41,6 @@ pub async fn run_format_prompt(
             prompt_inputs.content.as_str().into(),
             language,
             Some(app_state.languages.clone()),
-            None,
             cx,
         )
     });

@@ -125,6 +125,7 @@ members = [
     "crates/ollama",
     "crates/onboarding",
     "crates/open_ai",
+    "crates/open_path_prompt",
     "crates/open_router",
     "crates/outline",
     "crates/outline_panel",
@@ -187,6 +188,7 @@ members = [
     "crates/theme_importer",
     "crates/theme_selector",
     "crates/time_format",
+    "crates/platform_title_bar",
     "crates/title_bar",
     "crates/toolchain_selector",
     "crates/ui",
@@ -363,6 +365,7 @@ notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
 onboarding = { path = "crates/onboarding" }
 open_ai = { path = "crates/open_ai" }
+open_path_prompt = { path = "crates/open_path_prompt" }
 open_router = { path = "crates/open_router", features = ["schemars"] }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
@@ -420,6 +423,7 @@ theme = { path = "crates/theme" }
 theme_extension = { path = "crates/theme_extension" }
 theme_selector = { path = "crates/theme_selector" }
 time_format = { path = "crates/time_format" }
+platform_title_bar = { path = "crates/platform_title_bar" }
 title_bar = { path = "crates/title_bar" }
 toolchain_selector = { path = "crates/toolchain_selector" }
 ui = { path = "crates/ui" }
@@ -685,7 +689,7 @@ toml_edit = { version = "0.22", default-features = false, features = ["display",
 tower-http = "0.4.4"
 tree-sitter = { version = "0.26", features = ["wasm"] }
 tree-sitter-bash = "0.25.1"
-tree-sitter-c = "0.23"
+tree-sitter-c = "0.24.1"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
 tree-sitter-css = "0.23"
 tree-sitter-diff = "0.1.0"

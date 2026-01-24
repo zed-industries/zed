@@ -1,7 +1,6 @@
 name = "Markdown"
 grammar = "markdown"
 path_suffixes = ["md", "mdx", "mdwn", "markdown", "MD"]
-modeline_aliases = ["md"]
 completion_query_characters = ["-"]
 block_comment = { start = "<!--", prefix = "", end = "-->", tab_size = 0 }
 autoclose_before = ";:.,=}])>"

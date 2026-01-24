@@ -39,7 +39,6 @@ pub use terminal::*;
 use action_log::{ActionLog, ActionLogTelemetry};
 use agent_client_protocol::{self as acp};
 use anyhow::{Context as _, Result, anyhow};
-use editor::Bias;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use itertools::Itertools;
@@ -54,6 +53,7 @@ use std::process::ExitStatus;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
+use text::Bias;
 use ui::App;
 use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
@@ -2333,8 +2333,11 @@ impl AcpThread {
                 let format_on_save = buffer.update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
 
-                    let settings =
-                        language::language_settings::LanguageSettings::for_buffer(buffer, cx);
+                    let settings = language::language_settings::language_settings(
+                        buffer.language().map(|l| l.name()),
+                        buffer.file(),
+                        cx,
+                    );
 
                     settings.format_on_save != FormatOnSave::Off
                 });
