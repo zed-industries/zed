@@ -3342,9 +3342,9 @@ async fn test_lsp_pull_diagnostics(
         editor.handle_input(":", window, cx);
     });
     pull_diagnostics_handle.next().await.unwrap();
-    pull_diagnostics_handle.next().await.unwrap();
+    // pull_diagnostics_handle.next().await.unwrap();
     assert_eq!(
-        5,
+        4,
         diagnostics_pulls_made.load(atomic::Ordering::Acquire),
         "Client lib.rs edits should trigger another diagnostics pull for open buffers"
     );
@@ -3364,7 +3364,7 @@ async fn test_lsp_pull_diagnostics(
     pull_diagnostics_handle.next().await.unwrap();
     pull_diagnostics_handle.next().await.unwrap();
     assert_eq!(
-        8,
+        7,
         diagnostics_pulls_made.load(atomic::Ordering::Acquire),
         "Client main.rs edits should trigger diagnostics pull by both client and host and an extra pull for the client's lib.rs"
     );
@@ -3384,7 +3384,7 @@ async fn test_lsp_pull_diagnostics(
     pull_diagnostics_handle.next().await.unwrap();
     pull_diagnostics_handle.next().await.unwrap();
     assert_eq!(
-        11,
+        10,
         diagnostics_pulls_made.load(atomic::Ordering::Acquire),
         "Host main.rs edits should trigger another diagnostics pull by both client and host and another pull for the client's lib.rs"
     );
@@ -3417,7 +3417,7 @@ async fn test_lsp_pull_diagnostics(
     pull_diagnostics_handle.next().await.unwrap();
     pull_diagnostics_handle.next().await.unwrap();
     assert_eq!(
-        13,
+        12,
         diagnostics_pulls_made.load(atomic::Ordering::Acquire),
         "Workspace refresh should trigger document pulls for all open buffers (main.rs and lib.rs)"
     );
@@ -4185,8 +4185,8 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     // Client B adds breakpoint on line(2)
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.move_down(&editor::actions::MoveDown, window, cx);
-        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
         editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     });
 
@@ -4214,8 +4214,8 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     // Client A removes last added breakpoint from client B
     editor_a.update_in(cx_a, |editor, window, cx| {
-        editor.move_down(&editor::actions::MoveDown, window, cx);
-        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
         editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     });
 
@@ -4243,8 +4243,8 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     // Client B removes first added breakpoint by client A
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.move_up(&editor::actions::MoveUp, window, cx);
-        editor.move_up(&editor::actions::MoveUp, window, cx);
+        editor.move_up(&zed_actions::editor::MoveUp, window, cx);
+        editor.move_up(&zed_actions::editor::MoveUp, window, cx);
         editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     });
 

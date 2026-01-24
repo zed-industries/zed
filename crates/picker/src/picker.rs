@@ -3,16 +3,12 @@ pub mod highlighted_match_with_paths;
 pub mod popover_menu;
 
 use anyhow::Result;
-use editor::{
-    Editor, SelectionEffects,
-    actions::{MoveDown, MoveUp},
-    scroll::Autoscroll,
-};
+
 use gpui::{
-    Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent,
-    Pixels, Render, ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div,
-    list, prelude::*, uniform_list,
+    Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, EventEmitter, FocusHandle,
+    Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels, Render,
+    ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*,
+    uniform_list,
 };
 use head::Head;
 use schemars::JsonSchema;
@@ -25,7 +21,9 @@ use ui::{
     Color, Divider, DocumentationAside, DocumentationSide, Label, ListItem, ListItemSpacing,
     ScrollAxes, Scrollbars, WithScrollbar, prelude::*, utils::WithRemSize, v_flex,
 };
+use ui_input::{ErasedEditor, ErasedEditorEvent};
 use workspace::{ModalView, item::Settings};
+use zed_actions::editor::{MoveDown, MoveUp};
 
 enum ElementContainer {
     List(ListState),
@@ -195,9 +193,9 @@ pub trait PickerDelegate: Sized + 'static {
 
     fn render_editor(
         &self,
-        editor: &Entity<Editor>,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        editor: &Arc<dyn ErasedEditor>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
     ) -> Div {
         v_flex()
             .when(
@@ -210,7 +208,7 @@ pub trait PickerDelegate: Sized + 'static {
                     .flex_none()
                     .h_9()
                     .px_2p5()
-                    .child(editor.clone()),
+                    .child(editor.render(window, cx)),
             )
             .when(
                 self.editor_position() == PickerEditorPosition::Start,
@@ -480,7 +478,7 @@ impl<D: PickerDelegate> Picker<D> {
             .delegate
             .select_history(Direction::Down, &query, window, cx)
         {
-            self.set_query(query, window, cx);
+            self.set_query(&query, window, cx);
             return;
         }
         let count = self.delegate.match_count();
@@ -507,7 +505,7 @@ impl<D: PickerDelegate> Picker<D> {
             .delegate
             .select_history(Direction::Up, &query, window, cx)
         {
-            self.set_query(query, window, cx);
+            self.set_query(&query, window, cx);
             return;
         }
         let count = self.delegate.match_count();
@@ -606,7 +604,7 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) {
         if let Some(new_query) = self.delegate.confirm_completion(self.query(cx), window, cx) {
-            self.set_query(new_query, window, cx);
+            self.set_query(&new_query, window, cx);
         } else {
             cx.propagate()
         }
@@ -627,7 +625,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn do_confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(update_query) = self.delegate.confirm_update_query(window, cx) {
-            self.set_query(update_query, window, cx);
+            self.set_query(&update_query, window, cx);
             self.set_selected_index(0, Some(Direction::Down), false, window, cx);
         } else {
             self.delegate.confirm(secondary, window, cx)
@@ -636,8 +634,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn on_input_editor_event(
         &mut self,
-        _: &Entity<Editor>,
-        event: &editor::EditorEvent,
+        event: &ErasedEditorEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -645,16 +642,15 @@ impl<D: PickerDelegate> Picker<D> {
             panic!("unexpected call");
         };
         match event {
-            editor::EditorEvent::BufferEdited => {
-                let query = editor.read(cx).text(cx);
+            ErasedEditorEvent::BufferEdited => {
+                let query = editor.text(cx);
                 self.update_matches(query, window, cx);
             }
-            editor::EditorEvent::Blurred => {
+            ErasedEditorEvent::Blurred => {
                 if self.is_modal && window.is_window_active() {
                     self.cancel(&menu::Cancel, window, cx);
                 }
             }
-            _ => {}
         }
     }
 
@@ -667,14 +663,13 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    pub fn refresh_placeholder(&mut self, window: &mut Window, cx: &mut App) {
+    pub fn refresh_placeholder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match &self.head {
             Head::Editor(editor) => {
                 let placeholder = self.delegate.placeholder_text(window, cx);
-                editor.update(cx, |editor, cx| {
-                    editor.set_placeholder_text(placeholder.as_ref(), window, cx);
-                    cx.notify();
-                });
+
+                editor.set_placeholder_text(placeholder.as_ref(), window, cx);
+                cx.notify();
             }
             Head::Empty(_) => {}
         }
@@ -730,23 +725,15 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn query(&self, cx: &App) -> String {
         match &self.head {
-            Head::Editor(editor) => editor.read(cx).text(cx),
+            Head::Editor(editor) => editor.text(cx),
             Head::Empty(_) => "".to_string(),
         }
     }
 
-    pub fn set_query(&self, query: impl Into<Arc<str>>, window: &mut Window, cx: &mut App) {
+    pub fn set_query(&self, query: &str, window: &mut Window, cx: &mut App) {
         if let Head::Editor(editor) = &self.head {
-            editor.update(cx, |editor, cx| {
-                editor.set_text(query, window, cx);
-                let editor_offset = editor.buffer().read(cx).len(cx);
-                editor.change_selections(
-                    SelectionEffects::scroll(Autoscroll::Next),
-                    window,
-                    cx,
-                    |s| s.select_ranges(Some(editor_offset..editor_offset)),
-                );
-            });
+            editor.set_text(query, window, cx);
+            editor.move_selection_to_end(window, cx);
         }
     }
 
