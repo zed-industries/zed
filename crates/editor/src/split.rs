@@ -3403,7 +3403,7 @@ mod tests {
             &mut cx,
         );
 
-        dbg!("---------------------");
+        "---------------------";
 
         assert_split_content_with_widths(
             &editor,
