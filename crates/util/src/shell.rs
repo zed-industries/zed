@@ -504,6 +504,107 @@ impl ShellKind {
         }
     }
 
+    /// Quotes an argument while preserving shell variable references for expansion.
+    /// Variables like $VAR and ${VAR} are left unquoted so the shell expands them.
+    pub fn quote_preserving_variables(&self, arg: &str) -> String {
+        if arg.is_empty() {
+            return String::new();
+        }
+
+        // Nushell has special concatenation rules for variables (requires parens),
+        // so use the traditional approach of converting then quoting the whole string
+        if matches!(self, ShellKind::Nushell) {
+            let converted = self.to_shell_variable(arg);
+            return self
+                .try_quote(&converted)
+                .map(|c| c.into_owned())
+                .unwrap_or(converted);
+        }
+
+        // No variables - just quote the whole thing
+        if !arg.contains('$') {
+            return self
+                .try_quote(arg)
+                .map(|c| c.into_owned())
+                .unwrap_or_else(|| arg.to_owned());
+        }
+
+        let mut result = String::new();
+        let mut current_literal = String::new();
+        let mut chars = arg.char_indices().peekable();
+
+        while let Some((i, c)) = chars.next() {
+            if c != '$' {
+                current_literal.push(c);
+                continue;
+            }
+
+            let Some(&(_, next_char)) = chars.peek() else {
+                current_literal.push(c);
+                continue;
+            };
+
+            if next_char == '{' {
+                chars.next();
+                let var_start = i;
+                let var_end = chars.find(|(_, ch)| *ch == '}').map(|(j, _)| j + 1);
+
+                let Some(end) = var_end else {
+                    current_literal.push_str(&arg[var_start..]);
+                    break;
+                };
+
+                if !current_literal.is_empty() {
+                    result.push_str(
+                        &self
+                            .try_quote(&current_literal)
+                            .map(|c| c.into_owned())
+                            .unwrap_or_else(|| current_literal.clone()),
+                    );
+                    current_literal.clear();
+                }
+                result.push_str(&self.to_shell_variable(&arg[var_start..end]));
+                continue;
+            }
+
+            if !next_char.is_alphabetic() && next_char != '_' {
+                current_literal.push(c);
+                continue;
+            }
+
+            let var_start = i;
+            while chars
+                .peek()
+                .is_some_and(|&(_, ch)| ch.is_alphanumeric() || ch == '_')
+            {
+                chars.next();
+            }
+            let var_end = chars.peek().map(|&(j, _)| j).unwrap_or(arg.len());
+
+            if !current_literal.is_empty() {
+                result.push_str(
+                    &self
+                        .try_quote(&current_literal)
+                        .map(|c| c.into_owned())
+                        .unwrap_or_else(|| current_literal.clone()),
+                );
+                current_literal.clear();
+            }
+            result.push_str(&self.to_shell_variable(&arg[var_start..var_end]));
+        }
+
+        if !current_literal.is_empty() {
+            result.push_str(
+                &self
+                    .try_quote(&current_literal)
+                    .map(|c| c.into_owned())
+                    .unwrap_or_else(|| current_literal.clone()),
+            );
+        }
+
+        result
+    }
+
     fn quote_windows(arg: &str, enclose: bool) -> Cow<'_, str> {
         if arg.is_empty() {
             return Cow::Borrowed("\"\"");
@@ -975,6 +1076,121 @@ mod tests {
                 .unwrap()
                 .into_owned(),
             "uname".to_string()
+        );
+    }
+
+    #[test]
+    fn test_quote_preserving_variables_simple_var() {
+        let shell_kind = ShellKind::Posix;
+        assert_eq!(shell_kind.quote_preserving_variables("$HOME"), "$HOME");
+        assert_eq!(
+            shell_kind.quote_preserving_variables("$ZED_FILE"),
+            "$ZED_FILE"
+        );
+    }
+
+    #[test]
+    fn test_quote_preserving_variables_braced_var() {
+        let shell_kind = ShellKind::Posix;
+        assert_eq!(shell_kind.quote_preserving_variables("${HOME}"), "${HOME}");
+        assert_eq!(
+            shell_kind.quote_preserving_variables("${ZED_FILE}"),
+            "${ZED_FILE}"
+        );
+    }
+
+    #[test]
+    fn test_quote_preserving_variables_path_with_special_chars() {
+        let shell_kind = ShellKind::Posix;
+        assert_eq!(
+            shell_kind.quote_preserving_variables("./app/(public)/test.ts"),
+            "'./app/(public)/test.ts'"
+        );
+    }
+
+    #[test]
+    fn test_quote_preserving_variables_mixed() {
+        let shell_kind = ShellKind::Posix;
+        // Parens need quoting, but .ts after variable doesn't (no special chars)
+        assert_eq!(
+            shell_kind.quote_preserving_variables("./app/(public)/$ZED_FILE.ts"),
+            "'./app/(public)/'$ZED_FILE.ts"
+        );
+    }
+
+    #[test]
+    fn test_quote_preserving_variables_var_at_start() {
+        let shell_kind = ShellKind::Posix;
+        // Spaces need quoting
+        assert_eq!(
+            shell_kind.quote_preserving_variables("$HOME/path with spaces/file"),
+            "$HOME'/path with spaces/file'"
+        );
+    }
+
+    #[test]
+    fn test_quote_preserving_variables_multiple_vars() {
+        let shell_kind = ShellKind::Posix;
+        // No special chars in literals, no quoting needed
+        assert_eq!(
+            shell_kind.quote_preserving_variables("$HOME/$USER/file"),
+            "$HOME/$USER/file"
+        );
+    }
+
+    #[test]
+    fn test_quote_preserving_variables_var_in_middle() {
+        let shell_kind = ShellKind::Posix;
+        assert_eq!(
+            shell_kind.quote_preserving_variables("(prefix)/$VAR/(suffix)"),
+            "'(prefix)/'$VAR'/(suffix)'"
+        );
+    }
+
+    #[test]
+    fn test_quote_preserving_variables_simple_path() {
+        let shell_kind = ShellKind::Posix;
+        assert_eq!(
+            shell_kind.quote_preserving_variables("simple/path/file.txt"),
+            "simple/path/file.txt"
+        );
+    }
+
+    #[test]
+    fn test_quote_preserving_variables_lone_dollar() {
+        let shell_kind = ShellKind::Posix;
+        assert_eq!(
+            shell_kind.quote_preserving_variables("price: $"),
+            "'price: $'"
+        );
+    }
+
+    #[test]
+    fn test_quote_preserving_variables_unclosed_brace() {
+        let shell_kind = ShellKind::Posix;
+        assert_eq!(
+            shell_kind.quote_preserving_variables("${unclosed"),
+            "'${unclosed'"
+        );
+    }
+
+    #[test]
+    fn test_quote_preserving_variables_powershell() {
+        let shell_kind = ShellKind::PowerShell;
+        // /file.txt has no special chars for PowerShell, no quoting needed
+        assert_eq!(
+            shell_kind.quote_preserving_variables("$HOME/file.txt"),
+            "$env:HOME/file.txt"
+        );
+    }
+
+    #[test]
+    fn test_quote_preserving_variables_cmd() {
+        let shell_kind = ShellKind::Cmd;
+        // /file.txt has no special chars for cmd, no quoting needed
+        assert_eq!(
+            shell_kind.quote_preserving_variables("$HOME/file.txt"),
+            "%HOME%/file.txt"
         );
     }
 }

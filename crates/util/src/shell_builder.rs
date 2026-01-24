@@ -90,11 +90,7 @@ impl ShellBuilder {
             };
             let mut combined_command = task_args.iter().fold(task_command, |mut command, arg| {
                 command.push(' ');
-                let shell_variable = self.kind.to_shell_variable(arg);
-                command.push_str(&match self.kind.try_quote(&shell_variable) {
-                    Some(shell_variable) => shell_variable,
-                    None => Cow::Owned(shell_variable),
-                });
+                command.push_str(&self.kind.quote_preserving_variables(arg));
                 command
             });
             if self.redirect_stdin {
@@ -358,5 +354,43 @@ mod test {
                 "bun test ./src/app/(public)/tests/fails.test.ts"
             ]
         );
+    }
+
+    #[test]
+    fn build_quotes_paths_preserving_variables() {
+        let shell = Shell::Program("bash".to_owned());
+        let builder = ShellBuilder::new(&shell, false);
+
+        let (_, args) = builder.build(
+            Some("echo".into()),
+            &["./app/(public)/$ZED_FILE.ts".to_string()],
+        );
+
+        // Parens need quoting, but .ts after variable doesn't (no special chars)
+        assert_eq!(
+            args,
+            vec!["-i", "-c", "echo './app/(public)/'$ZED_FILE.ts"]
+        );
+    }
+
+    #[test]
+    fn build_pure_variable_not_quoted() {
+        let shell = Shell::Program("bash".to_owned());
+        let builder = ShellBuilder::new(&shell, false);
+
+        let (_, args) = builder.build(Some("echo".into()), &["$HOME".to_string()]);
+
+        assert_eq!(args, vec!["-i", "-c", "echo $HOME"]);
+    }
+
+    #[test]
+    fn build_braced_variable_with_path() {
+        let shell = Shell::Program("bash".to_owned());
+        let builder = ShellBuilder::new(&shell, false);
+
+        let (_, args) = builder.build(Some("cat".into()), &["${HOME}/file.txt".to_string()]);
+
+        // /file.txt has no special chars, no quoting needed
+        assert_eq!(args, vec!["-i", "-c", "cat ${HOME}/file.txt"]);
     }
 }
