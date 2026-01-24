@@ -4,7 +4,7 @@ use gpui::{
     Element, ElementId, Entity, FocusHandle, Font, FontFeatures, FontStyle, FontWeight,
     GlobalElementId, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity,
     IntoElement, LayoutId, Length, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
-    Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
+    Point, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
     UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, div, fill, point, px, relative,
     size,
 };
@@ -500,16 +500,12 @@ impl TerminalElement {
         (rects, batched_runs)
     }
 
-    /// Computes the cursor position and expected block width, may return a zero width if x_for_index returns
-    /// the same position for sequential indexes. Use em_width instead
+    /// Computes the cursor position and block width using the fixed cell width.
     fn shape_cursor(
         cursor_point: DisplayCursor,
         size: TerminalBounds,
-        _text_fragment: &ShapedLine,
     ) -> Option<(Point<Pixels>, Pixels)> {
         if cursor_point.line() < size.total_lines() as i32 {
-            // Always use cell_width for cursor - the text shaping width can be too wide
-            // for certain characters like Tab, causing the cursor to stretch
             let cursor_width = size.cell_width();
 
             // Cursor should always surround as much of the text as possible,
@@ -1148,7 +1144,7 @@ impl Element for TerminalElement {
                 };
 
                 let ime_cursor_bounds =
-                    TerminalElement::shape_cursor(cursor_point, dimensions, &cursor_text).map(
+                    TerminalElement::shape_cursor(cursor_point, dimensions).map(
                         |(cursor_position, block_width)| Bounds {
                             origin: cursor_position,
                             size: size(block_width, dimensions.line_height),
