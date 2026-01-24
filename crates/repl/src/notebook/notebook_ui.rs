@@ -34,9 +34,11 @@ use crate::kernels::{
     NativeRunningKernel, RemoteRunningKernel,
 };
 use crate::repl_store::ReplStore;
+use editor::actions::{MoveToBeginning, MoveToEnd};
 use picker::Picker;
 use runtimelib::{ExecuteRequest, JupyterMessage, JupyterMessageContent};
 use ui::PopoverMenuHandle;
+use zed_actions::editor::{MoveDown, MoveUp};
 
 actions!(
     notebook,
@@ -1164,6 +1166,54 @@ impl Render for NotebookEditor {
             .on_action(
                 cx.listener(|this, &AddCodeBlock, window, cx| this.add_code_block(window, cx)),
             )
+            .on_action(cx.listener(|this, _: &MoveUp, window, cx| {
+                this.select_previous(&menu::SelectPrevious, window, cx);
+                if let Some(cell_id) = this.cell_order.get(this.selected_cell_index) {
+                    if let Some(cell) = this.cell_map.get(cell_id) {
+                        match cell {
+                            Cell::Code(cell) => {
+                                let editor = cell.read(cx).editor().clone();
+                                editor.update(cx, |editor, cx| {
+                                    editor.move_to_end(&MoveToEnd, window, cx);
+                                });
+                                editor.focus_handle(cx).focus(window, cx);
+                            }
+                            Cell::Markdown(cell) => {
+                                let editor = cell.read(cx).editor().clone();
+                                editor.update(cx, |editor, cx| {
+                                    editor.move_to_end(&MoveToEnd, window, cx);
+                                });
+                                editor.focus_handle(cx).focus(window, cx);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }))
+            .on_action(cx.listener(|this, _: &MoveDown, window, cx| {
+                this.select_next(&menu::SelectNext, window, cx);
+                if let Some(cell_id) = this.cell_order.get(this.selected_cell_index) {
+                    if let Some(cell) = this.cell_map.get(cell_id) {
+                        match cell {
+                            Cell::Code(cell) => {
+                                let editor = cell.read(cx).editor().clone();
+                                editor.update(cx, |editor, cx| {
+                                    editor.move_to_beginning(&MoveToBeginning, window, cx);
+                                });
+                                editor.focus_handle(cx).focus(window, cx);
+                            }
+                            Cell::Markdown(cell) => {
+                                let editor = cell.read(cx).editor().clone();
+                                editor.update(cx, |editor, cx| {
+                                    editor.move_to_beginning(&MoveToBeginning, window, cx);
+                                });
+                                editor.focus_handle(cx).focus(window, cx);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }))
             .on_action(
                 cx.listener(|this, action, window, cx| this.restart_kernel(action, window, cx)),
             )
