@@ -527,9 +527,33 @@ jobs:
       shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  auto_release_preview:
+  validate_release_assets:
     needs:
     - upload_release_assets
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: release::validate_release_assets
+      run: |
+        EXPECTED_ASSETS='["Zed-aarch64.dmg", "Zed-x86_64.dmg", "zed-linux-aarch64.tar.gz", "zed-linux-x86_64.tar.gz", "Zed-x86_64.exe", "Zed-aarch64.exe", "zed-remote-server-macos-aarch64.gz", "zed-remote-server-macos-x86_64.gz", "zed-remote-server-linux-aarch64.gz", "zed-remote-server-linux-x86_64.gz"]'
+        TAG="$GITHUB_REF_NAME"
+
+        ACTUAL_ASSETS=$(gh release view "$TAG" --repo=zed-industries/zed --json assets -q '[.assets[].name]')
+
+        MISSING_ASSETS=$(echo "$EXPECTED_ASSETS" | jq -r --argjson actual "$ACTUAL_ASSETS" '. - $actual | .[]')
+
+        if [ -n "$MISSING_ASSETS" ]; then
+            echo "Error: The following assets are missing from the release:"
+            echo "$MISSING_ASSETS"
+            exit 1
+        fi
+
+        echo "All expected assets are present in the release."
+      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  auto_release_preview:
+    needs:
+    - validate_release_assets
     if: startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
@@ -544,17 +568,44 @@ jobs:
       shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
-  notify_on_failure:
+  push_release_update_notification:
     needs:
+    - create_draft_release
     - upload_release_assets
+    - validate_release_assets
     - auto_release_preview
-    if: failure()
+    if: always()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
-    - name: release::notify_on_failure::notify_slack
-      run: |-
-        curl -X POST -H 'Content-type: application/json'\
-         --data '{"text":"${{ github.workflow }} failed:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' "$SLACK_WEBHOOK"
+    - name: release::notify_slack
+      run: |
+        MESSAGE=$(DRAFT_RESULT="${{ needs.create_draft_release.result }}"
+        UPLOAD_RESULT="${{ needs.upload_release_assets.result }}"
+        VALIDATE_RESULT="${{ needs.validate_release_assets.result }}"
+        AUTO_RELEASE_RESULT="${{ needs.auto_release_preview.result }}"
+        TAG="$GITHUB_REF_NAME"
+        RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+        if [ "$DRAFT_RESULT" == "failure" ]; then
+            echo "❌ Draft release creation failed for $TAG: $RUN_URL"
+        else
+            RELEASE_URL=$(gh release view "$TAG" --repo=zed-industries/zed --json url -q '.url')
+            if [ "$UPLOAD_RESULT" == "failure" ]; then
+                echo "❌ Release asset upload failed for $TAG: $RELEASE_URL"
+            elif [ "$VALIDATE_RESULT" == "failure" ]; then
+                echo "❌ Release asset validation failed for $TAG (missing assets): $RUN_URL"
+            elif [ "$AUTO_RELEASE_RESULT" == "success" ]; then
+                echo "✅ Release $TAG was auto-released successfully: $RELEASE_URL"
+            elif [ "$AUTO_RELEASE_RESULT" == "failure" ]; then
+                echo "❌ Auto release failed for $TAG: $RUN_URL"
+            else
+                echo "👀 Release $TAG is freshly baked and ready to be published: $RELEASE_URL"
+            fi
+        fi
+        )
+
+        curl -X POST -H 'Content-type: application/json'
+            --data '{"text": "$MESSAGE"}" "$SLACK_WEBHOOK"
       shell: bash -euxo pipefail {0}
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
