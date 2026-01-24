@@ -250,4 +250,10 @@ impl Platform for VisualTestPlatform {
     }
 
     fn on_keyboard_layout_change(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn thermal_state(&self) -> super::ThermalState {
+        super::ThermalState::Nominal
+    }
+
+    fn on_thermal_state_change(&self, _callback: Box<dyn FnMut()>) {}
 }
