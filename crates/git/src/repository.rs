@@ -1753,17 +1753,17 @@ impl GitRepository for RealGitRepository {
 
                 let mut args = vec!["--no-optional-locks", "log", "--follow", &format_string];
 
-                let skip_str;
-                let limit_str;
-                if skip > 0 {
-                    skip_str = skip.to_string();
-                    args.push("--skip");
-                    args.push(&skip_str);
-                }
-                if let Some(n) = limit {
-                    limit_str = n.to_string();
+                let max_count_str;
+                if let Some(limit) = limit {
+                    // `git log --follow` does not reliably respect `--skip` for pagination.
+                    // Therefore we request the first `skip + limit` entries and drop `skip` locally.
+                    let max_count = skip
+                        .checked_add(limit)
+                        .context("file history pagination overflow")?;
+
+                    max_count_str = max_count.to_string();
                     args.push("-n");
-                    args.push(&limit_str);
+                    args.push(&max_count_str);
                 }
 
                 args.push("--");
@@ -1807,6 +1807,12 @@ impl GitRepository for RealGitRepository {
                             author_email,
                         });
                     }
+                }
+
+                // `git log --follow` doesn't reliably respect `--skip`, so we over-fetch and drop
+                // the first `skip` entries client-side to keep pagination stable (no duplicates).
+                if skip > 0 {
+                    entries = entries.into_iter().skip(skip).collect();
                 }
 
                 Ok(FileHistory { entries, path })
@@ -3467,6 +3473,64 @@ mod tests {
         assert_eq!(
             smol::fs::read_to_string(&bin_path).await.unwrap(),
             "Modified binary file"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_file_history_paginated_returns_distinct_pages(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let file_path = repo_dir.path().join("file");
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        for commit_index in 0..12 {
+            smol::fs::write(&file_path, format!("content {commit_index}"))
+                .await
+                .unwrap();
+
+            repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+                .await
+                .unwrap();
+
+            repo.commit(
+                format!("Commit {commit_index}").into(),
+                None,
+                CommitOptions::default(),
+                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await
+            .unwrap();
+        }
+
+        let full_history = repo.file_history(repo_path("file")).await.unwrap();
+        assert!(full_history.entries.len() >= 10);
+
+        let page_size = 5;
+        let page1 = repo
+            .file_history_paginated(repo_path("file"), 0, Some(page_size))
+            .await
+            .unwrap();
+        let page2 = repo
+            .file_history_paginated(repo_path("file"), page_size, Some(page_size))
+            .await
+            .unwrap();
+
+        assert_eq!(page1.entries.as_slice(), &full_history.entries[..page_size]);
+        assert_eq!(
+            page2.entries.as_slice(),
+            &full_history.entries[page_size..page_size * 2]
         );
     }
 
