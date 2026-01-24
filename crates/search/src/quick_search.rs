@@ -51,6 +51,19 @@ actions!(
 );
 
 const SEARCH_DEBOUNCE_MS: u64 = 100;
+const DEFAULT_RESULTS_HEIGHT: f32 = 180.0;
+const DEFAULT_PREVIEW_HEIGHT: f32 = 280.0;
+const MIN_PANEL_HEIGHT: f32 = 80.0;
+const MAX_PREVIEW_HEIGHT: f32 = 600.0;
+const AUTOSAVE_DELAY_MS: u64 = 500;
+const MODAL_WIDTH_REMS: f32 = 50.0;
+const RESIZE_HANDLE_HEIGHT: f32 = 6.0;
+const CLICK_THRESHOLD_MS: u128 = 50;
+const DOUBLE_CLICK_THRESHOLD_MS: u128 = 300;
+
+const REPLACE_PLACEHOLDER: &str = "Replace in project…";
+const INCLUDE_PLACEHOLDER: &str = "Include: e.g. src/**/*.rs";
+const EXCLUDE_PLACEHOLDER: &str = "Exclude: e.g. vendor/*, *.lock";
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 enum InputPanel {
@@ -76,11 +89,6 @@ pub struct SearchMatch {
     pub line_text: String,
     pub line_number: u32,
 }
-
-const DEFAULT_RESULTS_HEIGHT: f32 = 180.0;
-const DEFAULT_PREVIEW_HEIGHT: f32 = 280.0;
-const MIN_PANEL_HEIGHT: f32 = 80.0;
-const MAX_PREVIEW_HEIGHT: f32 = 600.0;
 
 pub struct QuickSearch {
     picker: Entity<Picker<QuickSearchDelegate>>,
@@ -167,13 +175,13 @@ impl QuickSearch {
         });
 
         let replacement_editor = ui_input::ERASED_EDITOR_FACTORY.get().unwrap()(window, cx);
-        replacement_editor.set_placeholder_text("Replace in project…", window, cx);
+        replacement_editor.set_placeholder_text(REPLACE_PLACEHOLDER, window, cx);
 
         let included_files_editor = ui_input::ERASED_EDITOR_FACTORY.get().unwrap()(window, cx);
-        included_files_editor.set_placeholder_text("Include: e.g. src/**/*.rs", window, cx);
+        included_files_editor.set_placeholder_text(INCLUDE_PLACEHOLDER, window, cx);
 
         let excluded_files_editor = ui_input::ERASED_EDITOR_FACTORY.get().unwrap()(window, cx);
-        excluded_files_editor.set_placeholder_text("Exclude: e.g. vendor/*, *.lock", window, cx);
+        excluded_files_editor.set_placeholder_text(EXCLUDE_PLACEHOLDER, window, cx);
 
         let focus_handle = cx.focus_handle();
         let this_handle = cx.entity().downgrade();
@@ -253,7 +261,7 @@ impl QuickSearch {
                     if matches!(event, EditorEvent::Edited { .. }) {
                         this._autosave_task = Some(cx.spawn_in(window, async move |this, cx| {
                             cx.background_executor()
-                                .timer(Duration::from_millis(500))
+                                .timer(Duration::from_millis(AUTOSAVE_DELAY_MS))
                                 .await;
 
                             this.update_in(cx, |this, _window, cx| {
@@ -468,14 +476,41 @@ impl QuickSearch {
         let picker = self.picker.read(cx);
 
         if picker.focus_handle(cx).is_focused(window) {
+            let query_text = picker.query(cx);
+
             let new_query = self.picker.update(cx, |picker, cx| {
                 let project = picker.delegate.project.clone();
-                project.update(cx, |project, _| {
-                    project
-                        .search_history_mut(SearchInputKind::Query)
-                        .next(&mut picker.delegate.search_history_cursor)
-                        .map(str::to_string)
-                })
+                let mut new_query = None;
+
+                if query_text.is_empty() {
+                    new_query = project.update(cx, |project, _| {
+                        project
+                            .search_history(SearchInputKind::Query)
+                            .current(&picker.delegate.search_history_cursor)
+                            .map(str::to_string)
+                    });
+                }
+
+                if new_query.is_none() {
+                    new_query = project.update(cx, |project, _| {
+                        project
+                            .search_history_mut(SearchInputKind::Query)
+                            .next(&mut picker.delegate.search_history_cursor)
+                            .map(str::to_string)
+                    });
+                }
+
+                if let Some(q) = &new_query {
+                    if q == &query_text {
+                        new_query = project.update(cx, |project, _| {
+                            project
+                                .search_history_mut(SearchInputKind::Query)
+                                .next(&mut picker.delegate.search_history_cursor)
+                                .map(str::to_string)
+                        });
+                    }
+                }
+                new_query
             });
 
             if let Some(new_query) = new_query {
@@ -548,7 +583,7 @@ impl QuickSearch {
 
 impl Render for QuickSearch {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let modal_width = rems(50.).to_pixels(window.rem_size());
+        let modal_width = rems(MODAL_WIDTH_REMS).to_pixels(window.rem_size());
 
         let delegate = &self.picker.read(cx).delegate;
         let match_count = delegate.matches.len();
@@ -851,7 +886,42 @@ impl Render for QuickSearch {
                     .overflow_hidden()
                     .child(self.picker.clone()),
             )
-            .when(has_matches, |this| {
+            .child({
+                // Resize handle between results and preview
+                div()
+                    .id("resize-handle")
+                    .h(px(RESIZE_HANDLE_HEIGHT))
+                    .w_full()
+                    .cursor_row_resize()
+                    .bg(cx.theme().colors().border)
+                    .hover(|style| style.bg(cx.theme().colors().border_focused))
+                    .on_drag(
+                        ResizeDrag {
+                            mouse_start_y: window.mouse_position().y,
+                            results_height_start: self.results_height,
+                            preview_height_start: self.preview_height,
+                        },
+                        |_, _, _, cx| cx.new(|_| DragPreview),
+                    )
+                    .on_drag_move::<ResizeDrag>(cx.listener(
+                        |this, event: &DragMoveEvent<ResizeDrag>, _window, cx| {
+                            let drag = event.drag(cx);
+                            let delta = event.event.position.y - drag.mouse_start_y;
+                            let total_height =
+                                drag.results_height_start + drag.preview_height_start;
+
+                            let new_results = (drag.results_height_start + delta)
+                                .max(px(MIN_PANEL_HEIGHT))
+                                .min(total_height - px(MIN_PANEL_HEIGHT));
+                            let new_preview = total_height - new_results;
+
+                            this.results_height = new_results;
+                            this.preview_height = new_preview;
+                            cx.notify();
+                        },
+                    ))
+            })
+            .child({
                 let delegate = &self.picker.read(cx).delegate;
                 let selected_match = delegate.matches.get(delegate.selected_index);
 
@@ -950,44 +1020,18 @@ impl Render for QuickSearch {
                         )
                 });
 
-                // Resize handle between results and preview
-                let resize_handle = div()
-                    .id("resize-handle")
-                    .h(px(6.))
-                    .w_full()
-                    .cursor_row_resize()
-                    .bg(cx.theme().colors().border)
-                    .hover(|style| style.bg(cx.theme().colors().border_focused))
-                    .on_drag(
-                        ResizeDrag {
-                            mouse_start_y: window.mouse_position().y,
-                            results_height_start: self.results_height,
-                            preview_height_start: self.preview_height,
-                        },
-                        |_, _, _, cx| cx.new(|_| DragPreview),
-                    )
-                    .on_drag_move::<ResizeDrag>(cx.listener(
-                        |this, event: &DragMoveEvent<ResizeDrag>, _window, cx| {
-                            let drag = event.drag(cx);
-                            let delta = event.event.position.y - drag.mouse_start_y;
-                            let total_height =
-                                drag.results_height_start + drag.preview_height_start;
-
-                            let new_results = (drag.results_height_start + delta)
-                                .max(px(MIN_PANEL_HEIGHT))
-                                .min(total_height - px(MIN_PANEL_HEIGHT));
-                            let new_preview = total_height - new_results;
-
-                            this.results_height = new_results;
-                            this.preview_height = new_preview;
-                            cx.notify();
-                        },
-                    ));
-
+                v_flex().children(preview_header).child(
+                    div()
+                        .h(self.preview_height)
+                        .overflow_hidden()
+                        .child(self.preview_editor.clone()),
+                )
+            })
+            .child({
                 // Bottom resize handle for preview
-                let bottom_resize_handle = div()
+                div()
                     .id("bottom-resize-handle")
-                    .h(px(6.))
+                    .h(px(RESIZE_HANDLE_HEIGHT))
                     .w_full()
                     .cursor_row_resize()
                     .bg(cx.theme().colors().border)
@@ -1011,18 +1055,7 @@ impl Render for QuickSearch {
                             this.preview_height = new_preview;
                             cx.notify();
                         },
-                    ));
-
-                this.child(resize_handle)
-                    .child(
-                        v_flex().children(preview_header).child(
-                            div()
-                                .h(self.preview_height)
-                                .overflow_hidden()
-                                .child(self.preview_editor.clone()),
-                        ),
-                    )
-                    .child(bottom_resize_handle)
+                    ))
             })
     }
 }
@@ -1173,18 +1206,13 @@ impl QuickSearchDelegate {
     }
 
     fn parse_path_matches(&self, text: String, cx: &App) -> anyhow::Result<PathMatcher> {
+        let path_style = self.project.read(cx).path_style(cx);
         let queries: Vec<String> = text
             .split(',')
             .map(str::trim)
-            .filter(|s| !s.is_empty())
+            .filter(|maybe_glob_str| !maybe_glob_str.is_empty())
             .map(str::to_owned)
-            .collect();
-
-        if queries.is_empty() {
-            return Ok(PathMatcher::default());
-        }
-
-        let path_style = self.project.read(cx).path_style(cx);
+            .collect::<Vec<_>>();
         Ok(PathMatcher::new(&queries, path_style)?)
     }
 
@@ -1257,18 +1285,26 @@ impl QuickSearchDelegate {
             PathMatcher::default()
         };
 
-        let match_full_paths = self.project.read(cx).visible_worktrees(cx).count() > 1;
-        let case_sensitive = self.search_options.contains(SearchOptions::CASE_SENSITIVE);
-        let whole_word = self.search_options.contains(SearchOptions::WHOLE_WORD);
-        let include_ignored = self.search_options.contains(SearchOptions::INCLUDE_IGNORED);
+        // If the project contains multiple visible worktrees, we match the
+        // include/exclude patterns against full paths to allow them to be
+        // disambiguated. For single worktree projects we use worktree relative
+        // paths for convenience.
+        let match_full_paths = self.
+            project.
+            read(cx).
+            visible_worktrees(cx).
+            count()
+            > 1;
+
 
         let result = if self.search_options.contains(SearchOptions::REGEX) {
             SearchQuery::regex(
                 query,
-                whole_word,
-                case_sensitive,
-                include_ignored,
-                false,
+                self.search_options.contains(SearchOptions::WHOLE_WORD),
+                self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
+                self.search_options
+                    .contains(SearchOptions::ONE_MATCH_PER_LINE),
                 files_to_include,
                 files_to_exclude,
                 match_full_paths,
@@ -1277,9 +1313,9 @@ impl QuickSearchDelegate {
         } else {
             SearchQuery::text(
                 query,
-                whole_word,
-                case_sensitive,
-                include_ignored,
+                self.search_options.contains(SearchOptions::WHOLE_WORD),
+                self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
                 files_to_include,
                 files_to_exclude,
                 match_full_paths,
@@ -1856,13 +1892,13 @@ impl PickerDelegate for QuickSearchDelegate {
         let now = std::time::Instant::now();
         let is_click = self
             .last_selection_change_time
-            .map(|t| now.duration_since(t).as_millis() < 50)
+            .map(|t| now.duration_since(t).as_millis() < CLICK_THRESHOLD_MS)
             .unwrap_or(false);
 
         if is_click {
             let is_double_click = self
                 .last_confirm_time
-                .map(|t| now.duration_since(t).as_millis() < 300)
+                .map(|t| now.duration_since(t).as_millis() < DOUBLE_CLICK_THRESHOLD_MS)
                 .unwrap_or(false);
             self.last_confirm_time = Some(now);
 
@@ -1904,7 +1940,9 @@ impl PickerDelegate for QuickSearchDelegate {
         cx.emit(DismissEvent);
     }
 
-    fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        cx.emit(DismissEvent);
+    }
 
     fn render_match(
         &self,
