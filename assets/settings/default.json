@@ -204,6 +204,13 @@
   "use_system_prompts": true,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
+  // Enable smooth cursor animation.
+  "smooth_caret": false,
+  // Cursor visual effects (particle animations).
+  // Available modes: "none", "sonicboom"
+  "cursor_vfx": {
+    "mode": "none"
+  },
   // Cursor shape for the default editor.
   //  1. A vertical bar
   //     "bar"

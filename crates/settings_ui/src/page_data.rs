@@ -1023,7 +1023,7 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
-    fn cursor_section() -> [SettingsPageItem; 5] {
+    fn cursor_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Cursor"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1073,6 +1073,42 @@ fn appearance_page() -> SettingsPage {
                     pick: |settings_content| settings_content.editor.hide_mouse.as_ref(),
                     write: |settings_content, value| {
                         settings_content.editor.hide_mouse = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Smooth Cursor Animation",
+                description: "Enable smooth cursor movement animation.",
+                field: Box::new(SettingField {
+                    json_path: Some("smooth_caret"),
+                    pick: |settings_content| settings_content.editor.smooth_caret.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.smooth_caret = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Cursor Effect",
+                description: "Visual effect when cursor stops moving.",
+                field: Box::new(SettingField {
+                    json_path: Some("cursor_vfx.mode"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .cursor_vfx
+                            .as_ref()
+                            .and_then(|c| c.mode.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .cursor_vfx
+                            .get_or_insert_default()
+                            .mode = value;
                     },
                 }),
                 metadata: None,

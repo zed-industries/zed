@@ -1802,10 +1802,23 @@ impl EditorElement {
         cx: &mut App,
     ) -> Vec<CursorLayout> {
         let mut autoscroll_bounds = None;
+        let mut cursor_vfx_pos = None;
+        let mut animation_state = None;
+        let editor_handle = self.editor.clone();
         let cursor_layouts = self.editor.update(cx, |editor, cx| {
             let mut cursors = Vec::new();
 
             let show_local_cursors = editor.show_local_cursors(window, cx);
+            // When smooth cursor animation is enabled, disable blinking entirely.
+            // Blinking adds visual noise when cursor is already smoothly animating.
+            let smooth_cursor_enabled = editor.quad_cursor().is_some();
+            let blink_opacity = if smooth_cursor_enabled {
+                1.0 // Always visible when smooth cursor is enabled
+            } else if editor.blink_manager.read(cx).visible() {
+                1.0
+            } else {
+                0.0
+            };
 
             for (player_color, selections) in selections {
                 for selection in selections {
@@ -1891,10 +1904,36 @@ impl EditorElement {
                         None
                     };
 
-                    let x = cursor_character_x - scroll_pixel_position.x.into();
-                    let y = ((cursor_position.row().as_f64() - scroll_position.y)
+                    let logical_x = cursor_character_x - scroll_pixel_position.x.into();
+                    let logical_y: Pixels = ((cursor_position.row().as_f64() - scroll_position.y)
                         * ScrollPixelOffset::from(line_height))
                     .into();
+
+                    // For the newest (primary) cursor, use inertial animation if enabled
+                    // Order: 1) set target 2) tick physics 3) read position
+                    // This ensures physics uses the NEW target, eliminating one-frame lag
+                    let (x, y, quad_corners, cursor_animating_for_opacity) = if selection.is_newest {
+                        if let Some(quad) = editor.quad_cursor_mut() {
+                            // Set target position for animation
+                            quad.set_logical_pos(point(logical_x, logical_y));
+                            quad.set_cell_size(block_width.into(), line_height.into());
+                            // Physics tick happens in animation callback only (prevents double-tick)
+                            // Use interpolated positions for smooth rendering between physics ticks
+                            let corners = quad.interpolated_corner_positions();
+                            let visual = quad.visual_pos();
+                            let cursor_animating = editor.is_cursor_animating();
+                            (visual.x, visual.y, Some(corners), cursor_animating)
+                        } else {
+                            (logical_x, logical_y, None, false)
+                        }
+                    } else {
+                        (logical_x, logical_y, None, false)
+                    };
+
+                    if selection.is_newest {
+                        cursor_vfx_pos = Some(point(x, y));
+                    }
+
                     if selection.is_newest {
                         editor.pixel_position_of_newest_cursor = Some(point(
                             text_hitbox.origin.x + x + block_width / 2.,
@@ -1934,7 +1973,23 @@ impl EditorElement {
                         color: player_color.cursor,
                         block_width,
                         origin: point(x, y),
+                        quad_corners,
                         line_height,
+                        // When smooth cursor is animating, animation callback handles this cursor.
+                        // Only suppress when animation is active to prevent flicker on animation end.
+                        // With smooth cursor disabled, use normal blink behavior.
+                        opacity: if selection.is_newest
+                            && quad_corners.is_some()
+                            && cursor_animating_for_opacity
+                        {
+                            0.0 // Animation callback handles this cursor
+                        } else if selection.is_local && smooth_cursor_enabled {
+                            1.0 // Smooth cursor at rest - always visible
+                        } else if selection.is_local {
+                            blink_opacity // Normal blink behavior
+                        } else {
+                            1.0 // Remote cursors
+                        },
                         shape: selection.cursor_shape,
                         block_text,
                         cursor_name: None,
@@ -1945,6 +2000,18 @@ impl EditorElement {
                         is_top_row: cursor_position.row().0 == 0,
                     });
                     cursor.layout(content_origin, cursor_name, window, cx);
+                    if selection.is_newest {
+                        animation_state = Some(CursorAnimationState {
+                            editor: editor_handle.clone(),
+                            content_origin,
+                            cursor_pos: point(x, y),
+                            cursor_color: cursor.color,
+                            line_height: cursor.line_height,
+                            block_width: cursor.block_width,
+                            cursor_shape: cursor.shape,
+                            block_text: cursor.block_text.clone(),
+                        });
+                    }
                     cursors.push(cursor);
                 }
             }
@@ -1954,6 +2021,42 @@ impl EditorElement {
 
         if let Some(bounds) = autoscroll_bounds {
             window.request_autoscroll(bounds);
+        }
+
+        // Update VFX and request next frame if still animating
+        // Note: tick_cursor_animations() handles physics with centralized frame pacing
+        let cursor_vfx_pos = cursor_vfx_pos;
+        let update_vfx_in_callback = animation_state.is_some();
+        let is_animating = self.editor.update(cx, move |editor, _cx| {
+            let cursor_animating = editor.is_cursor_animating();
+            let vfx_animating = editor.is_cursor_vfx_animating();
+            let is_animating = cursor_animating || vfx_animating;
+
+            // Update VFX system with cursor position from quad cursor
+            if !(is_animating && update_vfx_in_callback) {
+                if let Some(quad) = editor.quad_cursor() {
+                    let pos = quad.visual_pos();
+                    editor.update_cursor_vfx(pos);
+                } else if let Some(pos) = cursor_vfx_pos {
+                    editor.update_cursor_vfx(pos);
+                }
+            }
+
+            is_animating
+        });
+        // Request animation-only frame for smooth cursor animation.
+        // This uses scene caching to skip full layout on animation frames.
+        // We register an animation callback to tick physics and paint the cursor
+        // on top of the cached scene.
+        if is_animating {
+            window.request_animation_only_frame();
+
+            // Register animation callback with state that re-registers itself each frame
+            if let Some(state) = animation_state {
+                window.on_animation_frame(move |window, cx| {
+                    paint_cursor_animation_frame(state, window, cx);
+                });
+            }
         }
 
         cursor_layouts
@@ -7078,8 +7181,36 @@ impl EditorElement {
     }
 
     fn paint_cursors(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
+        // Skip cursor painting during regular paint when animation is active.
+        // The animation callback will handle cursor painting to avoid
+        // the cursor being included in the cached scene.
+        let is_animating = {
+            let editor = self.editor.read(cx);
+            editor.is_cursor_animating() || editor.is_cursor_vfx_animating()
+        };
+
+        if is_animating {
+            return;
+        }
+
         for cursor in &mut layout.visible_cursors {
             cursor.paint(layout.content_origin, window, cx);
+        }
+
+        // Paint cursor VFX particles if enabled
+        if let Some(vfx_system) = self.editor.read(cx).cursor_vfx_system() {
+            // Use the cursor color from the first visible cursor, or fallback to white
+            let cursor_color = layout
+                .visible_cursors
+                .first()
+                .map(|c| c.color)
+                .unwrap_or(gpui::Hsla {
+                    h: 0.0,
+                    s: 0.0,
+                    l: 1.0,
+                    a: 1.0,
+                });
+            vfx_system.paint(layout.content_origin, window, cursor_color);
         }
     }
 
@@ -11788,9 +11919,14 @@ pub struct IndentGuideLayout {
 
 pub struct CursorLayout {
     origin: gpui::Point<Pixels>,
+    /// Four corner positions for quad animation.
+    /// Corners are in order: [top-left, top-right, bottom-right, bottom-left]
+    quad_corners: Option<[gpui::Point<Pixels>; 4]>,
     block_width: Pixels,
     line_height: Pixels,
     color: Hsla,
+    /// Opacity for smooth blink (0.0 = hidden, 1.0 = fully visible).
+    opacity: f32,
     shape: CursorShape,
     block_text: Option<ShapedLine>,
     cursor_name: Option<AnyElement>,
@@ -11801,6 +11937,65 @@ pub struct CursorName {
     string: SharedString,
     color: Hsla,
     is_top_row: bool,
+}
+
+/// State for cursor animation callback that re-registers itself each frame.
+struct CursorAnimationState {
+    editor: Entity<Editor>,
+    content_origin: gpui::Point<Pixels>,
+    cursor_pos: gpui::Point<Pixels>,
+    cursor_color: Hsla,
+    line_height: Pixels,
+    block_width: Pixels,
+    cursor_shape: CursorShape,
+    block_text: Option<ShapedLine>,
+}
+
+/// Paint one frame of cursor animation and re-register callback if still animating.
+fn paint_cursor_animation_frame(state: CursorAnimationState, window: &mut Window, cx: &mut App) {
+    let (cursor_origin, cursor_corners, still_animating) =
+        state.editor.update(cx, |editor, _cx| {
+            editor.tick_cursor_animations();
+
+            let (origin, quad_corners) = if let Some(quad) = editor.quad_cursor() {
+                let visual = quad.visual_pos();
+                (visual, Some(quad.interpolated_corner_positions()))
+            } else {
+                (state.cursor_pos, None)
+            };
+
+            editor.update_cursor_vfx(origin);
+
+            let still_animating = editor.is_cursor_animating() || editor.is_cursor_vfx_animating();
+
+            (origin, quad_corners, still_animating)
+        });
+
+    let mut cursor = CursorLayout {
+        origin: cursor_origin,
+        quad_corners: cursor_corners,
+        block_width: state.block_width,
+        line_height: state.line_height,
+        color: state.cursor_color,
+        opacity: 1.0,
+        shape: state.cursor_shape,
+        block_text: state.block_text.clone(),
+        cursor_name: None,
+    };
+    cursor.paint(state.content_origin, window, cx);
+
+    if let Some(vfx_system) = state.editor.read(cx).cursor_vfx_system() {
+        vfx_system.paint(state.content_origin, window, state.cursor_color);
+    }
+
+    if still_animating {
+        window.request_animation_only_frame();
+        window.on_animation_frame(move |window, cx| {
+            paint_cursor_animation_frame(state, window, cx);
+        });
+    } else {
+        state.editor.update(cx, |_, cx| cx.notify());
+    }
 }
 
 impl CursorLayout {
@@ -11814,13 +12009,26 @@ impl CursorLayout {
     ) -> CursorLayout {
         CursorLayout {
             origin,
+            quad_corners: None,
             block_width,
             line_height,
             color,
+            opacity: 1.0,
             shape,
             block_text,
             cursor_name: None,
         }
+    }
+
+    /// Corners should be in order: [top-left, top-right, bottom-right, bottom-left]
+    pub fn with_quad_corners(mut self, corners: Option<[gpui::Point<Pixels>; 4]>) -> Self {
+        self.quad_corners = corners;
+        self
+    }
+
+    pub fn with_opacity(mut self, opacity: f32) -> Self {
+        self.opacity = opacity;
+        self
     }
 
     pub fn bounding_rect(&self, origin: gpui::Point<Pixels>) -> Bounds<Pixels> {
@@ -11890,13 +12098,60 @@ impl CursorLayout {
     }
 
     pub fn paint(&mut self, origin: gpui::Point<Pixels>, window: &mut Window, cx: &mut App) {
-        let bounds = self.bounds(origin);
+        let color = Hsla {
+            a: self.color.a * self.opacity,
+            ..self.color
+        };
 
-        //Draw background or border quad
+        if self.opacity < 0.01 {
+            return;
+        }
+
+        let head_bounds = self.bounds(origin);
+
+        if let Some(corners) = self.quad_corners {
+            let corners_with_offset = [
+                gpui::Point::new(corners[0].x + origin.x, corners[0].y + origin.y),
+                gpui::Point::new(corners[1].x + origin.x, corners[1].y + origin.y),
+                gpui::Point::new(corners[2].x + origin.x, corners[2].y + origin.y),
+                gpui::Point::new(corners[3].x + origin.x, corners[3].y + origin.y),
+            ];
+
+            // Check if corners form a parallelogram (not a rectangle)
+            // In a rectangle: top edge and bottom edge are parallel and equal length
+            // Deformation = how much the corners deviate from a perfect rectangle
+            let top_edge_x = f32::from(corners_with_offset[1].x - corners_with_offset[0].x);
+            let bottom_edge_x = f32::from(corners_with_offset[2].x - corners_with_offset[3].x);
+            let left_edge_y = f32::from(corners_with_offset[3].y - corners_with_offset[0].y);
+            let right_edge_y = f32::from(corners_with_offset[2].y - corners_with_offset[1].y);
+
+            // Measure skew: difference between parallel edges indicates parallelogram deformation
+            let horizontal_skew = (top_edge_x - bottom_edge_x).abs();
+            let vertical_skew = (left_edge_y - right_edge_y).abs();
+            let deformation =
+                (horizontal_skew * horizontal_skew + vertical_skew * vertical_skew).sqrt();
+
+            if deformation > 2.0 && !matches!(self.shape, CursorShape::Hollow) {
+                self.paint_quad_corners(corners_with_offset, color, window);
+
+                if let Some(name) = &mut self.cursor_name {
+                    name.paint(window, cx);
+                }
+
+                if let Some(block_text) = &self.block_text {
+                    block_text
+                        .paint(self.origin + origin, self.line_height, TextAlign::Left, None, window, cx)
+                        .log_err();
+                }
+                return;
+            }
+        }
+
+        // Normal cursor rendering
         let cursor = if matches!(self.shape, CursorShape::Hollow) {
-            outline(bounds, self.color, BorderStyle::Solid)
+            outline(head_bounds, color, BorderStyle::Solid)
         } else {
-            fill(bounds, self.color)
+            fill(head_bounds, color)
         };
 
         if let Some(name) = &mut self.cursor_name {
@@ -11919,8 +12174,60 @@ impl CursorLayout {
         }
     }
 
-    pub fn shape(&self) -> CursorShape {
-        self.shape
+    /// Used for parallelogram deformation during movement.
+    fn paint_quad_corners(
+        &self,
+        corners: [gpui::Point<Pixels>; 4],
+        color: Hsla,
+        window: &mut Window,
+    ) {
+        match self.shape {
+            CursorShape::Bar => {
+                // Bar: only use left edge of quad (corners 0 and 3)
+                let bar_width = px(2.0);
+                let mut builder = gpui::PathBuilder::fill();
+                builder.move_to(corners[0]);
+                builder.line_to(point(corners[0].x + bar_width, corners[0].y));
+                builder.line_to(point(corners[3].x + bar_width, corners[3].y));
+                builder.line_to(corners[3]);
+                builder.close();
+
+                if let Ok(path) = builder.build() {
+                    window.paint_path(path, color);
+                }
+            }
+            CursorShape::Block => {
+                // Block: draw full parallelogram using all 4 corners
+                let mut builder = gpui::PathBuilder::fill();
+                builder.move_to(corners[0]); // top-left
+                builder.line_to(corners[1]); // top-right
+                builder.line_to(corners[2]); // bottom-right
+                builder.line_to(corners[3]); // bottom-left
+                builder.close();
+
+                if let Ok(path) = builder.build() {
+                    window.paint_path(path, color);
+                }
+            }
+            CursorShape::Underline => {
+                // Underline: use bottom edge of quad (corners 2 and 3)
+                let underline_height = px(2.0);
+                let mut builder = gpui::PathBuilder::fill();
+                builder.move_to(point(corners[3].x, corners[3].y - underline_height));
+                builder.line_to(point(corners[2].x, corners[2].y - underline_height));
+                builder.line_to(corners[2]);
+                builder.line_to(corners[3]);
+                builder.close();
+
+                if let Ok(path) = builder.build() {
+                    window.paint_path(path, color);
+                }
+            }
+            CursorShape::Hollow => {
+                // Hollow cursors don't support quad animation, fall back to head bounds
+                // This case is handled earlier in paint() but included for completeness
+            }
+        }
     }
 }
 

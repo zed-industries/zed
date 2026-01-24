@@ -54,6 +54,10 @@ impl Scene {
         self.paint_operations.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.paint_operations.is_empty()
+    }
+
     pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
         let order = self.primitive_bounds.insert(bounds);
         self.layer_stack.push(order);
@@ -179,6 +183,32 @@ impl Scene {
             surfaces_iter: self.surfaces.iter().peekable(),
         }
     }
+
+    pub(crate) fn batches_with_overlay<'a>(
+        &'a self,
+        overlay: Option<&'a Scene>,
+    ) -> impl Iterator<Item = PrimitiveBatch<'a>> + 'a {
+        self.batches()
+            .chain(overlay.into_iter().flat_map(|scene| scene.batches()))
+    }
+}
+
+impl Clone for Scene {
+    fn clone(&self) -> Self {
+        Scene {
+            paint_operations: self.paint_operations.clone(),
+            primitive_bounds: BoundsTree::default(), // Not needed for replay
+            layer_stack: self.layer_stack.clone(),
+            shadows: self.shadows.clone(),
+            quads: self.quads.clone(),
+            paths: self.paths.clone(),
+            underlines: self.underlines.clone(),
+            monochrome_sprites: self.monochrome_sprites.clone(),
+            polychrome_sprites: self.polychrome_sprites.clone(),
+            subpixel_sprites: self.subpixel_sprites.clone(),
+            surfaces: self.surfaces.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
@@ -201,6 +231,7 @@ pub(crate) enum PrimitiveKind {
     Surface,
 }
 
+#[derive(Clone)]
 pub(crate) enum PaintOperation {
     Primitive(Primitive),
     StartLayer(Bounds<ScaledPixels>),
