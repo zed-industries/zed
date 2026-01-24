@@ -130,9 +130,14 @@ function BuildRemoteServer {
 
     # Create zipped remote server binary
     $remoteServerSrc = ".\$CargoOutDir\remote_server.exe"
+
+    if ($env:CI) {
+        Write-Output "Code signing remote_server.exe"
+        & "$innoDir\sign.ps1" $remoteServerSrc
+    }
+
     $remoteServerDst = "$env:ZED_WORKSPACE\target\zed-remote-server-windows-$Architecture.zip"
     Write-Output "Compressing remote_server to $remoteServerDst"
-
     Compress-Archive -Path $remoteServerSrc -DestinationPath $remoteServerDst -Force
 
     Write-Output "Remote server compressed successfully"
