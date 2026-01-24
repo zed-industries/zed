@@ -212,6 +212,7 @@ impl QuickSearch {
         });
 
         let subscriptions = vec![
+            cx.observe(&picker, |_, _, cx| cx.notify()),
             cx.subscribe_in(&picker, window, |this, _, _: &DismissEvent, _, cx| {
                 this.save_history(cx);
                 cx.emit(DismissEvent);
@@ -586,13 +587,8 @@ impl Render for QuickSearch {
         let modal_width = rems(MODAL_WIDTH_REMS).to_pixels(window.rem_size());
 
         let delegate = &self.picker.read(cx).delegate;
-        let match_count = delegate.matches.len();
-        let file_count = delegate
-            .matches
-            .iter()
-            .map(|m| &m.path)
-            .collect::<HashSet<_>>()
-            .len();
+        let match_count = delegate.match_count;
+        let file_count = delegate.file_count;
         let search_in_progress = delegate.search_in_progress;
         let replace_enabled = delegate.replace_enabled;
         let filters_enabled = delegate.filters_enabled;
@@ -925,7 +921,7 @@ impl Render for QuickSearch {
                 let delegate = &self.picker.read(cx).delegate;
                 let selected_match = delegate.matches.get(delegate.selected_index);
 
-                let preview_header = selected_match.map(|m| {
+                let preview_header = if let Some(m) = selected_match {
                     let path = &m.path.path;
                     let file_name = path
                         .file_name()
@@ -1018,9 +1014,11 @@ impl Render for QuickSearch {
                                     }
                                 }),
                         )
-                });
+                } else {
+                    h_flex().h(px(26.0))
+                };
 
-                v_flex().children(preview_header).child(
+                v_flex().child(preview_header).child(
                     div()
                         .h(self.preview_height)
                         .overflow_hidden()
@@ -1083,6 +1081,9 @@ pub struct QuickSearchDelegate {
     history_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
     search_history_cursor: SearchHistoryCursor,
     current_query: String,
+    match_count: usize,
+    file_count: usize,
+    unique_files: HashSet<ProjectPath>,
 }
 
 impl QuickSearchDelegate {
@@ -1119,6 +1120,9 @@ impl QuickSearchDelegate {
             history_popover_menu_handle: PopoverMenuHandle::default(),
             search_history_cursor: SearchHistoryCursor::default(),
             current_query: String::new(),
+            match_count: 0,
+            file_count: 0,
+            unique_files: HashSet::default(),
         }
     }
 
@@ -1139,7 +1143,9 @@ impl QuickSearchDelegate {
         let Some(selected_match) = self.matches.get(self.selected_index) else {
             self.preview_editor.update(cx, |editor, cx| {
                 editor.buffer().update(cx, |multi_buffer, cx| {
-                    multi_buffer.clear(cx);
+                    if !multi_buffer.read(cx).is_empty() {
+                        multi_buffer.clear(cx);
+                    }
                 });
             });
             return;
@@ -1799,8 +1805,6 @@ impl PickerDelegate for QuickSearchDelegate {
             .project
             .update(cx, |project, cx| project.search(search_query, cx));
 
-        self.matches.clear();
-        self.selected_index = 0;
         self.search_in_progress = true;
         cx.notify();
 
@@ -1813,6 +1817,7 @@ impl PickerDelegate for QuickSearchDelegate {
                 return;
             }
 
+            let mut first_batch = true;
             let SearchResults { rx, _task_handle } = search_results;
             let mut results_stream = pin!(rx.ready_chunks(256));
 
@@ -1840,10 +1845,26 @@ impl PickerDelegate for QuickSearchDelegate {
                 picker
                     .update_in(cx, |picker, window, cx| {
                         let delegate = &mut picker.delegate;
-                        delegate.matches.extend(batch_matches);
 
-                        if delegate.selected_index >= delegate.matches.len()
-                            && !delegate.matches.is_empty()
+                        if first_batch {
+                            delegate.matches.clear();
+                            delegate.match_count = 0;
+                            delegate.file_count = 0;
+                            delegate.unique_files.clear();
+                            delegate.selected_index = 0;
+                            first_batch = false;
+                        }
+
+                        for m in &batch_matches {
+                            if delegate.unique_files.insert(m.path.clone()) {
+                                delegate.file_count += 1;
+                            }
+                        }
+                        delegate.matches.extend(batch_matches);
+                        delegate.match_count = delegate.matches.len();
+
+                        if delegate.selected_index >= delegate.match_count
+                            && delegate.match_count > 0
                         {
                             delegate.selected_index = 0;
                         }
