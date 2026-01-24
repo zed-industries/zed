@@ -5,7 +5,7 @@ use cloud_llm_client::predict_edits_v3::{
     PredictEditsV3Request, PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
 };
 use cloud_llm_client::{
-    EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason, EditPredictionRejection,
+    EditPredictionRejectReason, EditPredictionRejection,
     MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
     PredictEditsRequestTrigger, RejectEditPredictionsBodyRef, ZED_VERSION_HEADER_NAME,
 };
@@ -29,7 +29,7 @@ use gpui::{
 use language::language_settings::all_language_settings;
 use language::{Anchor, Buffer, File, Point, TextBufferSnapshot, ToOffset, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
-use language_model::{LlmApiToken, RefreshLlmTokenListener};
+use language_model::{LlmApiToken, NeedsLlmTokenRefresh, RefreshLlmTokenListener};
 use project::{Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
@@ -1738,16 +1738,19 @@ impl EditPredictionStore {
         let can_collect_example = snapshot
             .file()
             .is_some_and(|file| self.can_collect_file(&project, file, cx))
-            && self.can_collect_events(&inputs.events, cx);
+            && self.can_collect_events(&inputs.events, cx)
+            && self.can_collect_related_files(&project, cx);
 
         if can_collect_example && should_sample_edit_prediction_example_capture(cx) {
             let events_for_capture =
                 self.edit_history_for_project_with_pause_split_last_event(&project, cx);
+            let related_files_for_capture = inputs.related_files.clone();
             if let Some(example_task) = capture_example::capture_example(
                 project.clone(),
                 active_buffer.clone(),
                 position,
                 events_for_capture,
+                related_files_for_capture,
                 false,
                 cx,
             ) {
@@ -1920,6 +1923,7 @@ impl EditPredictionStore {
         client: Arc<Client>,
         llm_token: LlmApiToken,
         app_version: Version,
+        trigger: PredictEditsRequestTrigger,
     ) -> Result<(PredictEditsV3Response, Option<EditPredictionUsage>)> {
         let url = client
             .http_client()
@@ -1929,6 +1933,7 @@ impl EditPredictionStore {
             input,
             model: EDIT_PREDICTIONS_MODEL_ID.clone(),
             prompt_version,
+            trigger,
         };
 
         Self::send_api_request(
@@ -2046,13 +2051,7 @@ impl EditPredictionStore {
                 let mut body = Vec::new();
                 response.body_mut().read_to_end(&mut body).await?;
                 return Ok((serde_json::from_slice(&body)?, usage));
-            } else if !did_retry
-                && token.is_some()
-                && response
-                    .headers()
-                    .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
-                    .is_some()
-            {
+            } else if !did_retry && token.is_some() && response.needs_llm_token_refresh() {
                 did_retry = true;
                 token = Some(llm_token.refresh(&client).await?);
             } else {
@@ -2143,6 +2142,21 @@ impl EditPredictionStore {
                     ..
                 }
             )
+        })
+    }
+
+    fn can_collect_related_files(&self, project: &Entity<Project>, cx: &mut App) -> bool {
+        if !self.data_collection_choice.is_enabled(cx) {
+            return false;
+        }
+
+        let related_with_buffers = self.context_for_project_with_buffers(project, cx);
+
+        related_with_buffers.iter().all(|(_, buffer)| {
+            buffer
+                .read(cx)
+                .file()
+                .is_some_and(|file| self.is_file_open_source(project, &file, cx))
         })
     }
 
