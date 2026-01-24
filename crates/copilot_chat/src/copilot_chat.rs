@@ -219,7 +219,7 @@ impl Model {
     }
 
     pub fn max_token_count(&self) -> u64 {
-        self.capabilities.limits.max_prompt_tokens
+        self.capabilities.limits.max_context_window_tokens as u64
     }
 
     pub fn supports_tools(&self) -> bool {
@@ -1008,5 +1008,72 @@ mod tests {
         assert_eq!(schema.data.len(), 1);
         assert_eq!(schema.data[0].id, "future-model-v1");
         assert_eq!(schema.data[0].vendor, ModelVendor::Unknown);
+    }
+
+    #[test]
+    fn test_max_token_count_returns_context_window_not_prompt_tokens() {
+        // This test verifies that max_token_count() returns the full context window size
+        // (max_context_window_tokens), not the prompt token limit (max_prompt_tokens).
+        // This is important for consistency with other providers that report the full
+        // context window in max_token_count().
+        let json = r#"{
+              "data": [
+                {
+                  "billing": { "is_premium": true, "multiplier": 1 },
+                  "capabilities": {
+                    "family": "claude-3.7-sonnet",
+                    "limits": {
+                      "max_context_window_tokens": 200000,
+                      "max_output_tokens": 16384,
+                      "max_prompt_tokens": 90000
+                    },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "claude-3.7-sonnet",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Claude 3.7 Sonnet",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "Anthropic",
+                  "version": "claude-3.7-sonnet"
+                },
+                {
+                  "billing": { "is_premium": false, "multiplier": 0 },
+                  "capabilities": {
+                    "family": "gpt-4o",
+                    "limits": {
+                      "max_context_window_tokens": 128000,
+                      "max_output_tokens": 16384,
+                      "max_prompt_tokens": 110000
+                    },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "gpt-4o",
+                  "is_chat_default": true,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "GPT-4o",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "Azure OpenAI",
+                  "version": "gpt-4o"
+                }
+              ],
+              "object": "list"
+            }"#;
+
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
+
+        // Claude 3.7 Sonnet should return 200000 (context window), not 90000 (prompt tokens)
+        assert_eq!(schema.data[0].max_token_count(), 200000);
+
+        // GPT-4o should return 128000 (context window), not 110000 (prompt tokens)
+        assert_eq!(schema.data[1].max_token_count(), 128000);
     }
 }
