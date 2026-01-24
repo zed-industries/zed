@@ -2,9 +2,10 @@
  (#set! injection.language "comment")
 )
 
-(((comment) @_jsdoc_comment
-  (#match? @_jsdoc_comment "(?s)^/[*][*][^*].*[*]/$")) @injection.content
-  (#set! injection.language "jsdoc"))
+((comment) @injection.content
+  (#match? @injection.content "^(///|//!|/\\*\\*|/\\*!)(.*)")
+  (#set! injection.language "doxygen")
+  (#set! injection.include-children))
 
 (preproc_def
     value: (preproc_arg) @injection.content
