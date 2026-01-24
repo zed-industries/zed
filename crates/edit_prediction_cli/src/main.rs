@@ -12,12 +12,14 @@ mod paths;
 mod predict;
 mod progress;
 mod pull_examples;
+mod qa;
 mod reorder_patch;
 mod retrieve_context;
 mod score;
 mod split_commit;
 mod split_dataset;
 mod synthesize;
+mod word_diff;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use collections::HashSet;
 use edit_prediction::EditPredictionStore;
@@ -159,6 +161,8 @@ enum Command {
     FilterLanguages(FilterLanguagesArgs),
     /// Import Anthropic batch results by batch IDs (useful for recovering after database loss)
     ImportBatch(ImportBatchArgs),
+    /// Assess the quality of predictions using LLM-as-a-judge
+    Qa(qa::QaArgs),
 }
 
 impl Display for Command {
@@ -193,6 +197,9 @@ impl Display for Command {
             Command::FilterLanguages(_) => write!(f, "filter-languages"),
             Command::ImportBatch(args) => {
                 write!(f, "import-batch --batch-ids {}", args.batch_ids.join(" "))
+            }
+            Command::Qa(_) => {
+                write!(f, "qa")
             }
         }
     }
@@ -558,6 +565,32 @@ fn main() {
             }
             return;
         }
+        Command::Qa(qa_args) => {
+            // Read examples from input files
+            let mut examples = example::read_example_files(&args.inputs);
+
+            // Apply filters
+            if let Some(name_filter) = &args.name {
+                examples.retain(|e| e.spec.name.contains(name_filter));
+            }
+            if let Some(repo_filter) = &args.repo {
+                examples.retain(|e| e.spec.repository_url.contains(repo_filter));
+            }
+            if let Some(offset) = args.offset {
+                examples.splice(0..offset, []);
+            }
+            if let Some(limit) = args.limit {
+                examples.truncate(limit);
+            }
+
+            smol::block_on(async {
+                if let Err(e) = qa::run_qa(&mut examples, qa_args, output.as_ref()).await {
+                    eprintln!("Error: {:?}", e);
+                    std::process::exit(1);
+                }
+            });
+            return;
+        }
         _ => {}
     }
 
@@ -724,7 +757,8 @@ fn main() {
                                         | Command::SplitCommit(_)
                                         | Command::Split(_)
                                         | Command::FilterLanguages(_)
-                                        | Command::ImportBatch(_) => {
+                                        | Command::ImportBatch(_)
+                                        | Command::Qa(_) => {
                                             unreachable!()
                                         }
                                     }

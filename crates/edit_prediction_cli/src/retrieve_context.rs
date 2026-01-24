@@ -1,5 +1,5 @@
 use crate::{
-    example::Example,
+    example::{Example, ExamplePromptInputs},
     headless::EpAppState,
     load_project::run_load_project,
     progress::{ExampleProgress, InfoStyle, Step, StepProgress},
@@ -25,6 +25,34 @@ pub async fn run_context_retrieval(
         .as_ref()
         .is_some_and(|inputs| inputs.related_files.is_some())
     {
+        return Ok(());
+    }
+
+    if let Some(captured) = &example.spec.captured_prompt_input {
+        let step_progress = example_progress.start(Step::Context);
+        step_progress.set_substatus("using captured prompt input");
+
+        let edit_history: Vec<Arc<zeta_prompt::Event>> = captured
+            .events
+            .iter()
+            .map(|e| Arc::new(e.to_event()))
+            .collect();
+
+        let related_files: Vec<zeta_prompt::RelatedFile> = captured
+            .related_files
+            .iter()
+            .map(|rf| rf.to_related_file())
+            .collect();
+
+        example.prompt_inputs = Some(ExamplePromptInputs {
+            content: captured.cursor_file_content.clone(),
+            cursor_row: captured.cursor_row,
+            cursor_column: captured.cursor_column,
+            cursor_offset: captured.cursor_offset,
+            edit_history,
+            related_files: Some(related_files),
+        });
+
         return Ok(());
     }
 

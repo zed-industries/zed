@@ -54,7 +54,7 @@ use collections::{BTreeMap, btree_map};
 use fake_git_repo::FakeGitRepositoryState;
 #[cfg(feature = "test-support")]
 use git::{
-    repository::{RepoPath, repo_path},
+    repository::{InitialGraphCommitData, RepoPath, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
 
@@ -1997,6 +1997,13 @@ impl FakeFs {
         self.with_git_state(dot_git, true, |state| {
             state.blames.clear();
             state.blames.extend(blames);
+        })
+        .unwrap();
+    }
+
+    pub fn set_graph_commits(&self, dot_git: &Path, commits: Vec<Arc<InitialGraphCommitData>>) {
+        self.with_git_state(dot_git, true, |state| {
+            state.graph_commits = commits;
         })
         .unwrap();
     }
