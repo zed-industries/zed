@@ -14,7 +14,7 @@ use settings::Settings;
 use crate::agent_server_store::{AllAgentServersSettings, CustomAgentServerSettings};
 
 const REGISTRY_URL: &str =
-    "https://github.com/agentclientprotocol/registry/releases/latest/download/registry.json";
+    "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 const REFRESH_THROTTLE_DURATION: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone, Debug)]
