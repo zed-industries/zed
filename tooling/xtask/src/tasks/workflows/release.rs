@@ -6,7 +6,7 @@ use crate::tasks::workflows::{
     run_tests,
     runners::{self, Arch, Platform},
     steps::{self, FluentBuilder, NamedJob, dependant_job, named, release_job},
-    vars::{self, assets},
+    vars::{self, StepOutput, assets},
 };
 
 const CURRENT_ACTION_RUN_URL: &str =
@@ -291,53 +291,71 @@ pub(crate) fn push_release_update_notification(
         run_url = CURRENT_ACTION_RUN_URL,
     };
 
-    let job = dependant_job(&[
+    let mut job = dependant_job(&[
         create_draft_release_job,
         upload_assets_job,
         validate_assets_job,
         auto_release_preview,
     ])
     .runs_on(runners::LINUX_SMALL)
-    .cond(Expression::new("always()"))
-    .add_step(notify_slack(MessageType::Evaluated(notification_script)));
+    .cond(Expression::new("always()"));
+
+    for step in notify_slack(MessageType::Evaluated(notification_script)) {
+        job = job.add_step(step);
+    }
     named::job(job)
 }
 
 pub(crate) fn notify_on_failure(deps: &[&NamedJob]) -> NamedJob {
     let failure_message = format!("❌ ${{{{ github.workflow }}}} failed: {CURRENT_ACTION_RUN_URL}");
 
-    let job = dependant_job(deps)
+    let mut job = dependant_job(deps)
         .runs_on(runners::LINUX_SMALL)
-        .cond(Expression::new("failure()"))
-        .add_step(notify_slack(MessageType::Static(failure_message)));
+        .cond(Expression::new("failure()"));
+
+    for step in notify_slack(MessageType::Static(failure_message)) {
+        job = job.add_step(step);
+    }
     named::job(job)
 }
 
-enum MessageType {
+pub(crate) enum MessageType {
     Static(String),
     Evaluated(String),
 }
 
-fn notify_slack(message: MessageType) -> Step<Run> {
-    let script = match message {
-        MessageType::Static(message) => {
-            formatdoc!(
-                r#"
-                curl -X POST -H 'Content-type: application/json'\
-                    --data '{{"text":"{message}"}}' "$SLACK_WEBHOOK"
-                "#,
-            )
-        }
+fn notify_slack(message: MessageType) -> Vec<Step<Run>> {
+    match message {
+        MessageType::Static(message) => vec![send_slack_message(message)],
         MessageType::Evaluated(expression) => {
-            formatdoc!(
-                r#"
-                MESSAGE=$({expression})
+            let (generate_step, generated_message) = generate_slack_message(expression);
 
-                curl -X POST -H 'Content-type: application/json'
-                    --data '{{"text": "$MESSAGE"}}" "$SLACK_WEBHOOK"
-                "#
-            )
+            vec![
+                generate_step,
+                send_slack_message(generated_message.to_string()),
+            ]
         }
+    }
+}
+
+fn generate_slack_message(expression: String) -> (Step<Run>, StepOutput) {
+    let script = formatdoc! {r#"
+        MESSAGE=$({expression})
+        echo "message=$MESSAGE" >> "$GITHUB_OUTPUT"
+        "#
     };
-    named::bash(script).add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
+    let generate_step = named::bash(&script).id("generate-webhook-message");
+
+    let output = StepOutput::new(&generate_step, "message");
+
+    (generate_step, output)
+}
+
+fn send_slack_message(message: String) -> Step<Run> {
+    let script = formatdoc! {r#"
+        curl -X POST -H 'Content-type: application/json' \
+            --data '{{"text":"{message}"}}' "$SLACK_WEBHOOK"
+        "#
+    };
+    named::bash(&script).add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
 }

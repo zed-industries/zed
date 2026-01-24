@@ -591,7 +591,8 @@ jobs:
     if: always()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
-    - name: release::notify_slack
+    - id: generate-webhook-message
+      name: release::generate_slack_message
       run: |
         MESSAGE=$(DRAFT_RESULT="${{ needs.create_draft_release.result }}"
         UPLOAD_RESULT="${{ needs.upload_release_assets.result }}"
@@ -617,9 +618,12 @@ jobs:
             fi
         fi
         )
-
-        curl -X POST -H 'Content-type: application/json'
-            --data '{"text": "$MESSAGE"}" "$SLACK_WEBHOOK"
+        echo "message=$MESSAGE" >> "$GITHUB_OUTPUT"
+      shell: bash -euxo pipefail {0}
+    - name: release::send_slack_message
+      run: |
+        curl -X POST -H 'Content-type: application/json' \
+            --data '{"text":"${{ steps.generate-webhook-message.outputs.message }}"}' "$SLACK_WEBHOOK"
       shell: bash -euxo pipefail {0}
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}

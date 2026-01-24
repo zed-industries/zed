@@ -535,9 +535,9 @@ jobs:
     if: failure()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
-    - name: release::notify_slack
+    - name: release::send_slack_message
       run: |
-        curl -X POST -H 'Content-type: application/json'\
+        curl -X POST -H 'Content-type: application/json' \
             --data '{"text":"❌ ${{ github.workflow }} failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' "$SLACK_WEBHOOK"
       shell: bash -euxo pipefail {0}
       env:
