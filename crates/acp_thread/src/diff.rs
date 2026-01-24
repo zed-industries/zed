@@ -1,11 +1,11 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
-use editor::{MultiBuffer, PathKey, multibuffer_context_lines};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task};
 use itertools::Itertools;
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _, Point, TextBuffer,
 };
+use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use util::ResultExt;
 
@@ -63,7 +63,7 @@ impl Diff {
                         PathKey::for_buffer(&buffer, cx),
                         buffer.clone(),
                         hunk_ranges,
-                        multibuffer_context_lines(cx),
+                        excerpt_context_lines(cx),
                         cx,
                     );
                     multibuffer.add_diff(diff, cx);
@@ -300,7 +300,7 @@ impl PendingDiff {
                         path_key,
                         buffer,
                         ranges,
-                        multibuffer_context_lines(cx),
+                        excerpt_context_lines(cx),
                         cx,
                     );
                     multibuffer.add_diff(buffer_diff.clone(), cx);
@@ -326,7 +326,7 @@ impl PendingDiff {
                 PathKey::for_buffer(&self.new_buffer, cx),
                 self.new_buffer.clone(),
                 ranges,
-                multibuffer_context_lines(cx),
+                excerpt_context_lines(cx),
                 cx,
             );
             let end = multibuffer.len(cx);

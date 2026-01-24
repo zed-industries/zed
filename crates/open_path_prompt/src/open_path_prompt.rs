@@ -1,4 +1,9 @@
-use crate::file_finder_settings::FileFinderSettings;
+pub mod file_finder_settings;
+
+#[cfg(test)]
+mod open_path_prompt_tests;
+
+use file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
 use futures::channel::oneshot;
 use fuzzy::{CharBag, StringMatch, StringMatchCandidate};
@@ -21,7 +26,7 @@ use util::{
 };
 use workspace::Workspace;
 
-pub(crate) struct OpenPathPrompt;
+pub struct OpenPathPrompt;
 
 pub struct OpenPathDelegate {
     tx: Option<oneshot::Sender<Option<Vec<PathBuf>>>>,
@@ -184,7 +189,7 @@ struct CandidateInfo {
 }
 
 impl OpenPathPrompt {
-    pub(crate) fn register(
+    pub fn register(
         workspace: &mut Workspace,
         _window: Option<&mut Window>,
         _: &mut Context<Workspace>,
@@ -196,7 +201,7 @@ impl OpenPathPrompt {
         }));
     }
 
-    pub(crate) fn register_new_path(
+    pub fn register_new_path(
         workspace: &mut Workspace,
         _window: Option<&mut Window>,
         _: &mut Context<Workspace>,
@@ -220,7 +225,7 @@ impl OpenPathPrompt {
             let delegate = OpenPathDelegate::new(tx, lister.clone(), creating_path, cx);
             let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
             let query = lister.default_query(cx);
-            picker.set_query(query, window, cx);
+            picker.set_query(&query, window, cx);
             picker
         });
     }
@@ -930,7 +935,7 @@ fn get_dir_and_suffix(query: String, path_style: PathStyle) -> (String, String) 
 mod tests {
     use util::paths::PathStyle;
 
-    use crate::open_path_prompt::get_dir_and_suffix;
+    use super::get_dir_and_suffix;
 
     #[test]
     fn test_get_dir_and_suffix_with_windows_style() {

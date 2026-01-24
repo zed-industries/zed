@@ -50,7 +50,7 @@ use terminal_hyperlinks::RegexSearches;
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use urlencoding;
-use util::truncate_and_trailoff;
+use util::{paths::PathStyle, truncate_and_trailoff};
 
 use std::{
     borrow::Cow,
@@ -347,6 +347,7 @@ impl TerminalBuilder {
         max_scroll_history_lines: Option<usize>,
         window_id: u64,
         background_executor: &BackgroundExecutor,
+        path_style: PathStyle,
     ) -> Result<TerminalBuilder> {
         // Create a display-only terminal (no actual PTY).
         let default_cursor_style = AlacCursorStyle::from(cursor_shape);
@@ -411,6 +412,7 @@ impl TerminalBuilder {
             child_exited: None,
             event_loop_task: Task::ready(Ok(())),
             background_executor: background_executor.clone(),
+            path_style,
         };
 
         Ok(TerminalBuilder {
@@ -434,6 +436,7 @@ impl TerminalBuilder {
         completion_tx: Option<Sender<Option<ExitStatus>>>,
         cx: &App,
         activation_script: Vec<String>,
+        path_style: PathStyle,
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
         let background_executor = cx.background_executor().clone();
@@ -640,6 +643,7 @@ impl TerminalBuilder {
                 child_exited: None,
                 event_loop_task: Task::ready(Ok(())),
                 background_executor,
+                path_style,
             };
 
             if !activation_script.is_empty() && no_task {
@@ -863,6 +867,7 @@ pub struct Terminal {
     child_exited: Option<ExitStatus>,
     event_loop_task: Task<Result<(), anyhow::Error>>,
     background_executor: BackgroundExecutor,
+    path_style: PathStyle,
 }
 
 struct CopyTemplate {
@@ -1181,6 +1186,7 @@ impl Terminal {
                     term,
                     point,
                     &mut self.hyperlink_regex_searches,
+                    self.path_style,
                 ) {
                     Some(hyperlink) => {
                         self.process_hyperlink(hyperlink, *open, cx);
@@ -1869,6 +1875,7 @@ impl Terminal {
                 &term_lock,
                 point,
                 &mut self.hyperlink_regex_searches,
+                self.path_style,
             );
             drop(term_lock);
 
@@ -1960,6 +1967,7 @@ impl Terminal {
                         &term_lock,
                         point,
                         &mut self.hyperlink_regex_searches,
+                        self.path_style,
                     )
                 } {
                     if mouse_down_hyperlink == mouse_up_hyperlink {
@@ -2283,6 +2291,7 @@ impl Terminal {
             None,
             cx,
             self.activation_script.clone(),
+            self.path_style,
         )
     }
 }
@@ -2553,6 +2562,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     vec![],
+                    PathStyle::local(),
                 )
             })
             .await
@@ -2574,6 +2584,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap()
             .subscribe(cx)
@@ -2697,6 +2708,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     Vec::new(),
+                    PathStyle::local(),
                 )
             })
             .await
@@ -2772,6 +2784,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     Vec::new(),
+                    PathStyle::local(),
                 )
             })
             .await
@@ -2958,6 +2971,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap()
             .subscribe(cx)
@@ -3005,6 +3019,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap()
             .subscribe(cx)
@@ -3046,6 +3061,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap()
             .subscribe(cx)
@@ -3256,6 +3272,7 @@ mod tests {
                         None,
                         cx,
                         vec![],
+                        PathStyle::local(),
                     )
                 })
                 .await

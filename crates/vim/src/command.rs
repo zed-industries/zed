@@ -1166,8 +1166,8 @@ impl VimCommand {
             has_bang,
             has_space: _,
         } = self.get_parsed_query(query.to_string())?;
-        let action = if has_bang && self.bang_action.is_some() {
-            self.bang_action.as_ref().unwrap().boxed_clone()
+        let action = if has_bang && let Some(bang_action) = self.bang_action.as_ref() {
+            bang_action.boxed_clone()
         } else if let Some(action) = self.action.as_ref() {
             action.boxed_clone()
         } else if let Some(action_name) = self.action_name {
