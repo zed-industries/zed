@@ -38,9 +38,8 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    #[cfg(not(windows))]
     if let Some(command) = cli.command {
-        use remote_server::unix::ExecuteProxyError;
+        use remote_server::ExecuteProxyError;
 
         let res = remote_server::run(command);
         if let Err(e) = &res
@@ -54,15 +53,6 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(e.to_exit_code());
         }
         res
-    } else {
-        eprintln!("usage: remote <run|proxy|version>");
-        std::process::exit(1);
-    }
-
-    #[cfg(windows)]
-    if let Some(_) = cli.command {
-        eprintln!("run is not supported on Windows");
-        std::process::exit(2);
     } else {
         eprintln!("usage: remote <run|proxy|version>");
         std::process::exit(1);
