@@ -1,6 +1,9 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use gpui::SharedString;
-use handlebars::{Handlebars, RenderError, Renderable, StringOutput};
+use handlebars::{
+    Handlebars, RenderError, Renderable, StringOutput,
+    template::{BlockParam, HelperTemplate, Parameter, TemplateElement},
+};
 use rust_embed::RustEmbed;
 use serde::Serialize;
 use serde_json::{Map, Value as Json};
@@ -329,104 +332,25 @@ fn trim_section_trailing_newline(mut rendered: String) -> String {
 }
 
 fn parse_section_graph_from_text(contents: &str) -> Result<TemplateSectionGraph> {
+    let template =
+        handlebars::Template::compile(contents).map_err(|err| anyhow!(err.to_string()))?;
     let mut sections: HashMap<String, SectionNode> = HashMap::new();
     let mut argument_pool: HashMap<Vec<String>, Arc<Vec<String>>> = HashMap::new();
     let mut roots = BTreeSet::new();
     let mut stack: Vec<String> = Vec::new();
     let mut scope_stack = vec![BlockScope {
-        name: None,
         arguments: intern_arguments(&default_arguments(), &mut argument_pool),
     }];
-    let mut index = 0;
-    while let Some(open_index) = contents[index..].find("{{") {
-        let tag_start = index + open_index;
-        let tag_end = contents[tag_start..]
-            .find("}}")
-            .map(|offset| tag_start + offset + 2)
-            .ok_or_else(|| anyhow!("Unterminated template tag"))?;
-        let tag = &contents[tag_start + 2..tag_end - 2];
-        let tag = tag.trim();
-        if tag.starts_with("!--") {
-            index = tag_end;
-            continue;
-        }
-        if let Some(section_name) = tag.strip_prefix("#section") {
-            let section_name =
-                parse_section_name(section_name).ok_or_else(|| anyhow!("section: missing name"))?;
-            let entry = sections
-                .entry(section_name.clone())
-                .or_insert_with(|| SectionNode {
-                    name: section_name.clone(),
-                    ..SectionNode::default()
-                });
-            entry.arguments = scope_stack
-                .last()
-                .map(|scope| scope.arguments.clone())
-                .unwrap_or_else(|| intern_arguments(&default_arguments(), &mut argument_pool));
-            if let Some(parent) = stack.last() {
-                add_unique(&mut entry.parents, parent);
-                let parent_entry = sections
-                    .entry(parent.clone())
-                    .or_insert_with(|| SectionNode {
-                        name: parent.clone(),
-                        arguments: scope_stack
-                            .last()
-                            .map(|scope| scope.arguments.clone())
-                            .unwrap_or_else(|| {
-                                intern_arguments(&default_arguments(), &mut argument_pool)
-                            }),
-                        ..SectionNode::default()
-                    });
-                add_unique(&mut parent_entry.children, &section_name);
-            } else {
-                roots.insert(section_name.clone());
-            }
-            stack.push(section_name);
-        } else if let Some(scope_name) = parse_block_start(tag) {
-            let arguments = if scope_name == "each" || scope_name == "with" {
-                let new_params = parse_block_params(tag);
-                if new_params.is_empty() {
-                    scope_stack
-                        .last()
-                        .map(|scope| scope.arguments.clone())
-                        .unwrap_or_else(|| {
-                            intern_arguments(&default_arguments(), &mut argument_pool)
-                        })
-                } else {
-                    let mut arguments = scope_stack
-                        .last()
-                        .map(|scope| (*scope.arguments).clone())
-                        .unwrap_or_else(default_arguments);
-                    arguments.extend(new_params);
-                    intern_arguments(&arguments, &mut argument_pool)
-                }
-            } else {
-                scope_stack
-                    .last()
-                    .map(|scope| scope.arguments.clone())
-                    .unwrap_or_else(|| intern_arguments(&default_arguments(), &mut argument_pool))
-            };
-            scope_stack.push(BlockScope {
-                name: Some(scope_name),
-                arguments,
-            });
-        } else if tag.starts_with("/section") {
-            if stack.pop().is_none() {
-                bail!("section: closing tag without opener");
-            }
-        } else if let Some(close_name) = parse_block_end(tag) {
-            if scope_stack.len() > 1
-                && scope_stack.last().and_then(|scope| scope.name.as_deref())
-                    == Some(close_name.as_str())
-            {
-                scope_stack.pop();
-            }
-        }
-        index = tag_end;
-    }
-    if !stack.is_empty() {
-        bail!("section: unclosed tag");
-    }
+
+    visit_template(
+        &template,
+        &mut sections,
+        &mut roots,
+        &mut stack,
+        &mut scope_stack,
+        &mut argument_pool,
+    )?;
+
     let roots = roots.into_iter().collect::<Vec<_>>();
     Ok(TemplateSectionGraph { sections, roots })
 }
@@ -470,7 +394,6 @@ fn parse_section_defaults_from_text(contents: &str) -> Result<HashMap<String, St
 
 #[derive(Clone, Debug)]
 struct BlockScope {
-    name: Option<String>,
     arguments: Arc<Vec<String>>,
 }
 
@@ -490,41 +413,104 @@ fn intern_arguments(
     shared
 }
 
-fn parse_block_start(tag: &str) -> Option<String> {
-    let tag = tag.trim_start();
-    let tag = tag.strip_prefix('#')?;
-    parse_block_name(tag)
-}
-
-fn parse_block_end(tag: &str) -> Option<String> {
-    let tag = tag.trim_start();
-    let tag = tag.strip_prefix('/')?;
-    parse_block_name(tag)
-}
-
-fn parse_block_name(tag: &str) -> Option<String> {
-    let end = tag
-        .find(|char: char| char.is_whitespace() || char == '}')
-        .unwrap_or(tag.len());
-    if end == 0 {
-        None
-    } else {
-        Some(tag[..end].to_string())
+fn visit_template(
+    template: &handlebars::Template,
+    sections: &mut HashMap<String, SectionNode>,
+    roots: &mut BTreeSet<String>,
+    stack: &mut Vec<String>,
+    scope_stack: &mut Vec<BlockScope>,
+    argument_pool: &mut HashMap<Vec<String>, Arc<Vec<String>>>,
+) -> Result<()> {
+    for element in &template.elements {
+        match element {
+            TemplateElement::HelperBlock(helper) => {
+                visit_helper_block(helper, sections, roots, stack, scope_stack, argument_pool)?;
+            }
+            TemplateElement::DecoratorBlock(decorator)
+            | TemplateElement::PartialBlock(decorator) => {
+                if let Some(template) = decorator.template.as_ref() {
+                    visit_template(template, sections, roots, stack, scope_stack, argument_pool)?;
+                }
+            }
+            _ => {}
+        }
     }
+    Ok(())
 }
 
-fn parse_block_params(tag: &str) -> Vec<String> {
-    let Some(as_index) = tag.find(" as |") else {
-        return Vec::new();
-    };
-    let after_as = &tag[as_index + " as |".len()..];
-    let Some(end) = after_as.find('|') else {
-        return Vec::new();
-    };
-    after_as[..end]
-        .split_whitespace()
-        .map(str::to_string)
-        .collect()
+fn visit_helper_block(
+    helper: &HelperTemplate,
+    sections: &mut HashMap<String, SectionNode>,
+    roots: &mut BTreeSet<String>,
+    stack: &mut Vec<String>,
+    scope_stack: &mut Vec<BlockScope>,
+    argument_pool: &mut HashMap<Vec<String>, Arc<Vec<String>>>,
+) -> Result<()> {
+    let helper_name = helper.name.as_name().unwrap_or_default().to_string();
+    let next_arguments = scoped_arguments(scope_stack, helper.block_param.as_ref(), argument_pool);
+
+    if helper_name == "section" {
+        let section_name = helper
+            .params
+            .get(0)
+            .and_then(parameter_name)
+            .or_else(|| helper.hash.get("name").and_then(parameter_name))
+            .ok_or_else(|| anyhow!("section: missing name"))?;
+
+        let entry = sections
+            .entry(section_name.clone())
+            .or_insert_with(|| SectionNode {
+                name: section_name.clone(),
+                ..SectionNode::default()
+            });
+        entry.arguments = scope_stack
+            .last()
+            .map(|scope| scope.arguments.clone())
+            .unwrap_or_else(|| intern_arguments(&default_arguments(), argument_pool));
+
+        if let Some(parent) = stack.last() {
+            add_unique(&mut entry.parents, parent);
+            let parent_entry = sections
+                .entry(parent.clone())
+                .or_insert_with(|| SectionNode {
+                    name: parent.clone(),
+                    arguments: scope_stack
+                        .last()
+                        .map(|scope| scope.arguments.clone())
+                        .unwrap_or_else(|| intern_arguments(&default_arguments(), argument_pool)),
+                    ..SectionNode::default()
+                });
+            add_unique(&mut parent_entry.children, &section_name);
+        } else {
+            roots.insert(section_name.clone());
+        }
+
+        stack.push(section_name);
+        scope_stack.push(BlockScope {
+            arguments: next_arguments,
+        });
+        if let Some(template) = helper.template.as_ref() {
+            visit_template(template, sections, roots, stack, scope_stack, argument_pool)?;
+        }
+        if let Some(inverse) = helper.inverse.as_ref() {
+            visit_template(inverse, sections, roots, stack, scope_stack, argument_pool)?;
+        }
+        scope_stack.pop();
+        stack.pop();
+        return Ok(());
+    }
+
+    scope_stack.push(BlockScope {
+        arguments: next_arguments,
+    });
+    if let Some(template) = helper.template.as_ref() {
+        visit_template(template, sections, roots, stack, scope_stack, argument_pool)?;
+    }
+    if let Some(inverse) = helper.inverse.as_ref() {
+        visit_template(inverse, sections, roots, stack, scope_stack, argument_pool)?;
+    }
+    scope_stack.pop();
+    Ok(())
 }
 
 fn parse_section_name(tag_body: &str) -> Option<String> {
@@ -548,10 +534,47 @@ fn parse_section_name(tag_body: &str) -> Option<String> {
     }
 }
 
+fn parameter_name(param: &Parameter) -> Option<String> {
+    match param {
+        Parameter::Literal(Json::String(value)) => Some(value.clone()),
+        _ => param.as_name().map(str::to_owned),
+    }
+}
+
 fn add_unique(target: &mut Vec<String>, value: &str) {
     if !target.iter().any(|existing| existing == value) {
         target.push(value.to_string());
     }
+}
+
+fn scoped_arguments(
+    scope_stack: &[BlockScope],
+    block_param: Option<&BlockParam>,
+    argument_pool: &mut HashMap<Vec<String>, Arc<Vec<String>>>,
+) -> Arc<Vec<String>> {
+    let Some(scope) = scope_stack.last() else {
+        return intern_arguments(&default_arguments(), argument_pool);
+    };
+    let Some(block_param) = block_param else {
+        return scope.arguments.clone();
+    };
+    let mut arguments = (*scope.arguments).clone();
+    match block_param {
+        BlockParam::Single(param) => {
+            if let Some(name) = parameter_name(param) {
+                arguments.push(name);
+            }
+        }
+        BlockParam::Pair((first, second)) => {
+            if let Some(name) = parameter_name(first) {
+                arguments.push(name);
+            }
+            if let Some(name) = parameter_name(second) {
+                arguments.push(name);
+            }
+        }
+    }
+    intern_arguments(&arguments, argument_pool)
 }
 
 pub trait Template: Sized {
@@ -692,8 +715,7 @@ mod tests {
 
     #[test]
     fn test_section_graph_errors_on_unclosed_sections() {
-        let err = parse_section_graph_from_text("{{#section root}}\ntext\n").unwrap_err();
-        assert!(err.to_string().contains("section: unclosed tag"));
+        assert!(parse_section_graph_from_text("{{#section root}}\ntext\n").is_err());
     }
 
     #[test]
