@@ -1,3 +1,5 @@
+{{#section root}}
+{{#section edit_file_prompt_xml_format}}
 You MUST respond with a series of edits to a file, using the following format:
 
 ```
@@ -26,7 +28,9 @@ NEW TEXT 3 HERE
 
 </edits>
 ```
+{{/section}}
 
+{{#section edit_file_prompt_xml_instructions}}
 # File Editing Instructions
 
 - Use `<old_text>` and `<new_text>` tags to replace content
@@ -42,8 +46,9 @@ NEW TEXT 3 HERE
 - Edits are sequential - each assumes previous edits are already applied
 - Only edit the specified file
 - Always close all tags properly
+{{/section}}
 
-
+{{#section edit_file_prompt_xml_example}}
 {{!-- The following example adds almost 10% pass rate for Gemini 2.5.
 Claude and gpt-4.1 don't really need it. --}}
 <example>
@@ -79,14 +84,21 @@ struct User {
 
 </edits>
 </example>
+{{/section}}
 
-
+{{#section edit_file_prompt_xml_file_to_edit}}
 <file_to_edit>
 {{path}}
 </file_to_edit>
+{{/section}}
 
+{{#section edit_file_prompt_xml_edit_description}}
 <edit_description>
 {{edit_description}}
 </edit_description>
+{{/section}}
 
+{{#section edit_file_prompt_xml_final_instructions}}
 Tool calls have been disabled. You MUST start your response with <edits>.
+{{/section}}
+{{/section}}

@@ -1,3 +1,5 @@
+{{#section root}}
+{{#section edit_file_prompt_diff_fenced_format}}
 You MUST respond with a series of edits to a file, using the following diff format:
 
 ```
@@ -17,7 +19,9 @@ return 0
 >>>>>>> REPLACE
 
 ```
+{{/section}}
 
+{{#section edit_file_prompt_diff_fenced_instructions}}
 # File Editing Instructions
 
 - Use the SEARCH/REPLACE diff format shown above
@@ -32,7 +36,9 @@ return 0
 - For multiple occurrences, repeat the same diff block for each instance
 - Edits are sequential - each assumes previous edits are already applied
 - Only edit the specified file
+{{/section}}
 
+{{#section edit_file_prompt_diff_fenced_example}}
 # Example
 
 ```
@@ -62,16 +68,23 @@ struct User {
     };
 >>>>>>> REPLACE
 ```
+{{/section}}
 
-
+{{#section edit_file_prompt_diff_fenced_final_instructions}}
 # Final instructions
 
 Tool calls have been disabled. You MUST respond using the SEARCH/REPLACE diff format only.
+{{/section}}
 
+{{#section edit_file_prompt_diff_fenced_file_to_edit}}
 <file_to_edit>
 {{path}}
 </file_to_edit>
+{{/section}}
 
+{{#section edit_file_prompt_diff_fenced_edit_description}}
 <edit_description>
 {{edit_description}}
 </edit_description>
+{{/section}}
+{{/section}}

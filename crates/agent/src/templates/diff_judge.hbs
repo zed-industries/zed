@@ -1,19 +1,31 @@
+{{#section root}}
+{{#section diff_judge_intro}}
 You are an expert coder, and have been tasked with looking at the following diff:
+{{/section}}
 
+{{#section diff_judge_diff}}
 <diff>
 {{diff}}
 </diff>
+{{/section}}
 
+{{#section diff_judge_assertions_intro}}
 Evaluate the following assertions:
+{{/section}}
 
+{{#section diff_judge_assertions}}
 <assertions>
 {{assertions}}
 </assertions>
+{{/section}}
 
+{{#section diff_judge_scoring_instructions}}
 You must respond with a short analysis and a score between 0 and 100, where:
 - 0 means no assertions pass
 - 100 means all the assertions pass perfectly
+{{/section}}
 
+{{#section diff_judge_response_format}}
 <analysis>
 - Assertion 1: one line describing why the first assertion passes or fails (even partially)
 - Assertion 2: one line describing why the second assertion passes or fails (even partially)
@@ -21,3 +33,5 @@ You must respond with a short analysis and a score between 0 and 100, where:
 - Assertion N: one line describing why the Nth assertion passes or fails (even partially)
 </analysis>
 <score>YOUR FINAL SCORE HERE</score>
+{{/section}}
+{{/section}}
