@@ -147,7 +147,7 @@ impl EditorBlock {
             let text_line_height = text_style.line_height_in_pixels(rem_size);
             let output_settings = ReplSettings::get_global(cx.app);
             let output_max_height = if output_settings.output_max_height_lines > 0 {
-                Some(px(text_line_height * output_settings.output_max_height_lines as f32))
+                Some(text_line_height * output_settings.output_max_height_lines as f32)
             } else {
                 None
             };

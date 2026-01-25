@@ -80,17 +80,13 @@ impl Render for ImageView {
             == u8::MAX as f32
         {
             let height = u8::MAX as f32 * line_height;
-            let width = self.width as f32 * height / self.height as f32;
+            let width = Pixels::from(self.width as f32 * f32::from(height) / self.height as f32);
             (height, width)
         } else {
             (self.height.into(), self.width.into())
         };
 
-        let max_width = plain::max_width_for_columns(
-            settings.output_max_width_columns,
-            window,
-            cx,
-        );
+        let max_width = plain::max_width_for_columns(settings.output_max_width_columns, window, cx);
 
         let max_height = if settings.output_max_height_lines > 0 {
             Some(line_height * settings.output_max_height_lines as f32)
@@ -98,9 +94,8 @@ impl Render for ImageView {
             None
         };
 
-        let mut scale = 1.0;
+        let mut scale: f32 = 1.0;
         if let Some(max_width) = max_width {
-            let max_width: f32 = max_width.into();
             if width > max_width {
                 scale = scale.min(max_width / width);
             }

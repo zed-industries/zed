@@ -1102,7 +1102,7 @@ impl Render for CodeCell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let output_max_height = ReplSettings::get_global(cx).output_max_height_lines;
         let output_max_height = if output_max_height > 0 {
-            Some(px(window.line_height() * output_max_height as f32))
+            Some(window.line_height() * output_max_height as f32)
         } else {
             None
         };

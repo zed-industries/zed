@@ -22,7 +22,7 @@ use alacritty_terminal::{
     term::Config,
     vte::ansi::Processor,
 };
-use gpui::{Bounds, ClipboardItem, Entity, FontStyle, TextStyle, WhiteSpace, canvas, px, size};
+use gpui::{Bounds, ClipboardItem, Entity, FontStyle, TextStyle, WhiteSpace, canvas, size};
 use language::Buffer;
 use settings::Settings as _;
 use terminal::terminal_settings::TerminalSettings;
@@ -132,7 +132,7 @@ pub fn max_width_for_columns(
         .map(|advance| advance.width)
         .unwrap_or(Pixels::ZERO);
 
-    Some(px(cell_width * columns as f32))
+    Some(cell_width * columns as f32)
 }
 
 impl TerminalOutput {
