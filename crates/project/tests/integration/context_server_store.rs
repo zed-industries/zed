@@ -1,12 +1,19 @@
+use anyhow::Result;
 use context_server::test::create_fake_transport;
-use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
+use context_server::{ContextServer, ContextServerId};
+use gpui::{AppContext, AsyncApp, Entity, Subscription, Task, TestAppContext, UpdateGlobal as _};
 use http_client::{FakeHttpClient, Response};
+use project::context_server_store::registry::ContextServerDescriptorRegistry;
 use project::context_server_store::*;
+use project::project_settings::ContextServerSettings;
+use project::worktree_store::WorktreeStore;
 use project::{
     FakeFs, Project, context_server_store::registry::ContextServerDescriptor,
     project_settings::ProjectSettings,
 };
 use serde_json::json;
+use settings::{ContextServerCommand, Settings, SettingsStore};
+use std::sync::Arc;
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 use util::path;
 

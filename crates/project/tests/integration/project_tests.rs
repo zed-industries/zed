@@ -2,6 +2,8 @@
 
 mod color_extractor;
 mod context_server_store;
+mod ext_agent_tests;
+mod extension_agent_tests;
 mod image_store;
 mod lsp_command;
 mod lsp_store;

@@ -598,7 +598,7 @@ impl ContextServerStore {
         Ok(())
     }
 
-    async fn create_context_server(
+    pub async fn create_context_server(
         this: WeakEntity<Self>,
         id: ContextServerId,
         configuration: Arc<ContextServerConfiguration>,

@@ -12638,6 +12638,7 @@ dependencies = [
  "postage",
  "prettier",
  "pretty_assertions",
+ "project",
  "rand 0.9.2",
  "regex",
  "release_channel",
