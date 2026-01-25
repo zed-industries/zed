@@ -310,7 +310,7 @@
     "delay": 300,
   },
   // Whether to automatically replace unicode shortcodes with their corresponding unicode characters (for ex: \alpha with α) as you type.
-  "auto_replace_unicode_shortcode": true,
+  "auto_replace_unicode_shortcode": false,
   
   // What to do when go to definition yields no results.
   //
