@@ -92,7 +92,7 @@ impl GitHostingProvider for Azure {
     }
 
     fn base_url(&self) -> Url {
-        Url::parse("https://dev.azure.com").expect("failed to parse Azure DevOps base URL")
+        Url::parse("https://dev.azure.com").unwrap()
     }
 
     fn supports_avatars(&self) -> bool {
