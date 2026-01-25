@@ -58,4 +58,3 @@ workspace = { workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-machete]
 ignored = ["tracing"]
-

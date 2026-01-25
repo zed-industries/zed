@@ -12,8 +12,8 @@ use command_palette_hooks::CommandPaletteFilter;
 use futures::future;
 use futures::{Future, FutureExt, TryFutureExt, channel::oneshot, future::Shared, select_biased};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
-    WeakEntity, actions,
+    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Subscription,
+    Task, WeakEntity, actions,
 };
 use language::language_settings::{AllLanguageSettings, CopilotSettings};
 use language::{
@@ -41,6 +41,7 @@ use std::{
 };
 use sum_tree::Dimensions;
 use util::{ResultExt, fs::remove_matching};
+use workspace::AppState;
 
 pub use crate::copilot_edit_prediction_delegate::CopilotEditPredictionDelegate;
 
@@ -251,20 +252,50 @@ pub struct Copilot {
     server: CopilotServer,
     buffers: HashSet<WeakEntity<Buffer>>,
     server_id: LanguageServerId,
-    _subscriptions: [gpui::Subscription; 2],
+    _subscriptions: Vec<Subscription>,
 }
 
 pub enum Event {
-    CopilotLanguageServerStarted,
     CopilotAuthSignedIn,
     CopilotAuthSignedOut,
 }
 
 impl EventEmitter<Event> for Copilot {}
 
-struct GlobalCopilot(Entity<Copilot>);
+#[derive(Clone)]
+pub struct GlobalCopilotAuth(pub Entity<Copilot>);
 
-impl Global for GlobalCopilot {}
+impl GlobalCopilotAuth {
+    pub fn set_global(
+        server_id: LanguageServerId,
+        fs: Arc<dyn Fs>,
+        node_runtime: NodeRuntime,
+        cx: &mut App,
+    ) {
+        let auth =
+            GlobalCopilotAuth(cx.new(|cx| Copilot::new(None, server_id, fs, node_runtime, cx)));
+        cx.set_global(auth);
+    }
+    pub fn try_global(cx: &mut App) -> Option<&GlobalCopilotAuth> {
+        cx.try_global()
+    }
+
+    pub fn get_or_init(cx: &mut App) -> Option<GlobalCopilotAuth> {
+        if let Some(copilot) = cx.try_global::<Self>() {
+            Some(copilot.clone())
+        } else {
+            let app_state = AppState::global(cx).upgrade()?;
+            Self::set_global(
+                app_state.languages.next_language_server_id(),
+                app_state.fs.clone(),
+                app_state.node_runtime.clone(),
+                cx,
+            );
+            cx.try_global::<Self>().cloned()
+        }
+    }
+}
+impl Global for GlobalCopilotAuth {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CompletionSource {
@@ -284,23 +315,14 @@ pub(crate) struct CopilotEditPrediction {
 }
 
 impl Copilot {
-    pub fn global(cx: &App) -> Option<Entity<Self>> {
-        cx.try_global::<GlobalCopilot>()
-            .map(|model| model.0.clone())
-    }
-
-    pub fn set_global(copilot: Entity<Self>, cx: &mut App) {
-        cx.set_global(GlobalCopilot(copilot));
-    }
-
     pub fn new(
-        project: Entity<Project>,
+        project: Option<Entity<Project>>,
         new_server_id: LanguageServerId,
         fs: Arc<dyn Fs>,
         node_runtime: NodeRuntime,
         cx: &mut Context<Self>,
     ) -> Self {
-        let send_focus_notification =
+        let send_focus_notification = project.map(|project| {
             cx.subscribe(&project, |this, project, e: &project::Event, cx| {
                 if let project::Event::ActiveEntryChanged(new_entry) = e
                     && let Ok(running) = this.server.as_authenticated()
@@ -312,11 +334,40 @@ impl Copilot {
 
                     _ = running.lsp.notify::<DidFocus>(DidFocusParams { uri });
                 }
+            })
+        });
+        let global_authentication_events =
+            cx.try_global::<GlobalCopilotAuth>().cloned().map(|auth| {
+                cx.subscribe(&auth.0, |_, _, _: &Event, cx| {
+                    cx.spawn(async move |this, cx| {
+                        let Some(server) = this
+                            .update(cx, |this, _| this.language_server().cloned())
+                            .ok()
+                            .flatten()
+                        else {
+                            return;
+                        };
+                        let status = server
+                            .request::<request::CheckStatus>(request::CheckStatusParams {
+                                local_checks_only: false,
+                            })
+                            .await
+                            .into_response()
+                            .ok();
+                        if let Some(status) = status {
+                            this.update(cx, |copilot, cx| {
+                                copilot.update_sign_in_status(status, cx);
+                            })
+                            .ok();
+                        }
+                    })
+                    .detach()
+                })
             });
-        let _subscriptions = [
-            cx.on_app_quit(Self::shutdown_language_server),
-            send_focus_notification,
-        ];
+        let _subscriptions = std::iter::once(cx.on_app_quit(Self::shutdown_language_server))
+            .chain(send_focus_notification)
+            .chain(global_authentication_events)
+            .collect();
         let mut this = Self {
             server_id: new_server_id,
             fs,
@@ -455,7 +506,7 @@ impl Copilot {
                 sign_in_status: SignInStatus::Authorized,
                 registered_buffers: Default::default(),
             }),
-            _subscriptions: [
+            _subscriptions: vec![
                 send_focus_notification,
                 cx.on_app_quit(Self::shutdown_language_server),
             ],
@@ -619,7 +670,6 @@ impl Copilot {
                         },
                         registered_buffers: Default::default(),
                     });
-                    cx.emit(Event::CopilotLanguageServerStarted);
                     this.update_sign_in_status(status, cx);
                 }
                 Err(error) => {
@@ -932,7 +982,7 @@ impl Copilot {
         let nes_enabled = AllLanguageSettings::get_global(cx)
             .edit_predictions
             .copilot
-            .enabled_next_edit_suggestions
+            .enable_next_edit_suggestions
             .unwrap_or(true);
 
         cx.background_spawn(async move {

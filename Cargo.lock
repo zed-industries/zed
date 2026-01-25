@@ -14,7 +14,6 @@ dependencies = [
  "buffer_diff",
  "chrono",
  "collections",
- "editor",
  "env_logger 0.11.8",
  "file_icons",
  "futures 0.3.31",
@@ -25,6 +24,7 @@ dependencies = [
  "language",
  "language_model",
  "markdown",
+ "multi_buffer",
  "parking_lot",
  "portable-pty",
  "project",
@@ -38,6 +38,7 @@ dependencies = [
  "telemetry",
  "tempfile",
  "terminal",
+ "text",
  "ui",
  "url",
  "urlencoding",
@@ -272,17 +273,18 @@ dependencies = [
  "chrono",
  "client",
  "collections",
+ "credentials_provider",
  "env_logger 0.11.8",
  "feature_flags",
  "fs",
  "futures 0.3.31",
+ "google_ai",
  "gpui",
  "gpui_tokio",
  "http_client",
  "indoc",
  "language",
  "language_model",
- "language_models",
  "libc",
  "log",
  "nix 0.29.0",
@@ -509,8 +511,7 @@ dependencies = [
 [[package]]
 name = "alacritty_terminal"
 version = "0.25.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46319972e74179d707445f64aaa2893bbf6a111de3a9af29b7eb382f8b39e282"
+source = "git+https://github.com/zed-industries/alacritty?rev=936aee8761a17affc84ab418ae21306c27c26221#936aee8761a17affc84ab418ae21306c27c26221"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.9.4",
@@ -3370,6 +3371,7 @@ dependencies = [
  "uuid",
  "workspace",
  "worktree",
+ "zed_actions",
  "zlog",
 ]
 
@@ -3703,6 +3705,7 @@ dependencies = [
  "sum_tree",
  "theme",
  "util",
+ "workspace",
  "zlog",
 ]
 
@@ -3718,7 +3721,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "http_client",
- "itertools 0.14.0",
  "log",
  "paths",
  "serde",
@@ -3733,10 +3735,12 @@ dependencies = [
  "anyhow",
  "copilot",
  "gpui",
+ "language",
  "log",
  "lsp",
  "menu",
  "serde_json",
+ "settings",
  "ui",
  "util",
  "workspace",
@@ -5516,6 +5520,7 @@ dependencies = [
  "tree-sitter-typescript",
  "tree-sitter-yaml",
  "ui",
+ "ui_input",
  "unicode-script",
  "unicode-segmentation",
  "unicode-width",
@@ -6221,11 +6226,10 @@ dependencies = [
  "gpui",
  "language",
  "menu",
+ "open_path_prompt",
  "picker",
  "pretty_assertions",
  "project",
- "schemars",
- "search",
  "serde",
  "serde_json",
  "settings",
@@ -6234,6 +6238,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
  "zlog",
 ]
 
@@ -7268,6 +7273,7 @@ dependencies = [
  "time_format",
  "tracing",
  "ui",
+ "ui_input",
  "unindent",
  "util",
  "watch",
@@ -8429,11 +8435,11 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "platform_title_bar",
  "project",
  "serde_json",
  "serde_json_lenient",
  "theme",
- "title_bar",
  "ui",
  "util",
  "util_macros",
@@ -9120,11 +9126,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "editor",
- "file_finder",
  "file_icons",
  "fuzzy",
  "gpui",
  "language",
+ "open_path_prompt",
  "picker",
  "project",
  "settings",
@@ -11134,6 +11140,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "open_path_prompt"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "file_icons",
+ "futures 0.3.31",
+ "fuzzy",
+ "gpui",
+ "picker",
+ "project",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "open_router"
 version = "0.1.0"
 dependencies = [
@@ -12156,7 +12183,9 @@ dependencies = [
  "serde_json",
  "theme",
  "ui",
+ "ui_input",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -12250,6 +12279,20 @@ name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
+
+[[package]]
+name = "platform_title_bar"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "settings",
+ "smallvec",
+ "theme",
+ "ui",
+ "windows 0.61.3",
+ "workspace",
+ "zed_actions",
+]
 
 [[package]]
 name = "plist"
@@ -13387,7 +13430,6 @@ dependencies = [
  "editor",
  "extension",
  "extension_host",
- "file_finder",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -13399,6 +13441,7 @@ dependencies = [
  "markdown",
  "menu",
  "node_runtime",
+ "open_path_prompt",
  "ordered-float 2.10.1",
  "paths",
  "picker",
@@ -13633,6 +13676,7 @@ dependencies = [
  "log",
  "lsp",
  "minidumper",
+ "net",
  "node_runtime",
  "paths",
  "pretty_assertions",
@@ -13659,6 +13703,7 @@ dependencies = [
  "unindent",
  "util",
  "watch",
+ "windows 0.61.3",
  "workspace",
  "worktree",
  "zlog",
@@ -14055,14 +14100,15 @@ dependencies = [
  "log",
  "menu",
  "picker",
+ "platform_title_bar",
  "prompt_store",
  "release_channel",
  "rope",
  "serde",
  "settings",
  "theme",
- "title_bar",
  "ui",
+ "ui_input",
  "util",
  "workspace",
  "zed_actions",
@@ -15058,6 +15104,7 @@ dependencies = [
  "assets",
  "bm25",
  "client",
+ "component",
  "copilot_ui",
  "edit_prediction",
  "editor",
@@ -15075,6 +15122,7 @@ dependencies = [
  "node_runtime",
  "paths",
  "picker",
+ "platform_title_bar",
  "pretty_assertions",
  "project",
  "recent_projects",
@@ -15090,7 +15138,6 @@ dependencies = [
  "theme",
  "title_bar",
  "ui",
- "ui_input",
  "util",
  "workspace",
  "zed_actions",
@@ -15387,11 +15434,11 @@ dependencies = [
 name = "snippets_ui"
 version = "0.1.0"
 dependencies = [
- "file_finder",
  "file_icons",
  "fuzzy",
  "gpui",
  "language",
+ "open_path_prompt",
  "paths",
  "picker",
  "settings",
@@ -17049,6 +17096,7 @@ dependencies = [
  "http_client",
  "menu",
  "notifications",
+ "platform_title_bar",
  "pretty_assertions",
  "project",
  "recent_projects",
@@ -17323,12 +17371,12 @@ dependencies = [
  "anyhow",
  "convert_case 0.8.0",
  "editor",
- "file_finder",
  "futures 0.3.31",
  "fuzzy",
  "gpui",
  "language",
  "menu",
+ "open_path_prompt",
  "picker",
  "project",
  "ui",
@@ -17998,11 +18046,7 @@ name = "ui_input"
 version = "0.1.0"
 dependencies = [
  "component",
- "editor",
  "gpui",
- "menu",
- "settings",
- "theme",
  "ui",
 ]
 

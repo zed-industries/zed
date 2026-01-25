@@ -98,9 +98,8 @@ use edit_prediction_types::{
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
 use futures::{
-    FutureExt, StreamExt as _,
+    FutureExt,
     future::{self, Shared, join},
-    stream::FuturesUnordered,
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::blame::{GitBlame, GlobalBlameRenderer};
@@ -108,7 +107,7 @@ use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
-    Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
+    Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
     MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement, Pixels, PressureStage,
     Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled, Subscription, Task,
     TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
@@ -196,13 +195,14 @@ use std::{
 use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
 use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _};
 use theme::{
-    AccentColors, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, Theme, ThemeSettings,
-    observe_buffer_font_size_adjustment,
+    AccentColors, ActiveTheme, GlobalTheme, PlayerColor, StatusColors, SyntaxTheme, Theme,
+    ThemeSettings, observe_buffer_font_size_adjustment,
 };
 use ui::{
     Avatar, ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape,
     IconName, IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
 };
+use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, NavigationEntry, OpenInTerminal,
@@ -212,6 +212,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::{CollapseDirection, SearchEvent},
 };
+use zed_actions::editor::{MoveDown, MoveUp};
 
 use crate::{
     code_context_menus::CompletionsMenuSource,
@@ -372,6 +373,12 @@ pub fn init(cx: &mut App) {
             .detach();
         }
     });
+    _ = ui_input::ERASED_EDITOR_FACTORY.set(|window, cx| {
+        Arc::new(ErasedEditorImpl(
+            cx.new(|cx| Editor::single_line(window, cx)),
+        )) as Arc<dyn ErasedEditor>
+    });
+    _ = multi_buffer::EXCERPT_CONTEXT_LINES.set(multibuffer_context_lines);
 }
 
 pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) {
@@ -1291,7 +1298,6 @@ pub struct Editor {
     next_review_comment_id: usize,
     hovered_diff_hunk_row: Option<DisplayRow>,
     pull_diagnostics_task: Task<()>,
-    pull_diagnostics_background_task: Task<()>,
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
@@ -2480,6 +2486,7 @@ impl Editor {
                         cx.observe_in(&display_map, window, Self::on_display_map_changed),
                         cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
+                        cx.observe_global_in::<GlobalTheme>(window, Self::theme_changed),
                         observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
                         cx.observe_window_activation(window, |editor, window, cx| {
                             let active = window.is_window_active();
@@ -2499,7 +2506,6 @@ impl Editor {
                 .unwrap_or_default(),
             tasks_update_task: None,
             pull_diagnostics_task: Task::ready(()),
-            pull_diagnostics_background_task: Task::ready(()),
             colors: None,
             refresh_colors_task: Task::ready(()),
             inlay_hints: None,
@@ -19243,8 +19249,8 @@ impl Editor {
 
     fn pull_diagnostics(
         &mut self,
-        buffer_id: Option<BufferId>,
-        window: &Window,
+        buffer_id: BufferId,
+        _window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
         if self.ignore_lsp_data() || !self.diagnostics_enabled() {
@@ -19256,102 +19262,27 @@ impl Editor {
         if !pull_diagnostics_settings.enabled {
             return None;
         }
-        let project = self.project()?.downgrade();
-
-        let mut edited_buffer_ids = HashSet::default();
-        let mut edited_worktree_ids = HashSet::default();
-        let edited_buffers = match buffer_id {
-            Some(buffer_id) => {
-                let buffer = self.buffer().read(cx).buffer(buffer_id)?;
-                let worktree_id = buffer.read(cx).file().map(|f| f.worktree_id(cx))?;
-                edited_buffer_ids.insert(buffer.read(cx).remote_id());
-                edited_worktree_ids.insert(worktree_id);
-                vec![buffer]
-            }
-            None => self
-                .buffer()
-                .read(cx)
-                .all_buffers()
-                .into_iter()
-                .filter(|buffer| {
-                    let buffer = buffer.read(cx);
-                    match buffer.file().map(|f| f.worktree_id(cx)) {
-                        Some(worktree_id) => {
-                            edited_buffer_ids.insert(buffer.remote_id());
-                            edited_worktree_ids.insert(worktree_id);
-                            true
-                        }
-                        None => false,
-                    }
-                })
-                .collect::<Vec<_>>(),
-        };
-
-        if edited_buffers.is_empty() {
-            self.pull_diagnostics_task = Task::ready(());
-            self.pull_diagnostics_background_task = Task::ready(());
-            return None;
-        }
-
-        let mut already_used_buffers = HashSet::default();
-        let related_open_buffers = self
-            .workspace
-            .as_ref()
-            .and_then(|(workspace, _)| workspace.upgrade())
-            .into_iter()
-            .flat_map(|workspace| workspace.read(cx).panes())
-            .flat_map(|pane| pane.read(cx).items_of_type::<Editor>())
-            .filter(|editor| editor != &cx.entity())
-            .flat_map(|editor| editor.read(cx).buffer().read(cx).all_buffers())
-            .filter(|buffer| {
-                let buffer = buffer.read(cx);
-                let buffer_id = buffer.remote_id();
-                if already_used_buffers.insert(buffer_id) {
-                    if let Some(worktree_id) = buffer.file().map(|f| f.worktree_id(cx)) {
-                        return !edited_buffer_ids.contains(&buffer_id)
-                            && edited_worktree_ids.contains(&worktree_id);
-                    }
-                }
-                false
-            })
-            .collect::<Vec<_>>();
-
         let debounce = Duration::from_millis(pull_diagnostics_settings.debounce_ms);
-        let make_spawn = |buffers: Vec<Entity<Buffer>>, delay: Duration| {
-            if buffers.is_empty() {
-                return Task::ready(());
+        let project = self.project()?.downgrade();
+        let buffer = self.buffer().read(cx).buffer(buffer_id)?;
+
+        self.pull_diagnostics_task = cx.spawn(async move |_, cx| {
+            cx.background_executor().timer(debounce).await;
+            if let Ok(task) = project.update(cx, |project, cx| {
+                project.lsp_store().update(cx, |lsp_store, cx| {
+                    lsp_store.pull_diagnostics_for_buffer(buffer, cx)
+                })
+            }) {
+                task.await.log_err();
             }
-            let project_weak = project.clone();
-            cx.spawn_in(window, async move |_, cx| {
-                cx.background_executor().timer(delay).await;
-
-                let Ok(mut pull_diagnostics_tasks) = cx.update(|_, cx| {
-                    buffers
-                        .into_iter()
-                        .filter_map(|buffer| {
-                            project_weak
-                                .update(cx, |project, cx| {
-                                    project.lsp_store().update(cx, |lsp_store, cx| {
-                                        lsp_store.pull_diagnostics_for_buffer(buffer, cx)
-                                    })
-                                })
-                                .ok()
-                        })
-                        .collect::<FuturesUnordered<_>>()
-                }) else {
-                    return;
-                };
-
-                while let Some(pull_task) = pull_diagnostics_tasks.next().await {
-                    if let Err(e) = pull_task {
-                        log::error!("Failed to update project diagnostics: {e:#}");
-                    }
-                }
-            })
-        };
-
-        self.pull_diagnostics_task = make_spawn(edited_buffers, debounce);
-        self.pull_diagnostics_background_task = make_spawn(related_open_buffers, debounce * 2);
+            project
+                .update(cx, |project, cx| {
+                    project.lsp_store().update(cx, |lsp_store, cx| {
+                        lsp_store.pull_document_diagnostics_for_buffer_edit(buffer_id, cx);
+                    })
+                })
+                .log_err();
+        });
 
         Some(())
     }
@@ -23983,6 +23914,18 @@ impl Editor {
         cx.notify();
     }
 
+    fn theme_changed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.mode.is_full() {
+            return;
+        }
+
+        let new_accents = self.fetch_accent_data(cx);
+        if new_accents != self.accent_data {
+            self.accent_data = new_accents;
+            self.colorize_brackets(true, cx);
+        }
+    }
+
     pub fn set_searchable(&mut self, searchable: bool) {
         self.searchable = searchable;
     }
@@ -24920,7 +24863,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        self.pull_diagnostics(for_buffer, window, cx);
+        if let Some(buffer_id) = for_buffer {
+            self.pull_diagnostics(buffer_id, window, cx);
+        }
         self.refresh_colors_for_visible_range(for_buffer, window, cx);
     }
 
@@ -27717,6 +27662,90 @@ impl<T: InvalidationRegion> InvalidationStack<T> {
     }
 }
 
+#[derive(Clone)]
+struct ErasedEditorImpl(Entity<Editor>);
+
+impl ui_input::ErasedEditor for ErasedEditorImpl {
+    fn text(&self, cx: &App) -> String {
+        self.0.read(cx).text(cx)
+    }
+
+    fn set_text(&self, text: &str, window: &mut Window, cx: &mut App) {
+        self.0.update(cx, |this, cx| {
+            this.set_text(text, window, cx);
+        })
+    }
+
+    fn clear(&self, window: &mut Window, cx: &mut App) {
+        self.0.update(cx, |this, cx| this.clear(window, cx));
+    }
+
+    fn set_placeholder_text(&self, text: &str, window: &mut Window, cx: &mut App) {
+        self.0.update(cx, |this, cx| {
+            this.set_placeholder_text(text, window, cx);
+        });
+    }
+
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.0.read(cx).focus_handle(cx)
+    }
+
+    fn render(&self, _: &mut Window, cx: &App) -> AnyElement {
+        let settings = ThemeSettings::get_global(cx);
+        let theme_color = cx.theme().colors();
+
+        let text_style = TextStyle {
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features.clone(),
+            font_size: rems(0.875).into(),
+            font_weight: settings.buffer_font.weight,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.2),
+            color: theme_color.text,
+            ..Default::default()
+        };
+        let editor_style = EditorStyle {
+            background: theme_color.ghost_element_background,
+            local_player: cx.theme().players().local(),
+            syntax: cx.theme().syntax().clone(),
+            text: text_style,
+            ..Default::default()
+        };
+        EditorElement::new(&self.0, editor_style).into_any()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        &self.0
+    }
+
+    fn move_selection_to_end(&self, window: &mut Window, cx: &mut App) {
+        self.0.update(cx, |editor, cx| {
+            let editor_offset = editor.buffer().read(cx).len(cx);
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::Next),
+                window,
+                cx,
+                |s| s.select_ranges(Some(editor_offset..editor_offset)),
+            );
+        });
+    }
+
+    fn subscribe(
+        &self,
+        mut callback: Box<dyn FnMut(ui_input::ErasedEditorEvent, &mut Window, &mut App) + 'static>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Subscription {
+        window.subscribe(&self.0, cx, move |_, event: &EditorEvent, window, cx| {
+            let event = match event {
+                EditorEvent::BufferEdited => ui_input::ErasedEditorEvent::BufferEdited,
+                EditorEvent::Blurred => ui_input::ErasedEditorEvent::Blurred,
+                _ => return,
+            };
+            (callback)(event, window, cx);
+        })
+    }
+}
 impl<T> Default for InvalidationStack<T> {
     fn default() -> Self {
         Self(Default::default())

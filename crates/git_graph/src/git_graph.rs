@@ -20,7 +20,10 @@ use smallvec::{SmallVec, smallvec};
 use std::{ops::Range, rc::Rc, sync::Arc, sync::OnceLock};
 use theme::{AccentColors, ThemeSettings};
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
-use ui::{ContextMenu, ScrollableHandle, Table, TableInteractionState, Tooltip, prelude::*};
+use ui::{
+    CommonAnimationExt as _, ContextMenu, ScrollableHandle, Table, TableColumnWidths,
+    TableInteractionState, TableResizeBehavior, Tooltip, prelude::*,
+};
 use workspace::{
     Workspace,
     item::{Item, ItemEvent, SerializableItem},
@@ -570,6 +573,7 @@ pub struct GitGraph {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     row_height: Pixels,
     table_interaction_state: Entity<TableInteractionState>,
+    table_column_widths: Entity<TableColumnWidths>,
     horizontal_scroll_offset: Pixels,
     graph_viewport_width: Pixels,
     selected_entry_idx: Option<usize>,
@@ -623,13 +627,14 @@ impl GitGraph {
                 // This won't overlap with loading commits from the repository because
                 // we either have all commits or commits loaded in chunks and loading commits
                 // from the repository event is always adding the last chunk of commits.
-                let commits =
+                let (commits, _) =
                     repository.graph_data(log_source.clone(), log_order, 0..usize::MAX, cx);
                 graph.add_commits(commits);
             });
         }
 
         let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
+        let table_column_widths = cx.new(|cx| TableColumnWidths::new(4, cx));
         let mut row_height = Self::row_height(cx);
 
         cx.observe_global_in::<settings::SettingsStore>(window, move |this, _window, cx| {
@@ -654,6 +659,7 @@ impl GitGraph {
             context_menu: None,
             row_height,
             table_interaction_state,
+            table_column_widths,
             horizontal_scroll_offset: px(0.),
             graph_viewport_width: px(88.),
             selected_entry_idx: None,
@@ -674,7 +680,7 @@ impl GitGraph {
                 let old_count = self.graph_data.commits.len();
 
                 repository.update(cx, |repository, cx| {
-                    let commits = repository.graph_data(
+                    let (commits, _) = repository.graph_data(
                         self.log_source.clone(),
                         self.log_order,
                         old_count..*commit_count,
@@ -880,6 +886,15 @@ impl GitGraph {
             owner: parsed.owner.into(),
             repo: parsed.repo.into(),
         })
+    }
+
+    fn render_loading_spinner(&self, cx: &App) -> AnyElement {
+        let rems = TextSize::Large.rems(cx);
+        Icon::new(IconName::LoadCircle)
+            .size(IconSize::Custom(rems))
+            .color(Color::Accent)
+            .with_rotate_animation(3)
+            .into_any_element()
     }
 
     fn render_commit_detail_panel(
@@ -1116,6 +1131,7 @@ impl GitGraph {
                     .border_t_1()
                     .border_color(cx.theme().colors().border)
                     .p_3()
+                    .min_w_0()
                     .child(
                         v_flex()
                             .gap_2()
@@ -1442,35 +1458,45 @@ impl Render for GitGraph {
         let author_width_fraction = 0.10;
         let commit_width_fraction = 0.06;
 
-        let commit_count = match self.graph_data.max_commit_count {
-            AllCommitCount::Loaded(count) => count,
+        let (commit_count, is_loading) = match self.graph_data.max_commit_count {
+            AllCommitCount::Loaded(count) => (count, true),
             AllCommitCount::NotLoaded => {
-                self.project.update(cx, |project, cx| {
+                let is_loading = self.project.update(cx, |project, cx| {
                     if let Some(repository) = project.active_repository(cx) {
                         repository.update(cx, |repository, cx| {
                             // Start loading the graph data if we haven't started already
-                            repository.graph_data(
-                                self.log_source.clone(),
-                                self.log_order,
-                                0..0,
-                                cx,
-                            );
+                            repository
+                                .graph_data(self.log_source.clone(), self.log_order, 0..0, cx)
+                                .1
                         })
+                    } else {
+                        false
                     }
-                });
+                }) && self.graph_data.commits.is_empty();
 
-                self.graph_data.commits.len()
+                (self.graph_data.commits.len(), is_loading)
             }
         };
 
         let content = if self.graph_data.commits.is_empty() {
-            let message = "No commits found";
+            let message = if is_loading {
+                "Loading"
+            } else {
+                "No commits found"
+            };
+            let label = Label::new(message)
+                .color(Color::Muted)
+                .size(LabelSize::Large);
             div()
                 .size_full()
-                .flex()
+                .h_flex()
+                .gap_1()
                 .items_center()
                 .justify_center()
-                .child(Label::new(message).color(Color::Muted))
+                .child(label)
+                .when(is_loading, |this| {
+                    this.child(self.render_loading_spinner(cx))
+                })
         } else {
             div()
                 .size_full()
@@ -1522,6 +1548,16 @@ impl Render for GitGraph {
                                     DefiniteLength::Fraction(commit_width_fraction),
                                 ]
                                 .to_vec(),
+                            )
+                            .resizable_columns(
+                                vec![
+                                    TableResizeBehavior::Resizable,
+                                    TableResizeBehavior::Resizable,
+                                    TableResizeBehavior::Resizable,
+                                    TableResizeBehavior::Resizable,
+                                ],
+                                &self.table_column_widths,
+                                cx,
                             )
                             .map_row(move |(index, row), _window, cx| {
                                 let is_selected = selected_entry_idx == Some(index);
@@ -2348,6 +2384,7 @@ mod tests {
                 0..usize::MAX,
                 cx,
             )
+            .0
             .to_vec()
         });
 

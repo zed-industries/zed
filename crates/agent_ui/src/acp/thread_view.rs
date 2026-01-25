@@ -3688,10 +3688,7 @@ impl AcpThreadView {
             .filter_map(|c| c.subagent_thread().cloned())
             .collect();
 
-        let tool_call_in_progress = matches!(
-            tool_call.status,
-            ToolCallStatus::Pending | ToolCallStatus::InProgress
-        );
+        let tool_call_status = &tool_call.status;
 
         v_flex()
             .mx_5()
@@ -3706,7 +3703,7 @@ impl AcpThreadView {
                             entry_ix,
                             context_ix,
                             &thread,
-                            tool_call_in_progress,
+                            tool_call_status,
                             window,
                             cx,
                         )
@@ -3719,7 +3716,7 @@ impl AcpThreadView {
         entry_ix: usize,
         context_ix: usize,
         thread: &Entity<AcpThread>,
-        tool_call_in_progress: bool,
+        tool_call_status: &ToolCallStatus,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -3733,7 +3730,14 @@ impl AcpThreadView {
         let files_changed = changed_buffers.len();
         let diff_stats = DiffStats::all_files(&changed_buffers, cx);
 
-        let is_running = tool_call_in_progress;
+        let is_running = matches!(
+            tool_call_status,
+            ToolCallStatus::Pending | ToolCallStatus::InProgress
+        );
+        let is_canceled_or_failed = matches!(
+            tool_call_status,
+            ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
+        );
 
         let card_header_id =
             SharedString::from(format!("subagent-header-{}-{}", entry_ix, context_ix));
@@ -3742,6 +3746,11 @@ impl AcpThreadView {
         let icon = h_flex().w_4().justify_center().child(if is_running {
             SpinnerLabel::new()
                 .size(LabelSize::Small)
+                .into_any_element()
+        } else if is_canceled_or_failed {
+            Icon::new(IconName::Close)
+                .size(IconSize::Small)
+                .color(Color::Error)
                 .into_any_element()
         } else {
             Icon::new(IconName::Check)
@@ -4624,7 +4633,9 @@ impl AcpThreadView {
                                 terminal.update(cx, |terminal, cx| {
                                     terminal.stop_by_user(cx);
                                 });
-                                this.cancel_generation(cx);
+                                if AgentSettings::get_global(cx).cancel_generation_on_terminal_stop {
+                                    this.cancel_generation(cx);
+                                }
                             })
                         }),
                     )
@@ -9539,6 +9550,7 @@ pub(crate) mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
             prompt_store::init(cx)
         });

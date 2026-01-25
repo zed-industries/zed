@@ -109,6 +109,11 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub expand_terminal_card: Option<bool>,
+    /// Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
+    /// Note that this only applies to the stop button, not to ctrl+c inside the terminal.
+    ///
+    /// Default: true
+    pub cancel_generation_on_terminal_stop: Option<bool>,
     /// Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages in the agent panel.
     ///
     /// Default: false

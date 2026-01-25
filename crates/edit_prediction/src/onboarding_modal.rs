@@ -60,7 +60,9 @@ impl ZedPredictModal {
                     EditPredictionOnboarding::new(
                         user_store.clone(),
                         client.clone(),
-                        copilot.is_some_and(|copilot| copilot.read(cx).status().is_configured()),
+                        copilot
+                            .as_ref()
+                            .is_some_and(|copilot| copilot.read(cx).status().is_configured()),
                         Arc::new({
                             let this = weak_entity.clone();
                             move |_window, cx| {
@@ -75,7 +77,9 @@ impl ZedPredictModal {
                                 ZedPredictUpsell::set_dismissed(true, cx);
                                 set_edit_prediction_provider(EditPredictionProvider::Copilot, cx);
                                 this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
-                                copilot_ui::initiate_sign_in(window, cx);
+                                if let Some(copilot) = copilot.clone() {
+                                    copilot_ui::initiate_sign_in(copilot, window, cx);
+                                }
                             }
                         }),
                         cx,
