@@ -198,6 +198,7 @@ impl EditorBlock {
                 )
                 .child(
                     div()
+                        .id((ElementId::from(cx.block_id), "output-scroll"))
                         .flex_1()
                         .size_full()
                         .py(text_line_height / 2.)

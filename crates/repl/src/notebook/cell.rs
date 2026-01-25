@@ -618,6 +618,7 @@ impl Render for MarkdownCell {
 
         let mut markdown_render_context =
             markdown_preview::markdown_renderer::RenderContext::new(None, window, cx);
+
         v_flex()
             .size_full()
             .children(self.cell_position_spacer(true, window, cx))
@@ -1168,6 +1169,80 @@ impl Render for CodeCell {
                     ),
             )
             // Output portion
+            .child(
+                h_flex()
+                    .w_full()
+                    .pr_6()
+                    .rounded_xs()
+                    .items_start()
+                    .gap(DynamicSpacing::Base08.rems(cx))
+                    .bg(self.selected_bg_color(window, cx))
+                    .child(self.gutter_output(window, cx))
+                    .child(
+                        div().py_1p5().w_full().child(
+                            div()
+                                .flex()
+                                .size_full()
+                                .flex_1()
+                                .py_3()
+                                .px_5()
+                                .rounded_lg()
+                                .border_1()
+                                // .border_color(cx.theme().colors().border)
+                                // .bg(cx.theme().colors().editor_background)
+                                .child(
+                                    div()
+                                        .id((
+                                            ElementId::from(self.id.to_string()),
+                                            "output-scroll",
+                                        ))
+                                        .w_full()
+                                        .when_some(output_max_width, |div, max_w| {
+                                            div.max_w(max_w).overflow_x_scroll()
+                                        })
+                                        .when_some(output_max_height, |div, max_h| {
+                                            div.max_h(max_h).overflow_y_scroll()
+                                        })
+                                        .children(self.outputs.iter().map(|output| {
+                                            let content = match output {
+                                                Output::Plain { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Markdown { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Stream { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Image { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Message(message) => Some(
+                                                    div().child(message.clone()).into_any_element(),
+                                                ),
+                                                Output::Table { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::ErrorOutput(error_view) => {
+                                                    error_view.render(window, cx)
+                                                }
+                                                Output::ClearOutputWaitMarker => None,
+                                            };
+
+                                            div()
+                                                // .w_full()
+                                                // .mt_3()
+                                                // .p_3()
+                                                // .rounded_sm()
+                                                // .bg(cx.theme().colors().editor_background)
+                                                // .border(px(1.))
+                                                // .border_color(cx.theme().colors().border)
+                                                // .shadow_xs()
+                                                .children(content)
+                                        })),
+                                ),
+                        ),
+                    ),
             .when(
                 self.has_outputs() || self.execution_duration.is_some() || self.is_executing,
                 |this| {
@@ -1242,46 +1317,38 @@ impl Render for CodeCell {
                                             },
                                         )
                                         // output at bottom
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .when_some(output_max_width, |div, max_w| {
-                                                    div.max_w(max_w).overflow_x_scroll()
-                                                })
-                                                .when_some(output_max_height, |div, max_h| {
-                                                    div.max_h(max_h).overflow_y_scroll()
-                                                })
-                                                .children(self.outputs.iter().map(|output| {
-                                                    let content = match output {
-                                                        Output::Plain { content, .. } => {
-                                                            Some(content.clone().into_any_element())
-                                                        }
-                                                        Output::Markdown { content, .. } => {
-                                                            Some(content.clone().into_any_element())
-                                                        }
-                                                        Output::Stream { content, .. } => {
-                                                            Some(content.clone().into_any_element())
-                                                        }
-                                                        Output::Image { content, .. } => {
-                                                            Some(content.clone().into_any_element())
-                                                        }
-                                                        Output::Message(message) => Some(
-                                                            div()
-                                                                .child(message.clone())
-                                                                .into_any_element(),
-                                                        ),
-                                                        Output::Table { content, .. } => {
-                                                            Some(content.clone().into_any_element())
-                                                        }
-                                                        Output::ErrorOutput(error_view) => {
-                                                            error_view.render(window, cx)
-                                                        }
-                                                        Output::ClearOutputWaitMarker => None,
-                                                    };
+                                        .child(div().w_full().children(self.outputs.iter().map(
+                                            |output| {
+                                                let content = match output {
+                                                    Output::Plain { content, .. } => {
+                                                        Some(content.clone().into_any_element())
+                                                    }
+                                                    Output::Markdown { content, .. } => {
+                                                        Some(content.clone().into_any_element())
+                                                    }
+                                                    Output::Stream { content, .. } => {
+                                                        Some(content.clone().into_any_element())
+                                                    }
+                                                    Output::Image { content, .. } => {
+                                                        Some(content.clone().into_any_element())
+                                                    }
+                                                    Output::Message(message) => Some(
+                                                        div()
+                                                            .child(message.clone())
+                                                            .into_any_element(),
+                                                    ),
+                                                    Output::Table { content, .. } => {
+                                                        Some(content.clone().into_any_element())
+                                                    }
+                                                    Output::ErrorOutput(error_view) => {
+                                                        error_view.render(window, cx)
+                                                    }
+                                                    Output::ClearOutputWaitMarker => None,
+                                                };
 
-                                                    div().children(content)
-                                                })),
-                                        ),
+                                                div().children(content)
+                                            },
+                                        ))),
                                 ),
                             ),
                     )
