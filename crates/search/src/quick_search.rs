@@ -72,6 +72,12 @@ enum InputPanel {
     Exclude,
 }
 
+#[derive(Clone, Copy)]
+enum HistoryDirection {
+    Next,
+    Previous,
+}
+
 struct SearchMatchHighlight;
 struct SearchMatchLineHighlight;
 
@@ -360,10 +366,8 @@ impl QuickSearch {
         let matches: Vec<_> = delegate.matches.clone();
         let project = delegate.project.clone();
 
-        let mut buffer_edits: std::collections::HashMap<
-            gpui::EntityId,
-            (Entity<Buffer>, Vec<Range<Anchor>>),
-        > = std::collections::HashMap::new();
+        let mut buffer_edits: HashMap<gpui::EntityId, (Entity<Buffer>, Vec<Range<Anchor>>)> =
+            HashMap::default();
 
         for m in &matches {
             let buffer_id = m.buffer.entity_id();
@@ -468,116 +472,64 @@ impl QuickSearch {
             .detach_and_log_err(cx);
     }
 
-    fn next_history_query(
+    fn navigate_history(
         &mut self,
-        _: &NextHistoryQuery,
+        direction: HistoryDirection,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let picker = self.picker.read(cx);
+        if !picker.focus_handle(cx).is_focused(window) {
+            return;
+        }
 
-        if picker.focus_handle(cx).is_focused(window) {
-            let query_text = picker.query(cx);
+        let query_text = picker.query(cx);
 
-            let new_query = self.picker.update(cx, |picker, cx| {
-                let project = picker.delegate.project.clone();
-                let mut new_query = None;
+        let new_query = self.picker.update(cx, |picker, cx| {
+            let cursor = &mut picker.delegate.search_history_cursor;
 
-                if query_text.is_empty() {
-                    new_query = project.update(cx, |project, _| {
-                        project
-                            .search_history(SearchInputKind::Query)
-                            .current(&picker.delegate.search_history_cursor)
-                            .map(str::to_string)
-                    });
-                }
+            picker.delegate.project.update(cx, |project, _| {
+                let history = project.search_history_mut(SearchInputKind::Query);
 
-                if new_query.is_none() {
-                    new_query = project.update(cx, |project, _| {
-                        project
-                            .search_history_mut(SearchInputKind::Query)
-                            .next(&mut picker.delegate.search_history_cursor)
-                            .map(str::to_string)
-                    });
-                }
+                let mut result = if query_text.is_empty() {
+                    history.current(cursor).map(str::to_string)
+                } else {
+                    None
+                };
 
-                if let Some(q) = &new_query {
-                    if q == &query_text {
-                        new_query = project.update(cx, |project, _| {
-                            project
-                                .search_history_mut(SearchInputKind::Query)
-                                .next(&mut picker.delegate.search_history_cursor)
-                                .map(str::to_string)
-                        });
+                if result.is_none() {
+                    result = match direction {
+                        HistoryDirection::Next => history.next(cursor),
+                        HistoryDirection::Previous => history.previous(cursor),
                     }
+                    .map(str::to_string);
                 }
-                new_query
-            });
 
-            if let Some(new_query) = new_query {
+                if result.as_deref() == Some(query_text.as_str()) {
+                    result = match direction {
+                        HistoryDirection::Next => history.next(cursor),
+                        HistoryDirection::Previous => history.previous(cursor),
+                    }
+                    .map(str::to_string);
+                }
+
+                result
+            })
+        });
+
+        match (new_query, direction) {
+            (Some(query), _) => {
                 self.picker.update(cx, |picker, cx| {
-                    picker.set_query(&new_query, window, cx);
+                    picker.set_query(&query, window, cx);
                 });
-            } else {
+            }
+            (None, HistoryDirection::Next) => {
                 self.picker.update(cx, |picker, cx| {
                     picker.delegate.search_history_cursor.reset();
                     picker.set_query("", window, cx);
                 });
             }
-        }
-    }
-
-    fn previous_history_query(
-        &mut self,
-        _: &PreviousHistoryQuery,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let picker = self.picker.read(cx);
-
-        if picker.focus_handle(cx).is_focused(window) {
-            let query_text = picker.query(cx);
-
-            let new_query = self.picker.update(cx, |picker, cx| {
-                let project = picker.delegate.project.clone();
-                let mut new_query = None;
-
-                if query_text.is_empty() {
-                    new_query = project.update(cx, |project, _| {
-                        project
-                            .search_history(SearchInputKind::Query)
-                            .current(&picker.delegate.search_history_cursor)
-                            .map(str::to_string)
-                    });
-                }
-
-                if new_query.is_none() {
-                    new_query = project.update(cx, |project, _| {
-                        project
-                            .search_history_mut(SearchInputKind::Query)
-                            .previous(&mut picker.delegate.search_history_cursor)
-                            .map(str::to_string)
-                    });
-                }
-
-                if let Some(q) = &new_query {
-                    if q == &query_text {
-                        new_query = project.update(cx, |project, _| {
-                            project
-                                .search_history_mut(SearchInputKind::Query)
-                                .previous(&mut picker.delegate.search_history_cursor)
-                                .map(str::to_string)
-                        });
-                    }
-                }
-                new_query
-            });
-
-            if let Some(new_query) = new_query {
-                self.picker.update(cx, |picker, cx| {
-                    picker.set_query(&new_query, window, cx);
-                });
-            }
+            (None, HistoryDirection::Previous) => {}
         }
     }
 }
@@ -630,14 +582,12 @@ impl Render for QuickSearch {
                 });
                 cx.notify();
             }))
-            .on_action(cx.listener(|this, action: &NextHistoryQuery, window, cx| {
-                this.next_history_query(action, window, cx);
+            .on_action(cx.listener(|this, _: &NextHistoryQuery, window, cx| {
+                this.navigate_history(HistoryDirection::Next, window, cx);
             }))
-            .on_action(
-                cx.listener(|this, action: &PreviousHistoryQuery, window, cx| {
-                    this.previous_history_query(action, window, cx);
-                }),
-            )
+            .on_action(cx.listener(|this, _: &PreviousHistoryQuery, window, cx| {
+                this.navigate_history(HistoryDirection::Previous, window, cx);
+            }))
             .on_action(cx.listener(|this, _: &ToggleHistory, window, cx| {
                 let handle = this
                     .picker
