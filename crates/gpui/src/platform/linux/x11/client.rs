@@ -474,11 +474,16 @@ impl X11Client {
                     XDPEvent::ButtonLayout(layout_str) => {
                         let layout = WindowButtonLayout::parse(&layout_str);
                         client.with_common(|common| common.button_layout = layout);
-                        for window in client.0.borrow_mut().windows.values_mut() {
-                            window.window.refresh(RequestFrameOptions {
-                                require_presentation: false,
-                                force_render: false,
-                            });
+                        let window_ids: Vec<_> =
+                            client.0.borrow().windows.keys().copied().collect();
+                        for window_id in window_ids {
+                            if let Some(window) = client.0.borrow_mut().windows.get_mut(&window_id)
+                            {
+                                window.window.refresh(RequestFrameOptions {
+                                    require_presentation: false,
+                                    force_render: true,
+                                });
+                            }
                         }
                     }
                     XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {}

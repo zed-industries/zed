@@ -78,9 +78,9 @@ use crate::{
     FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
-    PlatformInput, PlatformKeyboardLayout, Point, ResultExt as _, SCROLL_LINES, ScrollDelta,
-    ScrollWheelEvent, Size, TouchPhase, WindowButtonLayout, WindowParams, point, profiler, px,
-    size,
+    PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions, ResultExt as _,
+    SCROLL_LINES, ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowButtonLayout,
+    WindowParams, point, profiler, px, size,
 };
 use crate::{
     SharedString,
@@ -559,12 +559,18 @@ impl WaylandClient {
                     }
                     XDPEvent::ButtonLayout(layout_str) => {
                         if let Some(client) = client.0.upgrade() {
-                            let mut client = client.borrow_mut();
                             let layout = WindowButtonLayout::parse(&layout_str);
-                            client.common.button_layout = layout;
+                            let windows = {
+                                let mut client = client.borrow_mut();
+                                client.common.button_layout = layout;
+                                client.windows.values().cloned().collect::<Vec<_>>()
+                            };
 
-                            for window in client.windows.values_mut() {
-                                window.frame();
+                            for window in windows {
+                                window.refresh(RequestFrameOptions {
+                                    require_presentation: false,
+                                    force_render: true,
+                                });
                             }
                         }
                     }
