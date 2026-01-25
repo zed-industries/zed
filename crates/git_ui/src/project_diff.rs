@@ -713,9 +713,9 @@ impl ProjectDiff {
             let agent_ranges = agent_hunk_filter.unwrap_or(&[]);
             let mut agent_iter = agent_ranges.iter().peekable();
 
-            dbg!(agent_ranges);
+            agent_ranges;
             let filtered_diff_hunk_ranges = diff_hunk_ranges.filter(move |hunk_range| {
-                dbg!(&hunk_range);
+                &hunk_range;
                 if agent_ranges.is_empty() {
                     return true;
                 }

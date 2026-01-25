@@ -23655,11 +23655,8 @@ impl Editor {
             } => {
                 // Clean up selections that reference removed excerpts
                 let removed_excerpt_ids: collections::HashSet<_> = ids.iter().copied().collect();
-                let selections_reference_removed_excerpts = self
-                    .selections
-                    .disjoint_anchors()
-                    .iter()
-                    .any(|selection| {
+                let selections_reference_removed_excerpts =
+                    self.selections.disjoint_anchors().iter().any(|selection| {
                         removed_excerpt_ids.contains(&selection.start.excerpt_id)
                             || removed_excerpt_ids.contains(&selection.end.excerpt_id)
                     });
