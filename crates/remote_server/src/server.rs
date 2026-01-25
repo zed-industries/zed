@@ -1,29 +1,37 @@
-use crate::HeadlessProject;
-use crate::headless_project::HeadlessAppState;
+mod headless_project;
+
+#[cfg(test)]
+mod remote_editing_tests;
+
+#[cfg(windows)]
+pub mod windows;
+
+pub use headless_project::{HeadlessAppState, HeadlessProject};
+
 use anyhow::{Context as _, Result, anyhow};
+use clap::Subcommand;
 use client::ProxySettings;
 use collections::HashMap;
-use project::trusted_worktrees;
-use util::ResultExt;
-
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
-use futures::channel::{mpsc, oneshot};
-use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, select, select_biased};
+use futures::{
+    AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt,
+    channel::{mpsc, oneshot},
+    select, select_biased,
+};
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Context, Entity, UpdateGlobal as _};
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
+use net::async_net::{UnixListener, UnixStream};
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
-use project::project_settings::ProjectSettings;
-use util::command::new_smol_command;
-
+use project::{project_settings::ProjectSettings, trusted_worktrees};
 use proto::CrashReport;
 use release_channel::{AppCommitSha, AppVersion, RELEASE_CHANNEL, ReleaseChannel};
-use remote::RemoteClient;
 use remote::{
+    RemoteClient,
     json_log::LogRecord,
     protocol::{read_message, write_message},
     proxy::ProxyLaunchError,
@@ -32,23 +40,90 @@ use reqwest_client::ReqwestClient;
 use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
-
-use smol::channel::{Receiver, Sender};
-use smol::io::AsyncReadExt;
-use smol::{net::unix::UnixListener, stream::StreamExt as _};
+use smol::{
+    channel::{Receiver, Sender},
+    io::AsyncReadExt,
+    stream::StreamExt as _,
+};
 use std::{
     env,
     ffi::OsStr,
     fs::File,
     io::Write,
     mem,
-    ops::ControlFlow,
     path::{Path, PathBuf},
-    process::ExitStatus,
     str::FromStr,
     sync::{Arc, LazyLock},
 };
 use thiserror::Error;
+use util::{ResultExt, command::new_smol_command};
+
+#[derive(Subcommand)]
+pub enum Commands {
+    Run {
+        #[arg(long)]
+        log_file: PathBuf,
+        #[arg(long)]
+        pid_file: PathBuf,
+        #[arg(long)]
+        stdin_socket: PathBuf,
+        #[arg(long)]
+        stdout_socket: PathBuf,
+        #[arg(long)]
+        stderr_socket: PathBuf,
+    },
+    Proxy {
+        #[arg(long)]
+        reconnect: bool,
+        #[arg(long)]
+        identifier: String,
+    },
+    Version,
+}
+
+pub fn run(command: Commands) -> anyhow::Result<()> {
+    use anyhow::Context;
+    use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
+
+    match command {
+        Commands::Run {
+            log_file,
+            pid_file,
+            stdin_socket,
+            stdout_socket,
+            stderr_socket,
+        } => execute_run(
+            log_file,
+            pid_file,
+            stdin_socket,
+            stdout_socket,
+            stderr_socket,
+        ),
+        Commands::Proxy {
+            identifier,
+            reconnect,
+        } => execute_proxy(identifier, reconnect).context("running proxy on the remote server"),
+        Commands::Version => {
+            let release_channel = *RELEASE_CHANNEL;
+            match release_channel {
+                ReleaseChannel::Stable | ReleaseChannel::Preview => {
+                    println!("{}", env!("ZED_PKG_VERSION"))
+                }
+                ReleaseChannel::Nightly | ReleaseChannel::Dev => {
+                    let commit_sha =
+                        option_env!("ZED_COMMIT_SHA").unwrap_or(release_channel.dev_name());
+                    let build_id = option_env!("ZED_BUILD_ID");
+                    if let Some(build_id) = build_id {
+                        println!("{}+{}", build_id, commit_sha)
+                    } else {
+                        println!("{commit_sha}");
+                    }
+                }
+            };
+            Ok(())
+        }
+    }
+}
 
 pub static VERSION: LazyLock<String> = LazyLock::new(|| match *RELEASE_CHANNEL {
     ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION").to_owned(),
@@ -238,17 +313,17 @@ fn start_server(
     .detach();
 
     cx.spawn(async move |cx| {
-        let mut stdin_incoming = listeners.stdin.incoming();
-        let mut stdout_incoming = listeners.stdout.incoming();
-        let mut stderr_incoming = listeners.stderr.incoming();
-
         loop {
-            let streams = futures::future::join3(stdin_incoming.next(), stdout_incoming.next(), stderr_incoming.next());
+            let streams = futures::future::join3(
+                listeners.stdin.accept(),
+                listeners.stdout.accept(),
+                listeners.stderr.accept(),
+            );
 
             log::info!("accepting new connections");
             let result = select! {
                 streams = streams.fuse() => {
-                    let (Some(Ok(stdin_stream)), Some(Ok(stdout_stream)), Some(Ok(stderr_stream))) = streams else {
+                    let (Ok((stdin_stream, _)), Ok((stdout_stream, _)), Ok((stderr_stream, _))) = streams else {
                         log::error!("failed to accept new connections");
                         break;
                     };
@@ -296,7 +371,7 @@ fn start_server(
 
                     stdin_message = stdin_msg_rx.next().fuse() => {
                         let Some(message) = stdin_message else {
-                            log::warn!("error reading message on stdin. exiting.");
+                            log::warn!("error reading message on stdin, dropping connection.");
                             break;
                         };
                         if let Err(error) = incoming_tx.unbounded_send(message) {
@@ -372,13 +447,9 @@ pub fn execute_run(
 ) -> Result<()> {
     init_paths()?;
 
-    match daemonize()? {
-        ControlFlow::Break(_) => return Ok(()),
-        ControlFlow::Continue(_) => {}
-    }
-
     let app = gpui::Application::headless();
-    let id = std::process::id().to_string();
+    let pid = std::process::id();
+    let id = pid.to_string();
     app.background_executor()
         .spawn(crashes::init(crashes::InitCrashHandler {
             session_id: id,
@@ -390,7 +461,8 @@ pub fn execute_run(
         .detach();
     let log_rx = init_logging_server(&log_file)?;
     log::info!(
-        "starting up. pid_file: {:?}, log_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
+        "starting up with PID {}:\npid_file: {:?}, log_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
+        pid,
         pid_file,
         log_file,
         stdin_socket,
@@ -398,7 +470,7 @@ pub fn execute_run(
         stderr_socket
     );
 
-    write_pid_file(&pid_file)
+    write_pid_file(&pid_file, pid)
         .with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
 
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
@@ -410,13 +482,19 @@ pub fn execute_run(
         .build_global()
         .unwrap();
 
-    let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
-    app.background_executor()
-        .spawn(async {
-            util::load_login_shell_environment().await.log_err();
-            shell_env_loaded_tx.send(()).ok();
-        })
-        .detach();
+    #[cfg(unix)]
+    let shell_env_loaded_rx = {
+        let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
+        app.background_executor()
+            .spawn(async {
+                util::load_login_shell_environment().await.log_err();
+                shell_env_loaded_tx.send(()).ok();
+            })
+            .detach();
+        Some(shell_env_loaded_rx)
+    };
+    #[cfg(windows)]
+    let shell_env_loaded_rx: Option<oneshot::Receiver<()>> = None;
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     let run = move |cx: &mut _| {
@@ -474,11 +552,8 @@ pub fn execute_run(
                 )
             };
 
-            let node_runtime = NodeRuntime::new(
-                http_client.clone(),
-                Some(shell_env_loaded_rx),
-                node_settings_rx,
-            );
+            let node_runtime =
+                NodeRuntime::new(http_client.clone(), shell_env_loaded_rx, node_settings_rx);
 
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
             languages.set_language_server_download_dir(paths::languages_dir().clone());
@@ -519,7 +594,7 @@ pub fn execute_run(
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum ServerPathError {
+pub enum ServerPathError {
     #[error("Failed to create server_dir `{path}`")]
     CreateServerDir {
         #[source]
@@ -575,14 +650,14 @@ impl ServerPaths {
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum ExecuteProxyError {
-    #[error("Failed to init server paths")]
+pub enum ExecuteProxyError {
+    #[error("Failed to init server paths: {0:#}")]
     ServerPath(#[from] ServerPathError),
 
     #[error(transparent)]
     ServerNotRunning(#[from] ProxyLaunchError),
 
-    #[error("Failed to check PidFile '{path}'")]
+    #[error("Failed to check PidFile '{path}': {source:#}")]
     CheckPidFile {
         #[source]
         source: CheckPidError,
@@ -590,21 +665,28 @@ pub(crate) enum ExecuteProxyError {
     },
 
     #[error("Failed to kill existing server with pid '{pid}'")]
-    KillRunningServer {
-        #[source]
-        source: std::io::Error,
-        pid: u32,
-    },
+    KillRunningServer { pid: u32 },
 
     #[error("failed to spawn server")]
     SpawnServer(#[source] SpawnServerError),
 
-    #[error("stdin_task failed")]
+    #[error("stdin_task failed: {0:#}")]
     StdinTask(#[source] anyhow::Error),
-    #[error("stdout_task failed")]
+    #[error("stdout_task failed: {0:#}")]
     StdoutTask(#[source] anyhow::Error),
-    #[error("stderr_task failed")]
+    #[error("stderr_task failed: {0:#}")]
     StderrTask(#[source] anyhow::Error),
+}
+
+impl ExecuteProxyError {
+    pub fn to_exit_code(&self) -> i32 {
+        match self {
+            ExecuteProxyError::ServerNotRunning(proxy_launch_error) => {
+                proxy_launch_error.to_exit_code()
+            }
+            _ => 1,
+        }
+    }
 }
 
 pub(crate) fn execute_proxy(
@@ -626,20 +708,22 @@ pub(crate) fn execute_proxy(
     .detach();
 
     log::info!("starting proxy process. PID: {}", std::process::id());
-    smol::block_on(async {
-        let server_pid = check_pid_file(&server_paths.pid_file)
-            .await
-            .map_err(|source| ExecuteProxyError::CheckPidFile {
+    let server_pid = {
+        let server_pid = check_pid_file(&server_paths.pid_file).map_err(|source| {
+            ExecuteProxyError::CheckPidFile {
                 source,
                 path: server_paths.pid_file.clone(),
-            })?;
-        let server_running = server_pid.is_some();
+            }
+        })?;
         if is_reconnecting {
-            if !server_running {
-                log::error!("attempted to reconnect, but no server running");
-                return Err(ExecuteProxyError::ServerNotRunning(
-                    ProxyLaunchError::ServerNotRunning,
-                ));
+            match server_pid {
+                None => {
+                    log::error!("attempted to reconnect, but no server running");
+                    return Err(ExecuteProxyError::ServerNotRunning(
+                        ProxyLaunchError::ServerNotRunning,
+                    ));
+                }
+                Some(server_pid) => server_pid,
             }
         } else {
             if let Some(pid) = server_pid {
@@ -647,31 +731,59 @@ pub(crate) fn execute_proxy(
                     "proxy found server already running with PID {}. Killing process and cleaning up files...",
                     pid
                 );
-                kill_running_server(pid, &server_paths).await?;
+                kill_running_server(pid, &server_paths)?;
             }
-
-            spawn_server(&server_paths)
-                .await
-                .map_err(ExecuteProxyError::SpawnServer)?;
-        };
-        Ok(())
-    })?;
+            smol::block_on(spawn_server(&server_paths)).map_err(ExecuteProxyError::SpawnServer)?;
+            std::fs::read_to_string(&server_paths.pid_file)
+                .and_then(|contents| {
+                    contents.parse::<u32>().map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Invalid PID file contents",
+                        )
+                    })
+                })
+                .map_err(SpawnServerError::ProcessStatus)
+                .map_err(ExecuteProxyError::SpawnServer)?
+        }
+    };
 
     let stdin_task = smol::spawn(async move {
         let stdin = smol::Unblock::new(std::io::stdin());
-        let stream = smol::net::unix::UnixStream::connect(&server_paths.stdin_socket).await?;
+        let stream = UnixStream::connect(&server_paths.stdin_socket)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to connect to stdin socket {}",
+                    server_paths.stdin_socket.display()
+                )
+            })?;
         handle_io(stdin, stream, "stdin").await
     });
 
     let stdout_task: smol::Task<Result<()>> = smol::spawn(async move {
         let stdout = smol::Unblock::new(std::io::stdout());
-        let stream = smol::net::unix::UnixStream::connect(&server_paths.stdout_socket).await?;
+        let stream = UnixStream::connect(&server_paths.stdout_socket)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to connect to stdout socket {}",
+                    server_paths.stdout_socket.display()
+                )
+            })?;
         handle_io(stream, stdout, "stdout").await
     });
 
     let stderr_task: smol::Task<Result<()>> = smol::spawn(async move {
         let mut stderr = smol::Unblock::new(std::io::stderr());
-        let mut stream = smol::net::unix::UnixStream::connect(&server_paths.stderr_socket).await?;
+        let mut stream = UnixStream::connect(&server_paths.stderr_socket)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to connect to stderr socket {}",
+                    server_paths.stderr_socket.display()
+                )
+            })?;
         let mut stderr_buffer = vec![0; 2048];
         loop {
             match stream
@@ -699,23 +811,31 @@ pub(crate) fn execute_proxy(
             result = stderr_task.fuse() => result.map_err(ExecuteProxyError::StderrTask),
         }
     }) {
-        log::error!(
-            "encountered error while forwarding messages: {:?}, terminating...",
-            forwarding_result
-        );
+        log::error!("encountered error while forwarding messages: {forwarding_result:#}",);
+        if !matches!(smol::block_on(check_server_running(server_pid)), Ok(true)) {
+            log::error!("server exited unexpectedly");
+            return Err(ExecuteProxyError::ServerNotRunning(
+                ProxyLaunchError::ServerNotRunning,
+            ));
+        }
         return Err(forwarding_result);
     }
 
     Ok(())
 }
 
-async fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
+fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
     log::info!("killing existing server with PID {}", pid);
-    new_smol_command("kill")
-        .arg(pid.to_string())
-        .output()
-        .await
-        .map_err(|source| ExecuteProxyError::KillRunningServer { source, pid })?;
+    let system = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::nothing()),
+    );
+
+    if let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) {
+        let killed = process.kill();
+        if !killed {
+            return Err(ExecuteProxyError::KillRunningServer { pid });
+        }
+    }
 
     for file in [
         &paths.pid_file,
@@ -726,11 +846,12 @@ async fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), Execut
         log::debug!("cleaning up file {:?} before starting new server", file);
         std::fs::remove_file(file).ok();
     }
+
     Ok(())
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum SpawnServerError {
+pub enum SpawnServerError {
     #[error("failed to remove stdin socket")]
     RemoveStdinSocket(#[source] std::io::Error),
 
@@ -745,9 +866,6 @@ pub(crate) enum SpawnServerError {
 
     #[error("failed to launch server process")]
     ProcessStatus(#[source] std::io::Error),
-
-    #[error("failed to launch and detach server process: {status}\n{paths}")]
-    LaunchStatus { status: ExitStatus, paths: String },
 
     #[error("failed to wait for server to be ready to accept connections")]
     Timeout,
@@ -766,33 +884,15 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     }
 
     let binary_name = std::env::current_exe().map_err(SpawnServerError::CurrentExe)?;
-    let mut server_process = new_smol_command(binary_name);
-    server_process
-        .arg("run")
-        .arg("--log-file")
-        .arg(&paths.log_file)
-        .arg("--pid-file")
-        .arg(&paths.pid_file)
-        .arg("--stdin-socket")
-        .arg(&paths.stdin_socket)
-        .arg("--stdout-socket")
-        .arg(&paths.stdout_socket)
-        .arg("--stderr-socket")
-        .arg(&paths.stderr_socket);
 
-    let status = server_process
-        .status()
-        .await
-        .map_err(SpawnServerError::ProcessStatus)?;
+    #[cfg(windows)]
+    {
+        spawn_server_windows(&binary_name, paths)?;
+    }
 
-    if !status.success() {
-        return Err(SpawnServerError::LaunchStatus {
-            status,
-            paths: format!(
-                "log file: {:?}, pid file: {:?}",
-                paths.log_file, paths.pid_file,
-            ),
-        });
+    #[cfg(not(windows))]
+    {
+        spawn_server_normal(&binary_name, paths)?;
     }
 
     let mut total_time_waited = std::time::Duration::from_secs(0);
@@ -817,16 +917,73 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     Ok(())
 }
 
+#[cfg(windows)]
+fn spawn_server_windows(binary_name: &Path, paths: &ServerPaths) -> Result<(), SpawnServerError> {
+    let binary_path = binary_name.to_string_lossy().to_string();
+    let parameters = format!(
+        "run --log-file \"{}\" --pid-file \"{}\" --stdin-socket \"{}\" --stdout-socket \"{}\" --stderr-socket \"{}\"",
+        paths.log_file.to_string_lossy(),
+        paths.pid_file.to_string_lossy(),
+        paths.stdin_socket.to_string_lossy(),
+        paths.stdout_socket.to_string_lossy(),
+        paths.stderr_socket.to_string_lossy()
+    );
+
+    let directory = binary_name
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    crate::windows::shell_execute_from_explorer(&binary_path, &parameters, &directory)
+        .map_err(|e| SpawnServerError::ProcessStatus(std::io::Error::other(e)))?;
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn spawn_server_normal(binary_name: &Path, paths: &ServerPaths) -> Result<(), SpawnServerError> {
+    let mut server_process = new_smol_command(binary_name);
+    server_process
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .arg("run")
+        .arg("--log-file")
+        .arg(&paths.log_file)
+        .arg("--pid-file")
+        .arg(&paths.pid_file)
+        .arg("--stdin-socket")
+        .arg(&paths.stdin_socket)
+        .arg("--stdout-socket")
+        .arg(&paths.stdout_socket)
+        .arg("--stderr-socket")
+        .arg(&paths.stderr_socket);
+
+    server_process
+        .spawn()
+        .map_err(SpawnServerError::ProcessStatus)?;
+
+    Ok(())
+}
+
 #[derive(Debug, Error)]
 #[error("Failed to remove PID file for missing process (pid `{pid}`")]
-pub(crate) struct CheckPidError {
+pub struct CheckPidError {
     #[source]
     source: std::io::Error,
     pid: u32,
 }
+async fn check_server_running(pid: u32) -> std::io::Result<bool> {
+    new_smol_command("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .output()
+        .await
+        .map(|output| output.status.success())
+}
 
-async fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
-    let Some(pid) = std::fs::read_to_string(&path)
+fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
+    let Some(pid) = std::fs::read_to_string(path)
         .ok()
         .and_then(|contents| contents.parse::<u32>().ok())
     else {
@@ -834,36 +991,30 @@ async fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     };
 
     log::debug!("Checking if process with PID {} exists...", pid);
-    match new_smol_command("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .output()
-        .await
-    {
-        Ok(output) if output.status.success() => {
-            log::debug!(
-                "Process with PID {} exists. NOT spawning new server, but attaching to existing one.",
-                pid
-            );
-            Ok(Some(pid))
-        }
-        _ => {
-            log::debug!(
-                "Found PID file, but process with that PID does not exist. Removing PID file."
-            );
-            std::fs::remove_file(&path).map_err(|source| CheckPidError { source, pid })?;
-            Ok(None)
-        }
+
+    let system = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::nothing()),
+    );
+
+    if system.process(sysinfo::Pid::from_u32(pid)).is_some() {
+        log::debug!(
+            "Process with PID {} exists. NOT spawning new server, but attaching to existing one.",
+            pid
+        );
+        Ok(Some(pid))
+    } else {
+        log::debug!("Found PID file, but process with that PID does not exist. Removing PID file.");
+        std::fs::remove_file(path).map_err(|source| CheckPidError { source, pid })?;
+        Ok(None)
     }
 }
 
-fn write_pid_file(path: &Path) -> Result<()> {
+fn write_pid_file(path: &Path, pid: u32) -> Result<()> {
     if path.exists() {
         std::fs::remove_file(path)?;
     }
-    let pid = std::process::id().to_string();
     log::debug!("writing PID {} to file {:?}", pid, path);
-    std::fs::write(path, pid).context("Failed to write PID file")
+    std::fs::write(path, pid.to_string()).context("Failed to write PID file")
 }
 
 async fn handle_io<R, W>(mut reader: R, mut writer: W, socket_name: &str) -> Result<()>
@@ -891,10 +1042,10 @@ fn initialize_settings(
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) -> watch::Receiver<Option<NodeBinaryOptions>> {
-    let user_settings_file_rx =
+    let (user_settings_file_rx, watcher_task) =
         watch_config_file(cx.background_executor(), fs, paths::settings_file().clone());
 
-    handle_settings_file_changes(user_settings_file_rx, cx, {
+    handle_settings_file_changes(user_settings_file_rx, watcher_task, cx, {
         move |err, _cx| {
             if let Some(e) = err {
                 log::info!("Server settings failed to change: {}", e);
@@ -957,6 +1108,7 @@ fn initialize_settings(
 
 pub fn handle_settings_file_changes(
     mut server_settings_file: mpsc::UnboundedReceiver<String>,
+    watcher_task: gpui::Task<()>,
     cx: &mut App,
     settings_changed: impl Fn(Option<anyhow::Error>, &mut App) + 'static,
 ) {
@@ -970,6 +1122,7 @@ pub fn handle_settings_file_changes(
             .log_err();
     });
     cx.spawn(async move |cx| {
+        let _watcher_task = watcher_task;
         while let Some(server_settings_content) = server_settings_file.next().await {
             cx.update_global(|store: &mut SettingsStore, cx| {
                 let result = store.set_server_settings(&server_settings_content, cx);
@@ -998,46 +1151,6 @@ fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
                 .ok()
         })
         .or_else(read_proxy_from_env)
-}
-
-fn daemonize() -> Result<ControlFlow<()>> {
-    match fork::fork().map_err(|e| anyhow!("failed to call fork with error code {e}"))? {
-        fork::Fork::Parent(_) => {
-            return Ok(ControlFlow::Break(()));
-        }
-        fork::Fork::Child => {}
-    }
-
-    // Once we've detached from the parent, we want to close stdout/stderr/stdin
-    // so that the outer SSH process is not attached to us in any way anymore.
-    unsafe { redirect_standard_streams() }?;
-
-    Ok(ControlFlow::Continue(()))
-}
-
-unsafe fn redirect_standard_streams() -> Result<()> {
-    let devnull_fd = unsafe { libc::open(b"/dev/null\0" as *const [u8; 10] as _, libc::O_RDWR) };
-    anyhow::ensure!(devnull_fd != -1, "failed to open /dev/null");
-
-    let process_stdio = |name, fd| {
-        let reopened_fd = unsafe { libc::dup2(devnull_fd, fd) };
-        anyhow::ensure!(
-            reopened_fd != -1,
-            format!("failed to redirect {} to /dev/null", name)
-        );
-        Ok(())
-    };
-
-    process_stdio("stdin", libc::STDIN_FILENO)?;
-    process_stdio("stdout", libc::STDOUT_FILENO)?;
-    process_stdio("stderr", libc::STDERR_FILENO)?;
-
-    anyhow::ensure!(
-        unsafe { libc::close(devnull_fd) != -1 },
-        "failed to close /dev/null fd after redirecting"
-    );
-
-    Ok(())
 }
 
 fn cleanup_old_binaries() -> Result<()> {

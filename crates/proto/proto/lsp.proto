@@ -697,10 +697,16 @@ message OpenBufferForSymbolResponse {
   uint64 buffer_id = 1;
 }
 
+message BufferFormatRanges {
+  uint64 buffer_id = 1;
+  repeated AnchorRange ranges = 2;
+}
+
 message FormatBuffers {
   uint64 project_id = 1;
   FormatTrigger trigger = 2;
   repeated uint64 buffer_ids = 3;
+  repeated BufferFormatRanges buffer_ranges = 4;
 }
 
 message FormatBuffersResponse {

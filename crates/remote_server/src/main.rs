@@ -38,18 +38,21 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    #[cfg(not(windows))]
     if let Some(command) = cli.command {
-        remote_server::run(command)
-    } else {
-        eprintln!("usage: remote <run|proxy|version>");
-        std::process::exit(1);
-    }
+        use remote_server::ExecuteProxyError;
 
-    #[cfg(windows)]
-    if let Some(_) = cli.command {
-        eprintln!("run is not supported on Windows");
-        std::process::exit(2);
+        let res = remote_server::run(command);
+        if let Err(e) = &res
+            && let Some(e) = e.downcast_ref::<ExecuteProxyError>()
+        {
+            eprintln!("{e:#}");
+            // It is important for us to report the proxy spawn exit code here
+            // instead of the generic 1 that result returns
+            // The client reads the exit code to determine if the server process has died when trying to reconnect
+            // signaling that it needs to try spawning a new server
+            std::process::exit(e.to_exit_code());
+        }
+        res
     } else {
         eprintln!("usage: remote <run|proxy|version>");
         std::process::exit(1);

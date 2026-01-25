@@ -613,7 +613,7 @@ impl ConfigurationView {
 
         let api_url_editor = cx.new(|cx| {
             let input = InputField::new(window, cx, OLLAMA_API_URL).label("API URL");
-            input.set_text(OllamaLanguageModelProvider::api_url(cx), window, cx);
+            input.set_text(&OllamaLanguageModelProvider::api_url(cx), window, cx);
             input
         });
 

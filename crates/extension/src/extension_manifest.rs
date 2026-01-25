@@ -53,6 +53,30 @@ impl SchemaVersion {
     }
 }
 
+// TODO: We should change this to just always be a Vec<PathBuf> once we bump the
+// extension.toml schema version to 2
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ExtensionSnippets {
+    Single(PathBuf),
+    Multiple(Vec<PathBuf>),
+}
+
+impl ExtensionSnippets {
+    pub fn paths(&self) -> impl Iterator<Item = &PathBuf> {
+        match self {
+            ExtensionSnippets::Single(path) => std::slice::from_ref(path).iter(),
+            ExtensionSnippets::Multiple(paths) => paths.iter(),
+        }
+    }
+}
+
+impl From<&str> for ExtensionSnippets {
+    fn from(value: &str) -> Self {
+        ExtensionSnippets::Single(value.into())
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct ExtensionManifest {
     pub id: Arc<str>,
@@ -86,7 +110,7 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
     #[serde(default)]
-    pub snippets: Option<PathBuf>,
+    pub snippets: Option<ExtensionSnippets>,
     #[serde(default)]
     pub capabilities: Vec<ExtensionCapability>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

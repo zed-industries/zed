@@ -2,21 +2,51 @@ use futures::channel::oneshot;
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
 use language::{
-    BufferRow, Capability, DiffOptions, File, Language, LanguageName, LanguageRegistry,
+    Capability, Diff, DiffOptions, File, Language, LanguageName, LanguageRegistry,
     language_settings::language_settings, word_diff_ranges,
 };
 use rope::Rope;
 use std::{cmp::Ordering, future::Future, iter, ops::Range, sync::Arc};
 use sum_tree::SumTree;
-use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _, ToPoint as _};
+use text::{
+    Anchor, Bias, BufferId, Edit, OffsetRangeExt, Patch, Point, ToOffset as _, ToPoint as _,
+};
 use util::ResultExt;
+
+fn translate_point_through_patch(
+    patch: &Patch<Point>,
+    point: Point,
+) -> (Range<Point>, Range<Point>) {
+    let edits = patch.edits();
+
+    let ix = match edits.binary_search_by(|probe| probe.old.start.cmp(&point)) {
+        Ok(ix) => ix,
+        Err(ix) => {
+            if ix == 0 {
+                return (point..point, point..point);
+            } else {
+                ix - 1
+            }
+        }
+    };
+
+    if let Some(edit) = edits.get(ix) {
+        if point > edit.old.end {
+            let translated = edit.new.end + (point - edit.old.end);
+            (translated..translated, point..point)
+        } else {
+            (edit.new.start..edit.new.end, edit.old.start..edit.old.end)
+        }
+    } else {
+        (point..point, point..point)
+    }
+}
 
 pub const MAX_WORD_DIFF_LINE_COUNT: usize = 5;
 
 pub struct BufferDiff {
     pub buffer_id: BufferId,
     inner: BufferDiffInner<Entity<language::Buffer>>,
-    // diff of the index vs head
     secondary_diff: Option<Entity<BufferDiff>>,
 }
 
@@ -37,8 +67,10 @@ impl std::fmt::Debug for BufferDiffSnapshot {
 
 #[derive(Clone)]
 pub struct BufferDiffUpdate {
-    base_text_changed: bool,
     inner: BufferDiffInner<Arc<str>>,
+    buffer_snapshot: text::BufferSnapshot,
+    base_text_edits: Option<Diff>,
+    base_text_changed: bool,
 }
 
 #[derive(Clone)]
@@ -47,6 +79,13 @@ struct BufferDiffInner<BaseText> {
     pending_hunks: SumTree<PendingHunk>,
     base_text: BaseText,
     base_text_exists: bool,
+    buffer_snapshot: text::BufferSnapshot,
+}
+
+impl<BaseText> BufferDiffInner<BaseText> {
+    fn buffer_version(&self) -> &clock::Global {
+        self.buffer_snapshot.version()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -182,6 +221,18 @@ impl sum_tree::SeekTarget<'_, DiffHunkSummary, DiffHunkSummary> for Anchor {
     }
 }
 
+impl sum_tree::SeekTarget<'_, DiffHunkSummary, DiffHunkSummary> for usize {
+    fn cmp(&self, cursor_location: &DiffHunkSummary, _cx: &text::BufferSnapshot) -> Ordering {
+        if *self < cursor_location.diff_base_byte_range.start {
+            Ordering::Less
+        } else if *self > cursor_location.diff_base_byte_range.end {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    }
+}
+
 impl std::fmt::Debug for BufferDiffInner<language::BufferSnapshot> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BufferDiffSnapshot")
@@ -214,6 +265,14 @@ impl BufferDiffSnapshot {
 
     pub fn secondary_diff(&self) -> Option<&BufferDiffSnapshot> {
         self.secondary_diff.as_deref()
+    }
+
+    pub fn buffer_version(&self) -> &clock::Global {
+        self.inner.buffer_version()
+    }
+
+    pub fn original_buffer_snapshot(&self) -> &text::BufferSnapshot {
+        &self.inner.buffer_snapshot
     }
 
     #[ztracing::instrument(skip_all)]
@@ -326,63 +385,182 @@ impl BufferDiffSnapshot {
         (new_id == old_id && new_version == old_version) || (new_empty && old_empty)
     }
 
-    pub fn row_to_base_text_row(
+    #[allow(unused)]
+    fn hunk_before_base_text_offset<'a>(
         &self,
-        row: BufferRow,
-        bias: Bias,
-        buffer: &text::BufferSnapshot,
-    ) -> u32 {
-        // TODO(split-diff) expose a parameter to reuse a cursor to avoid repeatedly seeking from the start
-        let target = buffer.anchor_before(Point::new(row, 0));
-        // Find the last hunk that starts before the target.
-        let mut cursor = self.inner.hunks.cursor::<DiffHunkSummary>(buffer);
-        cursor.seek(&target, Bias::Left);
+        target: usize,
+        cursor: &mut sum_tree::Cursor<'a, '_, InternalDiffHunk, DiffHunkSummary>,
+    ) -> Option<&'a InternalDiffHunk> {
+        cursor.seek_forward(&target, Bias::Left);
         if cursor
             .item()
-            .is_none_or(|hunk| hunk.buffer_range.start.cmp(&target, buffer).is_gt())
+            .is_none_or(|hunk| target < hunk.diff_base_byte_range.start)
         {
             cursor.prev();
         }
+        let result = cursor
+            .item()
+            .filter(|hunk| target >= hunk.diff_base_byte_range.start);
+        if cursor.item().is_none() {
+            cursor.reset();
+        }
+        result
+    }
 
-        let unclipped_point = if let Some(hunk) = cursor.item()
-            && hunk.buffer_range.start.cmp(&target, buffer).is_le()
+    #[allow(unused)]
+    fn hunk_before_buffer_anchor<'a>(
+        &self,
+        target: Anchor,
+        cursor: &mut sum_tree::Cursor<'a, '_, InternalDiffHunk, DiffHunkSummary>,
+        buffer: &text::BufferSnapshot,
+    ) -> Option<&'a InternalDiffHunk> {
+        cursor.seek_forward(&target, Bias::Left);
+        if cursor
+            .item()
+            .is_none_or(|hunk| target.cmp(&hunk.buffer_range.start, buffer).is_lt())
         {
-            // Found a hunk that starts before the target.
-            let hunk_base_text_end = cursor.end().diff_base_byte_range.end;
-            let unclipped_point = if target.cmp(&cursor.end().buffer_range.end, buffer).is_ge() {
-                // Target falls strictly between two hunks.
-                let mut unclipped_point = hunk_base_text_end.to_point(self.base_text());
-                unclipped_point +=
-                    Point::new(row, 0) - cursor.end().buffer_range.end.to_point(buffer);
-                unclipped_point
-            } else if bias == Bias::Right {
-                hunk_base_text_end.to_point(self.base_text())
-            } else {
-                hunk.diff_base_byte_range.start.to_point(self.base_text())
-            };
-            // Move the cursor so that at the next step we can clip with the start of the next hunk.
-            cursor.next();
-            unclipped_point
-        } else {
-            // Target is before the added region for the first hunk.
-            debug_assert!(self.inner.hunks.first().is_none_or(|first_hunk| {
-                target.cmp(&first_hunk.buffer_range.start, buffer).is_le()
-            }));
-            Point::new(row, 0)
-        };
+            cursor.prev();
+        }
+        let result = cursor
+            .item()
+            .filter(|hunk| target.cmp(&hunk.buffer_range.start, buffer).is_ge());
+        if cursor.item().is_none() {
+            cursor.reset();
+        }
+        result
+    }
 
-        // If the target falls in the region between two hunks, we added an overshoot above.
-        // There may be changes in the main buffer that are not reflected in the hunks,
-        // so we need to ensure this overshoot keeps us in the corresponding base text region.
-        let max_point = if let Some(next_hunk) = cursor.item() {
-            next_hunk
-                .diff_base_byte_range
-                .start
-                .to_point(self.base_text())
-        } else {
-            self.base_text().max_point()
-        };
-        unclipped_point.min(max_point).row
+    pub fn points_to_base_text_points<'a>(
+        &'a self,
+        points: impl IntoIterator<Item = Point> + 'a,
+        buffer: &'a text::BufferSnapshot,
+    ) -> (
+        impl 'a + Iterator<Item = Range<Point>>,
+        Option<Range<Point>>,
+        Option<(Point, Range<Point>)>,
+    ) {
+        let original_snapshot = self.original_buffer_snapshot();
+
+        let edits_since: Vec<Edit<Point>> = buffer
+            .edits_since::<Point>(original_snapshot.version())
+            .collect();
+        let mut inverted_edits_since = Patch::new(edits_since);
+        inverted_edits_since.invert();
+
+        let composed = inverted_edits_since.compose(
+            self.inner
+                .hunks
+                .iter()
+                .map(|hunk| {
+                    let old_start = hunk.buffer_range.start.to_point(original_snapshot);
+                    let old_end = hunk.buffer_range.end.to_point(original_snapshot);
+                    let new_start = self
+                        .base_text()
+                        .offset_to_point(hunk.diff_base_byte_range.start);
+                    let new_end = self
+                        .base_text()
+                        .offset_to_point(hunk.diff_base_byte_range.end);
+                    Edit {
+                        old: old_start..old_end,
+                        new: new_start..new_end,
+                    }
+                })
+                .chain(
+                    if !self.inner.base_text_exists && self.inner.hunks.is_empty() {
+                        Some(Edit {
+                            old: Point::zero()..original_snapshot.max_point(),
+                            new: Point::zero()..Point::zero(),
+                        })
+                    } else {
+                        None
+                    },
+                ),
+        );
+
+        let mut points = points.into_iter().peekable();
+
+        let first_group = points.peek().map(|point| {
+            let (_, old_range) = translate_point_through_patch(&composed, *point);
+            old_range
+        });
+
+        let prev_boundary = points.peek().and_then(|first_point| {
+            if first_point.row > 0 {
+                let prev_point = Point::new(first_point.row - 1, 0);
+                let (range, _) = translate_point_through_patch(&composed, prev_point);
+                Some((prev_point, range))
+            } else {
+                None
+            }
+        });
+
+        let iter = points.map(move |point| {
+            let (range, _) = translate_point_through_patch(&composed, point);
+            range
+        });
+
+        (iter, first_group, prev_boundary)
+    }
+
+    pub fn base_text_points_to_points<'a>(
+        &'a self,
+        points: impl IntoIterator<Item = Point> + 'a,
+        buffer: &'a text::BufferSnapshot,
+    ) -> (
+        impl 'a + Iterator<Item = Range<Point>>,
+        Option<Range<Point>>,
+        Option<(Point, Range<Point>)>,
+    ) {
+        let original_snapshot = self.original_buffer_snapshot();
+
+        let mut hunk_edits: Vec<Edit<Point>> = Vec::new();
+        for hunk in self.inner.hunks.iter() {
+            let old_start = self
+                .base_text()
+                .offset_to_point(hunk.diff_base_byte_range.start);
+            let old_end = self
+                .base_text()
+                .offset_to_point(hunk.diff_base_byte_range.end);
+            let new_start = hunk.buffer_range.start.to_point(original_snapshot);
+            let new_end = hunk.buffer_range.end.to_point(original_snapshot);
+            hunk_edits.push(Edit {
+                old: old_start..old_end,
+                new: new_start..new_end,
+            });
+        }
+        if !self.inner.base_text_exists && hunk_edits.is_empty() {
+            hunk_edits.push(Edit {
+                old: Point::zero()..Point::zero(),
+                new: Point::zero()..original_snapshot.max_point(),
+            })
+        }
+        let hunk_patch = Patch::new(hunk_edits);
+
+        let composed = hunk_patch.compose(buffer.edits_since::<Point>(original_snapshot.version()));
+
+        let mut points = points.into_iter().peekable();
+
+        let first_group = points.peek().map(|point| {
+            let (_, result) = translate_point_through_patch(&composed, *point);
+            result
+        });
+
+        let prev_boundary = points.peek().and_then(|first_point| {
+            if first_point.row > 0 {
+                let prev_point = Point::new(first_point.row - 1, 0);
+                let (range, _) = translate_point_through_patch(&composed, prev_point);
+                Some((prev_point, range))
+            } else {
+                None
+            }
+        });
+
+        let iter = points.map(move |point| {
+            let (range, _) = translate_point_through_patch(&composed, point);
+            range
+        });
+
+        (iter, first_group, prev_boundary)
     }
 }
 
@@ -536,7 +714,9 @@ impl BufferDiffInner<Entity<language::Buffer>> {
                     let next_pending_hunk_offset_range =
                         next_pending_hunk.buffer_range.to_offset(buffer);
                     if next_pending_hunk_offset_range.start <= buffer_offset_range.end {
-                        buffer_offset_range.end = next_pending_hunk_offset_range.end;
+                        buffer_offset_range.end = buffer_offset_range
+                            .end
+                            .max(next_pending_hunk_offset_range.end);
                         pending_hunks_iter.next();
                         continue;
                     }
@@ -860,8 +1040,9 @@ fn compute_hunks(
 fn compare_hunks(
     new_hunks: &SumTree<InternalDiffHunk>,
     old_hunks: &SumTree<InternalDiffHunk>,
+    old_snapshot: &text::BufferSnapshot,
     new_snapshot: &text::BufferSnapshot,
-) -> (Option<Range<Anchor>>, Option<Range<usize>>) {
+) -> DiffChanged {
     let mut new_cursor = new_hunks.cursor::<()>(new_snapshot);
     let mut old_cursor = old_hunks.cursor::<()>(new_snapshot);
     old_cursor.next();
@@ -870,6 +1051,10 @@ fn compare_hunks(
     let mut end = None;
     let mut base_text_start = None;
     let mut base_text_end = None;
+
+    let mut last_unchanged_new_hunk_end: Option<text::Anchor> = None;
+    let mut has_changes = false;
+    let mut extended_end_candidate: Option<text::Anchor> = None;
 
     loop {
         match (new_cursor.item(), old_cursor.item()) {
@@ -880,6 +1065,8 @@ fn compare_hunks(
                     .cmp(&old_hunk.buffer_range.start, new_snapshot)
                 {
                     Ordering::Less => {
+                        has_changes = true;
+                        extended_end_candidate = None;
                         start.get_or_insert(new_hunk.buffer_range.start);
                         base_text_start.get_or_insert(new_hunk.diff_base_byte_range.start);
                         end.replace(new_hunk.buffer_range.end);
@@ -888,6 +1075,8 @@ fn compare_hunks(
                     }
                     Ordering::Equal => {
                         if new_hunk != old_hunk {
+                            has_changes = true;
+                            extended_end_candidate = None;
                             start.get_or_insert(new_hunk.buffer_range.start);
                             base_text_start.get_or_insert(new_hunk.diff_base_byte_range.start);
                             if old_hunk
@@ -907,12 +1096,20 @@ fn compare_hunks(
                                     .end
                                     .max(new_hunk.diff_base_byte_range.end),
                             );
+                        } else {
+                            if !has_changes {
+                                last_unchanged_new_hunk_end = Some(new_hunk.buffer_range.end);
+                            } else if extended_end_candidate.is_none() {
+                                extended_end_candidate = Some(new_hunk.buffer_range.start);
+                            }
                         }
 
                         new_cursor.next();
                         old_cursor.next();
                     }
                     Ordering::Greater => {
+                        has_changes = true;
+                        extended_end_candidate = None;
                         start.get_or_insert(old_hunk.buffer_range.start);
                         base_text_start.get_or_insert(old_hunk.diff_base_byte_range.start);
                         end.replace(old_hunk.buffer_range.end);
@@ -922,18 +1119,26 @@ fn compare_hunks(
                 }
             }
             (Some(new_hunk), None) => {
+                has_changes = true;
+                extended_end_candidate = None;
                 start.get_or_insert(new_hunk.buffer_range.start);
                 base_text_start.get_or_insert(new_hunk.diff_base_byte_range.start);
-                // TODO(cole) it seems like this could move end backward?
-                end.replace(new_hunk.buffer_range.end);
+                if end.is_none_or(|end| end.cmp(&new_hunk.buffer_range.end, &new_snapshot).is_le())
+                {
+                    end.replace(new_hunk.buffer_range.end);
+                }
                 base_text_end = base_text_end.max(Some(new_hunk.diff_base_byte_range.end));
                 new_cursor.next();
             }
             (None, Some(old_hunk)) => {
+                has_changes = true;
+                extended_end_candidate = None;
                 start.get_or_insert(old_hunk.buffer_range.start);
                 base_text_start.get_or_insert(old_hunk.diff_base_byte_range.start);
-                // TODO(cole) it seems like this could move end backward?
-                end.replace(old_hunk.buffer_range.end);
+                if end.is_none_or(|end| end.cmp(&old_hunk.buffer_range.end, &new_snapshot).is_le())
+                {
+                    end.replace(old_hunk.buffer_range.end);
+                }
                 base_text_end = base_text_end.max(Some(old_hunk.diff_base_byte_range.end));
                 old_cursor.next();
             }
@@ -941,12 +1146,46 @@ fn compare_hunks(
         }
     }
 
-    (
-        start.zip(end).map(|(start, end)| start..end),
-        base_text_start
-            .zip(base_text_end)
-            .map(|(start, end)| start..end),
-    )
+    let changed_range = start.zip(end).map(|(start, end)| start..end);
+    let base_text_changed_range = base_text_start
+        .zip(base_text_end)
+        .map(|(start, end)| start..end);
+
+    let extended_range = if has_changes && let Some(changed_range) = changed_range.clone() {
+        let extended_start = *last_unchanged_new_hunk_end
+            .unwrap_or(text::Anchor::min_for_buffer(new_snapshot.remote_id()))
+            .min(&changed_range.start, new_snapshot);
+        let extended_start = new_snapshot
+            .anchored_edits_since_in_range::<usize>(
+                &old_snapshot.version(),
+                extended_start..changed_range.start,
+            )
+            .map(|(_, anchors)| anchors.start)
+            .min_by(|a, b| a.cmp(b, new_snapshot))
+            .unwrap_or(changed_range.start);
+
+        let extended_end = *extended_end_candidate
+            .unwrap_or(text::Anchor::max_for_buffer(new_snapshot.remote_id()))
+            .max(&changed_range.end, new_snapshot);
+        let extended_end = new_snapshot
+            .anchored_edits_since_in_range::<usize>(
+                &old_snapshot.version(),
+                changed_range.end..extended_end,
+            )
+            .map(|(_, anchors)| anchors.end)
+            .max_by(|a, b| a.cmp(b, new_snapshot))
+            .unwrap_or(changed_range.end);
+
+        Some(extended_start..extended_end)
+    } else {
+        None
+    };
+
+    DiffChanged {
+        changed_range,
+        base_text_changed_range,
+        extended_range,
+    }
 }
 
 fn process_patch_hunk(
@@ -1074,12 +1313,16 @@ impl std::fmt::Debug for BufferDiff {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct DiffChanged {
+    pub changed_range: Option<Range<text::Anchor>>,
+    pub base_text_changed_range: Option<Range<usize>>,
+    pub extended_range: Option<Range<text::Anchor>>,
+}
+
 #[derive(Clone, Debug)]
 pub enum BufferDiffEvent {
-    DiffChanged {
-        changed_range: Option<Range<text::Anchor>>,
-        base_text_changed_range: Option<Range<usize>>,
-    },
+    DiffChanged(DiffChanged),
     LanguageChanged,
     HunksStagedOrUnstaged(Option<Rope>),
 }
@@ -1101,6 +1344,7 @@ impl BufferDiff {
                 hunks: SumTree::new(buffer),
                 pending_hunks: SumTree::new(buffer),
                 base_text_exists: false,
+                buffer_snapshot: buffer.clone(),
             },
             secondary_diff: None,
         }
@@ -1121,6 +1365,7 @@ impl BufferDiff {
                 hunks: SumTree::new(buffer),
                 pending_hunks: SumTree::new(buffer),
                 base_text_exists: true,
+                buffer_snapshot: buffer.clone(),
             },
             secondary_diff: None,
         }
@@ -1138,7 +1383,7 @@ impl BufferDiff {
         let inner = cx.foreground_executor().block_on(this.update_diff(
             buffer.clone(),
             Some(Arc::from(base_text)),
-            true,
+            Some(false),
             None,
             cx,
         ));
@@ -1160,10 +1405,13 @@ impl BufferDiff {
                 buffer_range: Anchor::min_min_range_for_buffer(self.buffer_id),
                 diff_base_byte_range: 0..0,
             });
-            cx.emit(BufferDiffEvent::DiffChanged {
-                changed_range: Some(Anchor::min_max_range_for_buffer(self.buffer_id)),
-                base_text_changed_range: Some(0..self.base_text(cx).len()),
-            });
+            let changed_range = Some(Anchor::min_max_range_for_buffer(self.buffer_id));
+            let base_text_range = Some(0..self.base_text(cx).len());
+            cx.emit(BufferDiffEvent::DiffChanged(DiffChanged {
+                changed_range: changed_range.clone(),
+                base_text_changed_range: base_text_range,
+                extended_range: changed_range,
+            }));
         }
     }
 
@@ -1193,13 +1441,14 @@ impl BufferDiff {
             new_index_text.clone(),
         ));
         if let Some((first, last)) = hunks.first().zip(hunks.last()) {
-            let changed_range = first.buffer_range.start..last.buffer_range.end;
+            let changed_range = Some(first.buffer_range.start..last.buffer_range.end);
             let base_text_changed_range =
-                first.diff_base_byte_range.start..last.diff_base_byte_range.end;
-            cx.emit(BufferDiffEvent::DiffChanged {
-                changed_range: Some(changed_range),
-                base_text_changed_range: Some(base_text_changed_range),
-            });
+                Some(first.diff_base_byte_range.start..last.diff_base_byte_range.end);
+            cx.emit(BufferDiffEvent::DiffChanged(DiffChanged {
+                changed_range: changed_range.clone(),
+                base_text_changed_range,
+                extended_range: changed_range,
+            }));
         }
         new_index_text
     }
@@ -1222,13 +1471,14 @@ impl BufferDiff {
         self.inner
             .stage_or_unstage_hunks_impl(&secondary, stage, &hunks, buffer, file_exists, cx);
         if let Some((first, last)) = hunks.first().zip(hunks.last()) {
-            let changed_range = first.buffer_range.start..last.buffer_range.end;
+            let changed_range = Some(first.buffer_range.start..last.buffer_range.end);
             let base_text_changed_range =
-                first.diff_base_byte_range.start..last.diff_base_byte_range.end;
-            cx.emit(BufferDiffEvent::DiffChanged {
-                changed_range: Some(changed_range),
-                base_text_changed_range: Some(base_text_changed_range),
-            });
+                Some(first.diff_base_byte_range.start..last.diff_base_byte_range.end);
+            cx.emit(BufferDiffEvent::DiffChanged(DiffChanged {
+                changed_range: changed_range.clone(),
+                base_text_changed_range,
+                extended_range: changed_range,
+            }));
         }
     }
 
@@ -1236,45 +1486,73 @@ impl BufferDiff {
         &self,
         buffer: text::BufferSnapshot,
         base_text: Option<Arc<str>>,
-        base_text_changed: bool,
+        base_text_change: Option<bool>,
         language: Option<Arc<Language>>,
         cx: &App,
     ) -> Task<BufferDiffUpdate> {
         let prev_base_text = self.base_text(cx).as_rope().clone();
+        let base_text_changed = base_text_change.is_some();
+        let compute_base_text_edits = base_text_change == Some(true);
         let diff_options = build_diff_options(
             None,
             language.as_ref().map(|l| l.name()),
             language.as_ref().map(|l| l.default_scope()),
             cx,
         );
+        let buffer_snapshot = buffer.clone();
+
+        let base_text_diff_task = if base_text_changed && compute_base_text_edits {
+            base_text
+                .as_ref()
+                .map(|new_text| self.inner.base_text.read(cx).diff(new_text.clone(), cx))
+        } else {
+            None
+        };
+
+        let hunk_task = cx.background_executor().spawn({
+            let buffer_snapshot = buffer_snapshot.clone();
+            async move {
+                let base_text_rope = if let Some(base_text) = &base_text {
+                    if base_text_changed {
+                        Rope::from(base_text.as_ref())
+                    } else {
+                        prev_base_text
+                    }
+                } else {
+                    Rope::new()
+                };
+                let base_text_exists = base_text.is_some();
+                let hunks = compute_hunks(
+                    base_text
+                        .clone()
+                        .map(|base_text| (base_text, base_text_rope.clone())),
+                    buffer.clone(),
+                    diff_options,
+                );
+                let base_text = base_text.unwrap_or_default();
+                BufferDiffInner {
+                    base_text,
+                    hunks,
+                    base_text_exists,
+                    pending_hunks: SumTree::new(&buffer),
+                    buffer_snapshot,
+                }
+            }
+        });
 
         cx.background_executor().spawn(async move {
-            let base_text_rope = if let Some(base_text) = &base_text {
-                if base_text_changed {
-                    Rope::from(base_text.as_ref())
-                } else {
-                    prev_base_text
+            let (inner, base_text_edits) = match base_text_diff_task {
+                Some(diff_task) => {
+                    let (inner, diff) = futures::join!(hunk_task, diff_task);
+                    (inner, Some(diff))
                 }
-            } else {
-                Rope::new()
+                None => (hunk_task.await, None),
             };
-            let base_text_exists = base_text.is_some();
-            let hunks = compute_hunks(
-                base_text
-                    .clone()
-                    .map(|base_text| (base_text, base_text_rope.clone())),
-                buffer.clone(),
-                diff_options,
-            );
-            let base_text = base_text.unwrap_or_default();
-            let inner = BufferDiffInner {
-                base_text,
-                hunks,
-                base_text_exists,
-                pending_hunks: SumTree::new(&buffer),
-            };
+
             BufferDiffUpdate {
                 inner,
+                buffer_snapshot,
+                base_text_edits,
                 base_text_changed,
             }
         })
@@ -1311,23 +1589,37 @@ impl BufferDiff {
         secondary_diff_change: Option<Range<Anchor>>,
         clear_pending_hunks: bool,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = (Option<Range<Anchor>>, Option<Range<usize>>)> + use<> {
+    ) -> impl Future<Output = DiffChanged> + use<> {
         log::debug!("set snapshot with secondary {secondary_diff_change:?}");
 
         let old_snapshot = self.snapshot(cx);
         let state = &mut self.inner;
         let new_state = update.inner;
-        let (mut changed_range, mut base_text_changed_range) =
-            match (state.base_text_exists, new_state.base_text_exists) {
-                (false, false) => (None, None),
-                (true, true) if !update.base_text_changed => {
-                    compare_hunks(&new_state.hunks, &old_snapshot.inner.hunks, buffer)
+        let base_text_changed = update.base_text_changed;
+
+        let old_buffer_snapshot = &old_snapshot.inner.buffer_snapshot;
+        let DiffChanged {
+            mut changed_range,
+            mut base_text_changed_range,
+            mut extended_range,
+        } = match (state.base_text_exists, new_state.base_text_exists) {
+            (false, false) => DiffChanged::default(),
+            (true, true) if !base_text_changed => compare_hunks(
+                &new_state.hunks,
+                &old_snapshot.inner.hunks,
+                old_buffer_snapshot,
+                buffer,
+            ),
+            _ => {
+                let full_range = text::Anchor::min_max_range_for_buffer(self.buffer_id);
+                let full_base_range = 0..new_state.base_text.len();
+                DiffChanged {
+                    changed_range: Some(full_range.clone()),
+                    base_text_changed_range: Some(full_base_range),
+                    extended_range: Some(full_range),
                 }
-                _ => (
-                    Some(text::Anchor::min_max_range_for_buffer(self.buffer_id)),
-                    Some(0..new_state.base_text.len()),
-                ),
-            };
+            }
+        };
 
         if let Some(secondary_changed_range) = secondary_diff_change
             && let (Some(secondary_hunk_range), Some(secondary_base_range)) =
@@ -1337,20 +1629,34 @@ impl BufferDiff {
                 range.start = *secondary_hunk_range.start.min(&range.start, buffer);
                 range.end = *secondary_hunk_range.end.max(&range.end, buffer);
             } else {
-                changed_range = Some(secondary_hunk_range);
+                changed_range = Some(secondary_hunk_range.clone());
             }
 
-            if let Some(base_text_range) = &mut base_text_changed_range {
+            if let Some(base_text_range) = base_text_changed_range.as_mut() {
                 base_text_range.start = secondary_base_range.start.min(base_text_range.start);
                 base_text_range.end = secondary_base_range.end.max(base_text_range.end);
             } else {
                 base_text_changed_range = Some(secondary_base_range);
             }
+
+            if let Some(ext) = &mut extended_range {
+                ext.start = *ext.start.min(&secondary_hunk_range.start, buffer);
+                ext.end = *ext.end.max(&secondary_hunk_range.end, buffer);
+            } else {
+                extended_range = Some(secondary_hunk_range);
+            }
         }
 
         let state = &mut self.inner;
         state.base_text_exists = new_state.base_text_exists;
-        let parsing_idle = if update.base_text_changed {
+        let parsing_idle = if let Some(diff) = update.base_text_edits {
+            state.base_text.update(cx, |base_text, cx| {
+                base_text.set_capability(Capability::ReadWrite, cx);
+                base_text.apply_diff(diff, cx);
+                base_text.set_capability(Capability::ReadOnly, cx);
+                Some(base_text.parsing_idle())
+            })
+        } else if update.base_text_changed {
             state.base_text.update(cx, |base_text, cx| {
                 base_text.set_capability(Capability::ReadWrite, cx);
                 base_text.set_text(new_state.base_text.clone(), cx);
@@ -1361,23 +1667,32 @@ impl BufferDiff {
             None
         };
         state.hunks = new_state.hunks;
-        if update.base_text_changed || clear_pending_hunks {
+        state.buffer_snapshot = update.buffer_snapshot;
+        if base_text_changed || clear_pending_hunks {
             if let Some((first, last)) = state.pending_hunks.first().zip(state.pending_hunks.last())
             {
+                let pending_range = first.buffer_range.start..last.buffer_range.end;
                 if let Some(range) = &mut changed_range {
-                    range.start = *range.start.min(&first.buffer_range.start, buffer);
-                    range.end = *range.end.max(&last.buffer_range.end, buffer);
+                    range.start = *range.start.min(&pending_range.start, buffer);
+                    range.end = *range.end.max(&pending_range.end, buffer);
                 } else {
-                    changed_range = Some(first.buffer_range.start..last.buffer_range.end);
+                    changed_range = Some(pending_range.clone());
                 }
 
-                if let Some(base_text_range) = &mut base_text_changed_range {
+                if let Some(base_text_range) = base_text_changed_range.as_mut() {
                     base_text_range.start =
                         base_text_range.start.min(first.diff_base_byte_range.start);
                     base_text_range.end = base_text_range.end.max(last.diff_base_byte_range.end);
                 } else {
                     base_text_changed_range =
                         Some(first.diff_base_byte_range.start..last.diff_base_byte_range.end);
+                }
+
+                if let Some(ext) = &mut extended_range {
+                    ext.start = *ext.start.min(&pending_range.start, buffer);
+                    ext.end = *ext.end.max(&pending_range.end, buffer);
+                } else {
+                    extended_range = Some(pending_range);
                 }
             }
             state.pending_hunks = SumTree::new(buffer);
@@ -1387,7 +1702,11 @@ impl BufferDiff {
             if let Some(parsing_idle) = parsing_idle {
                 parsing_idle.await;
             }
-            (changed_range, base_text_changed_range)
+            DiffChanged {
+                changed_range,
+                base_text_changed_range,
+                extended_range,
+            }
         }
     }
 
@@ -1417,15 +1736,12 @@ impl BufferDiff {
         );
 
         cx.spawn(async move |this, cx| {
-            let (changed_range, base_text_changed_range) = fut.await;
+            let change = fut.await;
             this.update(cx, |_, cx| {
-                cx.emit(BufferDiffEvent::DiffChanged {
-                    changed_range: changed_range.clone(),
-                    base_text_changed_range,
-                });
+                cx.emit(BufferDiffEvent::DiffChanged(change.clone()));
             })
             .ok();
-            changed_range
+            change.changed_range
         })
     }
 
@@ -1444,6 +1760,7 @@ impl BufferDiff {
                 pending_hunks: self.inner.pending_hunks.clone(),
                 base_text: self.inner.base_text.read(cx).snapshot(),
                 base_text_exists: self.inner.base_text_exists,
+                buffer_snapshot: self.inner.buffer_snapshot.clone(),
             },
             secondary_diff: self
                 .secondary_diff
@@ -1467,7 +1784,7 @@ impl BufferDiff {
         cx.spawn(async move |this, cx| {
             let Some(state) = this
                 .update(cx, |this, cx| {
-                    this.update_diff(buffer.clone(), base_text, true, language, cx)
+                    this.update_diff(buffer.clone(), base_text, Some(false), language, cx)
                 })
                 .log_err()
             else {
@@ -1496,15 +1813,12 @@ impl BufferDiff {
     pub fn recalculate_diff_sync(&mut self, buffer: &text::BufferSnapshot, cx: &mut Context<Self>) {
         let language = self.base_text(cx).language().cloned();
         let base_text = self.base_text_string(cx).map(|s| s.as_str().into());
-        let fut = self.update_diff(buffer.clone(), base_text, false, language, cx);
+        let fut = self.update_diff(buffer.clone(), base_text, None, language, cx);
         let fg_executor = cx.foreground_executor().clone();
         let snapshot = fg_executor.block_on(fut);
         let fut = self.set_snapshot_with_secondary_inner(snapshot, buffer, None, false, cx);
-        let (changed_range, base_text_changed_range) = fg_executor.block_on(fut);
-        cx.emit(BufferDiffEvent::DiffChanged {
-            changed_range,
-            base_text_changed_range,
-        })
+        let change = fg_executor.block_on(fut);
+        cx.emit(BufferDiffEvent::DiffChanged(change));
     }
 
     pub fn base_text_buffer(&self) -> Entity<language::Buffer> {
@@ -2141,6 +2455,72 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_stage_all_with_nested_hunks(cx: &mut TestAppContext) {
+        // This test reproduces a crash where staging all hunks would cause an underflow
+        // when there's one large unstaged hunk containing multiple uncommitted hunks.
+        let head_text = "
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff
+            ggg
+            hhh
+            iii
+            jjj
+            kkk
+            lll
+        "
+        .unindent();
+
+        let index_text = "
+            aaa
+            bbb
+            CCC-index
+            DDD-index
+            EEE-index
+            FFF-index
+            GGG-index
+            HHH-index
+            III-index
+            JJJ-index
+            kkk
+            lll
+        "
+        .unindent();
+
+        let buffer_text = "
+            aaa
+            bbb
+            ccc-modified
+            ddd
+            eee-modified
+            fff
+            ggg
+            hhh-modified
+            iii
+            jjj
+            kkk
+            lll
+        "
+        .unindent();
+
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+
+        let unstaged_diff = cx.new(|cx| BufferDiff::new_with_base_text(&index_text, &buffer, cx));
+        let uncommitted_diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new_with_base_text(&head_text, &buffer, cx);
+            diff.set_secondary_diff(unstaged_diff);
+            diff
+        });
+
+        uncommitted_diff.update(cx, |diff, cx| {
+            diff.stage_or_unstage_all_hunks(true, &buffer, true, cx);
+        });
+    }
+
+    #[gpui::test]
     async fn test_toggling_stage_and_unstage_same_hunk(cx: &mut TestAppContext) {
         let head_text = "
             one
@@ -2229,11 +2609,19 @@ mod tests {
 
         let empty_diff = cx.update(|cx| BufferDiff::new(&buffer, cx).snapshot(cx));
         let diff_1 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
-        let (range, base_text_range) =
-            compare_hunks(&diff_1.inner.hunks, &empty_diff.inner.hunks, &buffer);
-        let range = range.unwrap();
+        let DiffChanged {
+            changed_range,
+            base_text_changed_range,
+            extended_range: _,
+        } = compare_hunks(
+            &diff_1.inner.hunks,
+            &empty_diff.inner.hunks,
+            &buffer,
+            &buffer,
+        );
+        let range = changed_range.unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(0, 0)..Point::new(8, 0));
-        let base_text_range = base_text_range.unwrap();
+        let base_text_range = base_text_changed_range.unwrap();
         assert_eq!(
             base_text_range.to_point(diff_1.base_text()),
             Point::new(0, 0)..Point::new(10, 0)
@@ -2254,14 +2642,19 @@ mod tests {
             .unindent(),
         );
         let diff_2 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
-        let (range, base_text_range) =
-            compare_hunks(&diff_2.inner.hunks, &diff_1.inner.hunks, &buffer);
+        let DiffChanged {
+            changed_range,
+            base_text_changed_range,
+            extended_range: _,
+        } = compare_hunks(&diff_2.inner.hunks, &diff_1.inner.hunks, &buffer, &buffer);
         assert_eq!(
-            range.unwrap().to_point(&buffer),
+            changed_range.unwrap().to_point(&buffer),
             Point::new(4, 0)..Point::new(5, 0),
         );
         assert_eq!(
-            base_text_range.unwrap().to_point(diff_2.base_text()),
+            base_text_changed_range
+                .unwrap()
+                .to_point(diff_2.base_text()),
             Point::new(6, 0)..Point::new(7, 0),
         );
 
@@ -2280,11 +2673,14 @@ mod tests {
             .unindent(),
         );
         let diff_3 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
-        let (range, base_text_range) =
-            compare_hunks(&diff_3.inner.hunks, &diff_2.inner.hunks, &buffer);
-        let range = range.unwrap();
+        let DiffChanged {
+            changed_range,
+            base_text_changed_range,
+            extended_range: _,
+        } = compare_hunks(&diff_3.inner.hunks, &diff_2.inner.hunks, &buffer, &buffer);
+        let range = changed_range.unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(1, 0)..Point::new(2, 0));
-        let base_text_range = base_text_range.unwrap();
+        let base_text_range = base_text_changed_range.unwrap();
         assert_eq!(
             base_text_range.to_point(diff_3.base_text()),
             Point::new(2, 0)..Point::new(4, 0)
@@ -2304,11 +2700,14 @@ mod tests {
             .unindent(),
         );
         let diff_4 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
-        let (range, base_text_range) =
-            compare_hunks(&diff_4.inner.hunks, &diff_3.inner.hunks, &buffer);
-        let range = range.unwrap();
+        let DiffChanged {
+            changed_range,
+            base_text_changed_range,
+            extended_range: _,
+        } = compare_hunks(&diff_4.inner.hunks, &diff_3.inner.hunks, &buffer, &buffer);
+        let range = changed_range.unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(3, 4)..Point::new(4, 0));
-        let base_text_range = base_text_range.unwrap();
+        let base_text_range = base_text_changed_range.unwrap();
         assert_eq!(
             base_text_range.to_point(diff_4.base_text()),
             Point::new(6, 0)..Point::new(7, 0)
@@ -2329,11 +2728,14 @@ mod tests {
             .unindent(),
         );
         let diff_5 = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text.clone(), cx);
-        let (range, base_text_range) =
-            compare_hunks(&diff_5.inner.hunks, &diff_4.inner.hunks, &buffer);
-        let range = range.unwrap();
+        let DiffChanged {
+            changed_range,
+            base_text_changed_range,
+            extended_range: _,
+        } = compare_hunks(&diff_5.inner.hunks, &diff_4.inner.hunks, &buffer, &buffer);
+        let range = changed_range.unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(3, 0)..Point::new(4, 0));
-        let base_text_range = base_text_range.unwrap();
+        let base_text_range = base_text_changed_range.unwrap();
         assert_eq!(
             base_text_range.to_point(diff_5.base_text()),
             Point::new(5, 0)..Point::new(5, 0)
@@ -2354,11 +2756,14 @@ mod tests {
             .unindent(),
         );
         let diff_6 = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text, cx);
-        let (range, base_text_range) =
-            compare_hunks(&diff_6.inner.hunks, &diff_5.inner.hunks, &buffer);
-        let range = range.unwrap();
+        let DiffChanged {
+            changed_range,
+            base_text_changed_range,
+            extended_range: _,
+        } = compare_hunks(&diff_6.inner.hunks, &diff_5.inner.hunks, &buffer, &buffer);
+        let range = changed_range.unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(7, 0)..Point::new(8, 0));
-        let base_text_range = base_text_range.unwrap();
+        let base_text_range = base_text_changed_range.unwrap();
         assert_eq!(
             base_text_range.to_point(diff_6.base_text()),
             Point::new(9, 0)..Point::new(10, 0)
@@ -2531,69 +2936,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_row_to_base_text_row(cx: &mut TestAppContext) {
-        let base_text = "
-            zero
-            one
-            two
-            three
-            four
-            five
-            six
-            seven
-            eight
-        "
-        .unindent();
-        let buffer_text = "
-            zero
-            ONE
-            two
-            NINE
-            five
-            seven
-        "
-        .unindent();
-
-        //   zero
-        // - one
-        // + ONE
-        //   two
-        // - three
-        // - four
-        // + NINE
-        //   five
-        // - six
-        //   seven
-        // + eight
-
-        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
-        let buffer_snapshot = buffer.snapshot();
-        let diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text, cx);
-        let expected_results = [
-            // main buffer row, base text row (right bias), base text row (left bias)
-            (0, 0, 0),
-            (1, 2, 1),
-            (2, 2, 2),
-            (3, 5, 3),
-            (4, 5, 5),
-            (5, 7, 7),
-            (6, 9, 9),
-        ];
-        for (buffer_row, expected_right, expected_left) in expected_results {
-            assert_eq!(
-                diff.row_to_base_text_row(buffer_row, Bias::Right, &buffer_snapshot),
-                expected_right,
-                "{buffer_row}"
-            );
-            assert_eq!(
-                diff.row_to_base_text_row(buffer_row, Bias::Left, &buffer_snapshot),
-                expected_left,
-                "{buffer_row}"
-            );
-        }
-    }
-
-    #[gpui::test]
     async fn test_changed_ranges(cx: &mut gpui::TestAppContext) {
         let base_text = "
             one
@@ -2642,7 +2984,7 @@ mod tests {
                 diff.update_diff(
                     snapshot.clone(),
                     Some(base_text.as_str().into()),
-                    false,
+                    None,
                     None,
                     cx,
                 )
@@ -2655,10 +2997,11 @@ mod tests {
         let events = rx.into_iter().collect::<Vec<_>>();
         match events.as_slice() {
             [
-                BufferDiffEvent::DiffChanged {
+                BufferDiffEvent::DiffChanged(DiffChanged {
                     changed_range: _,
                     base_text_changed_range,
-                },
+                    extended_range: _,
+                }),
             ] => {
                 // TODO(cole) this seems like it should pass but currently fails (see compare_hunks)
                 // assert_eq!(
@@ -2671,5 +3014,1414 @@ mod tests {
             }
             _ => panic!("unexpected events: {:?}", events),
         }
+    }
+
+    #[gpui::test]
+    async fn test_extended_range(cx: &mut TestAppContext) {
+        let base_text = "
+            aaa
+            bbb
+
+
+
+
+
+            ccc
+            ddd
+        "
+        .unindent();
+
+        let buffer_text = "
+            aaa
+            bbb
+
+
+
+
+
+            CCC
+            ddd
+        "
+        .unindent();
+
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let old_buffer = buffer.snapshot();
+        let diff_a = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
+
+        buffer.edit([(Point::new(1, 3)..Point::new(1, 3), "\n")]);
+        let diff_b = BufferDiffSnapshot::new_sync(buffer.clone(), base_text, cx);
+
+        let DiffChanged {
+            changed_range,
+            base_text_changed_range: _,
+            extended_range,
+        } = compare_hunks(
+            &diff_b.inner.hunks,
+            &diff_a.inner.hunks,
+            &old_buffer,
+            &buffer,
+        );
+
+        let changed_range = changed_range.unwrap();
+        assert_eq!(
+            changed_range.to_point(&buffer),
+            Point::new(7, 0)..Point::new(9, 0),
+            "changed_range should span from old hunk position to new hunk end"
+        );
+
+        let extended_range = extended_range.unwrap();
+        assert_eq!(
+            extended_range.start.to_point(&buffer),
+            Point::new(1, 3),
+            "extended_range.start should extend to include the edit outside changed_range"
+        );
+        assert_eq!(
+            extended_range.end.to_point(&buffer),
+            Point::new(9, 0),
+            "extended_range.end should collapse to changed_range.end when no edits in end margin"
+        );
+
+        let base_text_2 = "
+            one
+            two
+            three
+            four
+            five
+            six
+            seven
+            eight
+        "
+        .unindent();
+
+        let buffer_text_2 = "
+            ONE
+            two
+            THREE
+            four
+            FIVE
+            six
+            SEVEN
+            eight
+        "
+        .unindent();
+
+        let mut buffer_2 = Buffer::new(ReplicaId::LOCAL, BufferId::new(2).unwrap(), buffer_text_2);
+        let old_buffer_2 = buffer_2.snapshot();
+        let diff_2a = BufferDiffSnapshot::new_sync(buffer_2.clone(), base_text_2.clone(), cx);
+
+        buffer_2.edit([(Point::new(4, 0)..Point::new(4, 4), "FIVE_CHANGED")]);
+        let diff_2b = BufferDiffSnapshot::new_sync(buffer_2.clone(), base_text_2, cx);
+
+        let DiffChanged {
+            changed_range,
+            base_text_changed_range: _,
+            extended_range,
+        } = compare_hunks(
+            &diff_2b.inner.hunks,
+            &diff_2a.inner.hunks,
+            &old_buffer_2,
+            &buffer_2,
+        );
+
+        let changed_range = changed_range.unwrap();
+        assert_eq!(
+            changed_range.to_point(&buffer_2),
+            Point::new(4, 0)..Point::new(5, 0),
+            "changed_range should be just the hunk that changed (FIVE)"
+        );
+
+        let extended_range = extended_range.unwrap();
+        assert_eq!(
+            extended_range.to_point(&buffer_2),
+            Point::new(4, 0)..Point::new(5, 0),
+            "extended_range should equal changed_range when edit is within the hunk"
+        );
+    }
+
+    fn assert_rows_to_base_text_rows_visual(
+        buffer: &Entity<language::Buffer>,
+        diff: &Entity<BufferDiff>,
+        source_text: &str,
+        annotated_target: &str,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (target_text, expected_ranges) = parse_row_annotations(annotated_target);
+
+        let buffer = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+        let diff = diff.update(cx, |diff, cx| diff.snapshot(cx));
+
+        assert_eq!(
+            buffer.text(),
+            source_text,
+            "buffer text does not match source text"
+        );
+
+        assert_eq!(
+            diff.base_text_string().unwrap_or_default(),
+            target_text,
+            "base text does not match stripped annotated target"
+        );
+
+        let num_rows = source_text.lines().count() as u32;
+        let max_point = buffer.max_point();
+        let points = (0..=num_rows).map(move |row| {
+            if row == num_rows && max_point.column > 0 {
+                max_point
+            } else {
+                Point::new(row, 0)
+            }
+        });
+        let actual_ranges: Vec<_> = diff.points_to_base_text_points(points, &buffer).0.collect();
+
+        assert_eq!(
+            actual_ranges, expected_ranges,
+            "\nsource (buffer):\n{}\ntarget (base):\n{}\nexpected: {:?}\nactual: {:?}",
+            source_text, target_text, expected_ranges, actual_ranges
+        );
+    }
+
+    fn assert_base_text_rows_to_rows_visual(
+        buffer: &Entity<language::Buffer>,
+        diff: &Entity<BufferDiff>,
+        source_text: &str,
+        annotated_target: &str,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (target_text, expected_ranges) = parse_row_annotations(annotated_target);
+
+        let buffer = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+        let diff = diff.update(cx, |diff, cx| diff.snapshot(cx));
+
+        assert_eq!(
+            diff.base_text_string().unwrap_or_default(),
+            source_text,
+            "base text does not match source text"
+        );
+
+        assert_eq!(
+            buffer.text(),
+            target_text,
+            "buffer text does not match stripped annotated target"
+        );
+
+        let num_rows = source_text.lines().count() as u32;
+        let base_max_point = diff.base_text().max_point();
+        let points = (0..=num_rows).map(move |row| {
+            if row == num_rows && base_max_point.column > 0 {
+                base_max_point
+            } else {
+                Point::new(row, 0)
+            }
+        });
+        let actual_ranges: Vec<_> = diff.base_text_points_to_points(points, &buffer).0.collect();
+
+        assert_eq!(
+            actual_ranges, expected_ranges,
+            "\nsource (base):\n{}\ntarget (buffer):\n{}\nexpected: {:?}\nactual: {:?}",
+            source_text, target_text, expected_ranges, actual_ranges
+        );
+    }
+
+    fn parse_row_annotations(annotated_text: &str) -> (String, Vec<Range<Point>>) {
+        let mut starts: std::collections::HashMap<u32, Point> = std::collections::HashMap::new();
+        let mut ends: std::collections::HashMap<u32, Point> = std::collections::HashMap::new();
+
+        let mut clean_text = String::new();
+        let mut current_point = Point::new(0, 0);
+        let mut chars = annotated_text.chars().peekable();
+
+        while let Some(c) = chars.next() {
+            if c == '<' {
+                let mut num_str = String::new();
+                while let Some(&next) = chars.peek() {
+                    if next.is_ascii_digit() {
+                        num_str.push(chars.next().unwrap());
+                    } else {
+                        break;
+                    }
+                }
+                if !num_str.is_empty() {
+                    let row_num: u32 = num_str.parse().unwrap();
+                    starts.insert(row_num, current_point);
+
+                    if chars.peek() == Some(&'>') {
+                        chars.next();
+                        ends.insert(row_num, current_point);
+                    }
+                } else {
+                    clean_text.push(c);
+                    current_point.column += 1;
+                }
+            } else if c.is_ascii_digit() {
+                let mut num_str = String::from(c);
+                while let Some(&next) = chars.peek() {
+                    if next.is_ascii_digit() {
+                        num_str.push(chars.next().unwrap());
+                    } else {
+                        break;
+                    }
+                }
+                if chars.peek() == Some(&'>') {
+                    chars.next();
+                    let row_num: u32 = num_str.parse().unwrap();
+                    ends.insert(row_num, current_point);
+                } else {
+                    for ch in num_str.chars() {
+                        clean_text.push(ch);
+                        current_point.column += 1;
+                    }
+                }
+            } else if c == '\n' {
+                clean_text.push(c);
+                current_point.row += 1;
+                current_point.column = 0;
+            } else {
+                clean_text.push(c);
+                current_point.column += 1;
+            }
+        }
+
+        let max_row = starts.keys().chain(ends.keys()).max().copied().unwrap_or(0);
+        let mut ranges: Vec<Range<Point>> = Vec::new();
+        for row in 0..=max_row {
+            let start = starts.get(&row).copied().unwrap_or(Point::new(0, 0));
+            let end = ends.get(&row).copied().unwrap_or(start);
+            ranges.push(start..end);
+        }
+
+        (clean_text, ranges)
+    }
+
+    fn make_diff(
+        base_text: &str,
+        buffer_text: &str,
+        cx: &mut gpui::TestAppContext,
+    ) -> (Entity<language::Buffer>, Entity<BufferDiff>) {
+        let buffer = cx.new(|cx| language::Buffer::local(buffer_text, cx));
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx)
+        });
+        (buffer, diff)
+    }
+
+    #[gpui::test]
+    async fn test_row_translation_visual(cx: &mut gpui::TestAppContext) {
+        use unindent::Unindent;
+
+        {
+            let buffer_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aaa
+                <1>bbb
+                <2>ccc
+                <3>"
+            .unindent();
+            let (base_text, _) = parse_row_annotations(&annotated_base);
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+            assert_rows_to_base_text_rows_visual(&buffer, &diff, &buffer_text, &annotated_base, cx);
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let annotated_buffer = "
+                <0>aaa
+                <1>bbb
+                <2>ccc
+                <3>"
+            .unindent();
+            let (buffer_text, _) = parse_row_annotations(&annotated_buffer);
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+            assert_base_text_rows_to_rows_visual(&buffer, &diff, &base_text, &annotated_buffer, cx);
+        }
+
+        {
+            let buffer_text = "
+                XXX
+                bbb
+                ccc
+            "
+            .unindent();
+            let annotated_base = "
+                <0<1aaa
+                0>1>bbb
+                <2>ccc
+                <3>"
+            .unindent();
+            let (base_text, _) = parse_row_annotations(&annotated_base);
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+            assert_rows_to_base_text_rows_visual(&buffer, &diff, &buffer_text, &annotated_base, cx);
+        }
+
+        {
+            let buffer_text = "
+                aaa
+                NEW
+                ccc
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aaa
+                <1><2>ccc
+                <3>"
+            .unindent();
+            let (base_text, _) = parse_row_annotations(&annotated_base);
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+            assert_rows_to_base_text_rows_visual(&buffer, &diff, &buffer_text, &annotated_base, cx);
+        }
+
+        {
+            let base_text = "
+                aaa
+                ccc
+            "
+            .unindent();
+            let annotated_buffer = "
+                <0>aaa
+                <1NEW
+                1>ccc
+                <2>"
+            .unindent();
+            let (buffer_text, _) = parse_row_annotations(&annotated_buffer);
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+            assert_base_text_rows_to_rows_visual(&buffer, &diff, &base_text, &annotated_buffer, cx);
+        }
+
+        {
+            let buffer_text = "aaa\nbbb";
+            let annotated_base = "<0>aaa\n<1>bbb<2>";
+            let (base_text, _) = parse_row_annotations(annotated_base);
+            let (buffer, diff) = make_diff(&base_text, buffer_text, cx);
+            assert_rows_to_base_text_rows_visual(&buffer, &diff, buffer_text, annotated_base, cx);
+            assert_base_text_rows_to_rows_visual(&buffer, &diff, &base_text, annotated_base, cx);
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let annotated_buffer = "
+                <0<1XXX
+                0>1>bbb
+                <2>ccc
+                <3>"
+            .unindent();
+            let (buffer_text, _) = parse_row_annotations(&annotated_buffer);
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+            assert_base_text_rows_to_rows_visual(&buffer, &diff, &base_text, &annotated_buffer, cx);
+        }
+
+        {
+            let buffer_text = "
+                aaa
+                bbb
+                XXX
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aaa
+                <1>bbb
+                <2<3ccc
+                2>3>"
+                .unindent();
+            let (base_text, _) = parse_row_annotations(&annotated_base);
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+            assert_rows_to_base_text_rows_visual(&buffer, &diff, &buffer_text, &annotated_base, cx);
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let annotated_buffer = "
+                <0>aaa
+                <1>bbb
+                <2<3XXX
+                2>3>"
+                .unindent();
+            let (buffer_text, _) = parse_row_annotations(&annotated_buffer);
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+            assert_base_text_rows_to_rows_visual(&buffer, &diff, &base_text, &annotated_buffer, cx);
+        }
+
+        {
+            let buffer_text = "
+                aaa
+                ccc
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aaa
+                <1DELETED
+                1>ccc
+                <2>"
+            .unindent();
+            let (base_text, _) = parse_row_annotations(&annotated_base);
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+            assert_rows_to_base_text_rows_visual(&buffer, &diff, &buffer_text, &annotated_base, cx);
+        }
+
+        {
+            let base_text = "
+                aaa
+                DELETED
+                ccc
+            "
+            .unindent();
+            let annotated_buffer = "
+                <0>aaa
+                <1><2>ccc
+                <3>"
+            .unindent();
+            let (buffer_text, _) = parse_row_annotations(&annotated_buffer);
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+            assert_base_text_rows_to_rows_visual(&buffer, &diff, &base_text, &annotated_buffer, cx);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_row_translation_with_edits_since_diff(cx: &mut gpui::TestAppContext) {
+        use unindent::Unindent;
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = base_text.clone();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..7, "XXX")], None, cx);
+            });
+
+            let new_buffer_text = "
+                aaa
+                XXX
+                ccc
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aaa
+                <1bbb1>
+                <2>ccc
+                <3>"
+            .unindent();
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = base_text.clone();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..7, "XXX")], None, cx);
+            });
+
+            let annotated_buffer = "
+                <0>aaa
+                <1XXX1>
+                <2>ccc
+                <3>"
+            .unindent();
+            assert_base_text_rows_to_rows_visual(&buffer, &diff, &base_text, &annotated_buffer, cx);
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = base_text.clone();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..4, "NEW\n")], None, cx);
+            });
+
+            let new_buffer_text = "
+                aaa
+                NEW
+                bbb
+                ccc
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aaa
+                <1><2>bbb
+                <3>ccc
+                <4>"
+            .unindent();
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = base_text.clone();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..4, "NEW\n")], None, cx);
+            });
+
+            let annotated_buffer = "
+                <0>aaa
+                <1NEW
+                1>bbb
+                <2>ccc
+                <3>"
+            .unindent();
+            assert_base_text_rows_to_rows_visual(&buffer, &diff, &base_text, &annotated_buffer, cx);
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = base_text.clone();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..8, "")], None, cx);
+            });
+
+            let new_buffer_text = "
+                aaa
+                ccc
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aaa
+                <1bbb
+                1>ccc
+                <2>"
+            .unindent();
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = base_text.clone();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..8, "")], None, cx);
+            });
+
+            let annotated_buffer = "
+                <0>aaa
+                <1><2>ccc
+                <3>"
+            .unindent();
+            assert_base_text_rows_to_rows_visual(&buffer, &diff, &base_text, &annotated_buffer, cx);
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+                ddd
+                eee
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                XXX
+                ccc
+                ddd
+                eee
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(12..15, "YYY")], None, cx);
+            });
+
+            let new_buffer_text = "
+                aaa
+                XXX
+                ccc
+                YYY
+                eee
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aaa
+                <1<2bbb
+                1>2>ccc
+                <3ddd3>
+                <4>eee
+                <5>"
+            .unindent();
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+                ddd
+                eee
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                XXX
+                ccc
+                ddd
+                eee
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(12..15, "YYY")], None, cx);
+            });
+
+            let annotated_buffer = "
+                <0>aaa
+                <1<2XXX
+                1>2>ccc
+                <3YYY3>
+                <4>eee
+                <5>"
+            .unindent();
+            assert_base_text_rows_to_rows_visual(&buffer, &diff, &base_text, &annotated_buffer, cx);
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = base_text.clone();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..0, "NEW\n")], None, cx);
+            });
+
+            let new_buffer_text = "
+                NEW
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let annotated_base = "
+                <0><1>aaa
+                <2>bbb
+                <3>ccc
+                <4>"
+            .unindent();
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = base_text.clone();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..0, "NEW\n")], None, cx);
+            });
+
+            let annotated_buffer = "
+                <0NEW
+                0>aaa
+                <1>bbb
+                <2>ccc
+                <3>"
+            .unindent();
+            assert_base_text_rows_to_rows_visual(&buffer, &diff, &base_text, &annotated_buffer, cx);
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = base_text.clone();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(12..12, "NEW\n")], None, cx);
+            });
+
+            let new_buffer_text = "
+                aaa
+                bbb
+                ccc
+                NEW
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aaa
+                <1>bbb
+                <2>ccc
+                <3><4>"
+                .unindent();
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = base_text.clone();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(12..12, "NEW\n")], None, cx);
+            });
+
+            let annotated_buffer = "
+                <0>aaa
+                <1>bbb
+                <2>ccc
+                <3NEW
+                3>"
+            .unindent();
+            assert_base_text_rows_to_rows_visual(&buffer, &diff, &base_text, &annotated_buffer, cx);
+        }
+
+        {
+            let base_text = "";
+            let buffer_text = "aaa\n";
+            let (buffer, diff) = make_diff(base_text, buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..4, "bbb\n")], None, cx);
+            });
+
+            let new_buffer_text = "
+                aaa
+                bbb
+            "
+            .unindent();
+            let annotated_base = "<0><1><2>";
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "aaa\n";
+            let buffer_text = "";
+            let (buffer, diff) = make_diff(base_text, buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..0, "bbb\n")], None, cx);
+            });
+
+            let new_buffer_text = "bbb\n";
+            let annotated_base = "
+                <0<1aaa
+                0>1>"
+                .unindent();
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "";
+            let buffer_text = "";
+            let (buffer, diff) = make_diff(base_text, buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..0, "aaa\n")], None, cx);
+            });
+
+            let new_buffer_text = "aaa\n";
+            let annotated_base = "<0><1>";
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                XXX
+                ccc
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..7, "YYY")], None, cx);
+            });
+
+            let new_buffer_text = "
+                aaa
+                YYY
+                ccc
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aaa
+                <1<2bbb
+                1>2>ccc
+                <3>"
+            .unindent();
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                XXX
+                ccc
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..7, "YYY")], None, cx);
+            });
+
+            let annotated_buffer = "
+                <0>aaa
+                <1<2YYY
+                1>2>ccc
+                <3>"
+            .unindent();
+            assert_base_text_rows_to_rows_visual(&buffer, &diff, &base_text, &annotated_buffer, cx);
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                XXXX
+                ccc
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..6, "YY")], None, cx);
+            });
+
+            let new_buffer_text = "
+                aaa
+                YYXX
+                ccc
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aaa
+                <1<2bbb
+                1>2>ccc
+                <3>"
+            .unindent();
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                XXXX
+                ccc
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(6..8, "YY")], None, cx);
+            });
+
+            let new_buffer_text = "
+                aaa
+                XXYY
+                ccc
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aaa
+                <1<2bbb
+                1>2>ccc
+                <3>"
+            .unindent();
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                XXX
+                ccc
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..4, "NEW")], None, cx);
+            });
+
+            let new_buffer_text = "
+                aaa
+                NEWXXX
+                ccc
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aaa
+                <1<2bbb
+                1>2>ccc
+                <3>"
+            .unindent();
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                XXX
+                ccc
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(7..7, "NEW")], None, cx);
+            });
+
+            let new_buffer_text = "
+                aaa
+                XXXNEW
+                ccc
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aaa
+                <1<2bbb
+                1>2>ccc
+                <3>"
+            .unindent();
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                ccc
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..4, "NEW\n")], None, cx);
+            });
+
+            let new_buffer_text = "
+                aaa
+                NEW
+                ccc
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aaa
+                <1<2bbb
+                1>2>ccc
+                <3>"
+            .unindent();
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                ccc
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..4, "NEW\n")], None, cx);
+            });
+
+            let annotated_buffer = "
+                <0>aaa
+                <1<2NEW
+                1>2>ccc
+                <3>"
+            .unindent();
+            assert_base_text_rows_to_rows_visual(&buffer, &diff, &base_text, &annotated_buffer, cx);
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+                ddd
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                ddd
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..4, "XXX\nYYY\n")], None, cx);
+            });
+
+            let new_buffer_text = "
+                aaa
+                XXX
+                YYY
+                ddd
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aaa
+                <1<2<3bbb
+                ccc
+                1>2>3>ddd
+                <4>"
+            .unindent();
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+                ddd
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                ddd
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(4..4, "XXX\nYYY\n")], None, cx);
+            });
+
+            let annotated_buffer = "
+                <0>aaa
+                <1<2<3XXX
+                YYY
+                1>2>3>ddd
+                <4>"
+            .unindent();
+            assert_base_text_rows_to_rows_visual(&buffer, &diff, &base_text, &annotated_buffer, cx);
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                XXXX
+                ccc
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(2..10, "YY\nZZ")], None, cx);
+            });
+
+            let new_buffer_text = "
+                aaYY
+                ZZcc
+            "
+            .unindent();
+            let annotated_base = "
+                <0>aa<1a
+                bbb
+                c1>cc
+                <2>"
+            .unindent();
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+
+        {
+            let base_text = "
+                aaa
+                bbb
+                ccc
+            "
+            .unindent();
+            let buffer_text = "
+                aaa
+                XXXX
+                ccc
+            "
+            .unindent();
+            let (buffer, diff) = make_diff(&base_text, &buffer_text, cx);
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..9, "ZZ\n")], None, cx);
+            });
+
+            let new_buffer_text = "
+                ZZ
+                ccc
+            "
+            .unindent();
+            let annotated_base = "
+                <0<1aaa
+                bbb
+                0>1>ccc
+                <2>"
+            .unindent();
+            assert_rows_to_base_text_rows_visual(
+                &buffer,
+                &diff,
+                &new_buffer_text,
+                &annotated_base,
+                cx,
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_row_translation_no_base_text(cx: &mut gpui::TestAppContext) {
+        let buffer_text = "aaa\nbbb\nccc\n";
+        let buffer = cx.new(|cx| language::Buffer::local(buffer_text, cx));
+        let diff = cx.new(|cx| BufferDiff::new(&buffer.read(cx).text_snapshot(), cx));
+
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+        let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+
+        let points = vec![
+            Point::new(0, 0),
+            Point::new(1, 0),
+            Point::new(2, 0),
+            Point::new(3, 0),
+        ];
+        let base_rows: Vec<_> = diff_snapshot
+            .points_to_base_text_points(points, &buffer_snapshot)
+            .0
+            .collect();
+
+        let zero = Point::new(0, 0);
+        assert_eq!(
+            base_rows,
+            vec![zero..zero, zero..zero, zero..zero, zero..zero],
+            "all buffer rows should map to point 0,0 in empty base text"
+        );
+
+        let base_points = vec![Point::new(0, 0)];
+        let (rows_iter, _, _) =
+            diff_snapshot.base_text_points_to_points(base_points, &buffer_snapshot);
+        let buffer_rows: Vec<_> = rows_iter.collect();
+
+        let max_point = buffer_snapshot.max_point();
+        assert_eq!(
+            buffer_rows,
+            vec![zero..max_point],
+            "base text row 0 should map to entire buffer range"
+        );
     }
 }

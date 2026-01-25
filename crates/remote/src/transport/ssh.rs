@@ -628,10 +628,25 @@ impl SshRemoteConnection {
         let dst_path =
             paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
 
+        let binary_exists_on_server = self
+            .socket
+            .run_command(
+                self.ssh_shell_kind,
+                &dst_path.display(self.path_style()),
+                &["version"],
+                true,
+            )
+            .await
+            .is_ok();
+
         #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
-        if let Some(remote_server_path) =
-            super::build_remote_server_from_source(&self.ssh_platform, delegate.as_ref(), cx)
-                .await?
+        if let Some(remote_server_path) = super::build_remote_server_from_source(
+            &self.ssh_platform,
+            delegate.as_ref(),
+            binary_exists_on_server,
+            cx,
+        )
+        .await?
         {
             let tmp_path = paths::remote_server_dir_relative().join(
                 RelPath::unix(&format!(
@@ -648,17 +663,7 @@ impl SshRemoteConnection {
             return Ok(dst_path);
         }
 
-        if self
-            .socket
-            .run_command(
-                self.ssh_shell_kind,
-                &dst_path.display(self.path_style()),
-                &["version"],
-                true,
-            )
-            .await
-            .is_ok()
-        {
+        if binary_exists_on_server {
             return Ok(dst_path);
         }
 
@@ -673,11 +678,16 @@ impl SshRemoteConnection {
             _ => Ok(Some(AppVersion::global(cx))),
         })?;
 
-        let tmp_path_gz = remote_server_dir_relative().join(
+        let tmp_path_compressed = remote_server_dir_relative().join(
             RelPath::unix(&format!(
-                "{}-download-{}.gz",
+                "{}-download-{}.{}",
                 binary_name,
-                std::process::id()
+                std::process::id(),
+                if self.ssh_platform.os.is_windows() {
+                    "zip"
+                } else {
+                    "gz"
+                }
             ))
             .unwrap(),
         );
@@ -692,11 +702,11 @@ impl SshRemoteConnection {
                 .await?
         {
             match self
-                .download_binary_on_server(&url, &tmp_path_gz, delegate, cx)
+                .download_binary_on_server(&url, &tmp_path_compressed, delegate, cx)
                 .await
             {
                 Ok(_) => {
-                    self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
+                    self.extract_server_binary(&dst_path, &tmp_path_compressed, delegate, cx)
                         .await
                         .context("extracting server binary")?;
                     return Ok(dst_path);
@@ -718,10 +728,10 @@ impl SshRemoteConnection {
             )
             .await
             .context("downloading server binary locally")?;
-        self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
+        self.upload_local_server_binary(&src_path, &tmp_path_compressed, delegate, cx)
             .await
             .context("uploading server binary")?;
-        self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
+        self.extract_server_binary(&dst_path, &tmp_path_compressed, delegate, cx)
             .await
             .context("extracting server binary")?;
         Ok(dst_path)
@@ -730,11 +740,11 @@ impl SshRemoteConnection {
     async fn download_binary_on_server(
         &self,
         url: &str,
-        tmp_path_gz: &RelPath,
+        tmp_path: &RelPath,
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        if let Some(parent) = tmp_path_gz.parent() {
+        if let Some(parent) = tmp_path.parent() {
             let res = self
                 .socket
                 .run_command(
@@ -771,7 +781,7 @@ impl SshRemoteConnection {
                     &connection_timeout,
                     url,
                     "-o",
-                    &tmp_path_gz.display(self.path_style()),
+                    &tmp_path.display(self.path_style()),
                 ],
                 true,
             )
@@ -801,7 +811,7 @@ impl SshRemoteConnection {
                             "1",
                             url,
                             "-O",
-                            &tmp_path_gz.display(self.path_style()),
+                            &tmp_path.display(self.path_style()),
                         ],
                         true,
                     )
@@ -830,11 +840,11 @@ impl SshRemoteConnection {
     async fn upload_local_server_binary(
         &self,
         src_path: &Path,
-        tmp_path_gz: &RelPath,
+        tmp_path: &RelPath,
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        if let Some(parent) = tmp_path_gz.parent() {
+        if let Some(parent) = tmp_path.parent() {
             let res = self
                 .socket
                 .run_command(
@@ -859,10 +869,10 @@ impl SshRemoteConnection {
         delegate.set_status(Some("Uploading remote development server"), cx);
         log::info!(
             "uploading remote development server to {:?} ({}kb)",
-            tmp_path_gz,
+            tmp_path,
             size / 1024
         );
-        self.upload_file(src_path, tmp_path_gz)
+        self.upload_file(src_path, tmp_path)
             .await
             .context("failed to upload server binary")?;
         log::info!("uploaded remote development server in {:?}", t0.elapsed());
@@ -877,9 +887,21 @@ impl SshRemoteConnection {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         delegate.set_status(Some("Extracting remote development server"), cx);
-        let server_mode = 0o755;
 
+        if self.ssh_platform.os.is_windows() {
+            self.extract_server_binary_windows(dst_path, tmp_path).await
+        } else {
+            self.extract_server_binary_posix(dst_path, tmp_path).await
+        }
+    }
+
+    async fn extract_server_binary_posix(
+        &self,
+        dst_path: &RelPath,
+        tmp_path: &RelPath,
+    ) -> Result<()> {
         let shell_kind = ShellKind::Posix;
+        let server_mode = 0o755;
         let orig_tmp_path = tmp_path.display(self.path_style());
         let server_mode = format!("{:o}", server_mode);
         let server_mode = shell_kind
@@ -904,6 +926,39 @@ impl SshRemoteConnection {
         let args = shell_kind.args_for_shell(false, script.to_string());
         self.socket
             .run_command(self.ssh_shell_kind, "sh", &args, true)
+            .await?;
+        Ok(())
+    }
+
+    async fn extract_server_binary_windows(
+        &self,
+        dst_path: &RelPath,
+        tmp_path: &RelPath,
+    ) -> Result<()> {
+        let shell_kind = ShellKind::Pwsh;
+        let orig_tmp_path = tmp_path.display(self.path_style());
+        let dst_path = dst_path.display(self.path_style());
+        let dst_path = shell_kind.try_quote(&dst_path).context("shell quoting")?;
+
+        let script = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".zip") {
+            let orig_tmp_path = shell_kind
+                .try_quote(&orig_tmp_path)
+                .context("shell quoting")?;
+            let tmp_path = shell_kind.try_quote(tmp_path).context("shell quoting")?;
+            format!(
+                "Expand-Archive -Force -Path {orig_tmp_path} -DestinationPath {tmp_path} -ErrorAction Stop;
+                 Move-Item -Force {tmp_path} {dst_path}",
+            )
+        } else {
+            let orig_tmp_path = shell_kind
+                .try_quote(&orig_tmp_path)
+                .context("shell quoting")?;
+            format!("Move-Item -Force {orig_tmp_path} {dst_path}")
+        };
+
+        let args = shell_kind.args_for_shell(false, script);
+        self.socket
+            .run_command(self.ssh_shell_kind, "powershell", &args, true)
             .await?;
         Ok(())
     }
@@ -1070,8 +1125,12 @@ impl SshSocket {
             to_run.push(' ');
             to_run.push_str(&shell_kind.try_quote(arg.as_ref()).expect("shell quoting"));
         }
-        let separator = shell_kind.sequential_commands_separator();
-        let to_run = format!("cd{separator} {to_run}");
+        let to_run = if shell_kind == ShellKind::Cmd {
+            to_run // 'cd' prints the current directory in CMD
+        } else {
+            let separator = shell_kind.sequential_commands_separator();
+            format!("cd{separator} {to_run}")
+        };
         self.ssh_options(&mut command, true)
             .arg(self.connection_options.ssh_destination());
         if !allow_pseudo_tty {
@@ -1183,7 +1242,7 @@ impl SshSocket {
         let output = self
             .run_command(
                 shell,
-                "cmd",
+                "cmd.exe",
                 &["/c", "echo", "%PROCESSOR_ARCHITECTURE%"],
                 false,
             )
@@ -1210,7 +1269,7 @@ impl SshSocket {
     /// If it succeeds and returns Windows-like output, we assume it's Windows.
     async fn probe_is_windows(&self) -> bool {
         match self
-            .run_command(ShellKind::PowerShell, "cmd", &["/c", "ver"], false)
+            .run_command(ShellKind::Cmd, "cmd.exe", &["/c", "ver"], false)
             .await
         {
             // Windows 'ver' command outputs something like "Microsoft Windows [Version 10.0.19045.5011]"
@@ -1242,10 +1301,31 @@ impl SshSocket {
     }
 
     async fn shell_windows(&self) -> String {
-        // powershell is always the default, and cannot really be removed from the system
-        // so we can rely on that fact and reasonably assume that we will be running in a
-        // powershell environment
-        "powershell.exe".to_owned()
+        const DEFAULT_SHELL: &str = "cmd.exe";
+
+        // We detect the shell used by the SSH session by running the following command in PowerShell:
+        // (Get-CimInstance Win32_Process -Filter "ProcessId = $((Get-CimInstance Win32_Process -Filter ProcessId=$PID).ParentProcessId)").Name
+        // This prints the name of PowerShell's parent process (which will be the shell that SSH launched).
+        // We pass it as a Base64 encoded string since we don't yet know how to correctly quote that command.
+        // (We'd need to know what the shell is to do that...)
+        match self
+            .run_command(
+                ShellKind::Cmd,
+                "powershell",
+                &[
+                    "-E",
+                    "KABHAGUAdAAtAEMAaQBtAEkAbgBzAHQAYQBuAGMAZQAgAFcAaQBuADMAMgBfAFAAcgBvAGMAZQBzAHMAIAAtAEYAaQBsAHQAZQByACAAIgBQAHIAbwBjAGUAcwBzAEkAZAAgAD0AIAAkACgAKABHAGUAdAAtAEMAaQBtAEkAbgBzAHQAYQBuAGMAZQAgAFcAaQBuADMAMgBfAFAAcgBvAGMAZQBzAHMAIAAtAEYAaQBsAHQAZQByACAAUAByAG8AYwBlAHMAcwBJAGQAPQAkAFAASQBEACkALgBQAGEAcgBlAG4AdABQAHIAbwBjAGUAcwBzAEkAZAApACIAKQAuAE4AYQBtAGUA",
+                ],
+                false,
+            )
+            .await
+        {
+            Ok(output) => parse_shell(&output, DEFAULT_SHELL),
+            Err(e) => {
+                log::error!("Failed to detect remote shell: {e}");
+                DEFAULT_SHELL.to_owned()
+            }
+        }
     }
 }
 

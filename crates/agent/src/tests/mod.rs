@@ -52,6 +52,7 @@ use std::{
 };
 use util::path;
 
+mod edit_file_thread_test;
 mod test_tools;
 use test_tools::*;
 
@@ -3352,11 +3353,12 @@ fn watch_settings(fs: Arc<dyn Fs>, cx: &mut App) {
     let fs = fs.clone();
     cx.spawn({
         async move |cx| {
-            let mut new_settings_content_rx = settings::watch_config_file(
+            let (mut new_settings_content_rx, watcher_task) = settings::watch_config_file(
                 cx.background_executor(),
                 fs,
                 paths::settings_file().clone(),
             );
+            let _watcher_task = watcher_task;
 
             while let Some(new_settings_content) = new_settings_content_rx.next().await {
                 cx.update(|cx| {
@@ -5701,14 +5703,9 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
     fake_model
         .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::ToolUse));
 
-    // Queue a message before ending the stream
+    // Signal that a message is queued before ending the stream
     thread.update(cx, |thread, _cx| {
-        thread.queue_message(
-            vec![acp::ContentBlock::Text(acp::TextContent::new(
-                "This is my queued message".to_string(),
-            ))],
-            vec![],
-        );
+        thread.set_has_queued_message(true);
     });
 
     // Now end the stream - tool will run, and the boundary check should see the queue
@@ -5739,14 +5736,12 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
         "Turn should have ended after tool completion due to queued message"
     );
 
-    // Verify the queued message is still there
+    // Verify the queued message flag is still set
     thread.update(cx, |thread, _cx| {
-        let queued = thread.queued_messages();
-        assert_eq!(queued.len(), 1, "Should still have one queued message");
-        assert!(matches!(
-            &queued[0].content[0],
-            acp::ContentBlock::Text(t) if t.text == "This is my queued message"
-        ));
+        assert!(
+            thread.has_queued_message(),
+            "Should still have queued message flag set"
+        );
     });
 
     // Thread should be idle now

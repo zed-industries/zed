@@ -178,7 +178,7 @@ pub fn run_split_commit(
                                 e
                             );
                             match failed {
-                                FailedHandling::Skip => {
+                                FailedHandling::Skip | FailedHandling::SkipNoFiles => {
                                     eprintln!("{}", err_msg);
                                     continue;
                                 }
@@ -219,7 +219,7 @@ pub fn run_split_commit(
                             e
                         );
                         match failed {
-                            FailedHandling::Skip => {
+                            FailedHandling::Skip | FailedHandling::SkipNoFiles => {
                                 eprintln!("{}", err_msg);
                                 continue;
                             }
@@ -371,6 +371,7 @@ pub fn generate_evaluation_example_from_ordered_commit(
         reasoning: None,
         uncommitted_diff: String::new(),
         rejected_patch: None,
+        captured_prompt_input: None,
     })
 }
 
@@ -1402,6 +1403,7 @@ Date: Mon Jan 1 00:00:00 2024
             reasoning: None,
             uncommitted_diff: String::new(),
             rejected_patch: None,
+            captured_prompt_input: None,
         };
 
         let json = serde_json::to_string(&case).unwrap();

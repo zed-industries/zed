@@ -16,6 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 use url::Url;
+use util::paths::{PathStyle, UrlExt};
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
 const WIDE_CHAR_SPACERS: Flags =
@@ -70,6 +71,7 @@ pub(super) fn find_from_grid_point<T: EventListener>(
     term: &Term<T>,
     point: AlacPoint,
     regex_searches: &mut RegexSearches,
+    path_style: PathStyle,
 ) -> Option<(String, bool, Match)> {
     let grid = term.grid();
     let link = grid.index(point).hyperlink();
@@ -135,7 +137,7 @@ pub(super) fn find_from_grid_point<T: EventListener>(
             // (e.g., file:///C:/path -> C:\path)
             if maybe_url_or_path.starts_with("file://") {
                 if let Ok(url) = Url::parse(&maybe_url_or_path) {
-                    if let Ok(path) = url.to_file_path() {
+                    if let Ok(path) = url.to_file_path_ext(path_style) {
                         return (path.to_string_lossy().into_owned(), false, word_match);
                     }
                 }
@@ -1217,7 +1219,12 @@ mod tests {
                 }
 
                 TEST_REGEX_SEARCHES.with(|regex_searches| {
-                    find_from_grid_point(&term, point, &mut regex_searches.borrow_mut())
+                    find_from_grid_point(
+                        &term,
+                        point,
+                        &mut regex_searches.borrow_mut(),
+                        PathStyle::local(),
+                    )
                 })
             }
         }
@@ -1819,6 +1826,7 @@ mod tests {
                 &term,
                 expected_hyperlink.hovered_grid_point,
                 &mut regex_searches.borrow_mut(),
+                PathStyle::local(),
             )
         });
         let check_hyperlink_match =

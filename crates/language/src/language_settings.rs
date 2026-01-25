@@ -425,6 +425,8 @@ pub struct CopilotSettings {
     pub proxy_no_verify: Option<bool>,
     /// Enterprise URI for Copilot.
     pub enterprise_uri: Option<String>,
+    /// Whether the Copilot Next Edit Suggestions feature is enabled.
+    pub enable_next_edit_suggestions: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -658,6 +660,7 @@ impl settings::Settings for AllLanguageSettings {
             proxy: copilot.proxy,
             proxy_no_verify: copilot.proxy_no_verify,
             enterprise_uri: copilot.enterprise_uri,
+            enable_next_edit_suggestions: copilot.enable_next_edit_suggestions,
         };
 
         let codestral = edit_predictions.codestral.unwrap();
