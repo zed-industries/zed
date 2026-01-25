@@ -10,6 +10,7 @@ mod lsp_store;
 mod project_search;
 mod search;
 mod search_history;
+mod signature_help;
 mod task_inventory;
 mod trusted_worktrees;
 mod yarn;

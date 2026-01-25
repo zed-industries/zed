@@ -1,4 +1,4 @@
-mod signature_help;
+pub mod signature_help;
 
 use crate::{
     CodeAction, CompletionSource, CoreCompletion, CoreCompletionResponse, DocumentColor,
