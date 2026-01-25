@@ -254,6 +254,18 @@ pub struct AgentProfileContent {
     pub context_servers: IndexMap<Arc<str>, ContextServerPresetContent>,
     /// The default language model selected when using this profile.
     pub default_model: Option<LanguageModelSelection>,
+    /// Inline prompt section overrides applied to this profile.
+    #[serde(default)]
+    pub prompt_section_overrides: Vec<PromptSectionOverrideContent>,
+    /// Extension-provided prompt provider for this profile.
+    pub system_prompt_provider: Option<Arc<str>>,
+}
+
+#[with_fallible_options]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom, Default)]
+pub struct PromptSectionOverrideContent {
+    pub section: Arc<str>,
+    pub replacement: Arc<str>,
 }
 
 #[with_fallible_options]

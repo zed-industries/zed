@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::{Map, Value as Json};
 use std::{
     collections::{BTreeSet, HashMap},
-    sync::Arc,
+    sync::{Arc, LazyLock, Mutex, Weak},
 };
 
 #[derive(RustEmbed)]
@@ -16,29 +16,75 @@ struct Assets;
 
 pub struct Templates(Handlebars<'static>);
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum TemplatesCacheKey {
+    Default,
+    Config(TemplateSectionConfigKey),
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct TemplateSectionConfigKey {
+    sections: Vec<(String, TemplateSectionOverrideKey)>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum TemplateSectionOverrideKey {
+    Replace(String),
+    Remove,
+}
+
+static TEMPLATES_CACHE: LazyLock<Mutex<HashMap<TemplatesCacheKey, Weak<Templates>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Bump this when section dependency rules change.
+pub const SECTION_GRAPH_VERSION: SectionGraphVersion = SectionGraphVersion {
+    major: 0,
+    minor: 1,
+    patch: 0,
+};
+
 impl Templates {
     pub fn new() -> Arc<Self> {
         Self::new_with_section_config(None)
     }
 
     pub fn new_with_section_config(section_config: Option<TemplateSectionConfig>) -> Arc<Self> {
+        let cache_key = match section_config.as_ref() {
+            Some(config) if config.is_empty() => TemplatesCacheKey::Default,
+            Some(config) => TemplatesCacheKey::Config(config.cache_key()),
+            None => TemplatesCacheKey::Default,
+        };
+        if let Ok(cache) = TEMPLATES_CACHE.lock() {
+            if let Some(cached) = cache.get(&cache_key).and_then(Weak::upgrade) {
+                return cached;
+            }
+        }
+
+        let section_config = section_config.unwrap_or_default();
         let mut handlebars = Handlebars::new();
         handlebars.set_strict_mode(true);
         handlebars.register_helper("contains", Box::new(contains));
         handlebars.register_helper(
             "section",
             Box::new(SectionHelper {
-                section_config: Arc::new(section_config.unwrap_or_default()),
+                section_config: Arc::new(section_config),
             }),
         );
         handlebars.register_embed_templates::<Assets>().unwrap();
-        Arc::new(Self(handlebars))
+        let templates = Arc::new(Self(handlebars));
+
+        if let Ok(mut cache) = TEMPLATES_CACHE.lock() {
+            cache.insert(cache_key, Arc::downgrade(&templates));
+        }
+
+        templates
     }
 
     /// Returns the section graph for all embedded templates so callers can
     /// understand which sections are nested beneath others.
     pub fn section_graph() -> Result<SectionGraph> {
         let mut graph = SectionGraph {
+            version: SECTION_GRAPH_VERSION,
             templates: HashMap::new(),
         };
         for template_name in Assets::iter() {
@@ -54,12 +100,37 @@ impl Templates {
         }
         Ok(graph)
     }
+
+    /// Returns the default section bodies for embedded templates, keyed by section name.
+    pub fn section_defaults() -> Result<HashMap<String, String>> {
+        let mut defaults = HashMap::new();
+        for template_name in Assets::iter() {
+            let asset = Assets::get(template_name.as_ref())
+                .ok_or_else(|| anyhow!("Missing template asset: {template_name}"))?;
+            let contents = std::str::from_utf8(asset.data.as_ref())
+                .map_err(|err| anyhow!("Invalid utf-8 in {template_name}: {err}"))?;
+            let template_defaults = parse_section_defaults_from_text(contents)
+                .map_err(|err| anyhow!("Failed to parse {template_name}: {err}"))?;
+            for (section, body) in template_defaults {
+                defaults.entry(section).or_insert(body);
+            }
+        }
+        Ok(defaults)
+    }
 }
 
 /// The complete section graph for each embedded template.
 #[derive(Clone, Debug, Default)]
 pub struct SectionGraph {
+    pub version: SectionGraphVersion,
     pub templates: HashMap<String, TemplateSectionGraph>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SectionGraphVersion {
+    pub major: u32,
+    pub minor: u32,
+    pub patch: u32,
 }
 
 /// The section hierarchy for a single template.
@@ -105,6 +176,25 @@ impl TemplateSectionConfig {
 
     fn section_override(&self, section_name: &str) -> Option<&TemplateSectionOverride> {
         self.sections.get(section_name)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.sections.is_empty()
+    }
+
+    fn cache_key(&self) -> TemplateSectionConfigKey {
+        let mut sections = Vec::with_capacity(self.sections.len());
+        for (section, override_entry) in &self.sections {
+            let override_key = match override_entry {
+                TemplateSectionOverride::Replace(replacement) => {
+                    TemplateSectionOverrideKey::Replace(replacement.clone())
+                }
+                TemplateSectionOverride::Remove => TemplateSectionOverrideKey::Remove,
+            };
+            sections.push((section.clone(), override_key));
+        }
+        sections.sort_by(|left, right| left.0.cmp(&right.0));
+        TemplateSectionConfigKey { sections }
     }
 }
 
@@ -341,6 +431,43 @@ fn parse_section_graph_from_text(contents: &str) -> Result<TemplateSectionGraph>
     Ok(TemplateSectionGraph { sections, roots })
 }
 
+fn parse_section_defaults_from_text(contents: &str) -> Result<HashMap<String, String>> {
+    let mut defaults = HashMap::new();
+    let mut stack: Vec<(String, usize)> = Vec::new();
+    let mut index = 0;
+    while let Some(open_index) = contents[index..].find("{{") {
+        let tag_start = index + open_index;
+        let tag_end = contents[tag_start..]
+            .find("}}")
+            .map(|offset| tag_start + offset + 2)
+            .ok_or_else(|| anyhow!("Unterminated template tag"))?;
+        let tag = &contents[tag_start + 2..tag_end - 2];
+        let tag = tag.trim();
+        if tag.starts_with("!--") {
+            index = tag_end;
+            continue;
+        }
+        if let Some(section_name) = tag.strip_prefix("#section") {
+            let section_name =
+                parse_section_name(section_name).ok_or_else(|| anyhow!("section: missing name"))?;
+            stack.push((section_name, tag_end));
+        } else if tag.starts_with("/section") {
+            let (section_name, start) = stack
+                .pop()
+                .ok_or_else(|| anyhow!("section: unmatched closing tag"))?;
+            let body = contents[start..tag_start].to_string();
+            defaults.entry(section_name).or_insert(body);
+        }
+        index = tag_end;
+    }
+
+    if !stack.is_empty() {
+        return Err(anyhow!("section: unclosed tag"));
+    }
+
+    Ok(defaults)
+}
+
 #[derive(Clone, Debug)]
 struct BlockScope {
     name: Option<String>,
@@ -479,6 +606,7 @@ fn contains(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::Arc;
 
     #[test]
     fn test_system_prompt_template() {
@@ -535,6 +663,21 @@ mod tests {
         assert!(root.arguments.contains(&"this".to_string()));
         let child = graph.sections.get("child").unwrap();
         assert_eq!(child.parents, vec!["root".to_string()]);
+    }
+
+    #[test]
+    fn test_section_graph_has_version() {
+        let graph = Templates::section_graph().unwrap();
+        assert_eq!(graph.version, SECTION_GRAPH_VERSION);
+    }
+
+    #[test]
+    fn test_section_defaults_smoke() {
+        let defaults = Templates::section_defaults().unwrap();
+        let default = defaults
+            .get("system_prompt")
+            .expect("system_prompt default missing");
+        assert!(!default.trim().is_empty());
     }
 
     #[test]
@@ -607,5 +750,32 @@ mod tests {
             )
             .unwrap();
         assert_eq!(rendered, "Checklist:A\nChecklist:B\n");
+    }
+
+    #[test]
+    fn test_templates_cache_reuses_by_config() {
+        let default_first = Templates::new();
+        let default_second = Templates::new();
+        assert!(Arc::ptr_eq(&default_first, &default_second));
+
+        let empty_config =
+            Templates::new_with_section_config(Some(TemplateSectionConfig::default()));
+        assert!(Arc::ptr_eq(&default_first, &empty_config));
+
+        let mut section_config = TemplateSectionConfig::default();
+        section_config.insert_replace("cache_test_section", "A");
+        let templates_a_first = Templates::new_with_section_config(Some(section_config));
+
+        let mut section_config = TemplateSectionConfig::default();
+        section_config.insert_replace("cache_test_section", "A");
+        let templates_a_second = Templates::new_with_section_config(Some(section_config));
+
+        assert!(Arc::ptr_eq(&templates_a_first, &templates_a_second));
+
+        let mut section_config = TemplateSectionConfig::default();
+        section_config.insert_replace("cache_test_section", "B");
+        let templates_b = Templates::new_with_section_config(Some(section_config));
+
+        assert!(!Arc::ptr_eq(&templates_a_first, &templates_b));
     }
 }

@@ -5,7 +5,10 @@ use agent_settings::{AgentProfileId, AgentProfileSettings};
 use fs::Fs;
 use gpui::{App, Context, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, Window};
 use picker::{Picker, PickerDelegate};
-use settings::{AgentProfileContent, ContextServerPresetContent, update_settings_file};
+use settings::{
+    AgentProfileContent, ContextServerPresetContent, PromptSectionOverrideContent,
+    update_settings_file,
+};
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt as _;
 
@@ -315,6 +318,13 @@ impl PickerDelegate for ToolPickerDelegate {
                             })
                             .collect(),
                         default_model: default_profile.default_model.clone(),
+                        prompt_section_overrides: default_profile
+                            .prompt_section_overrides
+                            .iter()
+                            .cloned()
+                            .map(PromptSectionOverrideContent::from)
+                            .collect(),
+                        system_prompt_provider: default_profile.system_prompt_provider.clone(),
                     });
 
                 if let Some(server_id) = server_id {

@@ -10,7 +10,7 @@ use gpui::{App, Entity, SharedString, Task};
 use prompt_store::PromptStore;
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 
-use crate::{NativeAgent, NativeAgentConnection, ThreadStore, templates::Templates};
+use crate::{NativeAgent, NativeAgentConnection, ThreadStore};
 
 #[derive(Clone)]
 pub struct NativeAgentServer {
@@ -53,14 +53,10 @@ impl AgentServer for NativeAgentServer {
         let thread_store = self.thread_store.clone();
         let prompt_store = PromptStore::global(cx);
         cx.spawn(async move |cx| {
-            log::debug!("Creating templates for native agent");
-            let templates = Templates::new();
             let prompt_store = prompt_store.await?;
 
             log::debug!("Creating native agent entity");
-            let agent =
-                NativeAgent::new(project, thread_store, templates, Some(prompt_store), fs, cx)
-                    .await?;
+            let agent = NativeAgent::new(project, thread_store, Some(prompt_store), fs, cx).await?;
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);
