@@ -405,6 +405,9 @@ pub fn into_mistral(
             Role::Assistant => {
                 for content in &message.content {
                     match content {
+                        MessageContent::Text(text) if text.is_empty() => {
+                            // Mistral API returns a 400 if there's neither content nor tool_calls
+                        }
                         MessageContent::Text(text) => {
                             messages.push(mistral::RequestMessage::Assistant {
                                 content: Some(mistral::MessageContent::Plain {
@@ -850,6 +853,13 @@ mod tests {
                 LanguageModelRequestMessage {
                     role: Role::User,
                     content: vec![MessageContent::Text("Hello".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                // should skip empty assistant messages
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Text("".into())],
                     cache: false,
                     reasoning_details: None,
                 },
