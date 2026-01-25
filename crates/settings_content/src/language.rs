@@ -88,6 +88,32 @@ pub struct FeaturesContent {
     pub experimental_edit_prediction_context_retrieval: Option<bool>,
 }
 
+/// Configuration for automatic unicode shortcode replacement.
+///
+/// When enabled, typing shortcodes like `\alpha` followed by a space
+/// will automatically replace them with their unicode equivalents like `α`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+pub struct UnicodeShortcodesConfig {
+    /// Whether to enable automatic unicode shortcode replacement.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// Custom shortcode replacements that extend or override the builtin set
+    #[serde(default)]
+    pub replacements: HashMap<Arc<str>, Arc<str>>,
+}
+
+impl merge_from::MergeFrom for UnicodeShortcodesConfig {
+    fn merge_from(&mut self, other: &Self) {
+        if other.enabled.is_some() {
+            self.enabled = other.enabled;
+        }
+        // Merge replacements: other's values override self's for the same keys
+        for (key, value) in &other.replacements {
+            self.replacements.insert(key.clone(), value.clone());
+        }
+    }
+}
+
 /// The provider that supplies edit predictions.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
@@ -475,6 +501,11 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: false
     pub colorize_brackets: Option<bool>,
+    /// Configuration for automatic unicode shortcode replacement.
+    ///
+    /// When enabled, typing shortcodes like `\alpha` followed by a space
+    /// will automatically replace them with their unicode equivalents like `α`.
+    pub unicode_shortcodes: Option<UnicodeShortcodesConfig>,
 }
 
 /// Controls how whitespace should be displayedin the editor.

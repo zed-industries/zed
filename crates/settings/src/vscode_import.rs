@@ -303,7 +303,6 @@ impl VsCodeSettings {
             vertical_scroll_margin: self.read_f32("editor.cursorSurroundingLines"),
             completion_menu_scrollbar: None,
             completion_detail_alignment: None,
-            auto_replace_unicode_shortcode: None
         }
     }
 
@@ -497,6 +496,7 @@ impl VsCodeSettings {
                         .collect()
                 }),
             word_diff_enabled: None,
+            unicode_shortcodes: None,
         }
     }
 

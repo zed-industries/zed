@@ -220,11 +220,6 @@ pub struct EditorSettingsContent {
     ///
     /// Default: left
     pub completion_detail_alignment: Option<CompletionDetailAlignment>,
-    
-    /// Whether to automatically replace unicode shortcodes with their corresponding unicode characters (for ex: \alpha with α) as you type.
-    /// 
-    /// Default: false
-    pub auto_replace_unicode_shortcode: Option<bool>,
 }
 
 #[derive(

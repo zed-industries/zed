@@ -2695,15 +2695,37 @@ Positive `integer` values or `null` for unlimited tabs
 
 `boolean` values
 
-## Auto replace Unicode shortcodes
+## Unicode Shortcodes
 
-- Description: Whether to automatically replace unicode shortcodes with their corresponding unicode characters (for ex: \alpha with α) as you type
-- Setting: `auto_replace_unicode_shortcode`
-- Default: `false`
+- Description: Configuration for automatic unicode shortcode replacement. When enabled, typing shortcodes like `\alpha` followed by a space will automatically replace them with their unicode equivalents like `α`. Can be configured globally or per-language.
+- Setting: `unicode_shortcodes`
+- Default:
+
+```json
+"unicode_shortcodes": {
+  "enabled": null,
+  "replacements": {}
+}
+```
 
 **Options**
 
-`boolean` values
+| Property       | Description                                                                     | Default |
+| -------------- | ------------------------------------------------------------------------------- | ------- |
+| `enabled`      | Whether unicode shortcode replacement is enabled                                | `false` |
+| `replacements` | Custom shortcode replacements (keys without backslash, values are replacements) | `{}`    |
+
+**Per-language example**
+
+```json
+"languages": {
+  "Lean": {
+    "unicode_shortcodes": {
+      "enabled": true
+    }
+  }
+}
+```
 
 ## Multi Cursor Modifier
 

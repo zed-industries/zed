@@ -65,6 +65,7 @@ pub use git::blame::BlameRenderer;
 pub use hover_popover::hover_markdown_style;
 pub use inlays::Inlay;
 pub use items::MAX_TAB_TITLE_LEN;
+pub use language::language_settings::UnicodeShortcodesConfig;
 pub use lsp::CompletionContext;
 pub use lsp_ext::lsp_tasks;
 pub use multi_buffer::{
@@ -1259,7 +1260,7 @@ pub struct Editor {
     use_autoclose: bool,
     use_auto_surround: bool,
     auto_replace_emoji_shortcode: bool,
-    auto_replace_unicode_shortcode: bool,
+    unicode_shortcodes: Option<UnicodeShortcodesConfig>,
     active_unicode_shortcode_start: Option<Anchor>,
     jsx_tag_auto_close_enabled_in_any_buffer: bool,
     show_git_blame_gutter: bool,
@@ -2420,7 +2421,7 @@ impl Editor {
             use_autoclose: true,
             use_auto_surround: true,
             auto_replace_emoji_shortcode: false,
-            auto_replace_unicode_shortcode: false,
+            unicode_shortcodes: None,
             active_unicode_shortcode_start: None,
             jsx_tag_auto_close_enabled_in_any_buffer: false,
             leader_id: None,
@@ -3332,8 +3333,8 @@ impl Editor {
         self.auto_replace_emoji_shortcode = auto_replace;
     }
 
-    pub fn set_auto_replace_unicode_shortcode(&mut self, auto_replace: bool) {
-        self.auto_replace_unicode_shortcode = auto_replace;
+    pub fn set_unicode_shortcodes(&mut self, config: Option<UnicodeShortcodesConfig>) {
+        self.unicode_shortcodes = config;
     }
 
     pub fn set_should_serialize(&mut self, should_serialize: bool, cx: &App) {
@@ -4789,7 +4790,24 @@ impl Editor {
             }
 
             // Unicode shortcode handling
-            if self.auto_replace_unicode_shortcode {
+            let language_settings = snapshot.language_settings_at(selection.start, cx);
+            let language_config = snapshot
+                .language_at(selection.start)
+                .and_then(|l| l.config().unicode_shortcodes.clone());
+
+            // Merge configs: higher priority overrides enabled, replacements are merged
+            let merged_config = Self::merge_unicode_shortcode_configs(
+                self.unicode_shortcodes.as_ref(),
+                language_settings.unicode_shortcodes.as_ref(),
+                language_config.as_ref(),
+            );
+
+            let unicode_enabled = merged_config
+                .as_ref()
+                .and_then(|c| c.enabled)
+                .unwrap_or(false);
+
+            if unicode_enabled {
                 let input_char = text.as_ref().chars().next();
 
                 if text.as_ref() == "\\" {
@@ -4844,9 +4862,10 @@ impl Editor {
                                     .take(shortcode_len as usize)
                                     .collect();
 
-                                if let Some(unicode_char) =
-                                    Self::lookup_unicode_shortcode(&shortcode)
-                                {
+                                if let Some(unicode_char) = Self::lookup_unicode_shortcode(
+                                    &shortcode,
+                                    merged_config.as_ref(),
+                                ) {
                                     // Replace shortcode with unicode character + whitespace
                                     edits.push((
                                         active_point..selection.start,
@@ -5250,11 +5269,71 @@ impl Editor {
     ];
 
     /// Looks up a unicode symbol by its shortcode name.
-    fn lookup_unicode_shortcode(shortcode: &str) -> Option<&'static str> {
+    /// Checks custom replacements first, then falls back to builtin defaults.
+    fn lookup_unicode_shortcode(
+        shortcode: &str,
+        config: Option<&UnicodeShortcodesConfig>,
+    ) -> Option<String> {
+        // Check custom replacements first
+        if let Some(config) = config {
+            if let Some(replacement) = config.replacements.get::<str>(shortcode) {
+                return Some(replacement.to_string());
+            }
+        }
+
+        // Fall back to builtin shortcodes
         Self::UNICODE_SHORTCODES
             .iter()
             .find(|(sc, _)| *sc == shortcode)
-            .map(|(_, unicode)| *unicode)
+            .map(|(_, unicode)| unicode.to_string())
+    }
+
+    /// Merges unicode shortcode configs with 3-tier priority:
+    /// 1. Direct editor override via set_unicode_shortcodes()
+    /// 2. User settings (language-specific merged with global defaults)
+    /// 3. Language config from language extension's config.toml
+    fn merge_unicode_shortcode_configs(
+        programmatic_override: Option<&UnicodeShortcodesConfig>,
+        language_settings_config: Option<&UnicodeShortcodesConfig>,
+        language_config: Option<&UnicodeShortcodesConfig>,
+    ) -> Option<UnicodeShortcodesConfig> {
+        if programmatic_override.is_none()
+            && language_settings_config.is_none()
+            && language_config.is_none()
+        {
+            return None;
+        }
+
+        let mut merged = UnicodeShortcodesConfig::default();
+
+        if let Some(config) = language_config {
+            for (key, value) in &config.replacements {
+                merged
+                    .replacements
+                    .insert(Arc::<str>::clone(key), Arc::<str>::clone(value));
+            }
+        }
+        if let Some(config) = language_settings_config {
+            for (key, value) in &config.replacements {
+                merged
+                    .replacements
+                    .insert(Arc::<str>::clone(key), Arc::<str>::clone(value));
+            }
+        }
+        if let Some(config) = programmatic_override {
+            for (key, value) in &config.replacements {
+                merged
+                    .replacements
+                    .insert(Arc::<str>::clone(key), Arc::<str>::clone(value));
+            }
+        }
+
+        merged.enabled = programmatic_override
+            .and_then(|c| c.enabled)
+            .or_else(|| language_settings_config.and_then(|c| c.enabled))
+            .or_else(|| language_config.and_then(|c| c.enabled));
+
+        Some(merged)
     }
 
     /// Updates the unicode shortcode highlight based on the active shortcode anchor
@@ -5267,6 +5346,17 @@ impl Editor {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let display_snapshot = self.display_snapshot(cx);
         let selections = self.selections.all::<Point>(&display_snapshot);
+
+        let cursor_offset = selections.first().map(|s| s.head()).unwrap_or_default();
+        let language_settings = snapshot.language_settings_at(cursor_offset, cx);
+        let language_config = snapshot
+            .language_at(cursor_offset)
+            .and_then(|l| l.config().unicode_shortcodes.clone());
+        let merged_config = Self::merge_unicode_shortcode_configs(
+            self.unicode_shortcodes.as_ref(),
+            language_settings.unicode_shortcodes.as_ref(),
+            language_config.as_ref(),
+        );
 
         // Only highlight if we have a single cursor right after the active shortcode
         if selections.len() != 1 || !selections[0].is_empty() {
@@ -5310,7 +5400,7 @@ impl Editor {
             .collect();
 
         // Only highlight if it's a valid prefix for a shortcode
-        if Self::is_valid_unicode_shortcode_prefix(&shortcode) {
+        if Self::is_valid_unicode_shortcode_prefix(&shortcode, merged_config.as_ref()) {
             let start_anchor = snapshot.anchor_after(active_point);
             let end_anchor = snapshot.anchor_before(cursor_position);
             self.highlight_text::<UnicodeShortcodeHighlight>(
@@ -5331,7 +5421,23 @@ impl Editor {
     }
 
     /// Checks if the given string is a valid prefix for any unicode shortcode.
-    fn is_valid_unicode_shortcode_prefix(prefix: &str) -> bool {
+    /// Checks custom replacements first, then builtin defaults
+    fn is_valid_unicode_shortcode_prefix(
+        prefix: &str,
+        config: Option<&UnicodeShortcodesConfig>,
+    ) -> bool {
+        // Check custom replacements first
+        if let Some(config) = config {
+            if config
+                .replacements
+                .keys()
+                .any(|sc: &Arc<str>| sc.as_ref().starts_with(prefix))
+            {
+                return true;
+            }
+        }
+
+        // Check builtin shortcodes
         Self::UNICODE_SHORTCODES
             .iter()
             .any(|(sc, _)| sc.starts_with(prefix))
@@ -24195,7 +24301,6 @@ impl Editor {
             self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
             self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
             self.hide_mouse_mode = editor_settings.hide_mouse.unwrap_or_default();
-            self.auto_replace_unicode_shortcode = editor_settings.auto_replace_unicode_shortcode;
         }
 
         if old_cursor_shape != self.cursor_shape {

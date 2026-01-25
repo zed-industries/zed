@@ -11667,6 +11667,25 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_auto_replace_unicode_shortcode(cx: &mut TestAppContext) {
+    use settings::UnicodeShortcodesConfig;
+
+    let used_replacements = [
+        ("alpha", "α"),
+        ("beta", "β"),
+        ("Delta", "Δ"),
+        ("forall", "∀"),
+        ("gamma", "γ"),
+        ("delta", "δ"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.into(), v.into()))
+    .collect::<std::collections::HashMap<Arc<str>, Arc<str>, _>>();
+
+    let test_config = |enabled: bool| UnicodeShortcodesConfig {
+        enabled: Some(enabled),
+        replacements: used_replacements.clone(),
+    };
+
     init_test(cx, |_| {});
 
     let language = Arc::new(Language::new(
@@ -11682,7 +11701,7 @@ async fn test_auto_replace_unicode_shortcode(cx: &mut TestAppContext) {
         .await;
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.set_auto_replace_unicode_shortcode(true);
+        editor.set_unicode_shortcodes(Some(test_config(true)));
 
         editor.handle_input("\\", window, cx);
         editor.handle_input("alpha", window, cx);
@@ -11744,7 +11763,202 @@ async fn test_auto_replace_unicode_shortcode(cx: &mut TestAppContext) {
         .await;
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.set_auto_replace_unicode_shortcode(false);
+        editor.set_unicode_shortcodes(Some(test_config(false)));
+        editor.handle_input("\\", window, cx);
+        editor.handle_input("alpha", window, cx);
+        editor.handle_input(" ", window, cx);
+        assert_eq!(editor.text(cx), "\\alpha ");
+    });
+
+    init_test(cx, |_| {});
+
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.unicode_shortcodes = Some(test_config(false));
+        settings.languages.0.insert(
+            "Rust".into(),
+            LanguageSettingsContent {
+                unicode_shortcodes: Some(test_config(true)),
+                ..Default::default()
+            },
+        );
+    });
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".into()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_highlights_query("(identifier) @variable")
+        .unwrap(),
+    );
+
+    let buffer = cx.new(|cx| Buffer::local("", cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.handle_input("\\", window, cx);
+        editor.handle_input("alpha", window, cx);
+        editor.handle_input(" ", window, cx);
+        assert_eq!(editor.text(cx), "α ");
+    });
+
+    init_test(cx, |_| {});
+
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.unicode_shortcodes = Some(test_config(true));
+        settings.languages.0.insert(
+            "Rust".into(),
+            LanguageSettingsContent {
+                unicode_shortcodes: Some(test_config(false)),
+                ..Default::default()
+            },
+        );
+    });
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".into()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_highlights_query("(identifier) @variable")
+        .unwrap(),
+    );
+
+    let buffer = cx.new(|cx| Buffer::local("", cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.handle_input("\\", window, cx);
+        editor.handle_input("alpha", window, cx);
+        editor.handle_input(" ", window, cx);
+        assert_eq!(editor.text(cx), "\\alpha ");
+    });
+
+    init_test(cx, |_| {});
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Lean".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["lean".into()],
+                    ..Default::default()
+                },
+                unicode_shortcodes: Some(test_config(true)),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_highlights_query("(identifier) @variable")
+        .unwrap(),
+    );
+
+    let buffer = cx.new(|cx| Buffer::local("", cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.handle_input("\\", window, cx);
+        editor.handle_input("alpha", window, cx);
+        editor.handle_input(" ", window, cx);
+        assert_eq!(editor.text(cx), "α ");
+    });
+
+    init_test(cx, |_| {});
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Plain".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["txt".into()],
+                    ..Default::default()
+                },
+                unicode_shortcodes: Some(test_config(false)),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_highlights_query("(identifier) @variable")
+        .unwrap(),
+    );
+
+    let buffer = cx.new(|cx| Buffer::local("", cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.handle_input("\\", window, cx);
+        editor.handle_input("alpha", window, cx);
+        editor.handle_input(" ", window, cx);
+        assert_eq!(editor.text(cx), "\\alpha ");
+    });
+
+    init_test(cx, |_| {});
+
+    update_test_language_settings(cx, |settings| {
+        settings.languages.0.insert(
+            "Lean".into(),
+            LanguageSettingsContent {
+                unicode_shortcodes: Some(test_config(false)),
+                ..Default::default()
+            },
+        );
+    });
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Lean".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["lean".into()],
+                    ..Default::default()
+                },
+                unicode_shortcodes: Some(test_config(true)),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_highlights_query("(identifier) @variable")
+        .unwrap(),
+    );
+
+    let buffer = cx.new(|cx| Buffer::local("", cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
         editor.handle_input("\\", window, cx);
         editor.handle_input("alpha", window, cx);
         editor.handle_input(" ", window, cx);

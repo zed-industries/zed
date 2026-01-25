@@ -46,6 +46,7 @@ use schemars::{JsonSchema, SchemaGenerator, json_schema};
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
+use settings::UnicodeShortcodesConfig;
 use settings::WorktreeId;
 use smol::future::FutureExt as _;
 use std::num::NonZeroU32;
@@ -901,6 +902,9 @@ pub struct LanguageConfig {
     /// languages, but should not appear to the user as a distinct language.
     #[serde(default)]
     pub hidden: bool,
+    /// Configuration for automatic unicode shortcode replacement.
+    #[serde(default)]
+    pub unicode_shortcodes: Option<UnicodeShortcodesConfig>,
     /// If configured, this language contains JSX style tags, and should support auto-closing of those tags.
     #[serde(default)]
     pub jsx_tag_auto_close: Option<JsxTagAutoCloseConfig>,
@@ -1135,6 +1139,7 @@ impl Default for LanguageConfig {
             wrap_characters: None,
             prettier_parser_name: None,
             hidden: false,
+            unicode_shortcodes: None,
             jsx_tag_auto_close: None,
             completion_query_characters: Default::default(),
             linked_edit_characters: Default::default(),

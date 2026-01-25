@@ -309,9 +309,17 @@
     // The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
     "delay": 300,
   },
-  // Whether to automatically replace unicode shortcodes with their corresponding unicode characters (for ex: \alpha with α) as you type.
-  "auto_replace_unicode_shortcode": false,
-  
+  // Configuration for automatic unicode shortcode replacement.
+  // When enabled, typing shortcodes like `\alpha` followed by a space
+  // will automatically replace them with their unicode equivalents like `α`.
+  // Can be configured globally or per-language.
+  "unicode_shortcodes": {
+    // Whether unicode shortcode replacement is enabled.
+    "enabled": null,
+    // Custom shortcode replacements. Keys are shortcode names, values are the replacement strings.
+    "replacements": {},
+  },
+
   // What to do when go to definition yields no results.
   //
   // 1. Do nothing: `none`

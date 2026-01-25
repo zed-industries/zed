@@ -14,7 +14,7 @@ use settings::IntoGpui;
 pub use settings::{
     CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
-    RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
+    RewrapBehavior, ShowWhitespaceSetting, SoftWrap, UnicodeShortcodesConfig, WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore};
 use shellexpand;
@@ -167,6 +167,8 @@ pub struct LanguageSettings {
     pub word_diff_enabled: bool,
     /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
     pub colorize_brackets: bool,
+    /// Configuration for automatic unicode shortcode replacement.
+    pub unicode_shortcodes: Option<UnicodeShortcodesConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -611,6 +613,7 @@ impl settings::Settings for AllLanguageSettings {
                 show_completions_on_input: settings.show_completions_on_input.unwrap(),
                 show_completion_documentation: settings.show_completion_documentation.unwrap(),
                 colorize_brackets: settings.colorize_brackets.unwrap(),
+                unicode_shortcodes: settings.unicode_shortcodes.clone(),
                 completions: CompletionSettings {
                     words: completions.words.unwrap(),
                     words_min_length: completions.words_min_length.unwrap() as usize,

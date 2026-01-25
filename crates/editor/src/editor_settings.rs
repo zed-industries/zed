@@ -59,7 +59,6 @@ pub struct EditorSettings {
     pub minimum_contrast_for_highlights: f32,
     pub completion_menu_scrollbar: ShowScrollbar,
     pub completion_detail_alignment: CompletionDetailAlignment,
-    pub auto_replace_unicode_shortcode: bool,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
@@ -290,7 +289,6 @@ impl Settings for EditorSettings {
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
             completion_menu_scrollbar: editor.completion_menu_scrollbar.map(Into::into).unwrap(),
             completion_detail_alignment: editor.completion_detail_alignment.unwrap(),
-            auto_replace_unicode_shortcode: editor.auto_replace_unicode_shortcode.unwrap(),
         }
     }
 }
