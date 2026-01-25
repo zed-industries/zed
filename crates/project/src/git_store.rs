@@ -29,10 +29,11 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
-        GitRepository, GitRepositoryCheckpoint, GraphCommitData, InitialGraphCommitData, LogOrder,
-        LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
-        UpstreamTrackingStatus, Worktree as GitWorktree,
+        Branch, CommitDataReader, CommitDataRequest, CommitDetails, CommitDiff, CommitFile,
+        CommitOptions, DiffType, FetchOptions, GIT_GRAPH_MAX_BATCH_SIZE, GitRepository,
+        GitRepositoryCheckpoint, GraphCommitData, InitialGraphCommitData, LogOrder, LogSource,
+        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, UpstreamTrackingStatus,
+        Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -41,9 +42,10 @@ use git::{
     },
 };
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-    WeakEntity,
+    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
+    Subscription, Task, WeakEntity,
 };
+use itertools::{EitherOrBoth, Itertools};
 use language::{
     Buffer, BufferEvent, Language, LanguageRegistry,
     proto::{deserialize_version, serialize_version},
@@ -76,7 +78,7 @@ use sum_tree::{Edit, SumTree, TreeSet};
 use task::Shell;
 use text::{Bias, BufferId};
 use util::{
-    ResultExt, debug_panic,
+    ResultExt, debug_panic, maybe,
     paths::{PathStyle, SanitizedPath},
     post_inc,
     rel_path::RelPath,
@@ -539,6 +541,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_get_worktrees);
         client.add_entity_request_handler(Self::handle_create_worktree);
         client.add_entity_request_handler(Self::handle_get_initial_graph_commit);
+        client.add_entity_request_handler(Self::handle_get_graph_commit_data);
     }
 
     pub fn is_local(&self) -> bool {
@@ -2843,15 +2846,59 @@ impl GitStore {
         let range = envelope.payload.start as usize..envelope.payload.end as usize;
         let log_source = LogSource::from_proto(envelope.payload.log_source)?;
         let log_order = LogOrder::from_proto(envelope.payload.log_order)?;
-        let (commits, finished) = repository.update(&mut cx, |repository, cx| {
-            let (commits, is_loading) =
-                repository.graph_data(log_source, log_order, range.clone(), cx);
-            (
-                commits.iter().map(|commit| commit.to_proto()).collect(),
-                !is_loading && commits.len() < range.count(),
-            )
-        });
+        let first_request = range.start == 0;
+        let (commits, finished): (Vec<proto::InitialGraphCommit>, bool) =
+            repository.update(&mut cx, |repository, cx| {
+                let (commits, is_loading) =
+                    repository.graph_data(log_source, log_order, range.clone(), cx);
+                (
+                    commits.iter().map(|commit| commit.to_proto()).collect(),
+                    !is_loading && commits.len() < range.count(),
+                )
+            });
+        if first_request && !commits.is_empty() {
+            repository.update(&mut cx, |repository, cx| {
+                for commit in commits.iter() {
+                    let sha = Oid::from_str(&commit.sha).unwrap();
+                    let _ = repository.fetch_commit_data(sha, cx);
+                }
+            });
+        }
+
         Ok(proto::GetInitialGraphCommitResponse { commits, finished })
+    }
+
+    async fn handle_get_graph_commit_data(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetGraphCommitData>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GetGraphCommitDataResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let shas = envelope
+            .payload
+            .shas
+            .iter()
+            .filter_map(|sha| Oid::from_str(sha).ok())
+            .collect::<Vec<Oid>>();
+
+        let commits = repository.update(&mut cx, |repository, cx| {
+            let mut commits = Vec::with_capacity(shas.len());
+            let mut loading = false;
+            for sha in shas {
+                match repository.fetch_commit_data(sha, cx) {
+                    CommitDataState::Loading => loading = true,
+                    CommitDataState::Loaded(commit) => {
+                        if !loading {
+                            commits.push(commit.to_proto())
+                        }
+                    }
+                }
+            }
+            commits
+        });
+
+        Ok(proto::GetGraphCommitDataResponse { commits })
     }
 
     fn repository_for_request(
@@ -4371,14 +4418,13 @@ impl Repository {
         cx: &mut AsyncApp,
     ) -> Result<(), SharedString> {
         let mut next_start: u64 = 0;
-        let batch_count = 64;
         loop {
             let response = client
                 .request(proto::GetInitialGraphCommit {
                     project_id: project_id.to_proto(),
                     repository_id: repository_id.to_proto(),
                     start: next_start,
-                    end: next_start + batch_count,
+                    end: next_start + GIT_GRAPH_MAX_BATCH_SIZE as u64,
                     log_source: Some(log_source.to_proto()),
                     log_order: log_order.to_proto(),
                 })
@@ -4393,7 +4439,7 @@ impl Repository {
                     .await;
                 continue;
             }
-            next_start += batch_count;
+            next_start += response.commits.len() as u64;
             let mut initial_graph_commit_datas = Vec::new();
             for commit in response.commits {
                 initial_graph_commit_datas.push(Arc::new(
@@ -4482,29 +4528,34 @@ impl Repository {
 
         let request_tx_for_handler = request_tx;
         let background_executor = cx.background_executor().clone();
-
+        let repository_id = self.id;
         cx.background_spawn(async move {
-            let backend = match state.await {
-                Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => backend,
-                Ok(RepositoryState::Remote(_)) => {
-                    log::error!("commit_data_reader not supported for remote repositories");
-                    return;
+            let reader = match state.await {
+                Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => {
+                    match backend.commit_data_reader() {
+                        Ok(reader) => reader,
+                        Err(error) => {
+                            log::error!("failed to create commit data reader: {error:?}");
+                            return;
+                        }
+                    }
                 }
+                Ok(RepositoryState::Remote(RemoteRepositoryState { client, project_id })) => {
+                    Self::remote_commit_data_reader(
+                        &client,
+                        project_id,
+                        repository_id,
+                        background_executor.clone(),
+                    )
+                }
+
                 Err(error) => {
                     log::error!("failed to get repository state: {error}");
                     return;
                 }
             };
 
-            let reader = match backend.commit_data_reader() {
-                Ok(reader) => reader,
-                Err(error) => {
-                    log::error!("failed to create commit data reader: {error:?}");
-                    return;
-                }
-            };
-
-            loop {
+            'out: loop {
                 let timeout = background_executor.timer(std::time::Duration::from_secs(10));
 
                 futures::select_biased! {
@@ -4512,15 +4563,30 @@ impl Repository {
                         let Ok(sha) = sha else {
                             break;
                         };
-
-                        match reader.read(sha).await {
-                            Ok(commit_data) => {
-                                if result_tx.send((sha, commit_data)).await.is_err() {
-                                    break;
+                        let mut shas = vec![sha];
+                        while shas.len() < GIT_GRAPH_MAX_BATCH_SIZE {
+                            let Ok(sha) = request_rx.try_recv() else {
+                                break;
+                            };
+                            shas.push(sha);
+                        }
+                        match reader.read(shas).await {
+                            Ok(commit_datas) => {
+                                for commit in commit_datas {
+                                    let commit = match commit {
+                                        Ok(commit) => commit,
+                                        Err(error) => {
+                                            log::error!("failed to read commit data {error:?}");
+                                            continue;
+                                        }
+                                    };
+                                    if result_tx.send((commit.sha, commit)).await.is_err() {
+                                        break 'out;
+                                    }
                                 }
                             }
                             Err(error) => {
-                                log::error!("failed to read commit data for {sha}: {error:?}");
+                                log::error!("failed to read commit data {error:?}");
                             }
                         }
                     }
@@ -4538,6 +4604,84 @@ impl Repository {
             _task: foreground_task,
             commit_data_request: request_tx_for_handler,
         });
+    }
+
+    fn remote_commit_data_reader(
+        client: &AnyProtoClient,
+        project_id: ProjectId,
+        repository_id: RepositoryId,
+        executor: BackgroundExecutor,
+    ) -> CommitDataReader {
+        let (request_tx, request_rx) =
+            smol::channel::bounded::<CommitDataRequest>(GIT_GRAPH_MAX_BATCH_SIZE);
+        let client = client.clone();
+        let timer_executor = executor.clone();
+        let task = executor.spawn(async move {
+            maybe!(async move {
+                let mut pending_requests = Vec::with_capacity(GIT_GRAPH_MAX_BATCH_SIZE);
+                loop {
+                    if pending_requests.is_empty() {
+                        let Ok(first_request) = request_rx.recv().await else {
+                            break;
+                        };
+                        pending_requests.push(first_request);
+                    }
+
+                    while pending_requests.len() < GIT_GRAPH_MAX_BATCH_SIZE {
+                        match request_rx.try_recv() {
+                            Ok(request) => pending_requests.push(request),
+                            Err(_) => break,
+                        }
+                    }
+
+                    let response = client
+                        .request(proto::GetGraphCommitData {
+                            project_id: project_id.to_proto(),
+                            repository_id: repository_id.to_proto(),
+                            shas: pending_requests
+                                .iter()
+                                .map(|req| req.sha.to_string())
+                                .collect(),
+                        })
+                        .await?;
+
+                    if response.commits.is_empty() {
+                        timer_executor.timer(Duration::from_millis(1)).await;
+                        continue;
+                    }
+
+                    let mut not_ready_reqeusts = Vec::with_capacity(GIT_GRAPH_MAX_BATCH_SIZE);
+                    for pair in pending_requests
+                        .into_iter()
+                        .zip_longest(response.commits.into_iter())
+                    {
+                        match pair {
+                            EitherOrBoth::Both(request, commit) => {
+                                request
+                                    .response_tx
+                                    .send(GraphCommitData::from_proto(&commit))
+                                    .log_err();
+                            }
+                            EitherOrBoth::Left(request) => {
+                                not_ready_reqeusts.push(request);
+                            }
+                            EitherOrBoth::Right(_) => {
+                                log::error!("Unexpected response from remote server");
+                            }
+                        }
+                    }
+                    pending_requests = not_ready_reqeusts;
+                }
+                anyhow::Ok(())
+            })
+            .await
+            .log_err();
+        });
+
+        CommitDataReader {
+            request_tx,
+            _task: task,
+        }
     }
 
     fn buffer_store(&self, cx: &App) -> Option<Entity<BufferStore>> {

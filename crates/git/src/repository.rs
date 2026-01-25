@@ -40,6 +40,7 @@ use uuid::Uuid;
 pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
+pub const GIT_GRAPH_MAX_BATCH_SIZE: usize = 64;
 
 /// Format string used in graph log to get initial data for the git graph
 /// %H - Full commit hash
@@ -61,6 +62,34 @@ pub struct GraphCommitData {
     pub author_email: SharedString,
     pub commit_timestamp: i64,
     pub subject: SharedString,
+}
+
+impl GraphCommitData {
+    pub fn to_proto(&self) -> proto::GraphCommitData {
+        proto::GraphCommitData {
+            sha: self.sha.to_string(),
+            parents: self.parents.iter().map(|p| p.to_string()).collect(),
+            author_name: self.author_name.to_string(),
+            author_email: self.author_email.to_string(),
+            commit_timestamp: self.commit_timestamp,
+            subject: self.subject.to_string(),
+        }
+    }
+
+    pub fn from_proto(commit: &proto::GraphCommitData) -> Result<Self> {
+        Ok(GraphCommitData {
+            sha: Oid::from_str(&commit.sha)?,
+            parents: commit
+                .parents
+                .iter()
+                .filter_map(|parent| Oid::from_str(&parent).ok())
+                .collect(),
+            author_name: SharedString::from(&commit.author_name),
+            author_email: SharedString::from(&commit.author_email),
+            commit_timestamp: commit.commit_timestamp,
+            subject: SharedString::from(&commit.subject),
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -95,26 +124,35 @@ impl InitialGraphCommitData {
     }
 }
 
-struct CommitDataRequest {
-    sha: Oid,
-    response_tx: oneshot::Sender<Result<GraphCommitData>>,
+pub struct CommitDataRequest {
+    pub sha: Oid,
+    pub response_tx: oneshot::Sender<Result<GraphCommitData>>,
 }
 
 pub struct CommitDataReader {
-    request_tx: smol::channel::Sender<CommitDataRequest>,
-    _task: Task<()>,
+    pub request_tx: smol::channel::Sender<CommitDataRequest>,
+    pub _task: Task<()>,
 }
 
 impl CommitDataReader {
-    pub async fn read(&self, sha: Oid) -> Result<GraphCommitData> {
-        let (response_tx, response_rx) = oneshot::channel();
-        self.request_tx
-            .send(CommitDataRequest { sha, response_tx })
-            .await
-            .map_err(|_| anyhow!("commit data reader task closed"))?;
-        response_rx
-            .await
-            .map_err(|_| anyhow!("commit data reader task dropped response"))?
+    pub async fn read(&self, shas: Vec<Oid>) -> Result<Vec<Result<GraphCommitData>>> {
+        let mut rxs = Vec::with_capacity(shas.len());
+        let mut commits = Vec::with_capacity(shas.len());
+        for sha in shas {
+            let (response_tx, response_rx) = oneshot::channel();
+            self.request_tx
+                .send(CommitDataRequest { sha, response_tx })
+                .await
+                .map_err(|_| anyhow!("commit data reader task closed"))?;
+            rxs.push(response_rx);
+        }
+        for rx in rxs {
+            commits.push(
+                rx.await
+                    .map_err(|_| anyhow!("commit data reader task dropped response"))?,
+            );
+        }
+        Ok(commits)
     }
 }
 
@@ -2744,12 +2782,10 @@ async fn run_commit_data_reader(
     let mut stdin = BufWriter::new(process.stdin.take().context("no stdin")?);
     let mut stdout = BufReader::new(process.stdout.take().context("no stdout")?);
 
-    const MAX_BATCH_SIZE: usize = 64;
-
     while let Ok(first_request) = request_rx.recv().await {
         let mut pending_requests = vec![first_request];
 
-        while pending_requests.len() < MAX_BATCH_SIZE {
+        while pending_requests.len() < GIT_GRAPH_MAX_BATCH_SIZE {
             match request_rx.try_recv() {
                 Ok(request) => pending_requests.push(request),
                 Err(_) => break,
