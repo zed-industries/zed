@@ -367,10 +367,7 @@ mod test {
         );
 
         // Parens need quoting, but .ts after variable doesn't (no special chars)
-        assert_eq!(
-            args,
-            vec!["-i", "-c", "echo './app/(public)/'$ZED_FILE.ts"]
-        );
+        assert_eq!(args, vec!["-i", "-c", "echo './app/(public)/'$ZED_FILE.ts"]);
     }
 
     #[test]

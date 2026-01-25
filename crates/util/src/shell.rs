@@ -1202,10 +1202,7 @@ mod tests {
     fn test_quote_preserving_variables_var_followed_by_dollar() {
         let shell_kind = ShellKind::Posix;
         // $VAR followed by lone $ - the $ becomes part of literal
-        assert_eq!(
-            shell_kind.quote_preserving_variables("$VAR$"),
-            "$VAR'$'"
-        );
+        assert_eq!(shell_kind.quote_preserving_variables("$VAR$"), "$VAR'$'");
         // $VAR followed by $suffix (another variable)
         assert_eq!(
             shell_kind.quote_preserving_variables("$VAR$SUFFIX"),
