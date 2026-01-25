@@ -15,6 +15,7 @@ pub mod prettier_store;
 pub mod project_search;
 pub mod project_settings;
 pub mod search;
+pub mod symbol_index;
 mod task_inventory;
 pub mod task_store;
 pub mod telemetry_snapshot;
