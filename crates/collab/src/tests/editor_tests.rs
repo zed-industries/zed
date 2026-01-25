@@ -32,7 +32,7 @@ use project::{
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
-use settings::{InlayHintSettingsContent, InlineBlameSettings, SettingsStore};
+use settings::{InlayHintSettingsContent, InlineBlameSettings, SemanticTokens, SettingsStore};
 use std::{
     collections::BTreeSet,
     num::NonZeroU32,
@@ -4823,14 +4823,16 @@ async fn test_mutual_editor_semantic_token_cache_update(
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.all_languages.defaults.semantic_tokens = Some(true);
+                settings.project.all_languages.defaults.semantic_tokens =
+                    Some(SemanticTokens::Full);
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.all_languages.defaults.semantic_tokens = Some(true);
+                settings.project.all_languages.defaults.semantic_tokens =
+                    Some(SemanticTokens::Full);
             });
         });
     });
@@ -5036,14 +5038,15 @@ async fn test_semantic_token_refresh_is_forwarded(
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.all_languages.defaults.semantic_tokens = Some(false);
+                settings.project.all_languages.defaults.semantic_tokens = Some(SemanticTokens::Off);
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.all_languages.defaults.semantic_tokens = Some(true);
+                settings.project.all_languages.defaults.semantic_tokens =
+                    Some(SemanticTokens::Full);
             });
         });
     });

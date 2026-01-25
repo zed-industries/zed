@@ -1136,8 +1136,13 @@
   //
   // This is typically customized on a per-language basis.
   "language_servers": ["..."],
-  // Whether to use semantic tokens from the language server for syntax highlighting.
-  "semantic_tokens": false,
+  // Controls how semantic tokens from language servers are used for syntax highlighting.
+  //
+  // Options:
+  // - "off": Do not request semantic tokens from language servers.
+  // - "combined": Use LSP semantic tokens together with tree-sitter highlighting as base.
+  // - "full": Use LSP semantic tokens exclusively to highlight the text.
+  "semantic_tokens": "off",
 
   // When to automatically save edited buffers. This setting can
   // take four values.

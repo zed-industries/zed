@@ -553,7 +553,15 @@ impl VsCodeSettings {
             inlay_hints: None,
             jsx_tag_auto_close: None,
             language_servers: None,
-            semantic_tokens: self.read_bool("editor.semanticHighlighting.enabled"),
+            semantic_tokens: self
+                .read_bool("editor.semanticHighlighting.enabled")
+                .map(|enabled| {
+                    if enabled {
+                        SemanticTokens::Full
+                    } else {
+                        SemanticTokens::Off
+                    }
+                }),
             linked_edits: self.read_bool("editor.linkedEditing"),
             preferred_line_length: self.read_u32("editor.wordWrapColumn"),
             prettier: None,

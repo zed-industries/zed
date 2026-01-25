@@ -9,7 +9,7 @@ use ec4rs::{
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers, SharedString};
 use itertools::{Either, Itertools};
-use settings::IntoGpui;
+use settings::{IntoGpui, SemanticTokens};
 
 pub use settings::{
     CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
@@ -106,8 +106,8 @@ pub struct LanguageSettings {
     /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
     pub language_servers: Vec<String>,
-    /// Whether to use semantic tokens from the language server for syntax highlighting.
-    pub semantic_tokens: bool,
+    /// Controls how semantic tokens from language servers are used for syntax highlighting.
+    pub semantic_tokens: SemanticTokens,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
     /// Note: This setting has no effect in Vim mode, as rewrap is already

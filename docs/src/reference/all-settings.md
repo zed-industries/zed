@@ -2592,6 +2592,7 @@ The following settings can be overridden for each specific language:
 - [`hard_tabs`](#hard-tabs)
 - [`preferred_line_length`](#preferred-line-length)
 - [`remove_trailing_whitespace_on_save`](#remove-trailing-whitespace-on-save)
+- [`semantic_tokens`](#semantic-tokens)
 - [`show_edit_predictions`](#show-edit-predictions)
 - [`show_whitespaces`](#show-whitespaces)
 - [`whitespace_map`](#whitespace-map)
@@ -3293,6 +3294,38 @@ Non-negative `integer` values
 1. `always` always populate the search query with the word under the cursor
 2. `selection` only populate the search query when there is text selected
 3. `never` never populate the search query
+
+## Semantic Tokens
+
+- Description: Controls how semantic tokens from language servers are used for syntax highlighting.
+- Setting: `semantic_tokens`
+- Default: `off`
+
+**Options**
+
+1. `off`: Do not request semantic tokens from language servers.
+2. `combined`: Use LSP semantic tokens together with tree-sitter highlighting.
+3. `full`: Use LSP semantic tokens exclusively, replacing tree-sitter highlighting.
+
+To enable semantic tokens globally:
+
+```json [settings]
+{
+  "semantic_tokens": "combined"
+}
+```
+
+To enable semantic tokens for a specific language:
+
+```json [settings]
+{
+  "languages": {
+    "Rust": {
+      "semantic_tokens": "full"
+    }
+  }
+}
+```
 
 ## Use Smartcase Search
 

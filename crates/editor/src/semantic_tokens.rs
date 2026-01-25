@@ -65,7 +65,7 @@ impl Editor {
                 );
                 let retain = buffer_id.is_none_or(|buffer_id| buffer_id == editor_buffer_id)
                     && self.registered_buffers.contains_key(&editor_buffer_id)
-                    && settings.semantic_tokens;
+                    && settings.semantic_tokens.enabled();
                 if retain {
                     Some((editor_buffer_id, editor_buffer))
                 } else {
@@ -372,7 +372,7 @@ mod tests {
     use project::Project;
     use rope::Point;
     use serde_json::json;
-    use settings::LanguageSettingsContent;
+    use settings::{LanguageSettingsContent, SemanticTokens};
     use workspace::{Workspace, WorkspaceHandle as _};
 
     use crate::{
@@ -393,7 +393,7 @@ mod tests {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
-                    semantic_tokens: Some(true),
+                    semantic_tokens: Some(SemanticTokens::Full),
                     ..Default::default()
                 },
             );
@@ -471,7 +471,7 @@ mod tests {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
-                    semantic_tokens: Some(true),
+                    semantic_tokens: Some(SemanticTokens::Full),
                     ..Default::default()
                 },
             );
@@ -551,7 +551,7 @@ mod tests {
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
-                    semantic_tokens: Some(true),
+                    semantic_tokens: Some(SemanticTokens::Full),
                     ..Default::default()
                 },
             );
@@ -651,7 +651,7 @@ mod tests {
             language_settings.languages.0.insert(
                 "TOML".into(),
                 LanguageSettingsContent {
-                    semantic_tokens: Some(true),
+                    semantic_tokens: Some(SemanticTokens::Full),
                     ..Default::default()
                 },
             );
@@ -860,14 +860,14 @@ mod tests {
             language_settings.languages.0.insert(
                 "TOML".into(),
                 LanguageSettingsContent {
-                    semantic_tokens: Some(true),
+                    semantic_tokens: Some(SemanticTokens::Full),
                     ..Default::default()
                 },
             );
             language_settings.languages.0.insert(
                 "Rust".into(),
                 LanguageSettingsContent {
-                    semantic_tokens: Some(true),
+                    semantic_tokens: Some(SemanticTokens::Full),
                     ..Default::default()
                 },
             );
@@ -1105,7 +1105,7 @@ mod tests {
             language_settings.languages.0.insert(
                 "TOML".into(),
                 LanguageSettingsContent {
-                    semantic_tokens: Some(true),
+                    semantic_tokens: Some(SemanticTokens::Full),
                     ..Default::default()
                 },
             );

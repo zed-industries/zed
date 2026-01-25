@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize, de::Error as _};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
-use crate::{ExtendingVec, merge_from};
+use crate::{ExtendingVec, SemanticTokens, merge_from};
 
 /// The state of the modifier keys at some point in time
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -360,10 +360,15 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: ["..."]
     pub language_servers: Option<Vec<String>>,
-    /// Whether to use semantic tokens from language servers to color code in the editor.
+    /// Controls how semantic tokens from language servers are used for syntax highlighting.
     ///
-    /// Default: false
-    pub semantic_tokens: Option<bool>,
+    /// Options:
+    /// - "off": Do not request semantic tokens from language servers.
+    /// - "combined": Use LSP semantic tokens together with tree-sitter highlighting.
+    /// - "full": Use LSP semantic tokens exclusively, replacing tree-sitter highlighting.
+    ///
+    /// Default: "off"
+    pub semantic_tokens: Option<SemanticTokens>,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
     /// Note: This setting has no effect in Vim mode, as rewrap is already

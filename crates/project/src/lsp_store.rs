@@ -68,7 +68,9 @@ use language::{
     LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller,
     ManifestDelegate, ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
     Toolchain, Transaction, Unclipped,
-    language_settings::{FormatOnSave, Formatter, LanguageSettings, language_settings},
+    language_settings::{
+        AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, language_settings,
+    },
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_anchor_range, deserialize_lsp_edit, deserialize_version,
@@ -352,6 +354,7 @@ impl LocalLspStore {
                 adapter,
                 disposition.settings.clone(),
                 key.clone(),
+                language_name.clone(),
                 cx,
             );
             if let Some(state) = self.language_server_ids.get_mut(&key) {
@@ -373,6 +376,7 @@ impl LocalLspStore {
         adapter: Arc<CachedLspAdapter>,
         settings: Arc<LspSettings>,
         key: LanguageServerSeed,
+        language_name: LanguageName,
         cx: &mut App,
     ) -> LanguageServerId {
         let worktree = worktree_handle.read(cx);
@@ -488,7 +492,6 @@ impl LocalLspStore {
             let adapter = adapter.clone();
             let lsp_store = self.weak.clone();
             let pending_workspace_folders = pending_workspace_folders.clone();
-
             let pull_diagnostics = ProjectSettings::get_global(cx)
                 .diagnostics
                 .lsp_pull_diagnostics
@@ -523,6 +526,22 @@ impl LocalLspStore {
                     let initialization_params = cx.update(|cx| {
                         let mut params =
                             language_server.default_initialize_params(pull_diagnostics, cx);
+                        if let Some(semantic_tokens) = params
+                            .capabilities
+                            .text_document
+                            .as_mut()
+                            .and_then(|td| td.semantic_tokens.as_mut())
+                        {
+                            let settings_location = SettingsLocation {
+                                worktree_id,
+                                path: RelPath::empty(),
+                            };
+                            let settings = AllLanguageSettings::get(Some(settings_location), cx)
+                                .language(Some(settings_location), Some(&language_name), cx);
+                            // TODO kb need to restart the language servers
+                            semantic_tokens.augments_syntax_tokens =
+                                Some(settings.semantic_tokens.use_tree_sitter());
+                        }
                         params.initialization_options = initialization_options;
                         adapter.adapter.prepare_initialize_params(params, cx)
                     })?;

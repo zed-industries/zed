@@ -408,18 +408,23 @@ Zed supports syntax highlighting using semantic tokens from the attached languag
 
 ```json [settings]
 {
-  // Enable semantic tokens globally:
-  "semantic_tokens": true,
+  // Enable semantic tokens globally, backin with tree-sitter highlights for each language:
+  "semantic_tokens": "combined",
   // Or, specify per-language:
   "languages": {
     "Rust": {
-      "semantic_tokens": true
+      // No tree-sitter, only LSP semantic tokens:
+      "semantic_tokens": "full"
     }
   }
 }
 ```
 
-When enabled, Zed will use semantic tokens from the language server to enhance syntax highlighting. This can provide more accurate and context-aware highlighting compared to traditional syntax-based highlighting. Semantic tokens are applied on top of the existing syntax highlighting provided by Tree-sitter.
+The `semantic_tokens` setting accepts the following values:
+
+- `"off"` (default): Do not request semantic tokens from language servers.
+- `"combined"`: Use LSP semantic tokens together with tree-sitter highlighting.
+- `"full"`: Use LSP semantic tokens exclusively, replacing tree-sitter highlighting.
 
 #### Customizing Semantic Token Styles
 
