@@ -16,7 +16,7 @@ test = false
 [[test]]
 name = "integration"
 required-features = ["test-support"]
-path = "tests/integration/main.rs"
+path = "tests/integration/project_tests.rs"
 
 [features]
 test-support = [
