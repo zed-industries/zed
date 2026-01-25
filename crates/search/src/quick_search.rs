@@ -176,8 +176,7 @@ impl QuickSearch {
         let capability = project.read(cx).capability();
         let preview_editor = cx.new(|cx| {
             let multi_buffer = cx.new(|_| MultiBuffer::without_headers(capability));
-            let editor = Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx);
-            editor
+            Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx)
         });
 
         let replacement_editor = ui_input::ERASED_EDITOR_FACTORY.get().unwrap()(window, cx);
@@ -1308,7 +1307,7 @@ impl QuickSearchDelegate {
             return Vec::new();
         }
 
-        let buffer_data = buffer.read_with(cx, |buf, cx| {
+        buffer.read_with(cx, |buf, cx| {
             let file = buf.file();
             let path = file.map(|f| ProjectPath {
                 worktree_id: f.worktree_id(cx),
@@ -1316,7 +1315,7 @@ impl QuickSearchDelegate {
             });
             let text = buf.text();
 
-            let mut result = Vec::new();
+            let mut matches = Vec::new();
             for anchor_range in ranges {
                 let start_offset: usize = buf.summary_for_anchor(&anchor_range.start);
                 let end_offset: usize = buf.summary_for_anchor(&anchor_range.end);
@@ -1333,7 +1332,7 @@ impl QuickSearchDelegate {
                 let relative_end = end_offset - line_start;
 
                 if let Some(path) = &path {
-                    result.push(SearchMatch {
+                    matches.push(SearchMatch {
                         path: path.clone(),
                         buffer: buffer.clone(),
                         anchor_range: anchor_range.clone(),
@@ -1344,10 +1343,8 @@ impl QuickSearchDelegate {
                     });
                 }
             }
-            result
-        });
-
-        buffer_data
+            matches
+        })
     }
     fn render_history_menu(
         project: &Entity<Project>,
