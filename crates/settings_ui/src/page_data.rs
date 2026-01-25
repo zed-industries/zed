@@ -5727,6 +5727,9 @@ fn terminal_page() -> SettingsPage {
                                     .working_directory
                                     .get_or_insert_with(|| settings::WorkingDirectory::CurrentProjectDirectory);
                                 *settings_value = match value {
+                                    settings::WorkingDirectoryDiscriminants::CurrentFileDirectory => {
+                                        settings::WorkingDirectory::CurrentFileDirectory
+                                    },
                                     settings::WorkingDirectoryDiscriminants::CurrentProjectDirectory => {
                                         settings::WorkingDirectory::CurrentProjectDirectory
                                     }
@@ -5762,6 +5765,7 @@ fn terminal_page() -> SettingsPage {
                     fields: dynamic_variants::<settings::WorkingDirectory>()
                         .into_iter()
                         .map(|variant| match variant {
+                            settings::WorkingDirectoryDiscriminants::CurrentFileDirectory => vec![],
                             settings::WorkingDirectoryDiscriminants::CurrentProjectDirectory => vec![],
                             settings::WorkingDirectoryDiscriminants::FirstProjectDirectory => vec![],
                             settings::WorkingDirectoryDiscriminants::AlwaysHome => vec![],

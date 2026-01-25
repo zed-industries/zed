@@ -1590,13 +1590,12 @@ impl SearchableItem for TerminalView {
 /// Falls back to home directory when no project directory is available.
 pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
     let directory = match &TerminalSettings::get_global(cx).working_directory {
-        WorkingDirectory::CurrentProjectDirectory => workspace
+        WorkingDirectory::CurrentFileDirectory => workspace
             .project()
             .read(cx)
-            .active_project_directory(cx)
-            .as_deref()
-            .map(Path::to_path_buf)
-            .or_else(|| first_project_directory(workspace, cx)),
+            .active_file_directory(cx)
+            .or_else(|| current_project_directory(workspace, cx)),
+        WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
         WorkingDirectory::Always { directory } => shellexpand::full(directory)
@@ -1606,6 +1605,17 @@ pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Opti
     };
     directory.or_else(dirs::home_dir)
 }
+
+fn current_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
+    workspace
+        .project()
+        .read(cx)
+        .active_project_directory(cx)
+        .as_deref()
+        .map(Path::to_path_buf)
+        .or_else(|| first_project_directory(workspace, cx))
+}
+
 ///Gets the first project's home directory, or the home directory
 fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
     let worktree = workspace.worktrees(cx).next()?.read(cx);
