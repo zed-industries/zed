@@ -11901,3 +11901,54 @@ async fn test_read_only_files_with_lock_files(cx: &mut gpui::TestAppContext) {
         assert!(!buffer.read_only(), "package.json should not be read-only");
     });
 }
+
+mod disable_ai_settings_tests {
+    use gpui::TestAppContext;
+    use project::*;
+    use settings::{Settings, SettingsStore};
+
+    #[gpui::test]
+    async fn test_disable_ai_settings_security(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            settings::init(cx);
+
+            // Test 1: Default is false (AI enabled)
+            assert!(
+                !DisableAiSettings::get_global(cx).disable_ai,
+                "Default should allow AI"
+            );
+        });
+
+        let disable_true = serde_json::json!({
+            "disable_ai": true
+        })
+        .to_string();
+        let disable_false = serde_json::json!({
+            "disable_ai": false
+        })
+        .to_string();
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.set_user_settings(&disable_false, cx).unwrap();
+            store.set_global_settings(&disable_true, cx).unwrap();
+        });
+        cx.update(|cx| {
+            assert!(
+                DisableAiSettings::get_global(cx).disable_ai,
+                "Local false cannot override global true"
+            );
+        });
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.set_global_settings(&disable_false, cx).unwrap();
+            store.set_user_settings(&disable_true, cx).unwrap();
+        });
+
+        cx.update(|cx| {
+            assert!(
+                DisableAiSettings::get_global(cx).disable_ai,
+                "Local false cannot override global true"
+            );
+        });
+    }
+}
