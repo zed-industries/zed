@@ -80,6 +80,13 @@
     },
   },
   {
+    "context": "Editor && mode == auto_height",
+    "bindings": {
+      "shift-enter": "editor::Newline",
+      "ctrl-shift-enter": "editor::NewlineBelow",
+    },
+  },
+  {
     "context": "BufferSearchBar",
     "bindings": {
       "shift-enter": "search::SelectPreviousMatch",
