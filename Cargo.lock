@@ -3721,7 +3721,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "http_client",
- "itertools 0.14.0",
  "log",
  "paths",
  "serde",
