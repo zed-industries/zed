@@ -876,6 +876,7 @@ impl AcpThreadView {
                         }
 
                         let mut subscriptions = vec![
+                            cx.observe_in(&thread, window, |_, _, _, cx| cx.notify()),
                             cx.subscribe_in(&thread, window, Self::handle_thread_event),
                             cx.observe(&action_log, |_, _, cx| cx.notify()),
                         ];
@@ -1341,15 +1342,18 @@ impl AcpThreadView {
             ViewEvent::NewDiff(tool_call_id) => {
                 if AgentSettings::get_global(cx).expand_edit_card {
                     self.expanded_tool_calls.insert(tool_call_id.clone());
+                    cx.notify();
                 }
             }
             ViewEvent::NewTerminal(tool_call_id) => {
                 if AgentSettings::get_global(cx).expand_terminal_card {
                     self.expanded_tool_calls.insert(tool_call_id.clone());
+                    cx.notify();
                 }
             }
             ViewEvent::TerminalMovedToBackground(tool_call_id) => {
                 self.expanded_tool_calls.remove(tool_call_id);
+                cx.notify();
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(thread) = self.thread()
@@ -4719,12 +4723,13 @@ impl AcpThreadView {
                 .visible_on_hover(&header_group)
                 .on_click(cx.listener({
                     let id = tool_call.id.clone();
-                    move |this, _event, _window, _cx| {
+                    move |this, _event, _window, cx| {
                         if is_expanded {
                             this.expanded_tool_calls.remove(&id);
                         } else {
                             this.expanded_tool_calls.insert(id.clone());
                         }
+                        cx.notify();
                     }
                 })),
             );
