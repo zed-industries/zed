@@ -22,7 +22,7 @@ pub fn render_window_buttons(
                 button,
                 format!("{}-{}", side, i),
                 is_maximized,
-                close_action.boxed_clone(),
+                close_action,
                 cx,
             )
         })
@@ -42,7 +42,7 @@ fn create_window_button(
     button: gpui::WindowButton,
     id: String,
     is_maximized: bool,
-    close_action: Box<dyn Action>,
+    close_action: &dyn Action,
     cx: &mut App,
 ) -> AnyElement {
     use gpui::WindowButton;
@@ -61,7 +61,7 @@ fn create_window_button(
         )
         .into_any_element(),
         WindowButton::Close => {
-            WindowControl::new_close(id, WindowControlType::Close, close_action, cx)
+            WindowControl::new_close(id, WindowControlType::Close, close_action.boxed_clone(), cx)
                 .into_any_element()
         }
     }
