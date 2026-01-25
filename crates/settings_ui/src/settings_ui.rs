@@ -4068,7 +4068,7 @@ fn render_smooth_caret_toggle(
     Switch::new("toggle_button", toggle_state)
         .tab_index(0_isize)
         .on_click({
-            let existing_value = existing_value.clone();
+
             move |state, window, cx| {
                 telemetry::event!("Settings Change", setting = field.json_path, type = file.setting_type());
                 let enabled = *state == ui::ToggleState::Selected;

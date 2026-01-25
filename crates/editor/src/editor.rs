@@ -1173,6 +1173,7 @@ pub struct Editor {
     blink_manager: Entity<BlinkManager>,
     quad_cursor: Option<inertial_cursor::QuadCursor>,
     cursor_animation_ticker: inertial_cursor::CursorAnimationTicker,
+    cursor_animation_destination: Option<(DisplayPoint, Pixels, Pixels)>,
     cursor_vfx_system: Option<cursor_vfx::CursorVfxSystem>,
     show_cursor_names: bool,
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
@@ -2479,6 +2480,7 @@ impl Editor {
                 }
             },
             cursor_animation_ticker: inertial_cursor::CursorAnimationTicker::new(),
+            cursor_animation_destination: None,
             cursor_vfx_system: {
                 let vfx_settings = &EditorSettings::get_global(cx).cursor_vfx;
                 let vfx_config = cursor_vfx::CursorVfxConfig::from_runtime_settings(vfx_settings);
@@ -3368,6 +3370,17 @@ impl Editor {
 
     pub fn quad_cursor_mut(&mut self) -> Option<&mut inertial_cursor::QuadCursor> {
         self.quad_cursor.as_mut()
+    }
+
+    pub fn set_cursor_animation_destination(
+        &mut self,
+        destination: Option<(DisplayPoint, Pixels, Pixels)>,
+    ) {
+        self.cursor_animation_destination = destination;
+    }
+
+    pub fn cursor_animation_destination(&self) -> Option<(DisplayPoint, Pixels, Pixels)> {
+        self.cursor_animation_destination
     }
 
     fn build_inertial_cursor_config(
