@@ -1192,10 +1192,7 @@ impl Render for CodeCell {
                                 // .bg(cx.theme().colors().editor_background)
                                 .child(
                                     div()
-                                        .id((
-                                            ElementId::from(self.id.to_string()),
-                                            "output-scroll",
-                                        ))
+                                        .id((ElementId::from(self.id.to_string()), "output-scroll"))
                                         .w_full()
                                         .when_some(output_max_width, |div, max_w| {
                                             div.max_w(max_w).overflow_x_scroll()
@@ -1243,6 +1240,7 @@ impl Render for CodeCell {
                                 ),
                         ),
                     ),
+            )
             .when(
                 self.has_outputs() || self.execution_duration.is_some() || self.is_executing,
                 |this| {
