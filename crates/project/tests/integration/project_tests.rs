@@ -3435,7 +3435,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
         .await;
 
     let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store().clone());
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
 
     lsp_store.update(cx, |lsp_store, cx| {
         lsp_store
