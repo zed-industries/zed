@@ -1911,18 +1911,18 @@ impl AcpThread {
         })
     }
 
-    pub fn can_resume(&self, cx: &App) -> bool {
-        self.connection.resume(&self.session_id, cx).is_some()
+    pub fn can_retry(&self, cx: &App) -> bool {
+        self.connection.retry(&self.session_id, cx).is_some()
     }
 
-    pub fn resume(&mut self, cx: &mut Context<Self>) -> BoxFuture<'static, Result<()>> {
+    pub fn retry(&mut self, cx: &mut Context<Self>) -> BoxFuture<'static, Result<()>> {
         self.run_turn(cx, async move |this, cx| {
             this.update(cx, |this, cx| {
                 this.connection
-                    .resume(&this.session_id, cx)
-                    .map(|resume| resume.run(cx))
+                    .retry(&this.session_id, cx)
+                    .map(|retry| retry.run(cx))
             })?
-            .context("resuming a session is not supported")?
+            .context("retrying a session is not supported")?
             .await
         })
     }
@@ -2633,6 +2633,8 @@ mod tests {
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
+                cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -2706,6 +2708,8 @@ mod tests {
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
+                cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -2792,6 +2796,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     vec![],
+                    PathStyle::local(),
                 )
             })
             .await
@@ -4080,6 +4085,8 @@ mod tests {
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
+                cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -4125,6 +4132,8 @@ mod tests {
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
+                cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -4184,6 +4193,8 @@ mod tests {
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
+                cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)

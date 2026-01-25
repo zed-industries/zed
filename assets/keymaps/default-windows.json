@@ -311,8 +311,9 @@
       "ctrl-enter": "agent::ChatWithFollow",
       "ctrl-shift-enter": "agent::SendImmediately",
       "ctrl-shift-alt-enter": "agent::SendNextQueuedMessage",
-      "shift-backspace": "agent::RemoveFirstQueuedMessage",
-      "ctrl-shift-backspace": "agent::ClearMessageQueue",
+      "ctrl-shift-backspace": "agent::RemoveFirstQueuedMessage",
+      "ctrl-alt-e": "agent::EditFirstQueuedMessage",
+      "ctrl-alt-backspace": "agent::ClearMessageQueue",
       "ctrl-shift-v": "agent::PasteRaw",
       "ctrl-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",
@@ -1363,6 +1364,17 @@
     },
   },
   {
+    "context": "ImageViewer",
+    "bindings": {
+      "ctrl-=": "image_viewer::ZoomIn",
+      "ctrl-+": "image_viewer::ZoomIn",
+      "ctrl--": "image_viewer::ZoomOut",
+      "ctrl-0": "image_viewer::ResetZoom",
+      "ctrl-1": "image_viewer::ZoomToActualSize",
+      "ctrl-shift-0": "image_viewer::FitToView",
+    },
+  },
+  {
     "context": "RunModal",
     "bindings": {
       "alt-1": "new_process_modal::ActivateTaskTab",
@@ -1384,5 +1396,20 @@
     "bindings": {
       "shift-backspace": "project_dropdown::RemoveSelectedFolder",
     },
+  },
+  {
+    "context": "NotebookEditor > Editor",
+    "bindings": {
+      "enter": "editor::Newline",
+      "shift-enter": "notebook::Run",
+      "ctrl-enter": "notebook::Run",
+      "ctrl-shift-enter": "notebook::RunAll",
+      "alt-up": "notebook::MoveCellUp",
+      "alt-down": "notebook::MoveCellDown",
+      "ctrl-m": "notebook::AddCodeBlock",
+      "ctrl-shift-m": "notebook::AddMarkdownBlock",
+      "ctrl-shift-r": "notebook::RestartKernel",
+      "ctrl-c": "notebook::InterruptKernel"
+    }
   },
 ]

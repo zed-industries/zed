@@ -792,10 +792,11 @@ impl TitleBar {
         Some(
             PopoverMenu::new("branch-menu")
                 .menu(move |window, cx| {
-                    Some(git_ui::branch_picker::popover(
+                    Some(git_ui::git_picker::popover(
                         workspace.downgrade(),
-                        true,
                         effective_repository.clone(),
+                        git_ui::git_picker::GitPickerTab::Branches,
+                        gpui::rems(34.),
                         window,
                         cx,
                     ))

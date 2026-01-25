@@ -4,6 +4,7 @@ use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
 use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
+use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use futures::io::BufWriter;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
@@ -13,12 +14,15 @@ use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use smallvec::SmallVec;
+use smol::channel::Sender;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use text::LineEnding;
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::process::{ExitStatus, Stdio};
+use std::str::FromStr;
 use std::{
     cmp::Ordering,
     future,
@@ -36,6 +40,106 @@ use uuid::Uuid;
 pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
+
+/// Format string used in graph log to get initial data for the git graph
+/// %H - Full commit hash
+/// %P - Parent hashes
+/// %D - Ref names
+/// %x00 - Null byte separator, used to split up commit data
+static GRAPH_COMMIT_FORMAT: &str = "--format=%H%x00%P%x00%D";
+
+/// Number of commits to load per chunk for the git graph.
+pub const GRAPH_CHUNK_SIZE: usize = 1000;
+
+/// Commit data needed for the git graph visualization.
+#[derive(Debug, Clone)]
+pub struct GraphCommitData {
+    pub sha: Oid,
+    /// Most commits have a single parent, so we use a SmallVec to avoid allocations.
+    pub parents: SmallVec<[Oid; 1]>,
+    pub author_name: SharedString,
+    pub author_email: SharedString,
+    pub commit_timestamp: i64,
+    pub subject: SharedString,
+}
+
+#[derive(Debug)]
+pub struct InitialGraphCommitData {
+    pub sha: Oid,
+    pub parents: SmallVec<[Oid; 1]>,
+    pub ref_names: Vec<SharedString>,
+}
+
+struct CommitDataRequest {
+    sha: Oid,
+    response_tx: oneshot::Sender<Result<GraphCommitData>>,
+}
+
+pub struct CommitDataReader {
+    request_tx: smol::channel::Sender<CommitDataRequest>,
+    _task: Task<()>,
+}
+
+impl CommitDataReader {
+    pub async fn read(&self, sha: Oid) -> Result<GraphCommitData> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.request_tx
+            .send(CommitDataRequest { sha, response_tx })
+            .await
+            .map_err(|_| anyhow!("commit data reader task closed"))?;
+        response_rx
+            .await
+            .map_err(|_| anyhow!("commit data reader task dropped response"))?
+    }
+}
+
+fn parse_cat_file_commit(sha: Oid, content: &str) -> Option<GraphCommitData> {
+    let mut parents = SmallVec::new();
+    let mut author_name = SharedString::default();
+    let mut author_email = SharedString::default();
+    let mut commit_timestamp = 0i64;
+    let mut in_headers = true;
+    let mut subject = None;
+
+    for line in content.lines() {
+        if in_headers {
+            if line.is_empty() {
+                in_headers = false;
+                continue;
+            }
+
+            if let Some(parent_sha) = line.strip_prefix("parent ") {
+                if let Ok(oid) = Oid::from_str(parent_sha.trim()) {
+                    parents.push(oid);
+                }
+            } else if let Some(author_line) = line.strip_prefix("author ") {
+                if let Some((name_email, _timestamp_tz)) = author_line.rsplit_once(' ') {
+                    if let Some((name_email, timestamp_str)) = name_email.rsplit_once(' ') {
+                        if let Ok(ts) = timestamp_str.parse::<i64>() {
+                            commit_timestamp = ts;
+                        }
+                        if let Some((name, email)) = name_email.rsplit_once(" <") {
+                            author_name = SharedString::from(name.to_string());
+                            author_email =
+                                SharedString::from(email.trim_end_matches('>').to_string());
+                        }
+                    }
+                }
+            }
+        } else if subject.is_none() {
+            subject = Some(SharedString::from(line.to_string()));
+        }
+    }
+
+    Some(GraphCommitData {
+        sha,
+        parents,
+        author_name,
+        author_email,
+        commit_timestamp,
+        subject: subject.unwrap_or_default(),
+    })
+}
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Branch {
@@ -420,6 +524,46 @@ impl Drop for GitExcludeOverride {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Copy)]
+pub enum LogOrder {
+    #[default]
+    DateOrder,
+    TopoOrder,
+    AuthorDateOrder,
+    ReverseChronological,
+}
+
+impl LogOrder {
+    pub fn as_arg(&self) -> &'static str {
+        match self {
+            LogOrder::DateOrder => "--date-order",
+            LogOrder::TopoOrder => "--topo-order",
+            LogOrder::AuthorDateOrder => "--author-date-order",
+            LogOrder::ReverseChronological => "--reverse",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum LogSource {
+    #[default]
+    All,
+    Branch(SharedString),
+    Sha(Oid),
+}
+
+impl LogSource {
+    fn get_arg(&self) -> Result<&str> {
+        match self {
+            LogSource::All => Ok("--all"),
+            LogSource::Branch(branch) => Ok(branch.as_str()),
+            LogSource::Sha(oid) => {
+                str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")
+            }
+        }
+    }
+}
+
 pub trait GitRepository: Send + Sync {
     fn reload_index(&self);
 
@@ -653,6 +797,17 @@ pub trait GitRepository: Send + Sync {
         &self,
         include_remote_name: bool,
     ) -> BoxFuture<'_, Result<Option<SharedString>>>;
+
+    /// Runs `git rev-list --parents` to get the commit graph structure.
+    /// Returns commit SHAs and their parent SHAs for building the graph visualization.
+    fn initial_graph_data(
+        &self,
+        log_source: LogSource,
+        log_order: LogOrder,
+        request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn commit_data_reader(&self) -> Result<CommitDataReader>;
 }
 
 pub enum DiffType {
@@ -2412,6 +2567,215 @@ impl GitRepository for RealGitRepository {
         }
         .boxed()
     }
+
+    fn initial_graph_data(
+        &self,
+        log_source: LogSource,
+        log_order: LogOrder,
+        request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let executor = self.executor.clone();
+
+        async move {
+            let working_directory = working_directory?;
+            let git = GitBinary::new(git_binary_path, working_directory, executor);
+
+            let mut command = git.build_command([
+                "log",
+                GRAPH_COMMIT_FORMAT,
+                log_order.as_arg(),
+                log_source.get_arg()?,
+            ]);
+            command.stdout(Stdio::piped());
+            command.stderr(Stdio::null());
+
+            let mut child = command.spawn()?;
+            let stdout = child.stdout.take().context("failed to get stdout")?;
+            let mut reader = BufReader::new(stdout);
+
+            let mut line_buffer = String::new();
+            let mut lines: Vec<String> = Vec::with_capacity(GRAPH_CHUNK_SIZE);
+
+            loop {
+                line_buffer.clear();
+                let bytes_read = reader.read_line(&mut line_buffer).await?;
+
+                if bytes_read == 0 {
+                    if !lines.is_empty() {
+                        let commits = parse_initial_graph_output(lines.iter().map(|s| s.as_str()));
+                        if request_tx.send(commits).await.is_err() {
+                            log::warn!(
+                                "initial_graph_data: receiver dropped while sending commits"
+                            );
+                        }
+                    }
+                    break;
+                }
+
+                let line = line_buffer.trim_end_matches('\n').to_string();
+                lines.push(line);
+
+                if lines.len() >= GRAPH_CHUNK_SIZE {
+                    let commits = parse_initial_graph_output(lines.iter().map(|s| s.as_str()));
+                    if request_tx.send(commits).await.is_err() {
+                        log::warn!("initial_graph_data: receiver dropped while streaming commits");
+                        break;
+                    }
+                    lines.clear();
+                }
+            }
+
+            child.status().await?;
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn commit_data_reader(&self) -> Result<CommitDataReader> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self
+            .working_directory()
+            .map_err(|_| anyhow!("no working directory"))?;
+        let executor = self.executor.clone();
+
+        let (request_tx, request_rx) = smol::channel::bounded::<CommitDataRequest>(64);
+
+        let task = self.executor.spawn(async move {
+            if let Err(error) =
+                run_commit_data_reader(git_binary_path, working_directory, executor, request_rx)
+                    .await
+            {
+                log::error!("commit data reader failed: {error:?}");
+            }
+        });
+
+        Ok(CommitDataReader {
+            request_tx,
+            _task: task,
+        })
+    }
+}
+
+async fn run_commit_data_reader(
+    git_binary_path: PathBuf,
+    working_directory: PathBuf,
+    executor: BackgroundExecutor,
+    request_rx: smol::channel::Receiver<CommitDataRequest>,
+) -> Result<()> {
+    let git = GitBinary::new(git_binary_path, working_directory, executor);
+    let mut process = git
+        .build_command(["--no-optional-locks", "cat-file", "--batch"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("starting git cat-file --batch process")?;
+
+    let mut stdin = BufWriter::new(process.stdin.take().context("no stdin")?);
+    let mut stdout = BufReader::new(process.stdout.take().context("no stdout")?);
+
+    const MAX_BATCH_SIZE: usize = 64;
+
+    while let Ok(first_request) = request_rx.recv().await {
+        let mut pending_requests = vec![first_request];
+
+        while pending_requests.len() < MAX_BATCH_SIZE {
+            match request_rx.try_recv() {
+                Ok(request) => pending_requests.push(request),
+                Err(_) => break,
+            }
+        }
+
+        for request in &pending_requests {
+            stdin.write_all(request.sha.to_string().as_bytes()).await?;
+            stdin.write_all(b"\n").await?;
+        }
+        stdin.flush().await?;
+
+        for request in pending_requests {
+            let result = read_single_commit_response(&mut stdout, &request.sha).await;
+            request.response_tx.send(result).ok();
+        }
+    }
+
+    drop(stdin);
+    process.kill().ok();
+
+    Ok(())
+}
+
+async fn read_single_commit_response(
+    stdout: &mut BufReader<smol::process::ChildStdout>,
+    sha: &Oid,
+) -> Result<GraphCommitData> {
+    let mut header_bytes = Vec::new();
+    stdout.read_until(b'\n', &mut header_bytes).await?;
+    let header_line = String::from_utf8_lossy(&header_bytes);
+
+    let parts: Vec<&str> = header_line.trim().split(' ').collect();
+    if parts.len() < 3 {
+        bail!("invalid cat-file header: {header_line}");
+    }
+
+    let object_type = parts[1];
+    if object_type == "missing" {
+        bail!("object not found: {}", sha);
+    }
+
+    if object_type != "commit" {
+        bail!("expected commit object, got {object_type}");
+    }
+
+    let size: usize = parts[2]
+        .parse()
+        .with_context(|| format!("invalid object size: {}", parts[2]))?;
+
+    let mut content = vec![0u8; size];
+    stdout.read_exact(&mut content).await?;
+
+    let mut newline = [0u8; 1];
+    stdout.read_exact(&mut newline).await?;
+
+    let content_str = String::from_utf8_lossy(&content);
+    parse_cat_file_commit(*sha, &content_str)
+        .ok_or_else(|| anyhow!("failed to parse commit {}", sha))
+}
+
+fn parse_initial_graph_output<'a>(
+    lines: impl Iterator<Item = &'a str>,
+) -> Vec<Arc<InitialGraphCommitData>> {
+    lines
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| {
+            // Format: "SHA\x00PARENT1 PARENT2...\x00REF1, REF2, ..."
+            let mut parts = line.split('\x00');
+
+            let sha = Oid::from_str(parts.next()?).ok()?;
+            let parents_str = parts.next()?;
+            let parents = parents_str
+                .split_whitespace()
+                .filter_map(|p| Oid::from_str(p).ok())
+                .collect();
+
+            let ref_names_str = parts.next().unwrap_or("");
+            let ref_names = if ref_names_str.is_empty() {
+                Vec::new()
+            } else {
+                ref_names_str
+                    .split(", ")
+                    .map(|s| SharedString::from(s.to_string()))
+                    .collect()
+            };
+
+            Some(Arc::new(InitialGraphCommitData {
+                sha,
+                parents,
+                ref_names,
+            }))
+        })
+        .collect()
 }
 
 fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
