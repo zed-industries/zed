@@ -9,6 +9,7 @@ mod git_store;
 mod image_store;
 mod lsp_command;
 mod lsp_store;
+mod manifest_tree;
 mod project_search;
 mod search;
 mod search_history;

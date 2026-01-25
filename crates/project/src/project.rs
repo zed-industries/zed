@@ -10,7 +10,7 @@ pub mod git_store;
 pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
-mod manifest_tree;
+pub mod manifest_tree;
 pub mod prettier_store;
 pub mod project_search;
 pub mod project_settings;
@@ -1006,7 +1006,7 @@ impl DirectoryLister {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
     trigger_kind: lsp::CompletionTriggerKind::INVOKED,
     trigger_character: None,
@@ -1892,7 +1892,7 @@ impl Project {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub async fn example(
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut AsyncApp,
@@ -1933,7 +1933,7 @@ impl Project {
         project
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub async fn test(
         fs: Arc<dyn Fs>,
         root_paths: impl IntoIterator<Item = &Path>,
@@ -1942,7 +1942,7 @@ impl Project {
         Self::test_project(fs, root_paths, false, cx).await
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub async fn test_with_worktree_trust(
         fs: Arc<dyn Fs>,
         root_paths: impl IntoIterator<Item = &Path>,
@@ -1951,7 +1951,7 @@ impl Project {
         Self::test_project(fs, root_paths, true, cx).await
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     async fn test_project(
         fs: Arc<dyn Fs>,
         root_paths: impl IntoIterator<Item = &Path>,
@@ -2085,7 +2085,7 @@ impl Project {
         });
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     #[inline]
     pub fn has_open_buffer(&self, path: impl Into<ProjectPath>, cx: &App) -> bool {
         self.buffer_store
@@ -2854,7 +2854,7 @@ impl Project {
         })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub fn open_local_buffer_with_lsp(
         &mut self,
         abs_path: impl AsRef<Path>,
@@ -2882,7 +2882,7 @@ impl Project {
         })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub fn open_buffer_with_lsp(
         &mut self,
         path: impl Into<ProjectPath>,
@@ -5516,7 +5516,7 @@ impl Project {
             })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub fn has_language_servers_for(&self, buffer: &Buffer, cx: &mut App) -> bool {
         self.lsp_store.update(cx, |this, cx| {
             this.running_language_servers_for_local_buffer(buffer, cx)
