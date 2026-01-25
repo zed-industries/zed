@@ -2695,6 +2695,16 @@ Positive `integer` values or `null` for unlimited tabs
 
 `boolean` values
 
+## Auto replace Unicode shortcodes
+
+- Description: Whether to automatically replace unicode shortcodes with their corresponding unicode characters (for ex: \alpha with α) as you type
+- Setting: `auto_replace_unicode_shortcode`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Multi Cursor Modifier
 
 - Description: Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.

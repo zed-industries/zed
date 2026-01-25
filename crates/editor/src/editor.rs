@@ -667,6 +667,8 @@ enum EditPredictionSettings {
 
 enum EditPredictionHighlight {}
 
+enum UnicodeShortcodeHighlight {}
+
 #[derive(Debug, Clone)]
 struct InlineDiagnostic {
     message: SharedString,
@@ -1257,6 +1259,8 @@ pub struct Editor {
     use_autoclose: bool,
     use_auto_surround: bool,
     auto_replace_emoji_shortcode: bool,
+    auto_replace_unicode_shortcode: bool,
+    active_unicode_shortcode_start: Option<Anchor>,
     jsx_tag_auto_close_enabled_in_any_buffer: bool,
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
@@ -2416,6 +2420,8 @@ impl Editor {
             use_autoclose: true,
             use_auto_surround: true,
             auto_replace_emoji_shortcode: false,
+            auto_replace_unicode_shortcode: false,
+            active_unicode_shortcode_start: None,
             jsx_tag_auto_close_enabled_in_any_buffer: false,
             leader_id: None,
             remote_id: None,
@@ -3326,6 +3332,10 @@ impl Editor {
         self.auto_replace_emoji_shortcode = auto_replace;
     }
 
+    pub fn set_auto_replace_unicode_shortcode(&mut self, auto_replace: bool) {
+        self.auto_replace_unicode_shortcode = auto_replace;
+    }
+
     pub fn set_should_serialize(&mut self, should_serialize: bool, cx: &App) {
         self.buffer_serialization = should_serialize.then(|| {
             BufferSerialization::new(
@@ -3463,6 +3473,17 @@ impl Editor {
         self.invalidate_autoclose_regions(&selection_anchors, buffer);
         self.snippet_stack.invalidate(&selection_anchors, buffer);
         self.take_rename(false, window, cx);
+
+        // Clear active unicode shortcode when cursor moves away from the shortcode position
+        if let Some(active_start) = &self.active_unicode_shortcode_start {
+            let newest = self.selections.newest_anchor();
+            let active_point = active_start.to_point(buffer);
+            let cursor_point = newest.head().to_point(buffer);
+            if cursor_point.row != active_point.row || cursor_point.column <= active_point.column {
+                self.active_unicode_shortcode_start = None;
+                self.clear_highlights::<UnicodeShortcodeHighlight>(cx);
+            }
+        }
 
         let newest_selection = self.selections.newest_anchor();
         let new_cursor_position = newest_selection.head();
@@ -4498,6 +4519,9 @@ impl Editor {
         let mut all_selections_read_only = true;
         let mut has_adjacent_edits = false;
         let mut in_adjacent_group = false;
+        let mut clear_active_unicode_shortcode = false;
+        let mut set_active_unicode_shortcode: Option<Anchor> = None;
+        let active_unicode_shortcode_start = self.active_unicode_shortcode_start;
 
         let mut regions = self
             .selections_with_autoclose_regions(selections, &snapshot)
@@ -4764,6 +4788,104 @@ impl Editor {
                 continue;
             }
 
+            // Unicode shortcode handling
+            if self.auto_replace_unicode_shortcode {
+                let input_char = text.as_ref().chars().next();
+
+                if text.as_ref() == "\\" {
+                    if !selection.is_empty() {
+                        set_active_unicode_shortcode =
+                            Some(snapshot.anchor_before(selection.start));
+                    } else if let Some(active_start) = active_unicode_shortcode_start {
+                        // Check if cursor is right after the backslash
+                        let active_point = active_start.to_point(&snapshot);
+                        if active_point.row == selection.start.row
+                            && active_point.column + 1 == selection.start.column
+                        {
+                            // Remove the first backslash, insert one backslash
+                            edits.push((active_point..selection.start, "".to_string().into()));
+                            new_selections.push((
+                                Selection {
+                                    id: selection.id,
+                                    start: snapshot.anchor_after(active_point),
+                                    end: snapshot.anchor_before(selection.start),
+                                    reversed: selection.reversed,
+                                    goal: selection.goal,
+                                },
+                                0,
+                            ));
+
+                            let selection_start_anchor = snapshot.anchor_after(selection.start);
+                            new_selections.push((selection.map(|_| selection_start_anchor), 0));
+                            edits.push((selection.start..selection.end, "\\".to_string().into()));
+
+                            clear_active_unicode_shortcode = true;
+                            continue;
+                        } else {
+                            // Active shortcode exists but not right after backslash
+                            set_active_unicode_shortcode =
+                                Some(snapshot.anchor_before(selection.start));
+                        }
+                    } else {
+                        // No active shortcode, start a new one
+                        set_active_unicode_shortcode =
+                            Some(snapshot.anchor_before(selection.start));
+                    }
+                } else if input_char.is_some_and(|c| c.is_whitespace()) {
+                    if let Some(active_start) = active_unicode_shortcode_start {
+                        let active_point = active_start.to_point(&snapshot);
+                        if active_point.row == selection.start.row
+                            && active_point.column < selection.start.column
+                        {
+                            let shortcode_len = selection.start.column - active_point.column - 1;
+                            if shortcode_len > 0 {
+                                let shortcode: String = snapshot
+                                    .chars_at(Point::new(active_point.row, active_point.column + 1))
+                                    .take(shortcode_len as usize)
+                                    .collect();
+
+                                if let Some(unicode_char) =
+                                    Self::lookup_unicode_shortcode(&shortcode)
+                                {
+                                    // Replace shortcode with unicode character + whitespace
+                                    edits.push((
+                                        active_point..selection.start,
+                                        "".to_string().into(),
+                                    ));
+                                    new_selections.push((
+                                        Selection {
+                                            id: selection.id,
+                                            start: snapshot.anchor_after(active_point),
+                                            end: snapshot.anchor_before(selection.start),
+                                            reversed: selection.reversed,
+                                            goal: selection.goal,
+                                        },
+                                        0,
+                                    ));
+
+                                    let selection_start_anchor =
+                                        snapshot.anchor_after(selection.start);
+                                    new_selections
+                                        .push((selection.map(|_| selection_start_anchor), 0));
+                                    let replacement = format!("{}{}", unicode_char, text.as_ref());
+                                    edits
+                                        .push((selection.start..selection.end, replacement.into()));
+
+                                    clear_active_unicode_shortcode = true;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    // Invalid or no shortcode
+                    clear_active_unicode_shortcode = true;
+                } else if input_char.is_some_and(|c| c.is_ascii_alphanumeric()) {
+                    // Keep the active shortcode state
+                } else {
+                    clear_active_unicode_shortcode = true;
+                }
+            }
+
             let next_is_adjacent = regions
                 .peek()
                 .is_some_and(|(next, _)| selection.end == next.start);
@@ -4818,6 +4940,13 @@ impl Editor {
 
         drop(regions);
         drop(snapshot);
+
+        // Update the active unicode shortcode state
+        if clear_active_unicode_shortcode {
+            self.active_unicode_shortcode_start = None;
+        } else if let Some(anchor) = set_active_unicode_shortcode {
+            self.active_unicode_shortcode_start = Some(anchor);
+        }
 
         self.transact(window, cx, |this, window, cx| {
             if clear_linked_edit_ranges {
@@ -4945,6 +5074,7 @@ impl Editor {
             refresh_linked_ranges(this, window, cx);
             this.refresh_edit_prediction(true, false, window, cx);
             jsx_tag_auto_close::handle_from(this, initial_buffer_versions, window, cx);
+            this.update_unicode_shortcode_highlight(cx);
         });
     }
 
@@ -4993,6 +5123,218 @@ impl Editor {
         // Found a possible emoji shortcode at the beginning of the buffer
         chars.reverse();
         Some(chars.iter().collect())
+    }
+
+    /// Unicode shortcode mappings: (shortcode, unicode_char)
+    const UNICODE_SHORTCODES: &'static [(&'static str, &'static str)] = &[
+        ("alpha", "α"),
+        ("beta", "β"),
+        ("gamma", "γ"),
+        ("delta", "δ"),
+        ("epsilon", "ε"),
+        ("zeta", "ζ"),
+        ("eta", "η"),
+        ("theta", "θ"),
+        ("iota", "ι"),
+        ("kappa", "κ"),
+        ("lambda", "λ"),
+        ("mu", "μ"),
+        ("nu", "ν"),
+        ("xi", "ξ"),
+        ("pi", "π"),
+        ("rho", "ρ"),
+        ("sigma", "σ"),
+        ("tau", "τ"),
+        ("upsilon", "υ"),
+        ("phi", "φ"),
+        ("chi", "χ"),
+        ("psi", "ψ"),
+        ("omega", "ω"),
+        ("Alpha", "Α"),
+        ("Beta", "Β"),
+        ("Gamma", "Γ"),
+        ("Delta", "Δ"),
+        ("Epsilon", "Ε"),
+        ("Zeta", "Ζ"),
+        ("Eta", "Η"),
+        ("Theta", "Θ"),
+        ("Iota", "Ι"),
+        ("Kappa", "Κ"),
+        ("Lambda", "Λ"),
+        ("Mu", "Μ"),
+        ("Nu", "Ν"),
+        ("Xi", "Ξ"),
+        ("Pi", "Π"),
+        ("Rho", "Ρ"),
+        ("Sigma", "Σ"),
+        ("Tau", "Τ"),
+        ("Upsilon", "Υ"),
+        ("Phi", "Φ"),
+        ("Chi", "Χ"),
+        ("Psi", "Ψ"),
+        ("Omega", "Ω"),
+        ("forall", "∀"),
+        ("exists", "∃"),
+        ("nexists", "∄"),
+        ("in", "∈"),
+        ("notin", "∉"),
+        ("subset", "⊂"),
+        ("supset", "⊃"),
+        ("subseteq", "⊆"),
+        ("supseteq", "⊇"),
+        ("emptyset", "∅"),
+        ("infty", "∞"),
+        ("nabla", "∇"),
+        ("partial", "∂"),
+        ("sum", "∑"),
+        ("prod", "∏"),
+        ("int", "∫"),
+        ("pm", "±"),
+        ("mp", "∓"),
+        ("times", "×"),
+        ("div", "÷"),
+        ("cdot", "·"),
+        ("neq", "≠"),
+        ("leq", "≤"),
+        ("geq", "≥"),
+        ("approx", "≈"),
+        ("equiv", "≡"),
+        ("land", "∧"),
+        ("lor", "∨"),
+        ("lnot", "¬"),
+        ("implies", "⇒"),
+        ("iff", "⇔"),
+        ("to", "→"),
+        ("leftarrow", "←"),
+        ("rightarrow", "→"),
+        ("leftrightarrow", "↔"),
+        ("Leftarrow", "⇐"),
+        ("Rightarrow", "⇒"),
+        ("Leftrightarrow", "⇔"),
+        ("uparrow", "↑"),
+        ("downarrow", "↓"),
+        ("mapsto", "↦"),
+        ("circ", "∘"),
+        ("sqrt", "√"),
+        ("cbrt", "∛"),
+        ("ang", "∠"),
+        ("degree", "°"),
+        ("prime", "′"),
+        ("dprime", "″"),
+        ("ell", "ℓ"),
+        ("hbar", "ℏ"),
+        ("Re", "ℜ"),
+        ("Im", "ℑ"),
+        ("aleph", "ℵ"),
+        ("wp", "℘"),
+        ("sub0", "₀"),
+        ("sub1", "₁"),
+        ("sub2", "₂"),
+        ("sub3", "₃"),
+        ("sub4", "₄"),
+        ("sub5", "₅"),
+        ("sub6", "₆"),
+        ("sub7", "₇"),
+        ("sub8", "₈"),
+        ("sub9", "₉"),
+        ("sup0", "⁰"),
+        ("sup1", "¹"),
+        ("sup2", "²"),
+        ("sup3", "³"),
+        ("sup4", "⁴"),
+        ("sup5", "⁵"),
+        ("sup6", "⁶"),
+        ("sup7", "⁷"),
+        ("sup8", "⁸"),
+        ("sup9", "⁹"),
+    ];
+
+    /// Looks up a unicode symbol by its shortcode name.
+    fn lookup_unicode_shortcode(shortcode: &str) -> Option<&'static str> {
+        Self::UNICODE_SHORTCODES
+            .iter()
+            .find(|(sc, _)| *sc == shortcode)
+            .map(|(_, unicode)| *unicode)
+    }
+
+    /// Updates the unicode shortcode highlight based on the active shortcode anchor
+    fn update_unicode_shortcode_highlight(&mut self, cx: &mut Context<Self>) {
+        let Some(active_start) = &self.active_unicode_shortcode_start else {
+            self.clear_highlights::<UnicodeShortcodeHighlight>(cx);
+            return;
+        };
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let display_snapshot = self.display_snapshot(cx);
+        let selections = self.selections.all::<Point>(&display_snapshot);
+
+        // Only highlight if we have a single cursor right after the active shortcode
+        if selections.len() != 1 || !selections[0].is_empty() {
+            self.clear_highlights::<UnicodeShortcodeHighlight>(cx);
+            return;
+        }
+
+        let cursor_position = selections[0].head();
+        let active_point = active_start.to_point(&snapshot);
+
+        // Verify cursor is on the same line and after the backslash
+        if cursor_position.row != active_point.row || cursor_position.column <= active_point.column
+        {
+            self.clear_highlights::<UnicodeShortcodeHighlight>(cx);
+            return;
+        }
+
+        // Extract the shortcode text and check if it's a valid prefix
+        let shortcode_len = cursor_position.column - active_point.column - 1;
+        if shortcode_len == 0 {
+            let start_anchor = snapshot.anchor_after(active_point);
+            let end_anchor = snapshot.anchor_before(cursor_position);
+            self.highlight_text::<UnicodeShortcodeHighlight>(
+                vec![start_anchor..end_anchor],
+                HighlightStyle {
+                    underline: Some(UnderlineStyle {
+                        thickness: px(1.0),
+                        color: None,
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                },
+                cx,
+            );
+            return;
+        }
+
+        let shortcode: String = snapshot
+            .chars_at(Point::new(active_point.row, active_point.column + 1))
+            .take(shortcode_len as usize)
+            .collect();
+
+        // Only highlight if it's a valid prefix for a shortcode
+        if Self::is_valid_unicode_shortcode_prefix(&shortcode) {
+            let start_anchor = snapshot.anchor_after(active_point);
+            let end_anchor = snapshot.anchor_before(cursor_position);
+            self.highlight_text::<UnicodeShortcodeHighlight>(
+                vec![start_anchor..end_anchor],
+                HighlightStyle {
+                    underline: Some(UnderlineStyle {
+                        thickness: px(1.0),
+                        color: None,
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                },
+                cx,
+            );
+        } else {
+            self.clear_highlights::<UnicodeShortcodeHighlight>(cx);
+        }
+    }
+
+    /// Checks if the given string is a valid prefix for any unicode shortcode.
+    fn is_valid_unicode_shortcode_prefix(prefix: &str) -> bool {
+        Self::UNICODE_SHORTCODES
+            .iter()
+            .any(|(sc, _)| sc.starts_with(prefix))
     }
 
     pub fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
@@ -23853,6 +24195,7 @@ impl Editor {
             self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
             self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
             self.hide_mouse_mode = editor_settings.hide_mouse.unwrap_or_default();
+            self.auto_replace_unicode_shortcode = editor_settings.auto_replace_unicode_shortcode;
         }
 
         if old_cursor_shape != self.cursor_shape {

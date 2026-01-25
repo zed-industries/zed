@@ -11666,6 +11666,93 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_auto_replace_unicode_shortcode(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    let buffer = cx.new(|cx| Buffer::local("", cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_auto_replace_unicode_shortcode(true);
+
+        editor.handle_input("\\", window, cx);
+        editor.handle_input("alpha", window, cx);
+        assert_eq!(editor.text(cx), "\\alpha");
+
+        editor.handle_input(" ", window, cx);
+        assert_eq!(editor.text(cx), "α ");
+
+        editor.handle_input("\\", window, cx);
+        editor.handle_input("beta", window, cx);
+        assert_eq!(editor.text(cx), "α \\beta");
+
+        editor.handle_input(" ", window, cx);
+        assert_eq!(editor.text(cx), "α β ");
+
+        editor.handle_input("\\", window, cx);
+        editor.handle_input("Delta", window, cx);
+        editor.handle_input(" ", window, cx);
+        assert_eq!(editor.text(cx), "α β Δ ");
+
+        editor.handle_input("\\", window, cx);
+        editor.handle_input("forall", window, cx);
+        editor.handle_input(" ", window, cx);
+        assert_eq!(editor.text(cx), "α β Δ ∀ ");
+
+        editor.handle_input("\\", window, cx);
+        editor.handle_input("notashortcode", window, cx);
+        editor.handle_input(" ", window, cx);
+        assert_eq!(editor.text(cx), "α β Δ ∀ \\notashortcode ");
+
+        editor.handle_input("\\", window, cx);
+        assert_eq!(editor.text(cx), "α β Δ ∀ \\notashortcode \\");
+
+        editor.handle_input("\\", window, cx);
+        assert_eq!(editor.text(cx), "α β Δ ∀ \\notashortcode \\");
+
+        editor.handle_input("gamma", window, cx);
+        editor.handle_input(" ", window, cx);
+        assert_eq!(editor.text(cx), "α β Δ ∀ \\notashortcode \\gamma ");
+
+        editor.handle_input("\\", window, cx);
+        editor.handle_input("delta", window, cx);
+        editor.handle_input(" ", window, cx);
+        assert_eq!(editor.text(cx), "α β Δ ∀ \\notashortcode \\gamma δ ");
+    });
+
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    let buffer = cx.new(|cx| Buffer::local("", cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_auto_replace_unicode_shortcode(false);
+        editor.handle_input("\\", window, cx);
+        editor.handle_input("alpha", window, cx);
+        editor.handle_input(" ", window, cx);
+        assert_eq!(editor.text(cx), "\\alpha ");
+    });
+}
+
+#[gpui::test]
 async fn test_snippet_placeholder_choices(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
