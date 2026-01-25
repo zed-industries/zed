@@ -1407,6 +1407,153 @@ impl WslPath {
     }
 }
 
+pub trait UrlExt {
+    /// A version of `url::Url::to_file_path` that does platform handling based on the provided `PathStyle` instead of the host platform.
+    ///
+    /// Prefer using this over `url::Url::to_file_path` when you need to handle paths in a cross-platform way as is the case for remoting interactions.
+    fn to_file_path_ext(&self, path_style: PathStyle) -> Result<PathBuf, ()>;
+}
+
+impl UrlExt for url::Url {
+    // Copied from `url::Url::to_file_path`, but the `cfg` handling is replaced with runtime branching on `PathStyle`
+    fn to_file_path_ext(&self, source_path_style: PathStyle) -> Result<PathBuf, ()> {
+        if let Some(segments) = self.path_segments() {
+            let host = match self.host() {
+                None | Some(url::Host::Domain("localhost")) => None,
+                Some(_) if source_path_style.is_windows() && self.scheme() == "file" => {
+                    self.host_str()
+                }
+                _ => return Err(()),
+            };
+
+            let str_len = self.as_str().len();
+            let estimated_capacity = if source_path_style.is_windows() {
+                // remove scheme: - has possible \\ for hostname
+                str_len.saturating_sub(self.scheme().len() + 1)
+            } else {
+                // remove scheme://
+                str_len.saturating_sub(self.scheme().len() + 3)
+            };
+            return match source_path_style {
+                PathStyle::Posix => {
+                    file_url_segments_to_pathbuf_posix(estimated_capacity, host, segments)
+                }
+                PathStyle::Windows => {
+                    file_url_segments_to_pathbuf_windows(estimated_capacity, host, segments)
+                }
+            };
+        }
+
+        fn file_url_segments_to_pathbuf_posix(
+            estimated_capacity: usize,
+            host: Option<&str>,
+            segments: std::str::Split<'_, char>,
+        ) -> Result<PathBuf, ()> {
+            use percent_encoding::percent_decode;
+
+            if host.is_some() {
+                return Err(());
+            }
+
+            let mut bytes = Vec::new();
+            bytes.try_reserve(estimated_capacity).map_err(|_| ())?;
+
+            for segment in segments {
+                bytes.push(b'/');
+                bytes.extend(percent_decode(segment.as_bytes()));
+            }
+
+            // A windows drive letter must end with a slash.
+            if bytes.len() > 2
+                && bytes[bytes.len() - 2].is_ascii_alphabetic()
+                && matches!(bytes[bytes.len() - 1], b':' | b'|')
+            {
+                bytes.push(b'/');
+            }
+
+            let path = String::from_utf8(bytes).map_err(|_| ())?;
+            debug_assert!(
+                PathStyle::Posix.is_absolute(&path),
+                "to_file_path() failed to produce an absolute Path"
+            );
+
+            Ok(PathBuf::from(path))
+        }
+
+        fn file_url_segments_to_pathbuf_windows(
+            estimated_capacity: usize,
+            host: Option<&str>,
+            mut segments: std::str::Split<'_, char>,
+        ) -> Result<PathBuf, ()> {
+            use percent_encoding::percent_decode_str;
+            let mut string = String::new();
+            string.try_reserve(estimated_capacity).map_err(|_| ())?;
+            if let Some(host) = host {
+                string.push_str(r"\\");
+                string.push_str(host);
+            } else {
+                let first = segments.next().ok_or(())?;
+
+                match first.len() {
+                    2 => {
+                        if !first.starts_with(|c| char::is_ascii_alphabetic(&c))
+                            || first.as_bytes()[1] != b':'
+                        {
+                            return Err(());
+                        }
+
+                        string.push_str(first);
+                    }
+
+                    4 => {
+                        if !first.starts_with(|c| char::is_ascii_alphabetic(&c)) {
+                            return Err(());
+                        }
+                        let bytes = first.as_bytes();
+                        if bytes[1] != b'%'
+                            || bytes[2] != b'3'
+                            || (bytes[3] != b'a' && bytes[3] != b'A')
+                        {
+                            return Err(());
+                        }
+
+                        string.push_str(&first[0..1]);
+                        string.push(':');
+                    }
+
+                    _ => return Err(()),
+                }
+            };
+
+            for segment in segments {
+                string.push('\\');
+
+                // Currently non-unicode windows paths cannot be represented
+                match percent_decode_str(segment).decode_utf8() {
+                    Ok(s) => string.push_str(&s),
+                    Err(..) => return Err(()),
+                }
+            }
+            // ensure our estimated capacity was good
+            if cfg!(test) {
+                debug_assert!(
+                    string.len() <= estimated_capacity,
+                    "len: {}, capacity: {}",
+                    string.len(),
+                    estimated_capacity
+                );
+            }
+            debug_assert!(
+                PathStyle::Windows.is_absolute(&string),
+                "to_file_path() failed to produce an absolute Path"
+            );
+            let path = PathBuf::from(string);
+            Ok(path)
+        }
+        Err(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::rel_path::rel_path;
@@ -2701,5 +2848,214 @@ mod tests {
 
         let path = r"\\windows.localhost\Distro\foo";
         assert_eq!(WslPath::from_path(&path), None);
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_posix_basic() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file:///home/user/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/home/user/file.txt"))
+        );
+
+        let url = url::Url::parse("file:///").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/"))
+        );
+
+        let url = url::Url::parse("file:///a/b/c/d/e").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/a/b/c/d/e"))
+        );
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_posix_percent_encoding() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file:///home/user/file%20with%20spaces.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/home/user/file with spaces.txt"))
+        );
+
+        let url = url::Url::parse("file:///path%2Fwith%2Fencoded%2Fslashes").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/path/with/encoded/slashes"))
+        );
+
+        let url = url::Url::parse("file:///special%23chars%3F.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/special#chars?.txt"))
+        );
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_posix_localhost() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file://localhost/home/user/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/home/user/file.txt"))
+        );
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_posix_rejects_host() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file://somehost/home/user/file.txt").unwrap();
+        assert_eq!(url.to_file_path_ext(PathStyle::Posix), Err(()));
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_posix_windows_drive_letter() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file:///C:").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/C:/"))
+        );
+
+        let url = url::Url::parse("file:///D|").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/D|/"))
+        );
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_windows_basic() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file:///C:/Users/user/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("C:\\Users\\user\\file.txt"))
+        );
+
+        let url = url::Url::parse("file:///D:/folder/subfolder/file.rs").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("D:\\folder\\subfolder\\file.rs"))
+        );
+
+        let url = url::Url::parse("file:///C:/").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("C:\\"))
+        );
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_windows_encoded_drive_letter() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file:///C%3A/Users/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("C:\\Users\\file.txt"))
+        );
+
+        let url = url::Url::parse("file:///c%3a/Users/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("c:\\Users\\file.txt"))
+        );
+
+        let url = url::Url::parse("file:///D%3A/folder/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("D:\\folder\\file.txt"))
+        );
+
+        let url = url::Url::parse("file:///d%3A/folder/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("d:\\folder\\file.txt"))
+        );
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_windows_unc_path() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file://server/share/path/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("\\\\server\\share\\path\\file.txt"))
+        );
+
+        let url = url::Url::parse("file://server/share").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("\\\\server\\share"))
+        );
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_windows_percent_encoding() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file:///C:/Users/user/file%20with%20spaces.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("C:\\Users\\user\\file with spaces.txt"))
+        );
+
+        let url = url::Url::parse("file:///C:/special%23chars%3F.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("C:\\special#chars?.txt"))
+        );
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_windows_invalid_drive() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file:///1:/path/file.txt").unwrap();
+        assert_eq!(url.to_file_path_ext(PathStyle::Windows), Err(()));
+
+        let url = url::Url::parse("file:///CC:/path/file.txt").unwrap();
+        assert_eq!(url.to_file_path_ext(PathStyle::Windows), Err(()));
+
+        let url = url::Url::parse("file:///C/path/file.txt").unwrap();
+        assert_eq!(url.to_file_path_ext(PathStyle::Windows), Err(()));
+
+        let url = url::Url::parse("file:///invalid").unwrap();
+        assert_eq!(url.to_file_path_ext(PathStyle::Windows), Err(()));
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_non_file_scheme() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("http://example.com/path").unwrap();
+        assert_eq!(url.to_file_path_ext(PathStyle::Posix), Err(()));
+        assert_eq!(url.to_file_path_ext(PathStyle::Windows), Err(()));
+
+        let url = url::Url::parse("https://example.com/path").unwrap();
+        assert_eq!(url.to_file_path_ext(PathStyle::Posix), Err(()));
+        assert_eq!(url.to_file_path_ext(PathStyle::Windows), Err(()));
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_windows_localhost() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file://localhost/C:/Users/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("C:\\Users\\file.txt"))
+        );
     }
 }

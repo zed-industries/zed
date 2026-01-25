@@ -210,6 +210,10 @@ pub struct CopilotSettingsContent {
     ///
     /// Default: none
     pub enterprise_uri: Option<String>,
+    /// Whether the Copilot Next Edit Suggestions feature is enabled.
+    ///
+    /// Default: true
+    pub enable_next_edit_suggestions: Option<bool>,
 }
 
 #[with_fallible_options]

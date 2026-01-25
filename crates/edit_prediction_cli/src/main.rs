@@ -12,12 +12,14 @@ mod paths;
 mod predict;
 mod progress;
 mod pull_examples;
+mod qa;
 mod reorder_patch;
 mod retrieve_context;
 mod score;
 mod split_commit;
 mod split_dataset;
 mod synthesize;
+mod word_diff;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use collections::HashSet;
 use edit_prediction::EditPredictionStore;
@@ -146,7 +148,7 @@ enum Command {
     /// predicted outputs and removing actual outputs and prompts.
     Distill,
     /// Print aggregated scores
-    Eval(PredictArgs),
+    Eval(EvalArgs),
     /// Generate eval examples by analyzing git commits from a repository
     Synthesize(SynthesizeArgs),
     /// Remove git repositories and worktrees
@@ -159,6 +161,8 @@ enum Command {
     FilterLanguages(FilterLanguagesArgs),
     /// Import Anthropic batch results by batch IDs (useful for recovering after database loss)
     ImportBatch(ImportBatchArgs),
+    /// Assess the quality of predictions using LLM-as-a-judge
+    Qa(qa::QaArgs),
 }
 
 impl Display for Command {
@@ -180,7 +184,7 @@ impl Display for Command {
                 None => write!(f, "score"),
             },
             Command::Distill => write!(f, "distill"),
-            Command::Eval(args) => match &args.provider {
+            Command::Eval(args) => match &args.predict.provider {
                 Some(provider) => write!(f, "eval --provider={}", provider),
                 None => write!(f, "eval"),
             },
@@ -193,6 +197,9 @@ impl Display for Command {
             Command::FilterLanguages(_) => write!(f, "filter-languages"),
             Command::ImportBatch(args) => {
                 write!(f, "import-batch --batch-ids {}", args.batch_ids.join(" "))
+            }
+            Command::Qa(_) => {
+                write!(f, "qa")
             }
         }
     }
@@ -210,6 +217,15 @@ struct PredictArgs {
     provider: Option<PredictionProvider>,
     #[clap(long, default_value_t = 1)]
     repetitions: usize,
+}
+
+#[derive(Debug, Args, Clone)]
+struct EvalArgs {
+    #[clap(flatten)]
+    predict: PredictArgs,
+    /// Path to write summary scores as JSON
+    #[clap(long)]
+    summary_json: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -549,6 +565,32 @@ fn main() {
             }
             return;
         }
+        Command::Qa(qa_args) => {
+            // Read examples from input files
+            let mut examples = example::read_example_files(&args.inputs);
+
+            // Apply filters
+            if let Some(name_filter) = &args.name {
+                examples.retain(|e| e.spec.name.contains(name_filter));
+            }
+            if let Some(repo_filter) = &args.repo {
+                examples.retain(|e| e.spec.repository_url.contains(repo_filter));
+            }
+            if let Some(offset) = args.offset {
+                examples.splice(0..offset, []);
+            }
+            if let Some(limit) = args.limit {
+                examples.truncate(limit);
+            }
+
+            smol::block_on(async {
+                if let Err(e) = qa::run_qa(&mut examples, qa_args, output.as_ref()).await {
+                    eprintln!("Error: {:?}", e);
+                    std::process::exit(1);
+                }
+            });
+            return;
+        }
         _ => {}
     }
 
@@ -570,8 +612,11 @@ fn main() {
                 .await?;
 
                 match &command {
-                    Command::Predict(args) | Command::Score(args) | Command::Eval(args) => {
+                    Command::Predict(args) | Command::Score(args) => {
                         predict::sync_batches(args.provider.as_ref()).await?;
+                    }
+                    Command::Eval(args) => {
+                        predict::sync_batches(args.predict.provider.as_ref()).await?;
                     }
                     _ => (),
                 }
@@ -687,10 +732,20 @@ fn main() {
                                         Command::Distill => {
                                             run_distill(example).await?;
                                         }
-                                        Command::Score(args) | Command::Eval(args) => {
+                                        Command::Score(args) => {
                                             run_scoring(
                                                 example,
-                                                &args,
+                                                args,
+                                                app_state.clone(),
+                                                &example_progress,
+                                                cx.clone(),
+                                            )
+                                            .await?;
+                                        }
+                                        Command::Eval(args) => {
+                                            run_scoring(
+                                                example,
+                                                &args.predict,
                                                 app_state.clone(),
                                                 &example_progress,
                                                 cx.clone(),
@@ -702,7 +757,8 @@ fn main() {
                                         | Command::SplitCommit(_)
                                         | Command::Split(_)
                                         | Command::FilterLanguages(_)
-                                        | Command::ImportBatch(_) => {
+                                        | Command::ImportBatch(_)
+                                        | Command::Qa(_) => {
                                             unreachable!()
                                         }
                                     }
@@ -786,14 +842,23 @@ fn main() {
                 Progress::global().finalize();
 
                 match &command {
-                    Command::Predict(args) | Command::Score(args) | Command::Eval(args) => {
+                    Command::Predict(args) | Command::Score(args) => {
                         predict::sync_batches(args.provider.as_ref()).await?;
+                    }
+                    Command::Eval(args) => {
+                        predict::sync_batches(args.predict.provider.as_ref()).await?;
                     }
                     _ => (),
                 }
 
                 match &command {
-                    Command::Eval(_) => score::print_report(&finished_examples.lock().unwrap()),
+                    Command::Eval(args) => {
+                        let examples = finished_examples.lock().unwrap();
+                        score::print_report(&examples);
+                        if let Some(summary_path) = &args.summary_json {
+                            score::write_summary_json(&examples, summary_path)?;
+                        }
+                    }
                     _ => (),
                 };
 
