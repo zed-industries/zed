@@ -349,6 +349,8 @@ messages!(
     (GetSharedAgentThreadResponse, Foreground),
     (FindSearchCandidatesChunk, Background),
     (FindSearchCandidatesCancelled, Background),
+    (GetInitialGraphCommit, Background),
+    (GetInitialGraphCommitResponse, Background),
 );
 
 request_messages!(
@@ -540,6 +542,7 @@ request_messages!(
     (TrustWorktrees, Ack),
     (RestrictWorktrees, Ack),
     (FindSearchCandidatesChunk, Ack),
+    (GetInitialGraphCommit, GetInitialGraphCommitResponse),
 );
 
 lsp_messages!(
@@ -718,6 +721,7 @@ entity_messages!(
     RestrictWorktrees,
     FindSearchCandidatesChunk,
     FindSearchCandidatesCancelled,
+    GetInitialGraphCommit,
 );
 
 entity_messages!(

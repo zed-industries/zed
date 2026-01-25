@@ -7146,6 +7146,7 @@ dependencies = [
  "log",
  "parking_lot",
  "pretty_assertions",
+ "proto",
  "rand 0.9.2",
  "regex",
  "rope",

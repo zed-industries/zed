@@ -70,6 +70,31 @@ pub struct InitialGraphCommitData {
     pub ref_names: Vec<SharedString>,
 }
 
+impl InitialGraphCommitData {
+    pub fn to_proto(&self) -> proto::InitialGraphCommit {
+        proto::InitialGraphCommit {
+            sha: self.sha.to_string(),
+            parents: self.parents.iter().map(|p| p.to_string()).collect(),
+            ref_names: self.ref_names.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    pub fn from_proto(commit: proto::InitialGraphCommit) -> Result<Self> {
+        let sha = Oid::from_str(&commit.sha)?;
+        let parents = commit
+            .parents
+            .iter()
+            .filter_map(|parent| Oid::from_str(&parent).ok())
+            .collect();
+        let ref_names = commit.ref_names.iter().map(SharedString::from).collect();
+        Ok(Self {
+            sha,
+            parents,
+            ref_names,
+        })
+    }
+}
+
 struct CommitDataRequest {
     sha: Oid,
     response_tx: oneshot::Sender<Result<GraphCommitData>>,
@@ -542,6 +567,25 @@ impl LogOrder {
             LogOrder::ReverseChronological => "--reverse",
         }
     }
+
+    pub fn to_proto(&self) -> i32 {
+        match self {
+            LogOrder::DateOrder => 0,
+            LogOrder::TopoOrder => 1,
+            LogOrder::AuthorDateOrder => 2,
+            LogOrder::ReverseChronological => 3,
+        }
+    }
+
+    pub fn from_proto(proto: i32) -> Result<Self> {
+        Ok(match proto {
+            0 => LogOrder::DateOrder,
+            1 => LogOrder::TopoOrder,
+            2 => LogOrder::AuthorDateOrder,
+            3 => LogOrder::ReverseChronological,
+            _ => return Err(anyhow!("Invalid proto value for LogOrder")),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -561,6 +605,30 @@ impl LogSource {
                 str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")
             }
         }
+    }
+    pub fn to_proto(&self) -> proto::get_initial_graph_commit::LogSource {
+        match self {
+            LogSource::All => proto::get_initial_graph_commit::LogSource::All(true),
+            LogSource::Branch(branch) => {
+                proto::get_initial_graph_commit::LogSource::Branch(branch.to_string())
+            }
+            LogSource::Sha(sha) => proto::get_initial_graph_commit::LogSource::Sha(sha.to_string()),
+        }
+    }
+
+    pub fn from_proto(
+        log_source: Option<proto::get_initial_graph_commit::LogSource>,
+    ) -> Result<Self> {
+        Ok(match log_source {
+            Some(proto::get_initial_graph_commit::LogSource::All(_)) => LogSource::All,
+            Some(proto::get_initial_graph_commit::LogSource::Branch(branch)) => {
+                LogSource::Branch(SharedString::from(branch))
+            }
+            Some(proto::get_initial_graph_commit::LogSource::Sha(sha)) => {
+                LogSource::Sha(Oid::from_str(&sha)?)
+            }
+            None => return Err(anyhow!("Empty proto value for LogSource")),
+        })
     }
 }
 

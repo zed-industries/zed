@@ -589,3 +589,27 @@ message RunGitHook {
     uint64 repository_id = 2;
     GitHook hook = 3;
 }
+
+message GetInitialGraphCommit {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    uint64 start = 3;
+    uint64 end = 4;
+    oneof log_source {
+        bool all = 5;
+        string branch = 6;
+        string sha = 7;
+    };
+    int32 log_order = 8;
+}
+
+message InitialGraphCommit {
+    string sha = 1;
+    repeated string parents = 2;
+    repeated string ref_names = 3;
+}
+
+message GetInitialGraphCommitResponse {
+    repeated InitialGraphCommit commits = 1;
+    bool finished = 2;
+}
