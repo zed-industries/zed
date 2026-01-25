@@ -800,8 +800,7 @@ calloop = { git = "https://github.com/zed-industries/calloop" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
-# https://github.com/rust-lang/cargo/issues/16104
-incremental = false
+incremental = true
 codegen-units = 16
 
 # mirror configuration for crates compiled for the build platform
