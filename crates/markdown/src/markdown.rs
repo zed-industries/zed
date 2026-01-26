@@ -1910,8 +1910,15 @@ struct RenderedLink {
 
 impl RenderedText {
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
-        let mut lines = self.lines.iter().peekable();
+        // First, try to find an exact match (handles overlapping bounds like table columns)
+        for line in self.lines.iter() {
+            if line.layout.bounds().contains(&position) {
+                return line.source_index_for_position(position);
+            }
+        }
 
+        // Fall back to Y-coordinate based matching
+        let mut lines = self.lines.iter().peekable();
         while let Some(line) = lines.next() {
             let line_bounds = line.layout.bounds();
             if position.y > line_bounds.bottom() {
@@ -1920,11 +1927,9 @@ impl RenderedText {
                 {
                     return Err(line.source_end);
                 }
-
-                continue;
+            } else {
+                return line.source_index_for_position(position);
             }
-
-            return line.source_index_for_position(position);
         }
 
         Err(self.lines.last().map_or(0, |line| line.source_end))
@@ -2034,6 +2039,17 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, size};
 
+    fn ensure_theme_initialized(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            if !cx.has_global::<settings::SettingsStore>() {
+                settings::init(cx);
+            }
+            if !cx.has_global::<theme::GlobalTheme>() {
+                theme::init(theme::LoadThemes::JustBase, cx);
+            }
+        });
+    }
+
     #[gpui::test]
     fn test_mappings(cx: &mut TestAppContext) {
         // Formatting.
@@ -2093,6 +2109,8 @@ mod tests {
                 div()
             }
         }
+
+        ensure_theme_initialized(cx);
 
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
@@ -2240,6 +2258,28 @@ mod tests {
         let word_range = rendered.surrounding_word_range(51); // Inside "code"
         let selected_text = rendered.text_for_range(word_range);
         assert_eq!(selected_text, "code");
+    }
+
+    #[gpui::test]
+    fn test_table_column_selection(cx: &mut TestAppContext) {
+        let rendered = render_markdown("| a | b |\n|---|---|\n| c | d |", cx);
+
+        assert!(rendered.lines.len() >= 2);
+        let first_bounds = rendered.lines[0].layout.bounds();
+        let second_bounds = rendered.lines[1].layout.bounds();
+
+        let first_index = match rendered.source_index_for_position(first_bounds.center()) {
+            Ok(index) | Err(index) => index,
+        };
+        let second_index = match rendered.source_index_for_position(second_bounds.center()) {
+            Ok(index) | Err(index) => index,
+        };
+
+        let first_word = rendered.text_for_range(rendered.surrounding_word_range(first_index));
+        let second_word = rendered.text_for_range(rendered.surrounding_word_range(second_index));
+
+        assert_eq!(first_word, "a");
+        assert_eq!(second_word, "b");
     }
 
     #[gpui::test]
