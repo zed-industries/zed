@@ -455,7 +455,8 @@ pub fn into_open_ai(
                     
                     let mut tool_name = tool_use.name.to_string();
                     if tool_name.is_empty() {
-                        log::warn!("Tool call has empty name when sending to API, this may cause issues");
+                        tool_name = "unknown_tool".to_string();
+                        log::warn!("Using placeholder 'unknown_tool' for empty tool name when sending to API");
                     }
                     
                     let tool_call = open_ai::ToolCall {
@@ -847,7 +848,8 @@ impl OpenAiEventMapper {
                         tool_call.id = format!("call_{}", uuid::Uuid::new_v4());
                     }
                     if tool_call.name.is_empty() {
-                        log::warn!("Tool call has empty name, this may cause issues with the API");
+                        tool_call.name = "unknown_tool".to_string();
+                        log::warn!("Using placeholder 'unknown_tool' for empty tool name from streaming response");
                     }
 
                     match serde_json::Value::from_str(&tool_call.arguments) {
@@ -1104,9 +1106,11 @@ impl OpenAiResponseEventMapper {
                     call_id = format!("call_{}", uuid::Uuid::new_v4());
                 }
                 
-                let mut name: Arc<str> = Arc::from(function_call.name.clone().unwrap_or_default());
+                let name: Arc<str> = Arc::from(function_call.name.clone().unwrap_or_default());
+                let mut name = name;
                 if name.is_empty() {
-                    log::warn!("Tool call has empty name, this may cause issues with the API");
+                    name = Arc::from("unknown_tool");
+                    log::warn!("Using placeholder 'unknown_tool' for empty tool name from response");
                 }
                 
                 let arguments = &function_call.arguments;
@@ -1980,10 +1984,10 @@ mod tests {
     }
 
     #[test]
-    fn into_open_ai_generates_ids_for_empty_tool_calls() {
-        // Test the full round-trip: receive a tool call (possibly with empty ID),
+    fn into_open_ai_generates_ids_and_names_for_empty_tool_calls() {
+        // Test the full round-trip: receive a tool call (possibly with empty ID and name),
         // add it to conversation history, and serialize for API request.
-        // This validates the fix for #47696 where Zed sends empty tool call IDs back to the API.
+        // This validates the fix for #47696 where Zed sends empty tool call IDs and names back to the API.
         
         let request = LanguageModelRequest {
             thread_id: None,
@@ -1991,14 +1995,25 @@ mod tests {
             intent: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::Assistant,
-                content: vec![MessageContent::ToolUse(LanguageModelToolUse {
-                    id: LanguageModelToolUseId::from(""),  // Empty ID (as received from some APIs)
-                    name: "create_directory".into(),
-                    raw_input: r#"{"path":"test"}"#.to_string(),
-                    input: serde_json::json!({"path": "test"}),
-                    is_input_complete: true,
-                    thought_signature: None,
-                })],
+                content: vec![
+                    MessageContent::ToolUse(LanguageModelToolUse {
+                        id: LanguageModelToolUseId::from(""),  // Empty ID (as received from some APIs)
+                        name: "create_directory".into(),
+                        raw_input: r#"{"path":"test"}"#.to_string(),
+                        input: serde_json::json!({"path": "test"}),
+                        is_input_complete: true,
+                        thought_signature: None,
+                    }),
+                    // Test case with both empty ID and empty name
+                    MessageContent::ToolUse(LanguageModelToolUse {
+                        id: LanguageModelToolUseId::from(""),  // Empty ID
+                        name: "".into(),                        // Empty name (should use placeholder)
+                        raw_input: r#"{"file":"test.txt"}"#.to_string(),
+                        input: serde_json::json!({"file": "test.txt"}),
+                        is_input_complete: true,
+                        thought_signature: None,
+                    }),
+                ],
                 cache: false,
                 reasoning_details: None,
             }],
@@ -2011,12 +2026,15 @@ mod tests {
 
         let open_ai_request = into_open_ai(&request, "gpt-4o", false, false, None, None);
 
-        // Verify the serialized request has valid non-empty tool call IDs
+        // Verify the serialized request has valid non-empty tool call IDs and names
         if let Some(open_ai::RequestMessage::Assistant { tool_calls, .. }) = open_ai_request.messages.last()
         {
-            assert!(!tool_calls.is_empty());
-            for tool_call in tool_calls {
-                // The ID should not be empty
+            assert_eq!(tool_calls.len(), 2, "Should have two tool calls");
+            
+            // First tool call: with empty ID but valid name
+            {
+                let tool_call = &tool_calls[0];
+                // The ID should not be empty - it should have been generated
                 assert!(!tool_call.id.is_empty(), "Tool call ID should not be empty");
                 // It should follow our naming convention
                 assert!(
@@ -2027,6 +2045,27 @@ mod tests {
                 if let open_ai::ToolCallContent::Function { function } = &tool_call.content {
                     assert_eq!(function.name, "create_directory");
                 }
+            }
+            
+            // Second tool call: with both empty ID and empty name
+            {
+                let tool_call = &tool_calls[1];
+                // The ID should not be empty - it should have been generated
+                assert!(!tool_call.id.is_empty(), "Tool call ID should not be empty");
+                // It should follow our naming convention
+                assert!(
+                    tool_call.id.starts_with("call_"),
+                    "Tool call ID should start with 'call_'"
+                );
+                // Function content should have a placeholder name (not empty)
+                if let open_ai::ToolCallContent::Function { function } = &tool_call.content {
+                    assert_eq!(function.name, "unknown_tool", "Empty name should use placeholder");
+                }
+            }
+        } else {
+            panic!("Expected Assistant message with tool calls in serialized request");
+        }
+    }
             }
         } else {
             panic!("Expected Assistant message with tool calls in serialized request");
