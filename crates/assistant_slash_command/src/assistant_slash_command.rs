@@ -27,8 +27,10 @@ fn deserialize_icon_with_fallback<'de, D>(deserializer: D) -> Result<IconName, D
 where
     D: Deserializer<'de>,
 {
-    let s = String::deserialize(deserializer)?;
-    Ok(serde_json::from_value::<IconName>(serde_json::Value::String(s)).unwrap_or(IconName::Code))
+    Ok(String::deserialize(deserializer)
+        .ok()
+        .and_then(|string| serde_json::from_str::<IconName>(&string).ok())
+        .unwrap_or(IconName::Code))
 }
 
 pub fn init(cx: &mut App) {
@@ -612,7 +614,8 @@ mod tests {
             );
             let section: SlashCommandOutputSection<usize> = serde_json::from_str(&json).unwrap();
             assert_eq!(
-                section.icon, IconName::Code,
+                section.icon,
+                IconName::Code,
                 "Icon '{}' should fall back to Code",
                 icon_name
             );
