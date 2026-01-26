@@ -253,6 +253,7 @@ impl GitListEntry {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct GitStatusEntry {
+    pub(crate) old_repo_path: Option<RepoPath>,
     pub(crate) repo_path: RepoPath,
     pub(crate) status: FileStatus,
     pub(crate) staging: StageStatus,
@@ -2806,6 +2807,7 @@ impl GitPanel {
         };
 
         let repo = repo.read(cx);
+        let new_to_old_path = repo.cached_renames();
 
         self.stash_entries = repo.cached_stash();
 
@@ -2824,6 +2826,7 @@ impl GitPanel {
             }
 
             let entry = GitStatusEntry {
+                old_repo_path: new_to_old_path.get(&entry.repo_path).cloned(),
                 repo_path: entry.repo_path.clone(),
                 status: entry.status,
                 staging,
@@ -2877,6 +2880,7 @@ impl GitPanel {
                 self.single_staged_entry =
                     repo.status_for_path(&ops.repo_path)
                         .map(|status| GitStatusEntry {
+                            old_repo_path: new_to_old_path.get(&ops.repo_path).cloned(),
                             repo_path: ops.repo_path.clone(),
                             status: status.status,
                             staging: StageStatus::Staged,
@@ -4105,7 +4109,27 @@ impl GitPanel {
     ) -> AnyElement {
         let path_style = self.project.read(cx).path_style(cx);
         let git_path_style = ProjectSettings::get_global(cx).git.path_style;
-        let display_name = entry.display_name(path_style);
+
+        let (file_name, parent_dir) = if let Some(old_path) = &entry.old_repo_path {
+            let old_parent = old_path.parent();
+            let new_parent = entry.repo_path.parent();
+            if old_parent == new_parent {
+                let old_name = old_path.file_name().unwrap_or_default();
+                let new_name = entry.repo_path.file_name().unwrap_or_default();
+                (
+                    format!("{} → {}", old_name, new_name),
+                    old_parent.map(|p| p.display(path_style).to_string())
+                )
+            }
+            else {
+                (
+                    format!("{} → {}", old_path.display(path_style), entry.repo_path.display(path_style)),
+                    None
+                )
+            }
+        } else {
+            (entry.display_name(path_style), entry.parent_dir(path_style))
+        };
 
         let selected = self.selected_entry == Some(ix);
         let marked = self.marked_entries.contains(&ix);
@@ -4115,11 +4139,12 @@ impl GitPanel {
         let has_conflict = status.is_conflicted();
         let is_modified = status.is_modified();
         let is_deleted = status.is_deleted();
+        let is_renamed = status.is_renamed(); 
 
         let label_color = if status_style == StatusStyle::LabelColor {
             if has_conflict {
                 Color::VersionControlConflict
-            } else if is_modified {
+            } else if is_renamed || is_modified {
                 Color::VersionControlModified
             } else if is_deleted {
                 // We don't want a bunch of red labels in the list
@@ -4137,11 +4162,11 @@ impl GitPanel {
             Color::Muted
         };
 
-        let id: ElementId = ElementId::Name(format!("entry_{}_{}", display_name, ix).into());
+        let id: ElementId = ElementId::Name(format!("entry_{}_{}", file_name, ix).into());
         let checkbox_wrapper_id: ElementId =
-            ElementId::Name(format!("entry_{}_{}_checkbox_wrapper", display_name, ix).into());
+            ElementId::Name(format!("entry_{}_{}_checkbox_wrapper", file_name, ix).into());
         let checkbox_id: ElementId =
-            ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
+            ElementId::Name(format!("entry_{}_{}_checkbox", file_name, ix).into());
 
         let active_repo = self
             .project
@@ -4304,9 +4329,9 @@ impl GitPanel {
                     .child(h_flex().items_center().flex_1().map(|this| {
                         self.path_formatted(
                             this,
-                            entry.parent_dir(path_style),
+                            parent_dir,
                             path_color,
-                            display_name,
+                            file_name,
                             label_color,
                             path_style,
                             git_path_style,
@@ -5273,11 +5298,13 @@ mod tests {
                     header: Section::Tracked
                 }),
                 GitListEntry::Status(GitStatusEntry {
+                    old_repo_path: Some(repo_path("crates/gpui/gpui.rs")),
                     repo_path: repo_path("crates/gpui/gpui.rs"),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                 }),
                 GitListEntry::Status(GitStatusEntry {
+                    old_repo_path: Some(repo_path("crates/util/util.rs")),
                     repo_path: repo_path("crates/util/util.rs"),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
@@ -5298,11 +5325,13 @@ mod tests {
                     header: Section::Tracked
                 }),
                 GitListEntry::Status(GitStatusEntry {
+                    old_repo_path: Some(repo_path("crates/gpui/gpui.rs")),
                     repo_path: repo_path("crates/gpui/gpui.rs"),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                 }),
                 GitListEntry::Status(GitStatusEntry {
+                    old_repo_path: Some(repo_path("crates/util/util.rs")),
                     repo_path: repo_path("crates/util/util.rs"),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,

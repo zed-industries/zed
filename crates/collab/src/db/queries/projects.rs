@@ -997,6 +997,8 @@ impl Database {
                         abs_path: db_repository_entry.abs_path,
                         entry_ids,
                         updated_statuses,
+                        updated_renamed_paths: Default::default(),
+                        removed_renamed_paths: Vec::new(),
                         removed_statuses: Vec::new(),
                         current_merge_conflicts,
                         branch_summary,

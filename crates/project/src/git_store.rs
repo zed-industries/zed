@@ -255,6 +255,7 @@ pub struct MergeDetails {
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
+    pub renamed_paths: HashMap<RepoPath, RepoPath>,
     pub work_directory_abs_path: Arc<Path>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
@@ -3078,6 +3079,7 @@ impl RepositorySnapshot {
         Self {
             id,
             statuses_by_path: Default::default(),
+            renamed_paths: HashMap::default(),
             work_directory_abs_path,
             branch: None,
             head_commit: None,
@@ -3100,6 +3102,12 @@ impl RepositorySnapshot {
                 .map(|entry| entry.to_proto())
                 .collect(),
             removed_statuses: Default::default(),
+            updated_renamed_paths: self
+                .renamed_paths
+                .iter()
+                .map(|(new_path, old_path)| (new_path.to_proto(), old_path.to_proto()))
+                .collect(),
+            removed_renamed_paths: Default::default(),
             current_merge_conflicts: self
                 .merge
                 .conflicted_paths
@@ -3169,6 +3177,18 @@ impl RepositorySnapshot {
             head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses,
             removed_statuses,
+            updated_renamed_paths: self
+                .renamed_paths
+                .iter()
+                .filter(|(new_path, old_path)| old.renamed_paths.get(*new_path) != Some(*old_path))
+                .map(|(new_path, old_path)| (new_path.to_proto(), old_path.to_proto()))
+                .collect(),
+            removed_renamed_paths: old
+                .renamed_paths
+                .keys()
+                .filter(|new_path| self.renamed_paths.contains_key(*new_path))
+                .map(|new_path| new_path.to_proto())
+                .collect(),
             current_merge_conflicts: self
                 .merge
                 .conflicted_paths
@@ -3664,6 +3684,10 @@ impl Repository {
 
     pub fn cached_stash(&self) -> GitStash {
         self.snapshot.stash_entries.clone()
+    }
+
+    pub fn cached_renames(&self) ->  &HashMap<RepoPath, RepoPath> {
+        &self.snapshot.renamed_paths
     }
 
     pub fn repo_path_to_project_path(&self, path: &RepoPath, cx: &App) -> Option<ProjectPath> {
@@ -5030,6 +5054,21 @@ impl Repository {
         }
         self.snapshot.stash_entries = new_stash_entries;
 
+        for (new_path_str, old_path_str) in update.updated_renamed_paths {
+            if let (Some(new_path), Some(old_path)) = (
+                RepoPath::from_proto(&new_path_str).log_err(),
+                RepoPath::from_proto(&old_path_str).log_err(),
+            ) {
+                self.snapshot.renamed_paths.insert(new_path, old_path);
+            }
+        }
+
+        for new_path_str in update.removed_renamed_paths {
+            if let Some(new_path) = RepoPath::from_proto(&new_path_str).log_err() {
+                self.snapshot.renamed_paths.remove(&new_path);
+            }
+        }
+
         let edits = update
             .removed_statuses
             .into_iter()
@@ -5787,6 +5826,7 @@ async fn compute_snapshot(
             }),
         (),
     );
+    let renamed_paths = statuses.renamed;
     let (merge_details, merge_heads_changed) =
         MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;
     log::debug!("new merge details (changed={merge_heads_changed:?}): {merge_details:?}");
@@ -5816,6 +5856,7 @@ async fn compute_snapshot(
     let snapshot = RepositorySnapshot {
         id,
         statuses_by_path,
+        renamed_paths,
         work_directory_abs_path,
         path_style: prev_snapshot.path_style,
         scan_id: prev_snapshot.scan_id + 1,
