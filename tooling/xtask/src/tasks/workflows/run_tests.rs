@@ -319,20 +319,26 @@ pub(crate) fn clippy(platform: Platform) -> NamedJob {
         Platform::Linux => runners::LINUX_DEFAULT,
         Platform::Mac => runners::MAC_DEFAULT,
     };
+    let job = release_job(&[])
+        .runs_on(runner)
+        .add_step(steps::checkout_repo())
+        .add_step(steps::setup_cargo_config(platform))
+        .when(platform == Platform::Linux, |this| {
+            this.add_step(steps::cache_rust_dependencies_namespace())
+        })
+        .when(
+            platform == Platform::Linux,
+            steps::install_linux_dependencies,
+        )
+        .add_step(steps::clippy(platform));
+
     NamedJob {
         name: format!("clippy_{platform}"),
-        job: release_job(&[])
-            .runs_on(runner)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::setup_cargo_config(platform))
-            .when(platform == Platform::Linux, |this| {
-                this.add_step(steps::cache_rust_dependencies_namespace())
-            })
-            .when(
-                platform == Platform::Linux,
-                steps::install_linux_dependencies,
-            )
-            .add_step(steps::clippy(platform)),
+        job: if platform == Platform::Linux {
+            use_clang(job)
+        } else {
+            job
+        },
     }
 }
 
