@@ -1,7 +1,7 @@
 use gpui::{Entity, EventEmitter, WeakEntity};
 use ui::{ParentElement, Render, Styled, div};
 
-use crate::{ActivePaneDecorator, PaneGroup, Workspace};
+use crate::{ActivePaneDecorator, Pane, PaneGroup, Workspace};
 
 pub struct WorkspaceSatellite {
     pub(crate) center: PaneGroup,
