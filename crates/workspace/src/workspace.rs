@@ -6,7 +6,6 @@ mod modal_layer;
 pub mod notifications;
 pub mod pane;
 pub mod pane_group;
-pub mod pane_host;
 mod path_list;
 mod persistence;
 pub mod searchable;
@@ -19,6 +18,7 @@ mod toast_layer;
 mod toolbar;
 pub mod utility_pane;
 pub mod welcome;
+pub mod workspace_satellite;
 mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
@@ -138,8 +138,8 @@ use zed_actions::{Spawn, feedback::FileBugReport};
 use crate::{
     item::ItemBufferKind,
     notifications::NotificationId,
-    pane_host::PaneHost,
     utility_pane::{UTILITY_PANE_MIN_WIDTH, utility_slot_for_dock_position},
+    workspace_satellite::WorkspaceSatellite,
 };
 use crate::{
     persistence::{
@@ -1191,7 +1191,7 @@ pub struct Workspace {
     panes: Vec<Entity<Pane>>,
     active_worktree_override: Option<WorktreeId>,
     panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
-    panes_hosts: Vec<WindowHandle<PaneHost>>,
+    panes_hosts: Vec<WindowHandle<WorkspaceSatellite>>,
     active_pane: Entity<Pane>,
     last_active_center_pane: Option<WeakEntity<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
@@ -3257,7 +3257,7 @@ impl Workspace {
         item_to_detach: EntityId,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<WindowHandle<PaneHost>> {
+    ) -> Result<WindowHandle<WorkspaceSatellite>> {
         let source_pane = self
             .panes_by_item
             .get(&item_to_detach)
@@ -3281,7 +3281,7 @@ impl Workspace {
                 ..Default::default()
             },
             move |_, cx| {
-                cx.new(|_| PaneHost {
+                cx.new(|_| WorkspaceSatellite {
                     center: PaneGroup::new(empty_pane),
                     workspace: weak_self,
                 })
@@ -3313,7 +3313,7 @@ impl Workspace {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<WindowHandle<PaneHost>> {
+    ) -> Result<WindowHandle<WorkspaceSatellite>> {
         let active_item = self
             .active_item(cx)
             .ok_or_else(|| anyhow::anyhow!("No active item to detach"))?;

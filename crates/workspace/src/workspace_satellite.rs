@@ -3,12 +3,12 @@ use ui::{ParentElement, Render, Styled, div};
 
 use crate::{ActivePaneDecorator, PaneGroup, Workspace};
 
-pub struct PaneHost {
+pub struct WorkspaceSatellite {
     pub(crate) center: PaneGroup,
     pub(crate) workspace: WeakEntity<Workspace>,
 }
 
-impl Render for PaneHost {
+impl Render for WorkspaceSatellite {
     fn render(
         &mut self,
         window: &mut ui::Window,
