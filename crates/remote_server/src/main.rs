@@ -58,7 +58,6 @@ fn main() -> anyhow::Result<()> {
         std::io::stderr()
             .write_all(b"usage: remote <run|proxy|version>\n")
             .ok();
-        eprintln!();
         std::process::exit(1);
     }
 }
