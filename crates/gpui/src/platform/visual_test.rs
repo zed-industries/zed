@@ -112,18 +112,6 @@ impl Platform for VisualTestPlatform {
         self.mac_platform.window_stack()
     }
 
-    #[cfg(feature = "screen-capture")]
-    fn is_screen_capture_supported(&self) -> bool {
-        self.mac_platform.is_screen_capture_supported()
-    }
-
-    #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(
-        &self,
-    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
-        self.mac_platform.screen_capture_sources()
-    }
-
     fn open_window(
         &self,
         handle: AnyWindowHandle,

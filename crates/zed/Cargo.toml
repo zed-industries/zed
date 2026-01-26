@@ -15,7 +15,6 @@ workspace = true
 tracy = ["ztracing/tracy"]
 test-support = [
     "gpui/test-support",
-    "gpui/screen-capture",
     "dep:image",
     "dep:semver",
     "workspace/test-support",
@@ -28,7 +27,6 @@ test-support = [
 ]
 visual-tests = [
     "gpui/test-support",
-    "gpui/screen-capture",
     "dep:image",
     "dep:semver",
     "dep:tempfile",
@@ -240,7 +238,7 @@ ashpd.workspace = true
 call = { workspace = true, features = ["test-support"] }
 dap = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
-gpui = { workspace = true, features = ["test-support", "screen-capture"] }
+gpui = { workspace = true, features = ["test-support"] }
 image_viewer = { workspace = true, features = ["test-support"] }
 itertools.workspace = true
 language = { workspace = true, features = ["test-support"] }

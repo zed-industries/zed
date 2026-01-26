@@ -68,7 +68,7 @@ impl LocalParticipant {
         let sid = server
             .publish_video_track(this.room.token(), LocalVideoTrack {})
             .await?;
-        let spawn_handle = gpui_tokio::Tokio::spawn(cx, async {})?;
+        let spawn_handle = gpui_tokio::Tokio::spawn(cx, async {});
         let handle = ScreenCaptureStreamHandle {
             screen_id: 0,
             stop_capture: Arc::new(AtomicBool::new(false)),

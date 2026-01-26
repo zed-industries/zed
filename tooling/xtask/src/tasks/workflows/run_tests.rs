@@ -250,7 +250,7 @@ fn check_style() -> NamedJob {
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
             .add_step(check_for_typos()),
-    )
+    ))
 }
 
 fn check_dependencies() -> NamedJob {

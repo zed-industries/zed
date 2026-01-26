@@ -124,11 +124,6 @@ impl VisualTestAppContext {
         self.open_offscreen_window(size(px(1280.0), px(800.0)), build_root)
     }
 
-    /// Returns whether screen capture is supported on this platform.
-    pub fn is_screen_capture_supported(&self) -> bool {
-        self.platform.is_screen_capture_supported()
-    }
-
     /// Returns the text system used by this context.
     pub fn text_system(&self) -> &Arc<TextSystem> {
         &self.text_system
