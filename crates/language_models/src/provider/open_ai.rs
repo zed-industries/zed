@@ -32,6 +32,7 @@ use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
+use uuid;
 use ui_input::InputField;
 use util::ResultExt;
 
@@ -829,7 +830,15 @@ impl OpenAiEventMapper {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             Some("tool_calls") => {
-                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
+                events.extend(self.tool_calls_by_index.drain().map(|(_, mut tool_call)| {
+                    // Generate valid IDs and names if they're empty (some OpenAI-compatible APIs return empty values)
+                    if tool_call.id.is_empty() {
+                        tool_call.id = format!("call_{}", uuid::Uuid::new_v4());
+                    }
+                    if tool_call.name.is_empty() {
+                        log::warn!("Tool call has empty name, this may cause issues with the API");
+                    }
+
                     match serde_json::Value::from_str(&tool_call.arguments) {
                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
@@ -1073,18 +1082,22 @@ impl OpenAiResponseEventMapper {
         let mut events = Vec::new();
         for item in output {
             if let ResponseOutputItem::FunctionCall(function_call) = item {
-                let Some(call_id) = function_call
+                let mut call_id = function_call
                     .call_id
                     .clone()
                     .or_else(|| function_call.id.clone())
-                else {
-                    log::error!(
-                        "Function call item missing both call_id and id: {:?}",
-                        function_call
-                    );
-                    continue;
-                };
-                let name: Arc<str> = Arc::from(function_call.name.clone().unwrap_or_default());
+                    .unwrap_or_else(|| format!("call_{}", uuid::Uuid::new_v4()));
+                
+                // Generate valid ID if empty (some OpenAI-compatible APIs return empty values)
+                if call_id.is_empty() {
+                    call_id = format!("call_{}", uuid::Uuid::new_v4());
+                }
+                
+                let mut name: Arc<str> = Arc::from(function_call.name.clone().unwrap_or_default());
+                if name.is_empty() {
+                    log::warn!("Tool call has empty name, this may cause issues with the API");
+                }
+                
                 let arguments = &function_call.arguments;
                 if !arguments.is_empty() {
                     self.pending_stop_reason = Some(StopReason::ToolUse);
@@ -1925,4 +1938,34 @@ mod tests {
             LanguageModelCompletionEvent::Stop(StopReason::MaxTokens)
         ));
     }
+
+    #[test]
+    fn empty_tool_call_id_and_name_are_generated() {
+        // Test that when the model returns empty tool call IDs and names,
+        // we generate valid ones instead of passing empty strings to the API
+        let mut mapper = OpenAiResponseEventMapper::new();
+        let output = vec![ResponseOutputItem::FunctionCall(ResponseFunctionToolCall {
+            id: Some(String::new()),          // Empty ID
+            call_id: Some(String::new()),     // Empty call_id as well
+            name: Some(String::new()),        // Empty name
+            status: Some("in_progress".to_string()),
+            arguments: r#"{"city":"Boston"}"#.to_string(),
+        })];
+
+        let events = mapper.emit_tool_calls_from_output(&output);
+        
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
+                // The ID should not be empty - it should have been generated
+                assert!(!tool_use.id.to_string().is_empty());
+                // It should follow our naming convention
+                assert!(tool_use.id.to_string().starts_with("call_"));
+                // The name will be empty (as generated from the empty field),
+                // but the API call should include a generated ID
+            }
+            _ => panic!("Expected ToolUse event"),
+        }
+    }
 }
+
