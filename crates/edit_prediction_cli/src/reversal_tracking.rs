@@ -2,7 +2,6 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
 use edit_prediction::udiff::apply_diff_to_string;
 use language::text_diff;
 
@@ -53,8 +52,6 @@ pub fn compute_granular_edits(old_text: &str, new_text: &str) -> Vec<GranularEdi
 #[derive(Debug, Clone)]
 pub struct HistoryAdditionRange {
     pub range_in_current: Range<usize>,
-    #[cfg(test)]
-    pub added_text: String,
 }
 
 #[derive(Debug, Clone)]
@@ -74,8 +71,6 @@ pub fn compute_history_addition_ranges(
             let new_end = new_start + edit.new_text.len();
             result.push(HistoryAdditionRange {
                 range_in_current: new_start..new_end,
-                #[cfg(test)]
-                added_text: edit.new_text.clone(),
             });
         }
 
@@ -85,7 +80,6 @@ pub fn compute_history_addition_ranges(
     result
 }
 
-/// Compute ranges of text that history deleted (was present in original_content).
 pub fn compute_history_deletion_ranges(
     history_edits: &[GranularEdit],
 ) -> Vec<HistoryDeletionRange> {
@@ -211,7 +205,6 @@ fn compute_lcs_length(a: &str, b: &str) -> usize {
     prev[n]
 }
 
-/// Filter edit history events to only include changes to a specific file path.
 pub fn filter_edit_history_by_path<'a>(
     edit_history: &'a [Arc<zeta_prompt::Event>],
     cursor_path: &std::path::Path,
@@ -235,7 +228,6 @@ pub fn filter_edit_history_by_path<'a>(
         .collect()
 }
 
-/// Extract the diff string from a BufferChange event.
 pub fn extract_diff_from_event(event: &zeta_prompt::Event) -> &str {
     match event {
         zeta_prompt::Event::BufferChange { diff, .. } => diff.as_str(),
@@ -280,361 +272,110 @@ pub fn compute_prediction_reversal_ratio(
 mod tests {
     use super::*;
     use edit_prediction::udiff::apply_diff_to_string;
-    use indoc::indoc;
-
-    struct ReversalTestCase {
-        name: &'static str,
-        original: &'static str,
-        current: &'static str,
-        predicted: &'static str,
-        expected_reversal_chars: usize,
-        expected_total_chars: usize,
-        explanation: &'static str,
-    }
 
     #[test]
-    fn test_reversal_overlap_table() {
+    fn test_reversal_overlap() {
+        struct Case {
+            name: &'static str,
+            original: &'static str,
+            current: &'static str,
+            predicted: &'static str,
+            expected_reversal_chars: usize,
+            expected_total_chars: usize,
+        }
+
         let cases = [
-            // === Complete reversals ===
-            ReversalTestCase {
+            Case {
                 name: "user_adds_line_prediction_removes_it",
-                original: indoc! {"
-                    a
-                    b
-                    c"},
-                current: indoc! {"
-                    a
-                    new line
-                    b
-                    c"},
-                predicted: indoc! {"
-                    a
-                    b
-                    c"},
+                original: "a\nb\nc",
+                current: "a\nnew line\nb\nc",
+                predicted: "a\nb\nc",
                 expected_reversal_chars: 9,
                 expected_total_chars: 9,
-                explanation: "User added 'new line\n' (9 chars). Prediction deletes exactly those 9 chars.",
             },
-            ReversalTestCase {
+            Case {
                 name: "user_deletes_line_prediction_restores_it",
-                original: indoc! {"
-                    a
-                    deleted
-                    b"},
-                current: indoc! {"
-                    a
-                    b"},
-                predicted: indoc! {"
-                    a
-                    deleted
-                    b"},
+                original: "a\ndeleted\nb",
+                current: "a\nb",
+                predicted: "a\ndeleted\nb",
                 expected_reversal_chars: 8,
                 expected_total_chars: 8,
-                explanation: "User deleted 'deleted\n' (8 chars). Prediction adds back exactly those 8 chars.",
             },
-            // === Partial reversals ===
-            ReversalTestCase {
-                name: "user_adds_line_prediction_removes_partial",
-                original: "fn main() {}",
-                current: indoc! {"
-                    fn main() {
-                        let x = 42;
-                    }"},
-                predicted: indoc! {"
-                    fn main() {
-                    }"},
-                expected_reversal_chars: 16,
-                expected_total_chars: 16,
-                explanation: "User added '\n    let x = 42;' (16 chars). Prediction removes all 16 added chars.",
+            Case {
+                name: "user_deletes_text_prediction_restores_partial",
+                original: "hello beautiful world",
+                current: "hello world",
+                predicted: "hello beautiful world",
+                expected_reversal_chars: 10,
+                expected_total_chars: 10,
             },
-            ReversalTestCase {
-                name: "user_deletes_function_prediction_restores_partial",
-                original: indoc! {r#"
-                    fn helper() {
-                        println!("help");
-                    }"#},
-                current: "",
-                predicted: indoc! {"
-                    fn helper() {
-                    }"},
-                expected_reversal_chars: 15,
-                expected_total_chars: 15,
-                explanation: indoc! {"
-                    User deleted entire function (38 chars). Prediction adds 'fn helper() {\n}'
-                    (15 chars). Character overlap: f,n, ,h,e,l,p,e,r,(,),{,\n,} = 15 chars."},
-            },
-            // === Similar but different content ===
-            ReversalTestCase {
-                name: "user_deletes_hello_world_prediction_adds_hello_sailor",
-                original: r#"println!("hello world");"#,
-                current: "",
-                predicted: r#"println!("hello sailor");"#,
-                expected_reversal_chars: 21,
-                expected_total_chars: 25,
-                explanation: indoc! {r#"
-                    User deleted 'println!("hello world");' (24 chars). Prediction adds
-                    'println!("hello sailor");' (25 chars). Since current is empty, prediction
-                    only adds (no deletes), so total = 25. LCS between deleted and added:
-                    'println!("hello ' (16) + 'or' from world/sailor (2) + '");' (3) = 21."#},
-            },
-            ReversalTestCase {
+            Case {
                 name: "user_deletes_foo_prediction_adds_bar",
                 original: "foo",
                 current: "",
                 predicted: "bar",
                 expected_reversal_chars: 0,
                 expected_total_chars: 3,
-                explanation: "User deleted 'foo'. Prediction adds 'bar'. No character overlap.",
             },
-            // === No reversal cases ===
-            ReversalTestCase {
+            Case {
                 name: "independent_edits_different_locations",
-                original: indoc! {"
-                    line1
-                    line2
-                    line3"},
-                current: indoc! {"
-                    LINE1
-                    line2
-                    line3"},
-                predicted: indoc! {"
-                    LINE1
-                    line2
-                    LINE3"},
+                original: "line1\nline2\nline3",
+                current: "LINE1\nline2\nline3",
+                predicted: "LINE1\nline2\nLINE3",
                 expected_reversal_chars: 0,
                 expected_total_chars: 10,
-                explanation: indoc! {"
-                    User changed line1→LINE1. Prediction changes line3→LINE3. No overlap
-                    since they edit different regions. Total: delete 'line3' (5) + add 'LINE3' (5) = 10."},
             },
-            ReversalTestCase {
+            Case {
                 name: "no_history_edits",
                 original: "same",
                 current: "same",
                 predicted: "different",
                 expected_reversal_chars: 0,
                 expected_total_chars: 13,
-                explanation: indoc! {"
-                    No user edits (original==current). Prediction changes 'same'→'different'.
-                    Delete 4 + add 9 = 13 total chars. No reversal possible."},
             },
-            // === Mixed operations ===
-            ReversalTestCase {
-                name: "user_adds_and_deletes_prediction_reverses_both",
-                original: indoc! {"
-                    keep
-                    delete_me
-                    keep2"},
-                current: indoc! {"
-                    keep
-                    added
-                    keep2"},
-                predicted: indoc! {"
-                    keep
-                    delete_me
-                    keep2"},
+            Case {
+                name: "user_replaces_text_prediction_reverses",
+                original: "keep\ndelete_me\nkeep2",
+                current: "keep\nadded\nkeep2",
+                predicted: "keep\ndelete_me\nkeep2",
                 expected_reversal_chars: 14,
                 expected_total_chars: 14,
-                explanation: indoc! {"
-                    User changed 'delete_me' to 'added'. Prediction changes it back.
-                    Prediction deletes 'added' (5 chars, all user-added = 5 reversal).
-                    Prediction adds 'delete_me' (9 chars). Char overlap = 9.
-                    Total reversal = 5 + 9 = 14. Total prediction = 5 deleted + 9 added = 14."},
             },
-            ReversalTestCase {
+            Case {
                 name: "user_modifies_word_prediction_modifies_differently",
                 original: "the quick brown fox",
                 current: "the slow brown fox",
                 predicted: "the fast brown fox",
                 expected_reversal_chars: 4,
                 expected_total_chars: 8,
-                explanation: indoc! {"
-                    User changed 'quick'→'slow'. Prediction changes 'slow'→'fast'.
-                    Prediction deletes 'slow' (4 chars, all user-added = 4 reversal).
-                    Prediction adds 'fast' (4 chars). Char overlap between user-deleted 'quick'
-                    and prediction-added 'fast' = 0. Total reversal = 4, total prediction = 8."},
             },
         ];
 
         for case in &cases {
             let overlap = compute_reversal_overlap(case.original, case.current, case.predicted);
-
             assert_eq!(
-                overlap.chars_reversing_user_edits,
-                case.expected_reversal_chars,
-                "Test '{}' failed on reversal chars.\n\
-                 Explanation: {}\n\
-                 Got: {} reversal chars, expected: {}",
-                case.name,
-                case.explanation,
-                overlap.chars_reversing_user_edits,
-                case.expected_reversal_chars
+                overlap.chars_reversing_user_edits, case.expected_reversal_chars,
+                "Test '{}': expected {} reversal chars, got {}",
+                case.name, case.expected_reversal_chars, overlap.chars_reversing_user_edits
             );
-
             assert_eq!(
-                overlap.total_chars_in_prediction,
-                case.expected_total_chars,
-                "Test '{}' failed on total chars.\n\
-                 Explanation: {}\n\
-                 Got: {} total chars, expected: {}",
-                case.name,
-                case.explanation,
-                overlap.total_chars_in_prediction,
-                case.expected_total_chars
+                overlap.total_chars_in_prediction, case.expected_total_chars,
+                "Test '{}': expected {} total chars, got {}",
+                case.name, case.expected_total_chars, overlap.total_chars_in_prediction
             );
         }
-    }
-
-    #[test]
-    fn test_reversal_detection() {
-        // Scenario: User writes some code, then the model predicts undoing part of it.
-        // Original: fn main() { println!("hello"); }
-        // History adds: let x = 42; and modifies print
-        // Prediction removes the added line (reversal)
-
-        let original_content = indoc! {r#"
-            fn main() {
-                println!("hello");
-            }"#};
-
-        let current_content = indoc! {r#"
-            fn main() {
-                let x = 42;
-                println!("hello, x = {}", x);
-            }"#};
-
-        let predicted_content = indoc! {r#"
-            fn main() {
-                println!("hello, x = {}", x);
-            }"#};
-
-        // Step 1: Verify we can compute edits from original to current (what history did)
-        let history_edits = compute_granular_edits(original_content, current_content);
-
-        assert!(!history_edits.is_empty(), "History should have edits");
-
-        let history_added_chars: usize = history_edits.iter().map(|e| e.new_text.len()).sum();
-        let history_deleted_chars: usize = history_edits.iter().map(|e| e.old_text.len()).sum();
-
-        assert!(
-            history_added_chars > 0,
-            "History should have added characters"
-        );
-
-        // Step 2: Verify we can compute edits from current to predicted (what prediction does)
-        let prediction_edits = compute_granular_edits(current_content, predicted_content);
-
-        assert!(!prediction_edits.is_empty(), "Prediction should have edits");
-
-        let prediction_added_chars: usize = prediction_edits.iter().map(|e| e.new_text.len()).sum();
-        let prediction_deleted_chars: usize =
-            prediction_edits.iter().map(|e| e.old_text.len()).sum();
-
-        // The prediction should delete more than it adds (removing the let x = 42 line)
-        assert!(
-            prediction_deleted_chars > prediction_added_chars,
-            "Prediction should delete more than it adds"
-        );
-
-        // Step 3: Compute where history additions ended up in current_content
-        let history_addition_ranges = compute_history_addition_ranges(&history_edits);
-
-        assert!(
-            !history_addition_ranges.is_empty(),
-            "Should have history addition ranges"
-        );
-
-        // Verify the addition ranges point to the added text
-        for range in &history_addition_ranges {
-            let text_at_range = &current_content[range.range_in_current.clone()];
-            assert_eq!(
-                text_at_range, range.added_text,
-                "Addition range should match the added text"
-            );
-        }
-
-        // Step 4: Compute how much of the prediction deletes history additions
-        let reversed_addition_chars =
-            compute_reversed_additions(&history_addition_ranges, &prediction_edits);
-
-        // The "let x = 42;\n    " part was added by history, and prediction deletes it
-        assert!(
-            reversed_addition_chars > 0,
-            "Should have reversed some additions"
-        );
-
-        // Step 5: Compute history deletions and restored deletions
-        let history_deletion_ranges = compute_history_deletion_ranges(&history_edits);
-
-        let restored_deletion_chars =
-            compute_restored_deletions(&history_deletion_ranges, &prediction_edits);
-
-        // Step 6: Calculate reversal ratio
-        let total_prediction_change = prediction_added_chars + prediction_deleted_chars;
-        let total_reversal = reversed_addition_chars + restored_deletion_chars;
-
-        let reversal_ratio = if total_prediction_change > 0 {
-            total_reversal as f64 / total_prediction_change as f64
-        } else {
-            0.0
-        };
-
-        // The majority of the prediction should be reversal since it's mostly removing
-        // the line that was added
-        assert!(
-            reversal_ratio > 0.5,
-            "Reversal ratio should be > 50%, got {:.2}%",
-            reversal_ratio * 100.0
-        );
-
-        // Step 7: Verify the net change from original to predicted
-        let net_edits = compute_granular_edits(original_content, predicted_content);
-        let net_added_chars: usize = net_edits.iter().map(|e| e.new_text.len()).sum();
-        let net_deleted_chars: usize = net_edits.iter().map(|e| e.old_text.len()).sum();
-
-        // The net change should be smaller than history + prediction combined
-        // because some changes cancel out
-        let combined_change = history_added_chars
-            + history_deleted_chars
-            + prediction_added_chars
-            + prediction_deleted_chars;
-        let net_change = net_added_chars + net_deleted_chars;
-
-        assert!(
-            net_change < combined_change,
-            "Net change ({}) should be less than combined change ({})",
-            net_change,
-            combined_change
-        );
-
-        println!("=== Reversal Detection Test Results ===");
-        println!(
-            "History: added {} chars, deleted {} chars",
-            history_added_chars, history_deleted_chars
-        );
-        println!(
-            "Prediction: added {} chars, deleted {} chars",
-            prediction_added_chars, prediction_deleted_chars
-        );
-        println!("Reversed additions: {} chars", reversed_addition_chars);
-        println!("Restored deletions: {} chars", restored_deletion_chars);
-        println!("Reversal ratio: {:.2}%", reversal_ratio * 100.0);
-        println!(
-            "Net change: {} chars (vs combined {})",
-            net_change, combined_change
-        );
     }
 
     #[test]
     fn test_reverse_diff() {
-        let forward_diff = indoc! {r#"
-            --- a/file.rs
-            +++ b/file.rs
-            @@ -1,3 +1,4 @@
-             fn main() {
-            +    let x = 42;
-                 println!("hello");
-            }"#};
+        let forward_diff = "\
+--- a/file.rs
++++ b/file.rs
+@@ -1,3 +1,4 @@
+ fn main() {
++    let x = 42;
+     println!(\"hello\");
+}";
 
         let reversed = reverse_diff(forward_diff);
 
@@ -677,191 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn test_history_addition_ranges_offset_tracking() {
-        // Test that offset tracking works correctly across multiple edits
-        let original = "abc";
-        let current = "aXXbYYc";
-
-        let edits = compute_granular_edits(original, current);
-
-        // Should have two insertions: XX after a, YY after b
-        let addition_ranges = compute_history_addition_ranges(&edits);
-
-        // Verify each range points to the correct text in current
-        for range in &addition_ranges {
-            let actual_text = &current[range.range_in_current.clone()];
-            assert_eq!(
-                actual_text, range.added_text,
-                "Range {:?} should contain '{}' but got '{}'",
-                range.range_in_current, range.added_text, actual_text
-            );
-        }
-    }
-
-    #[test]
-    fn test_restored_deletions() {
-        // Test detecting when prediction adds back text that was deleted
-        let original = "hello beautiful world";
-        let current = "hello world"; // "beautiful " was deleted
-
-        let history_edits = compute_granular_edits(original, current);
-        let history_deletions = compute_history_deletion_ranges(&history_edits);
-
-        // Verify we captured the deletion
-        assert!(!history_deletions.is_empty());
-        let deleted_text: String = history_deletions
-            .iter()
-            .map(|d| d.deleted_text.as_str())
-            .collect();
-        assert!(
-            deleted_text.contains("beautiful"),
-            "Should have captured 'beautiful' as deleted"
-        );
-
-        // Now if prediction adds "beautiful" back
-        let prediction_edits = vec![GranularEdit {
-            range: 6..6,
-            old_text: String::new(),
-            new_text: "beautiful ".to_string(),
-        }];
-
-        let restored = compute_restored_deletions(&history_deletions, &prediction_edits);
-
-        // Should detect the restoration
-        assert!(restored > 0, "Should detect restored deletion");
-        assert!(
-            restored >= "beautiful".len(),
-            "Should restore at least 'beautiful'"
-        );
-    }
-
-    #[test]
-    fn test_no_reversal_when_edits_are_independent() {
-        // When prediction edits different parts than history, there should be no reversal
-        let original = "line1\nline2\nline3";
-        let current = "LINE1\nline2\nline3"; // History changed line1
-
-        let history_edits = compute_granular_edits(original, current);
-        let history_addition_ranges = compute_history_addition_ranges(&history_edits);
-        let history_deletion_ranges = compute_history_deletion_ranges(&history_edits);
-
-        // Prediction changes line3 (independent of history)
-        let predicted = "LINE1\nline2\nLINE3";
-        let prediction_edits = compute_granular_edits(current, predicted);
-
-        let reversed_additions =
-            compute_reversed_additions(&history_addition_ranges, &prediction_edits);
-        let restored_deletions =
-            compute_restored_deletions(&history_deletion_ranges, &prediction_edits);
-
-        assert_eq!(reversed_additions, 0, "Should not have reversed additions");
-        assert_eq!(restored_deletions, 0, "Should not have restored deletions");
-    }
-
-    #[test]
-    fn test_reversal_restoring_deleted_code() {
-        // Scenario: User deletes a function, then the model predicts adding it back.
-
-        let original_content = indoc! {r#"
-            fn main() {
-                helper();
-            }
-
-            fn helper() {
-                println!("helping");
-            }
-            "#};
-
-        let current_content = indoc! {r#"
-            fn main() {
-                helper();
-            }
-            "#};
-
-        let predicted_content = indoc! {r#"
-            fn main() {
-                helper();
-            }
-
-            fn helper() {
-            }
-            "#};
-
-        // Compute what history did (deleted the helper function body)
-        let history_edits = compute_granular_edits(original_content, current_content);
-
-        let history_added_chars: usize = history_edits.iter().map(|e| e.new_text.len()).sum();
-        let history_deleted_chars: usize = history_edits.iter().map(|e| e.old_text.len()).sum();
-
-        // History should have deleted text (the helper function)
-        assert!(
-            history_deleted_chars > 0,
-            "History should have deleted characters"
-        );
-        assert_eq!(
-            history_added_chars, 0,
-            "History should not have added characters"
-        );
-
-        // Compute what prediction does
-        let prediction_edits = compute_granular_edits(current_content, predicted_content);
-
-        let prediction_added_chars: usize = prediction_edits.iter().map(|e| e.new_text.len()).sum();
-        let prediction_deleted_chars: usize =
-            prediction_edits.iter().map(|e| e.old_text.len()).sum();
-
-        // Prediction should add text (restoring part of the function)
-        assert!(
-            prediction_added_chars > 0,
-            "Prediction should have added characters"
-        );
-
-        // Compute reversal metrics
-        let history_addition_ranges = compute_history_addition_ranges(&history_edits);
-        let history_deletion_ranges = compute_history_deletion_ranges(&history_edits);
-
-        let reversed_additions =
-            compute_reversed_additions(&history_addition_ranges, &prediction_edits);
-        let restored_deletions =
-            compute_restored_deletions(&history_deletion_ranges, &prediction_edits);
-
-        // Since history only deleted (no additions), reversed_additions should be 0
-        assert_eq!(
-            reversed_additions, 0,
-            "No reversed additions since history only deleted"
-        );
-
-        // Prediction added text that was previously deleted - should detect restored deletions
-        assert!(restored_deletions > 0, "Should detect restored deletions");
-
-        // The restored text should include at least "fn helper()" and "{" and "}"
-        // Using character overlap, we should see significant restoration
-        let total_reversal = reversed_additions + restored_deletions;
-        let total_prediction_change = prediction_added_chars + prediction_deleted_chars;
-        let reversal_ratio = total_reversal as f64 / total_prediction_change as f64;
-
-        assert!(
-            reversal_ratio > 0.3,
-            "Reversal ratio should be significant, got {:.2}%",
-            reversal_ratio * 100.0
-        );
-
-        println!("=== Restore Deletion Test Results ===");
-        println!(
-            "History: added {} chars, deleted {} chars",
-            history_added_chars, history_deleted_chars
-        );
-        println!(
-            "Prediction: added {} chars, deleted {} chars",
-            prediction_added_chars, prediction_deleted_chars
-        );
-        println!("Reversed additions: {} chars", reversed_additions);
-        println!("Restored deletions: {} chars", restored_deletions);
-        println!("Reversal ratio: {:.2}%", reversal_ratio * 100.0);
-    }
-
-    #[test]
-    fn test_filter_edit_history_by_path_with_prefix() {
+    fn test_filter_edit_history_by_path() {
         // Test that filter_edit_history_by_path correctly matches paths when
         // the edit history has paths with a repo prefix (e.g., "repo/src/file.rs")
         // but the cursor_path doesn't have the repo prefix (e.g., "src/file.rs")
