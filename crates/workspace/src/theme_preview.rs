@@ -1,6 +1,7 @@
 #![allow(unused, dead_code)]
 use gpui::{
-    AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Hsla, Task, actions, hsla,
+    AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla, Task, actions,
+    hsla,
 };
 use strum::IntoEnumIterator;
 use theme::all_theme_colors;
@@ -150,6 +151,20 @@ impl ThemePreview {
                             .child(Headline::new("Medium Headline").size(HeadlineSize::Medium))
                             .child(Headline::new("Small Headline").size(HeadlineSize::Small))
                             .child(Headline::new("XSmall Headline").size(HeadlineSize::XSmall)),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(Headline::new("Font Weight").size(HeadlineSize::Small).color(Color::Muted))
+                            .child(Label::new(format!("Black ({})", FontWeight::BLACK)).weight(FontWeight::BLACK))
+                            .child(Label::new(format!("Extra Bold ({})", FontWeight::EXTRA_BOLD)).weight(FontWeight::EXTRA_BOLD))
+                            .child(Label::new(format!("Bold ({})", FontWeight::BOLD)).weight(FontWeight::BOLD))
+                            .child(Label::new(format!("Semibold ({})", FontWeight::SEMIBOLD)).weight(FontWeight::SEMIBOLD))
+                            .child(Label::new(format!("Medium ({})", FontWeight::MEDIUM)).weight(FontWeight::MEDIUM))
+                            .child(Label::new(format!("Normal ({})", FontWeight::NORMAL)).weight(FontWeight::NORMAL))
+                            .child(Label::new(format!("Light ({})", FontWeight::LIGHT)).weight(FontWeight::LIGHT))
+                            .child(Label::new(format!("Extra Light ({})", FontWeight::EXTRA_LIGHT)).weight(FontWeight::EXTRA_LIGHT))
+                            .child(Label::new(format!("Thin ({})", FontWeight::THIN)).weight(FontWeight::THIN)),
                     )
                     .child(
                         v_flex()
