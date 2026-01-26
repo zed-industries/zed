@@ -1049,7 +1049,7 @@ impl RunningState {
                     }
                 };
                 let Some(mut task) = task_template.resolve_task("debug-build-task", &task_context) else {
-                    anyhow::bail!("Could not resolve task variables with a debug scenario");
+                    anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
 
                 let locator_name = if let Some(locator_name) = locator_name {
