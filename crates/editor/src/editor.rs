@@ -173,8 +173,8 @@ use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{
-    GitGutterSetting, RelativeLineNumbers, Settings, SettingsLocation, SettingsStore,
-    update_settings_file,
+    GitGutterSetting, RelativeLineNumbers, SemanticTokenRules, Settings, SettingsLocation,
+    SettingsStore, update_settings_file,
 };
 use smallvec::{SmallVec, smallvec};
 use snippet::Snippet;
@@ -1334,6 +1334,7 @@ pub struct Editor {
         Option<Box<dyn Fn(Point, &mut Window, &mut Context<Self>) + 'static>>,
     suppress_selection_callback: bool,
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
+    semantic_token_rules: SemanticTokenRules,
     accent_data: Option<AccentData>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
     semantic_tokens_enabled: bool,
@@ -2559,6 +2560,10 @@ impl Editor {
             on_local_selections_changed: None,
             suppress_selection_callback: false,
             applicable_language_settings: HashMap::default(),
+            semantic_token_rules: ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .semantic_token_rules
+                .clone(),
             accent_data: None,
             fetched_tree_sitter_chunks: HashMap::default(),
             semantic_tokens_enabled: full_mode,
@@ -23902,14 +23907,28 @@ impl Editor {
             cx.emit(EditorEvent::BreadcrumbsChanged);
         }
 
-        let project_settings = ProjectSettings::get_global(cx);
+        let (
+            restore_unsaved_buffers,
+            show_inline_diagnostics,
+            inline_blame_enabled,
+            new_semantic_token_rules,
+        ) = {
+            let project_settings = ProjectSettings::get_global(cx);
+            (
+                project_settings.session.restore_unsaved_buffers,
+                project_settings.diagnostics.inline.enabled,
+                project_settings.git.inline_blame.enabled,
+                project_settings
+                    .global_lsp_settings
+                    .semantic_token_rules
+                    .clone(),
+            )
+        };
         self.buffer_serialization = self
             .should_serialize_buffer()
-            .then(|| BufferSerialization::new(project_settings.session.restore_unsaved_buffers));
+            .then(|| BufferSerialization::new(restore_unsaved_buffers));
 
         if self.mode.is_full() {
-            let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;
-            let inline_blame_enabled = project_settings.git.inline_blame.enabled;
             if self.show_inline_diagnostics != show_inline_diagnostics {
                 self.show_inline_diagnostics = show_inline_diagnostics;
                 self.refresh_inline_diagnostics(false, window, cx);
@@ -23957,6 +23976,15 @@ impl Editor {
                 )),
                 cx,
             );
+
+            if new_semantic_token_rules != self.semantic_token_rules {
+                self.semantic_token_rules = new_semantic_token_rules;
+                self.semantic_tokens_fetched_for_buffers.clear();
+                self.display_map.update(cx, |display_map, _| {
+                    display_map.semantic_token_highlights.clear();
+                });
+                self.update_semantic_tokens(None, None, cx);
+            }
             self.update_semantic_tokens(None, None, cx);
         }
 

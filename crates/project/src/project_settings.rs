@@ -706,6 +706,7 @@ pub struct SettingsObserver {
     _editorconfig_watcher: Option<Subscription>,
     _global_task_config_watcher: Task<()>,
     _global_debug_config_watcher: Task<()>,
+    _global_semantic_token_rules_watcher: Task<()>,
 }
 
 /// SettingsObserver observers changes to .zed/{settings, task}.json files in local worktrees
@@ -838,6 +839,15 @@ impl SettingsObserver {
             } else {
                 Task::ready(())
             },
+            _global_semantic_token_rules_watcher: if watch_global_configs {
+                Self::subscribe_to_global_semantic_token_rules_changes(
+                    fs.clone(),
+                    paths::semantic_token_rules_file().clone(),
+                    cx,
+                )
+            } else {
+                Task::ready(())
+            },
         }
     }
 
@@ -893,6 +903,12 @@ impl SettingsObserver {
                 paths::debug_scenarios_file().clone(),
                 cx,
             ),
+            _global_semantic_token_rules_watcher:
+                Self::subscribe_to_global_semantic_token_rules_changes(
+                    fs.clone(),
+                    paths::semantic_token_rules_file().clone(),
+                    cx,
+                ),
         }
     }
 
@@ -1445,6 +1461,29 @@ impl SettingsObserver {
                         )),
                     })
                     .ok();
+            }
+        })
+    }
+
+    fn subscribe_to_global_semantic_token_rules_changes(
+        fs: Arc<dyn Fs>,
+        file_path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let (mut file_rx, watcher_task) =
+            watch_config_file(cx.background_executor(), fs, file_path);
+        let initial_content = cx.foreground_executor().block_on(file_rx.next());
+        cx.spawn(async move |_, cx| {
+            let _watcher_task = watcher_task;
+            if let Some(content) = initial_content {
+                cx.update_global(|store: &mut SettingsStore, cx| {
+                    store.set_user_semantic_token_rules(&content, cx);
+                });
+            }
+            while let Some(content) = file_rx.next().await {
+                cx.update_global(|store: &mut SettingsStore, cx| {
+                    store.set_user_semantic_token_rules(&content, cx);
+                });
             }
         })
     }
