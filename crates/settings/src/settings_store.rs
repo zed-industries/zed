@@ -2240,10 +2240,7 @@ mod tests {
         let overrides = store.get_overrides_for_field(SettingsFile::Project(wt1_subdir), get);
         assert_eq!(overrides, vec![]);
 
-        let wt0_deep_child = (
-            WorktreeId::local(0),
-            rel_path("child1/subdir").into_arc(),
-        );
+        let wt0_deep_child = (WorktreeId::local(0), rel_path("child1/subdir").into_arc());
         store
             .set_local_settings(
                 wt0_deep_child.0,
@@ -2263,15 +2260,13 @@ mod tests {
 
     #[test]
     fn test_file_ord() {
-        let wt0_root =
-            SettingsFile::Project((WorktreeId::local(0), RelPath::empty().into_arc()));
+        let wt0_root = SettingsFile::Project((WorktreeId::local(0), RelPath::empty().into_arc()));
         let wt0_child1 =
             SettingsFile::Project((WorktreeId::local(0), rel_path("child1").into_arc()));
         let wt0_child2 =
             SettingsFile::Project((WorktreeId::local(0), rel_path("child2").into_arc()));
 
-        let wt1_root =
-            SettingsFile::Project((WorktreeId::local(1), RelPath::empty().into_arc()));
+        let wt1_root = SettingsFile::Project((WorktreeId::local(1), RelPath::empty().into_arc()));
         let wt1_subdir =
             SettingsFile::Project((WorktreeId::local(1), rel_path("subdir").into_arc()));
 

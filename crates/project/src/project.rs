@@ -4974,10 +4974,8 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |project, cx| {
-            let worktree_id = WorktreeId::from_proto(
-                envelope.payload.worktree_id,
-                envelope.payload.project_id,
-            );
+            let worktree_id =
+                WorktreeId::from_proto(envelope.payload.worktree_id, envelope.payload.project_id);
             if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();

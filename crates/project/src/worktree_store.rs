@@ -943,10 +943,8 @@ impl WorktreeStore {
         mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let worktree = this.update(&mut cx, |this, cx| {
-            let worktree_id = WorktreeId::from_proto(
-                envelope.payload.worktree_id,
-                envelope.payload.project_id,
-            );
+            let worktree_id =
+                WorktreeId::from_proto(envelope.payload.worktree_id, envelope.payload.project_id);
             this.worktree_for_id(worktree_id, cx)
                 .context("worktree not found")
         })?;
