@@ -1764,7 +1764,7 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
 
-       // Start with a selection
+        // Start with a selection
         cx.set_state(
             indoc! {"
             «lineˇ» one
