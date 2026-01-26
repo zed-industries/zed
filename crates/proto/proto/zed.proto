@@ -455,7 +455,8 @@ message Envelope {
         FindSearchCandidatesChunk find_search_candidates_chunk = 409;
         FindSearchCandidatesCancelled find_search_candidates_cancelled = 410;
         GetContextServerCommand get_context_server_command = 411;
-        ContextServerCommand context_server_command = 412; // current max
+        ContextServerCommand context_server_command = 412;
+        PullDocumentDiagnosticsForBufferEdit pull_document_diagnostics_for_buffer_edit = 413; // current max
     }
 
     reserved 87 to 88;

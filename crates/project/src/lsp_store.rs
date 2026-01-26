@@ -3952,6 +3952,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
         client.add_entity_request_handler(Self::handle_rename_project_entry);
         client.add_entity_request_handler(Self::handle_pull_workspace_diagnostics);
+        client.add_entity_request_handler(Self::handle_pull_document_diagnostics_for_buffer_edit);
         client.add_entity_request_handler(Self::handle_lsp_get_completions);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentSymbols>);
@@ -10351,6 +10352,18 @@ impl LspStore {
         Ok(proto::Ack {})
     }
 
+    async fn handle_pull_document_diagnostics_for_buffer_edit(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::PullDocumentDiagnosticsForBufferEdit>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        lsp_store.update(&mut cx, |lsp_store, cx| {
+            lsp_store.pull_document_diagnostics_for_buffer_edit(buffer_id, cx);
+        });
+        Ok(proto::Ack {})
+    }
+
     async fn handle_get_color_presentation(
         lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::GetColorPresentation>,
@@ -12324,6 +12337,16 @@ impl LspStore {
         buffer_id: BufferId,
         cx: &mut Context<Self>,
     ) {
+        if let Some((client, project_id)) = self.upstream_client() {
+            client
+                .send(proto::PullDocumentDiagnosticsForBufferEdit {
+                    project_id,
+                    buffer_id: buffer_id.to_proto(),
+                })
+                .log_err();
+            return;
+        }
+
         let Some(local) = self.as_local_mut() else {
             return;
         };

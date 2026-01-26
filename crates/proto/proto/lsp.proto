@@ -960,6 +960,11 @@ message PullWorkspaceDiagnostics {
   uint64 server_id = 2;
 }
 
+message PullDocumentDiagnosticsForBufferEdit {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+}
+
 message ToggleLspLogs {
   uint64 project_id = 1;
   LogType log_type = 2;
