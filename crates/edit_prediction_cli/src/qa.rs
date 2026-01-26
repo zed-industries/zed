@@ -5,22 +5,18 @@
 
 use crate::anthropic_client::AnthropicClient;
 use crate::example::Example;
-use crate::paths::CACHE_DIR;
+use crate::paths::LLM_CACHE_DB;
 use crate::word_diff::unified_to_word_diff;
 use anthropic::{Message, RequestContent, Role};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
-use std::sync::LazyLock;
 
 /// Model to use for QA evaluation.
 const MODEL: &str = "claude-sonnet-4-5";
 
 const PROMPT_TEMPLATE: &str = include_str!("prompts/qa.md");
-
-/// Path to the QA cache database.
-pub static QA_CACHE_DB: LazyLock<PathBuf> = LazyLock::new(|| CACHE_DIR.join("qa_cache.sqlite"));
 
 /// Arguments for the QA command.
 #[derive(Debug, Clone, clap::Args)]
@@ -155,7 +151,7 @@ pub async fn run_qa(
     let client = if args.no_batch {
         AnthropicClient::plain()?
     } else {
-        AnthropicClient::batch(&QA_CACHE_DB)?
+        AnthropicClient::batch(&LLM_CACHE_DB)?
     };
 
     eprintln!("Using model: {}, batching: {}", MODEL, !args.no_batch);

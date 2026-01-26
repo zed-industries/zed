@@ -153,7 +153,7 @@ pub fn zeta2_output_for_patch(
 pub struct TeacherPrompt;
 
 impl TeacherPrompt {
-    const PROMPT: &str = include_str!("teacher.prompt.md");
+    const PROMPT: &str = include_str!("prompts/teacher.md");
     pub(crate) const EDITABLE_REGION_START: &str = "<|editable_region_start|>\n";
     pub(crate) const EDITABLE_REGION_END: &str = "\n<|editable_region_end|>";
     pub(crate) const USER_CURSOR_MARKER: &str = "<|user_cursor|>";

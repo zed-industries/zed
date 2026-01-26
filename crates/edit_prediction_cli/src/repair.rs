@@ -8,23 +8,18 @@ use crate::PredictionProvider;
 use crate::anthropic_client::AnthropicClient;
 use crate::example::{Example, ExamplePrediction};
 use crate::format_prompt::TeacherPrompt;
-use crate::paths::CACHE_DIR;
+use crate::paths::LLM_CACHE_DB;
 use crate::word_diff::unified_to_word_diff;
 use anthropic::{Message, RequestContent, Role};
 use anyhow::Result;
 use std::fmt::Write as _;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
-use std::sync::LazyLock;
 
 /// Model to use for repair.
 const MODEL: &str = "claude-sonnet-4-5";
 
 const PROMPT_TEMPLATE: &str = include_str!("prompts/repair.md");
-
-/// Path to the repair cache database.
-pub static REPAIR_CACHE_DB: LazyLock<PathBuf> =
-    LazyLock::new(|| CACHE_DIR.join("repair_cache.sqlite"));
 
 /// Arguments for the repair command.
 #[derive(Debug, Clone, clap::Args)]
@@ -226,7 +221,7 @@ pub async fn run_repair(
     let client = if args.no_batch {
         AnthropicClient::plain()?
     } else {
-        AnthropicClient::batch(&REPAIR_CACHE_DB)?
+        AnthropicClient::batch(&LLM_CACHE_DB)?
     };
 
     eprintln!(
