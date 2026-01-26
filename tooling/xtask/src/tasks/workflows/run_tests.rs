@@ -192,39 +192,47 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
         .add_with(("merge-multiple", "true"))
         .if_condition(Expression::new("always()"));
 
-    let mut script = String::from(indoc::indoc! {r#"
-        set +x
-        EXIT_CODE=0
+    let script_header = r##"set +x
+EXIT_CODE=0
 
-        # Check for original failure artifacts
-        if [ -d "failed-jobs" ] && [ "$(ls -A failed-jobs 2>/dev/null)" ]; then
-          echo "══════════════════════════════════════════════════════════"
-          echo "ORIGINAL FAILURE(S):"
-          for f in failed-jobs/*; do
-            if [ -f "$f" ]; then
-              job_name=$(cat "$f")
-              echo "  ✗ $job_name"
-            fi
-          done
-          echo "══════════════════════════════════════════════════════════"
-          echo ""
-        fi
+# Check for original failure artifacts and write to step summary
+if [ -d "failed-jobs" ] && [ "$(ls -A failed-jobs 2>/dev/null)" ]; then
+  echo "# :x: Original Failure(s)" >> $GITHUB_STEP_SUMMARY
+  echo "" >> $GITHUB_STEP_SUMMARY
+  echo "The following job(s) failed and cancelled the rest of the workflow:" >> $GITHUB_STEP_SUMMARY
+  echo "" >> $GITHUB_STEP_SUMMARY
+  for f in failed-jobs/*; do
+    if [ -f "$f" ]; then
+      job_name=$(cat "$f")
+      echo "- **$job_name**" >> $GITHUB_STEP_SUMMARY
+      echo "FAILED: $job_name"
+    fi
+  done
+  echo "" >> $GITHUB_STEP_SUMMARY
+fi
 
-        echo "Job results:"
-        check_result() {
-          local status_icon="✓"
-          if [[ "$2" == "failure" ]]; then
-            status_icon="✗"
-          elif [[ "$2" == "cancelled" ]]; then
-            status_icon="⊘"
-          elif [[ "$2" == "skipped" ]]; then
-            status_icon="⊖"
-          fi
-          echo "  $status_icon $1: $2"
-          if [[ "$2" != "skipped" && "$2" != "success" ]]; then EXIT_CODE=1; fi
-        }
+echo "# Job Results" >> $GITHUB_STEP_SUMMARY
+echo "" >> $GITHUB_STEP_SUMMARY
+echo "| Job | Result |" >> $GITHUB_STEP_SUMMARY
+echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
 
-    "#});
+check_result() {
+  local md_icon=":white_check_mark:"
+  if [[ "$2" == "failure" ]]; then
+    md_icon=":x:"
+  elif [[ "$2" == "cancelled" ]]; then
+    md_icon=":no_entry_sign:"
+  elif [[ "$2" == "skipped" ]]; then
+    md_icon=":fast_forward:"
+  fi
+  echo "  $1: $2"
+  echo "| $1 | $md_icon $2 |" >> $GITHUB_STEP_SUMMARY
+  if [[ "$2" != "skipped" && "$2" != "success" ]]; then EXIT_CODE=1; fi
+}
+
+"##;
+
+    let mut script = String::from(script_header);
 
     script.push_str(
         &jobs

@@ -55,6 +55,11 @@ jobs:
       run: |
         mkdir -p failed-jobs
         echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
     - name: Upload failure artifact
       if: failure()
@@ -93,6 +98,11 @@ jobs:
       run: |
         mkdir -p failed-jobs
         echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
     - name: Upload failure artifact
       if: failure()

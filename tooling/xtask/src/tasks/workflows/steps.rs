@@ -114,10 +114,14 @@ pub fn clippy(platform: Platform) -> Step<Run> {
 
 pub fn cancel_workflow_on_failure(job: Job) -> Job {
     let record_failure = Step::new("Record failure")
-        .run(indoc::indoc! {r#"
-            mkdir -p failed-jobs
-            echo "${{ github.job }}" > failed-jobs/${{ github.job }}
-        "#})
+        .run(r##"mkdir -p failed-jobs
+echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+echo "" >> $GITHUB_STEP_SUMMARY
+echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+echo "" >> $GITHUB_STEP_SUMMARY
+echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
+"##)
         .shell(BASH_SHELL)
         .if_condition(Expression::new("failure()"));
     let upload_failure = Step::new("Upload failure artifact")

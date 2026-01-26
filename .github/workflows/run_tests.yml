@@ -95,6 +95,11 @@ jobs:
       run: |
         mkdir -p failed-jobs
         echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
     - name: Upload failure artifact
       if: failure()
@@ -130,6 +135,11 @@ jobs:
       run: |
         mkdir -p failed-jobs
         echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
     - name: Upload failure artifact
       if: failure()
@@ -178,6 +188,11 @@ jobs:
       run: |
         mkdir -p failed-jobs
         echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
     - name: Upload failure artifact
       if: failure()
@@ -213,6 +228,11 @@ jobs:
       run: |
         mkdir -p failed-jobs
         echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
     - name: Upload failure artifact
       if: failure()
@@ -255,6 +275,11 @@ jobs:
       run: |
         mkdir -p failed-jobs
         echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
     - name: Upload failure artifact
       if: failure()
@@ -317,6 +342,11 @@ jobs:
       run: |
         mkdir -p failed-jobs
         echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
     - name: Upload failure artifact
       if: failure()
@@ -364,6 +394,11 @@ jobs:
       run: |
         mkdir -p failed-jobs
         echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
     - name: Upload failure artifact
       if: failure()
@@ -419,6 +454,11 @@ jobs:
       run: |
         mkdir -p failed-jobs
         echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
     - name: Upload failure artifact
       if: failure()
@@ -475,6 +515,11 @@ jobs:
       run: |
         mkdir -p failed-jobs
         echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
     - name: Upload failure artifact
       if: failure()
@@ -528,6 +573,11 @@ jobs:
       run: |
         mkdir -p failed-jobs
         echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
     - name: Upload failure artifact
       if: failure()
@@ -597,6 +647,11 @@ jobs:
       run: |
         mkdir -p failed-jobs
         echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
     - name: Upload failure artifact
       if: failure()
@@ -634,6 +689,11 @@ jobs:
       run: |
         mkdir -p failed-jobs
         echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
     - name: Upload failure artifact
       if: failure()
@@ -680,6 +740,11 @@ jobs:
       run: |
         mkdir -p failed-jobs
         echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
     - name: Upload failure artifact
       if: failure()
@@ -805,6 +870,11 @@ jobs:
       run: |
         mkdir -p failed-jobs
         echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        echo "# :x: Job Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "This job failed and triggered cancellation of the workflow." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
     - name: Upload failure artifact
       if: failure()
@@ -850,31 +920,38 @@ jobs:
         set +x
         EXIT_CODE=0
 
-        # Check for original failure artifacts
+        # Check for original failure artifacts and write to step summary
         if [ -d "failed-jobs" ] && [ "$(ls -A failed-jobs 2>/dev/null)" ]; then
-          echo "══════════════════════════════════════════════════════════"
-          echo "ORIGINAL FAILURE(S):"
+          echo "# :x: Original Failure(s)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The following job(s) failed and cancelled the rest of the workflow:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           for f in failed-jobs/*; do
             if [ -f "$f" ]; then
               job_name=$(cat "$f")
-              echo "  ✗ $job_name"
+              echo "- **$job_name**" >> $GITHUB_STEP_SUMMARY
+              echo "FAILED: $job_name"
             fi
           done
-          echo "══════════════════════════════════════════════════════════"
-          echo ""
+          echo "" >> $GITHUB_STEP_SUMMARY
         fi
 
-        echo "Job results:"
+        echo "# Job Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Job | Result |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+
         check_result() {
-          local status_icon="✓"
+          local md_icon=":white_check_mark:"
           if [[ "$2" == "failure" ]]; then
-            status_icon="✗"
+            md_icon=":x:"
           elif [[ "$2" == "cancelled" ]]; then
-            status_icon="⊘"
+            md_icon=":no_entry_sign:"
           elif [[ "$2" == "skipped" ]]; then
-            status_icon="⊖"
+            md_icon=":fast_forward:"
           fi
-          echo "  $status_icon $1: $2"
+          echo "  $1: $2"
+          echo "| $1 | $md_icon $2 |" >> $GITHUB_STEP_SUMMARY
           if [[ "$2" != "skipped" && "$2" != "success" ]]; then EXIT_CODE=1; fi
         }
 
