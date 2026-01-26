@@ -16,6 +16,7 @@ mod qa;
 mod reorder_patch;
 mod repair;
 mod retrieve_context;
+mod reversal_tracking;
 mod score;
 mod split_commit;
 mod split_dataset;
