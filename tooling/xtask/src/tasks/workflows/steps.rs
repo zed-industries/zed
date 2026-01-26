@@ -129,11 +129,14 @@ echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
         .if_condition(Expression::new("failure()"));
 
     let create_check = Step::new("Create failed check")
-        .run(format!(r##"curl -X POST \
+        .run(format!(r##"echo "Creating check run for job: ${{{{ github.job }}}}"
+echo "Repository: ${{{{ github.repository }}}}"
+echo "SHA: ${{{{ github.sha }}}}"
+curl -v -X POST \
   -H "Authorization: Bearer $GITHUB_TOKEN" \
   -H "Accept: application/vnd.github+json" \
   "https://api.github.com/repos/${{{{ github.repository }}}}/check-runs" \
-  -d '{{"name":"CI Failed","head_sha":"${{{{ github.sha }}}}","status":"completed","conclusion":"failure","output":{{"title":"Failed: ${{{{ github.job }}}}","summary":"Job ${{{{ github.job }}}} failed and cancelled the workflow."}}}}'
+  -d '{{"name":"Failed: ${{{{ github.job }}}}","head_sha":"${{{{ github.sha }}}}","status":"completed","conclusion":"failure","output":{{"title":"Job failed","summary":"Job ${{{{ github.job }}}} failed and cancelled the workflow."}}}}'
 "##))
         .shell(BASH_SHELL)
         .add_env(("GITHUB_TOKEN", token.to_string()))
