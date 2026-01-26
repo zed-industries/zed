@@ -1876,6 +1876,18 @@ impl App {
         self.actions.action_schemas(generator)
     }
 
+    /// Get the schema for a specific action by name.
+    /// Returns `None` if the action is not found.
+    /// Returns `Some(None)` if the action exists but has no schema.
+    /// Returns `Some(Some(schema))` if the action exists and has a schema.
+    pub fn action_schema_by_name(
+        &self,
+        name: &str,
+        generator: &mut schemars::SchemaGenerator,
+    ) -> Option<Option<schemars::Schema>> {
+        self.actions.action_schema_by_name(name, generator)
+    }
+
     /// Get a map from a deprecated action name to the canonical name.
     pub fn deprecated_actions_to_preferred_actions(&self) -> &HashMap<&'static str, &'static str> {
         self.actions.deprecated_aliases()

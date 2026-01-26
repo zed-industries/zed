@@ -3012,7 +3012,7 @@ impl LocalLspStore {
     }
 
     #[allow(clippy::type_complexity)]
-    pub(crate) fn edits_from_lsp(
+    pub fn edits_from_lsp(
         &mut self,
         buffer: &Entity<Buffer>,
         lsp_edits: impl 'static + Send + IntoIterator<Item = lsp::TextEdit>,
@@ -8481,7 +8481,7 @@ impl LspStore {
             .collect();
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub fn update_diagnostic_entries(
         &mut self,
         server_id: LanguageServerId,
@@ -14139,7 +14139,7 @@ pub enum ResolvedHint {
     Resolving(Shared<Task<()>>),
 }
 
-fn glob_literal_prefix(glob: &Path) -> PathBuf {
+pub fn glob_literal_prefix(glob: &Path) -> PathBuf {
     glob.components()
         .take_while(|component| match component {
             path::Component::Normal(part) => !part.to_string_lossy().contains(['*', '?', '{', '}']),
@@ -14547,7 +14547,7 @@ fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
 /// breaking the completions menu presentation.
 ///
 /// Sanitize the text to ensure there are no newlines, or, if there are some, remove them and also remove long space sequences if there were newlines.
-fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
+pub fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
     let mut new_text = String::with_capacity(label.text.len());
     let mut offset_map = vec![0; label.text.len() + 1];
     let mut last_char_was_space = false;
@@ -14644,81 +14644,4 @@ fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
     }
 
     label.text = new_text;
-}
-
-#[cfg(test)]
-mod tests {
-    use language::HighlightId;
-
-    use super::*;
-
-    #[test]
-    fn test_glob_literal_prefix() {
-        assert_eq!(glob_literal_prefix(Path::new("**/*.js")), Path::new(""));
-        assert_eq!(
-            glob_literal_prefix(Path::new("node_modules/**/*.js")),
-            Path::new("node_modules")
-        );
-        assert_eq!(
-            glob_literal_prefix(Path::new("foo/{bar,baz}.js")),
-            Path::new("foo")
-        );
-        assert_eq!(
-            glob_literal_prefix(Path::new("foo/bar/baz.js")),
-            Path::new("foo/bar/baz.js")
-        );
-
-        #[cfg(target_os = "windows")]
-        {
-            assert_eq!(glob_literal_prefix(Path::new("**\\*.js")), Path::new(""));
-            assert_eq!(
-                glob_literal_prefix(Path::new("node_modules\\**/*.js")),
-                Path::new("node_modules")
-            );
-            assert_eq!(
-                glob_literal_prefix(Path::new("foo/{bar,baz}.js")),
-                Path::new("foo")
-            );
-            assert_eq!(
-                glob_literal_prefix(Path::new("foo\\bar\\baz.js")),
-                Path::new("foo/bar/baz.js")
-            );
-        }
-    }
-
-    #[test]
-    fn test_multi_len_chars_normalization() {
-        let mut label = CodeLabel::new(
-            "myElˇ (parameter) myElˇ: {\n    foo: string;\n}".to_string(),
-            0..6,
-            vec![(0..6, HighlightId(1))],
-        );
-        ensure_uniform_list_compatible_label(&mut label);
-        assert_eq!(
-            label,
-            CodeLabel::new(
-                "myElˇ (parameter) myElˇ: { foo: string; }".to_string(),
-                0..6,
-                vec![(0..6, HighlightId(1))],
-            )
-        );
-    }
-
-    #[test]
-    fn test_trailing_newline_in_completion_documentation() {
-        let doc = lsp::Documentation::String(
-            "Inappropriate argument value (of correct type).\n".to_string(),
-        );
-        let completion_doc: CompletionDocumentation = doc.into();
-        assert!(
-            matches!(completion_doc, CompletionDocumentation::SingleLine(s) if s == "Inappropriate argument value (of correct type).")
-        );
-
-        let doc = lsp::Documentation::String("  some value  \n".to_string());
-        let completion_doc: CompletionDocumentation = doc.into();
-        assert!(matches!(
-            completion_doc,
-            CompletionDocumentation::SingleLine(s) if s == "some value"
-        ));
-    }
 }
