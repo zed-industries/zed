@@ -1,4 +1,4 @@
-use crate::tests::TestServer;
+use crate::TestServer;
 use call::ActiveCall;
 use collections::{HashMap, HashSet};
 

@@ -3,13 +3,11 @@ use std::sync::Arc;
 
 use rpc::ExtensionProvides;
 
-use super::Database;
-use crate::db::ExtensionVersionConstraints;
-use crate::{
-    db::{ExtensionMetadata, NewExtensionVersion, queries::extensions::convert_time_to_chrono},
-    test_both_dbs,
-};
-
+use crate::test_both_dbs;
+use collab::db::Database;
+use collab::db::ExtensionVersionConstraints;
+use collab::db::{NewExtensionVersion, queries::extensions::convert_time_to_chrono};
+use rpc::ExtensionMetadata;
 test_both_dbs!(
     test_extensions,
     test_extensions_postgres,
