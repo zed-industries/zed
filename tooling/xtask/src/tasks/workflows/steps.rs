@@ -112,6 +112,12 @@ pub fn clippy(platform: Platform) -> Step<Run> {
     }
 }
 
+pub fn cancel_workflow_on_failure() -> Step<Use> {
+    Step::new("Cancel workflow on failure")
+        .uses("styfle", "cancel-workflow-action", "0.12.1")
+        .if_condition(Expression::new("failure()"))
+}
+
 pub fn cache_rust_dependencies_namespace() -> Step<Use> {
     named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "rust"))
 }

@@ -50,6 +50,9 @@ jobs:
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
       shell: pwsh
+    - name: Cancel workflow on failure
+      if: failure()
+      uses: styfle/cancel-workflow-action@0.12.1
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -72,6 +75,9 @@ jobs:
     - name: steps::clippy
       run: ./script/clippy.ps1
       shell: pwsh
+    - name: Cancel workflow on failure
+      if: failure()
+      uses: styfle/cancel-workflow-action@0.12.1
     timeout-minutes: 60
   bundle_linux_aarch64:
     needs:
