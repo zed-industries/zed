@@ -1,0 +1,502 @@
+//! Repair predictions that received poor QA scores.
+//!
+//! This module takes examples with predictions and QA feedback, identifies
+//! predictions that need improvement (based on reverts_edits or low confidence),
+//! and uses an LLM to generate improved predictions.
+
+use crate::anthropic_client::AnthropicClient;
+use crate::example::{Example, ExamplePrediction};
+use crate::format_prompt::TeacherPrompt;
+use crate::paths::CACHE_DIR;
+use crate::word_diff::unified_to_word_diff;
+use crate::PredictionProvider;
+use anthropic::{Message, RequestContent, Role};
+use anyhow::Result;
+use std::fmt::Write as _;
+use std::io::{BufWriter, Write};
+use std::path::PathBuf;
+use std::sync::LazyLock;
+
+
+/// Model to use for repair.
+const MODEL: &str = "claude-sonnet-4-5";
+
+/// Path to the repair cache database.
+pub static REPAIR_CACHE_DB: LazyLock<PathBuf> =
+    LazyLock::new(|| CACHE_DIR.join("repair_cache.sqlite"));
+
+/// Arguments for the repair command.
+#[derive(Debug, Clone, clap::Args)]
+pub struct RepairArgs {
+    /// Use synchronous API instead of batch
+    #[clap(long)]
+    pub no_batch: bool,
+
+    /// Wait for batch to complete (polls every 30s)
+    #[clap(long)]
+    pub wait: bool,
+
+    /// Confidence threshold: repair predictions with confidence <= this value (1-5)
+    #[clap(long, default_value = "2")]
+    pub confidence_threshold: u8,
+}
+
+/// Build the repair prompt for an example that needs improvement.
+///
+/// Returns None if the example doesn't have the required data (predictions, qa, prompt_inputs).
+pub fn build_repair_prompt(example: &Example) -> Option<String> {
+    let prediction = example.predictions.first()?;
+    let qa = example.qa.first()?.as_ref()?;
+    let prompt_inputs = example.prompt_inputs.as_ref()?;
+    let actual_patch = prediction.actual_patch.as_ref()?;
+
+    let actual_patch_word_diff = unified_to_word_diff(actual_patch);
+
+    // Format edit history similar to qa.rs
+    let mut edit_history = String::new();
+    for event in &prompt_inputs.edit_history {
+        match event.as_ref() {
+            zeta_prompt::Event::BufferChange {
+                path,
+                old_path,
+                diff,
+                predicted: _,
+                in_open_source_repo: _,
+            } => {
+                edit_history.push_str(&format!("--- a{}\n", old_path.display()));
+                edit_history.push_str(&format!("+++ b{}\n", path.display()));
+                let diff_word_diff = unified_to_word_diff(diff);
+                edit_history.push_str(&diff_word_diff);
+                edit_history.push_str("\n\n");
+            }
+        }
+    }
+
+    // Format related files context
+    let context = format_context(example);
+
+    // Format cursor excerpt with editable region markers
+    let cursor_excerpt = format_cursor_excerpt(example)?;
+
+    // Get QA feedback
+    let qa_reasoning = qa.reasoning.as_deref().unwrap_or("No reasoning provided");
+    let reverts_edits = qa.reverts_edits.map_or("unknown", |v| if v { "yes" } else { "no" });
+    let confidence = qa
+        .confidence
+        .map_or("unknown".to_string(), |v| v.to_string());
+
+    Some(format!(
+        r#"# Instructions
+
+You are an edit prediction assistant in a code editor. Your task is to generate an improved prediction based on feedback from a quality assessment.
+
+A previous model generated a prediction that was judged to have issues. Your job is to generate a better prediction that addresses the feedback.
+
+## Focus on
+
+- Completing any partially-applied changes made
+- Ensuring consistency with the programming style and patterns already established
+- Making edits that maintain or improve code quality
+- NOT reverting or undoing changes the user intentionally made
+
+## Rules
+
+- Do not just mechanically apply patterns - reason about what changes make sense given the context and the programmer's apparent goals.
+- Do not just fix syntax errors - look for the broader refactoring pattern and apply it systematically throughout the code.
+- Keep existing formatting unless it's absolutely necessary
+- Don't write a lot of code if you're not sure what to do
+- Do not delete or remove text that was just added in the edit history. If a recent edit introduces incomplete or incorrect code, finish or fix it in place, or simply do nothing rather than removing it. Only remove a recent edit if the history explicitly shows the user undoing it themselves.
+
+# Input Format
+
+You will be provided with:
+1. The user's *edit history*, in chronological order. Use this to infer the user's trajectory and predict the next most logical edit.
+2. A set of *related excerpts* from the user's codebase. Some of these may be needed for correctly predicting the next edit.
+   - `…` may appear within a related file to indicate that some code has been skipped.
+3. An excerpt from the user's *current file*.
+    - Within the user's current file, there is an *editable region* delimited by the `<|editable_region_start|>` and `<|editable_region_end|>` tags. You can only predict edits in this region.
+    - The `<|user_cursor|>` tag marks the user's current cursor position, as it stands after the last edit in the history.
+4. The *previous prediction* that was generated and needs improvement.
+5. *Quality assessment feedback* explaining why the previous prediction was problematic.
+
+# Output Format
+
+- Briefly explain what was wrong with the previous prediction and how you'll improve it.
+- Output the entire editable region, applying the edits that you predict the user will make next.
+- If you're unsure about some portion of the next edit, you may still predict the surrounding code (such as a function definition, `for` loop, etc) and place the `<|user_cursor|>` within it for the user to fill in.
+- Wrap the edited code in a codeblock with exactly five backticks.
+
+# 1. User Edits History
+
+`````
+{edit_history}
+`````
+
+# 2. Related excerpts
+
+{context}
+
+# 3. Current File
+
+{cursor_excerpt}
+
+# 4. Previous Prediction (needs improvement)
+
+The previous model generated the following edit (in word-diff format):
+
+`````
+{actual_patch_word_diff}
+`````
+
+# 5. Quality Assessment Feedback
+
+- **Reverts user edits**: {reverts_edits}
+- **Confidence score**: {confidence}/5
+- **Reasoning**: {qa_reasoning}
+
+# Your Improved Prediction
+
+Based on the feedback above, generate an improved prediction. Address the issues identified in the quality assessment.
+"#
+    ))
+}
+
+/// Format context (related files) - similar to TeacherPrompt::format_context
+fn format_context(example: &Example) -> String {
+    let related_files = example
+        .prompt_inputs
+        .as_ref()
+        .and_then(|pi| pi.related_files.as_ref());
+
+    let Some(related_files) = related_files else {
+        return "(No context)".to_string();
+    };
+
+    if related_files.is_empty() {
+        return "(No context)".to_string();
+    }
+
+    let mut prompt = String::new();
+    for file in related_files {
+        let path_str = file.path.to_string_lossy();
+        writeln!(&mut prompt, "`````{path_str}").ok();
+
+        let mut prev_row = 0;
+        for excerpt in &file.excerpts {
+            if excerpt.row_range.start > prev_row {
+                prompt.push_str("…\n");
+            }
+            prompt.push_str(&excerpt.text);
+            prompt.push('\n');
+            prev_row = excerpt.row_range.end;
+        }
+        if prev_row < file.max_row {
+            prompt.push_str("…\n");
+        }
+        prompt.push_str("\n`````\n");
+    }
+
+    prompt
+}
+
+/// Format cursor excerpt with editable region markers.
+/// This reconstructs the cursor excerpt from the prompt if available.
+fn format_cursor_excerpt(example: &Example) -> Option<String> {
+    // If we have the original prompt, extract the cursor excerpt from it
+    if let Some(prompt) = &example.prompt {
+        // Find "# 3. Current File" section and extract the content
+        if let Some(start) = prompt.input.find("# 3. Current File") {
+            let content_start = prompt.input[start..].find('`').map(|i| start + i)?;
+            let backtick_count = prompt.input[content_start..]
+                .chars()
+                .take_while(|&c| c == '`')
+                .count();
+            let content_start = content_start + backtick_count;
+
+            // Find the path line and skip it
+            let newline_pos = prompt.input[content_start..].find('\n')?;
+            let text_start = content_start + newline_pos + 1;
+
+            // Find the closing backticks
+            let closing_pattern = "`".repeat(backtick_count);
+            let text_end = prompt.input[text_start..].find(&closing_pattern)?;
+            let cursor_excerpt = &prompt.input[text_start..text_start + text_end];
+
+            let path_str = example.spec.cursor_path.to_string_lossy();
+            return Some(format!("`````{path_str}\n{cursor_excerpt}`````"));
+        }
+    }
+
+    // Fallback: construct from prompt_inputs if available
+    let prompt_inputs = example.prompt_inputs.as_ref()?;
+    let content = &prompt_inputs.content;
+    let cursor_offset = prompt_inputs.cursor_offset;
+
+    // Simple fallback: just show content around cursor with markers
+    let path_str = example.spec.cursor_path.to_string_lossy();
+    let mut result = format!("`````{path_str}\n");
+    result.push_str(TeacherPrompt::EDITABLE_REGION_START);
+    result.push_str(&content[..cursor_offset]);
+    result.push_str(TeacherPrompt::USER_CURSOR_MARKER);
+    result.push_str(&content[cursor_offset..]);
+    result.push_str(TeacherPrompt::EDITABLE_REGION_END);
+    result.push_str("\n`````");
+
+    Some(result)
+}
+
+/// Check if an example needs repair based on QA feedback.
+pub fn needs_repair(example: &Example, confidence_threshold: u8) -> bool {
+    let Some(qa) = example.qa.first().and_then(|q| q.as_ref()) else {
+        return false;
+    };
+
+    // Repair if reverts_edits is true
+    if qa.reverts_edits == Some(true) {
+        return true;
+    }
+
+    // Repair if confidence is at or below threshold
+    if let Some(confidence) = qa.confidence {
+        if confidence <= confidence_threshold {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Parse the repair response into a prediction.
+fn parse_repair_response(
+    example: &Example,
+    response_text: &str,
+) -> Result<ExamplePrediction> {
+    let actual_patch = TeacherPrompt::parse(example, response_text)?;
+
+    Ok(ExamplePrediction {
+        actual_patch: Some(actual_patch),
+        actual_output: response_text.to_string(),
+        error: None,
+        provider: PredictionProvider::Repair,
+    })
+}
+
+/// Run the repair process on a set of examples.
+pub async fn run_repair(
+    examples: &mut [Example],
+    args: &RepairArgs,
+    output_path: Option<&PathBuf>,
+) -> Result<()> {
+    let client = if args.no_batch {
+        AnthropicClient::plain()?
+    } else {
+        AnthropicClient::batch(&REPAIR_CACHE_DB)?
+    };
+
+    eprintln!(
+        "Using model: {}, batching: {}, confidence_threshold: {}",
+        MODEL, !args.no_batch, args.confidence_threshold
+    );
+
+    // First pass: identify examples that need repair and build prompts
+    let mut repair_items: Vec<(usize, String)> = Vec::new();
+    let mut skipped_missing_data = 0;
+    let mut skipped_no_repair_needed = 0;
+
+    for (idx, example) in examples.iter().enumerate() {
+        // Skip if missing predictions or qa
+        if example.predictions.is_empty() || example.qa.is_empty() {
+            skipped_missing_data += 1;
+            continue;
+        }
+
+        // Skip if doesn't need repair
+        if !needs_repair(example, args.confidence_threshold) {
+            skipped_no_repair_needed += 1;
+            continue;
+        }
+
+        // Build repair prompt
+        let Some(prompt) = build_repair_prompt(example) else {
+            skipped_missing_data += 1;
+            continue;
+        };
+
+        repair_items.push((idx, prompt));
+    }
+
+    eprintln!(
+        "Skipping {} items with missing data, {} items that don't need repair",
+        skipped_missing_data, skipped_no_repair_needed
+    );
+    eprintln!("{} items to repair", repair_items.len());
+
+    // Process all items
+    let mut results: Vec<(usize, Option<String>)> = Vec::new();
+
+    if args.no_batch {
+        // Synchronous processing
+        for (i, (idx, prompt)) in repair_items.iter().enumerate() {
+            eprint!("\rProcessing {}/{}", i + 1, repair_items.len());
+
+            let messages = vec![Message {
+                role: Role::User,
+                content: vec![RequestContent::Text {
+                    text: prompt.clone(),
+                    cache_control: None,
+                }],
+            }];
+
+            let response = client.generate(MODEL, 16384, messages).await?;
+            let result = response.map(|r| {
+                r.content
+                    .iter()
+                    .filter_map(|c| match c {
+                        anthropic::ResponseContent::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("")
+            });
+            results.push((*idx, result));
+        }
+        eprintln!();
+    } else {
+        // Queue all for batching
+        for (idx, prompt) in &repair_items {
+            let messages = vec![Message {
+                role: Role::User,
+                content: vec![RequestContent::Text {
+                    text: prompt.clone(),
+                    cache_control: None,
+                }],
+            }];
+
+            let response = client.generate(MODEL, 16384, messages).await?;
+            let result = response.map(|r| {
+                r.content
+                    .iter()
+                    .filter_map(|c| match c {
+                        anthropic::ResponseContent::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("")
+            });
+            results.push((*idx, result));
+        }
+
+        // Sync batches (upload pending, download finished)
+        client.sync_batches().await?;
+
+        if args.wait {
+            eprintln!("Waiting for batch to complete...");
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                client.sync_batches().await?;
+
+                // Re-check all items that didn't have results
+                let mut all_done = true;
+                for (result_idx, (idx, prompt)) in repair_items.iter().enumerate() {
+                    if results[result_idx].1.is_none() {
+                        let messages = vec![Message {
+                            role: Role::User,
+                            content: vec![RequestContent::Text {
+                                text: prompt.clone(),
+                                cache_control: None,
+                            }],
+                        }];
+
+                        let response = client.generate(MODEL, 16384, messages).await?;
+                        if let Some(r) = response {
+                            let text = r
+                                .content
+                                .iter()
+                                .filter_map(|c| match c {
+                                    anthropic::ResponseContent::Text { text } => {
+                                        Some(text.as_str())
+                                    }
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("");
+                            results[result_idx] = (*idx, Some(text));
+                        } else {
+                            all_done = false;
+                        }
+                    }
+                }
+
+                let done_count = results.iter().filter(|(_, r)| r.is_some()).count();
+                if all_done {
+                    break;
+                }
+                eprintln!(
+                    "Still waiting... {}/{} results",
+                    done_count,
+                    repair_items.len()
+                );
+            }
+        } else {
+            let pending_count = results.iter().filter(|(_, r)| r.is_none()).count();
+            if pending_count > 0 {
+                eprintln!(
+                    "Batch submitted. {} pending. Run again later to retrieve results.",
+                    pending_count
+                );
+            }
+        }
+    }
+
+    // Build results map by index
+    let mut results_by_idx: std::collections::HashMap<usize, String> =
+        std::collections::HashMap::new();
+    for (idx, result) in results {
+        if let Some(r) = result {
+            results_by_idx.insert(idx, r);
+        }
+    }
+
+    // Output results
+    let mut writer: Box<dyn Write> = if let Some(path) = output_path {
+        Box::new(BufWriter::new(std::fs::File::create(path)?))
+    } else {
+        Box::new(std::io::stdout())
+    };
+
+    let mut num_repaired = 0;
+    let mut num_repair_errors = 0;
+
+    for (idx, example) in examples.iter_mut().enumerate() {
+        // Add repair prediction if we have a result
+        if let Some(response_text) = results_by_idx.get(&idx) {
+            match parse_repair_response(example, response_text) {
+                Ok(prediction) => {
+                    example.predictions.push(prediction);
+                    num_repaired += 1;
+                }
+                Err(e) => {
+                    // Add error prediction
+                    example.predictions.push(ExamplePrediction {
+                        actual_patch: None,
+                        actual_output: response_text.clone(),
+                        error: Some(format!("Failed to parse repair response: {}", e)),
+                        provider: PredictionProvider::Repair,
+                    });
+                    num_repair_errors += 1;
+                }
+            }
+        }
+
+        writeln!(writer, "{}", serde_json::to_string(&example)?)?;
+    }
+
+    if let Some(path) = output_path {
+        eprintln!("Results written to {}", path.display());
+    }
+
+    eprintln!("Repaired:      {} items", num_repaired);
+    eprintln!("Repair errors: {} items", num_repair_errors);
+
+    Ok(())
+}
