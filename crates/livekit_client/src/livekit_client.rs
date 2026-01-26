@@ -308,7 +308,7 @@ impl LocalParticipant {
                     tokio::time::sleep(Duration::from_secs_f32(1.0 / 60.0)).await;
                 }
             }
-        })?;
+        });
 
         let video_source = video_source_receiver.next().await.ok_or(anyhow!(
             "No NativeVideoSource received from DesktopCapturer"
