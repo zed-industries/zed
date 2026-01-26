@@ -13,7 +13,7 @@ use cloud_llm_client::{Plan, PlanV2};
 use collections::HashMap;
 use context_server::ContextServerId;
 use editor::{Editor, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
-use extension::ExtensionManifest;
+use extension::{ExtensionFeatures, ExtensionManifest};
 use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
@@ -782,7 +782,7 @@ impl AgentConfiguration {
                                     resolve_extension_for_context_server(&context_server_id, cx),
                                 ) {
                                     (true, Some((id, manifest))) => {
-                                        if extension_only_provides_context_server(manifest.as_ref())
+                                        if extension_only_provides_context_server(&manifest.provides)
                                         {
                                             ExtensionStore::global(cx).update(cx, |store, cx| {
                                                 store.uninstall_extension(id, cx)
@@ -1271,16 +1271,16 @@ impl Render for AgentConfiguration {
     }
 }
 
-fn extension_only_provides_context_server(manifest: &ExtensionManifest) -> bool {
-    manifest.context_servers.len() == 1
-        && manifest.themes.is_empty()
-        && manifest.icon_themes.is_empty()
-        && manifest.languages.is_empty()
-        && manifest.grammars.is_empty()
-        && manifest.language_servers.is_empty()
-        && manifest.slash_commands.is_empty()
-        && manifest.snippets.is_none()
-        && manifest.debug_locators.is_empty()
+fn extension_only_provides_context_server(features: &ExtensionFeatures) -> bool {
+    features.context_servers.len() == 1
+        && features.themes.is_empty()
+        && features.icon_themes.is_empty()
+        && features.languages.is_empty()
+        && features.grammars.is_empty()
+        && features.language_servers.is_empty()
+        && features.slash_commands.is_empty()
+        && features.snippets.is_none()
+        && features.debug_locators.is_empty()
 }
 
 pub(crate) fn resolve_extension_for_context_server(
@@ -1291,7 +1291,7 @@ pub(crate) fn resolve_extension_for_context_server(
         .read(cx)
         .installed_extensions()
         .iter()
-        .find(|(_, entry)| entry.manifest.context_servers.contains_key(&id.0))
+        .find(|(_, entry)| entry.manifest.provides.context_servers.contains_key(&id.0))
         .map(|(id, entry)| (id.clone(), entry.manifest.clone()))
 }
 

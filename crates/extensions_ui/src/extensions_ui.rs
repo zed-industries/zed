@@ -605,7 +605,7 @@ impl ExtensionsPage {
 
         let repository_url = extension.repository.clone();
 
-        let can_configure = !extension.context_servers.is_empty();
+        let can_configure = !extension.provides.context_servers.is_empty();
 
         ExtensionCard::new()
             .child(

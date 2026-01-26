@@ -125,30 +125,32 @@ fn manifest() -> ExtensionManifest {
         description: Some("An extension for use in tests.".into()),
         authors: Vec::new(),
         repository: None,
-        themes: Default::default(),
-        icon_themes: Vec::new(),
         lib: LibManifestEntry {
             kind: Some(ExtensionLibraryKind::Rust),
             version: Some(semver::Version::new(0, 1, 0)),
         },
-        languages: Vec::new(),
-        grammars: BTreeMap::default(),
-        language_servers: [("gleam".into(), LanguageServerManifestEntry::default())]
-            .into_iter()
-            .collect(),
-        context_servers: BTreeMap::default(),
-        agent_servers: BTreeMap::default(),
-        slash_commands: BTreeMap::default(),
-        snippets: None,
         capabilities: vec![ExtensionCapability::ProcessExec(
             extension::ProcessExecCapability {
                 command: "echo".into(),
                 args: vec!["hello!".into()],
             },
         )],
-        debug_adapters: Default::default(),
-        debug_locators: Default::default(),
-        language_model_providers: BTreeMap::default(),
+        provides: extension::ExtensionFeatures {
+            themes: Default::default(),
+            icon_themes: Vec::new(),
+            languages: Vec::new(),
+            grammars: BTreeMap::default(),
+            language_servers: [("gleam".into(), LanguageServerManifestEntry::default())]
+                .into_iter()
+                .collect(),
+            context_servers: BTreeMap::default(),
+            agent_servers: BTreeMap::default(),
+            slash_commands: BTreeMap::default(),
+            snippets: None,
+            debug_adapters: Default::default(),
+            debug_locators: Default::default(),
+            language_model_providers: BTreeMap::default(),
+        },
     }
 }
 

@@ -44,7 +44,7 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
                         .read(cx)
                         .extension_manifest_for_id(extension_id)
                     {
-                        if !manifest.language_model_providers.is_empty() {
+                        if !manifest.provides.language_model_providers.is_empty() {
                             registry.update(cx, |registry, cx| {
                                 registry.extension_installed(extension_id.clone(), cx);
                             });
@@ -59,7 +59,7 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
                 extension_host::Event::ExtensionsUpdated => {
                     let mut new_ids = HashSet::default();
                     for (extension_id, entry) in extension_store.read(cx).installed_extensions() {
-                        if !entry.manifest.language_model_providers.is_empty() {
+                        if !entry.manifest.provides.language_model_providers.is_empty() {
                             new_ids.insert(extension_id.clone());
                         }
                     }
@@ -76,7 +76,7 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
         registry.update(cx, |registry, cx| {
             let mut initial_ids = HashSet::default();
             for (extension_id, entry) in extension_store.read(cx).installed_extensions() {
-                if !entry.manifest.language_model_providers.is_empty() {
+                if !entry.manifest.provides.language_model_providers.is_empty() {
                     initial_ids.insert(extension_id.clone());
                 }
             }
