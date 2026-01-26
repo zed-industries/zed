@@ -512,6 +512,38 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 }
 
 #[gpui::test]
+async fn test_invalid_local_tasks_shows_toast_with_doc_link(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    TaskStore::init(None);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".zed": {
+                "tasks.json": r#"{ invalid json }"#,
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let event = project.next_event(cx).await;
+
+    match event {
+        Event::Toast {
+            notification_id,
+            link: Some(ToastLink { url, .. }),
+            ..
+        } => {
+            assert!(notification_id.starts_with("local-tasks-"));
+            assert_eq!(url, "https://zed.dev/docs/tasks");
+        }
+        event => panic!("Expected `Event::Toast`. Got {event:?}"),
+    }
+}
+
+#[gpui::test]
 async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     TaskStore::init(None);
