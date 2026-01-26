@@ -1260,8 +1260,9 @@ impl Element for TerminalElement {
             let terminal_input_handler = TerminalInputHandler {
                 terminal: self.terminal.clone(),
                 terminal_view: self.terminal_view.clone(),
-                cursor_bounds: layout.ime_cursor_bounds.map(|bounds| bounds + origin),
                 workspace: self.workspace.clone(),
+                element_bounds: bounds,
+                gutter: layout.gutter,
             };
 
             self.register_mouse_listeners(
@@ -1422,7 +1423,8 @@ struct TerminalInputHandler {
     terminal: Entity<Terminal>,
     terminal_view: Entity<TerminalView>,
     workspace: WeakEntity<Workspace>,
-    cursor_bounds: Option<Bounds<Pixels>>,
+    element_bounds: Bounds<Pixels>,
+    gutter: Pixels,
 }
 
 impl InputHandler for TerminalInputHandler {
@@ -1513,13 +1515,35 @@ impl InputHandler for TerminalInputHandler {
         _window: &mut Window,
         cx: &mut App,
     ) -> Option<Bounds<Pixels>> {
-        let term_bounds = self.terminal_view.read(cx).terminal_bounds(cx);
+        let terminal_view = self.terminal_view.read(cx);
+        let terminal_content = self.terminal.read(cx).last_content();
+        let dimensions = terminal_content.terminal_bounds;
+        let display_offset = terminal_content.display_offset;
 
-        let mut bounds = self.cursor_bounds?;
-        let offset_x = term_bounds.cell_width * range_utf16.start as f32;
-        bounds.origin.x += offset_x;
+        let cursor_point = DisplayCursor::from(terminal_content.cursor.point, display_offset);
 
-        Some(bounds)
+        if cursor_point.line() >= dimensions.total_lines() as i32 {
+            return None;
+        }
+
+        let cursor_x = (cursor_point.col() as f32 * dimensions.cell_width()).floor();
+        let cursor_y = (cursor_point.line() as f32 * dimensions.line_height()).floor();
+
+        let scroll_top = if terminal_view.block_below_cursor.is_some() && display_offset == 0 {
+            terminal_view.scroll_top
+        } else {
+            px(0.)
+        };
+
+        let origin =
+            self.element_bounds.origin + point(self.gutter, px(0.)) - point(px(0.), scroll_top);
+
+        let offset_x = dimensions.cell_width() * range_utf16.start as f32;
+
+        Some(Bounds {
+            origin: origin + point(cursor_x + offset_x, cursor_y),
+            size: size(dimensions.cell_width(), dimensions.line_height()),
+        })
     }
 
     fn apple_press_and_hold_enabled(&mut self) -> bool {

@@ -358,10 +358,6 @@ impl TerminalView {
         }
     }
 
-    pub(crate) fn terminal_bounds(&self, cx: &App) -> TerminalBounds {
-        self.terminal.read(cx).last_content().terminal_bounds
-    }
-
     pub fn entity(&self) -> &Entity<Terminal> {
         &self.terminal
     }
