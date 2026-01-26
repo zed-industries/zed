@@ -13,13 +13,23 @@ use language::CodeLabelBuilder;
 use language::HighlightId;
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
 pub use language_model::Role;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{
     ops::Range,
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::ActiveTheme;
 use workspace::{Workspace, ui::IconName};
+
+/// Deserializes IconName, falling back to Code for unknown variants.
+/// This handles old saved data that may contain removed or renamed icon variants.
+fn deserialize_icon_with_fallback<'de, D>(deserializer: D) -> Result<IconName, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    Ok(serde_json::from_value::<IconName>(serde_json::Value::String(s)).unwrap_or(IconName::Code))
+}
 
 pub fn init(cx: &mut App) {
     SlashCommandRegistry::default_global(cx);
@@ -256,6 +266,7 @@ impl SlashCommandOutput {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SlashCommandOutputSection<T> {
     pub range: Range<T>,
+    #[serde(deserialize_with = "deserialize_icon_with_fallback")]
     pub icon: IconName,
     pub label: SharedString,
     pub metadata: Option<serde_json::Value>,
@@ -569,5 +580,56 @@ mod tests {
 
             assert_eq!(new_output, output);
         }
+    }
+
+    #[test]
+    fn test_deserialize_slash_command_output_section_with_valid_icon_pascal_case() {
+        // Test that PascalCase icons (serde default) deserialize correctly
+        let json = r#"{"range": {"start": 0, "end": 5}, "icon": "Code", "label": "Test", "metadata": null}"#;
+        let section: SlashCommandOutputSection<usize> = serde_json::from_str(json).unwrap();
+        assert_eq!(section.icon, IconName::Code);
+        assert_eq!(section.label, "Test");
+    }
+
+    #[test]
+    fn test_deserialize_slash_command_output_section_with_unknown_icon() {
+        // Test that unknown icon variants fall back to Code
+        let json = r#"{"range": {"start": 0, "end": 5}, "icon": "RemovedIcon", "label": "Old Icon", "metadata": null}"#;
+        let section: SlashCommandOutputSection<usize> = serde_json::from_str(json).unwrap();
+        assert_eq!(section.icon, IconName::Code);
+        assert_eq!(section.label, "Old Icon");
+    }
+
+    #[test]
+    fn test_deserialize_slash_command_output_section_with_various_unknown_icons() {
+        // Test that various unknown variants all fall back to Code
+        let test_cases = vec!["UnknownIcon", "removed_variant", "FooBar", "invalid"];
+
+        for icon_name in test_cases {
+            let json = format!(
+                r#"{{"range": {{"start": 0, "end": 5}}, "icon": "{}", "label": "Test", "metadata": null}}"#,
+                icon_name
+            );
+            let section: SlashCommandOutputSection<usize> = serde_json::from_str(&json).unwrap();
+            assert_eq!(
+                section.icon, IconName::Code,
+                "Icon '{}' should fall back to Code",
+                icon_name
+            );
+        }
+    }
+
+    #[test]
+    fn test_serialize_slash_command_output_section_unchanged() {
+        // Test that serialization still works normally (PascalCase, serde default)
+        let section = SlashCommandOutputSection {
+            range: 0..5,
+            icon: IconName::Code,
+            label: "Test".into(),
+            metadata: None,
+        };
+        let json = serde_json::to_string(&section).unwrap();
+        // The icon should serialize to "Code" (PascalCase, serde default)
+        assert!(json.contains(r#""icon":"Code""#));
     }
 }
