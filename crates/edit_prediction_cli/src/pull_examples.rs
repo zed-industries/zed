@@ -13,7 +13,10 @@ use zeta_prompt::ZetaPromptInput;
 
 use crate::example::Example;
 use crate::progress::{InfoStyle, Progress, Step};
-use edit_prediction::example_spec::{CapturedEvent, CapturedPromptInput, CapturedRelatedExcerpt, CapturedRelatedFile, ExampleSpec, TelemetrySource};
+use edit_prediction::example_spec::{
+    CapturedEvent, CapturedPromptInput, CapturedRelatedExcerpt, CapturedRelatedFile, ExampleSpec,
+    TelemetrySource,
+};
 use std::fmt::Write as _;
 
 const SNOWFLAKE_SUCCESS_CODE: &str = "090001";
@@ -564,16 +567,19 @@ fn rejected_examples_from_response(
         }
     }
 
-    let column_indices = get_column_indices(&response.result_set_meta_data, &[
-        "request_id",
-        "device_id",
-        "time",
-        "input",
-        "prompt",
-        "output",
-        "was_shown",
-        "reason",
-    ]);
+    let column_indices = get_column_indices(
+        &response.result_set_meta_data,
+        &[
+            "request_id",
+            "device_id",
+            "time",
+            "input",
+            "prompt",
+            "output",
+            "was_shown",
+            "reason",
+        ],
+    );
 
     let iter = response
         .data
@@ -636,7 +642,7 @@ fn rejected_examples_from_response(
                     log::warn!(
                         "skipping row {row_index}: missing fields - request_id={:?} device_id={:?} time={:?} input={:?} output={:?} was_shown={:?} reason={:?}",
                         request_id_str.is_some(),
-                        device_id.is_some(), 
+                        device_id.is_some(),
                         time.is_some(),
                         input_json.is_some(),
                         output.is_some(),

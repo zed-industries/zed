@@ -207,7 +207,6 @@ impl Display for Command {
             Command::Qa(_) => {
                 write!(f, "qa")
             }
-
         }
     }
 }
