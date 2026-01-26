@@ -139,7 +139,7 @@ curl -v -X POST \
   -H "Authorization: Bearer $GITHUB_TOKEN" \
   -H "Accept: application/vnd.github+json" \
   "https://api.github.com/repos/${{{{ github.repository }}}}/check-runs" \
-  -d "{{\"name\":\"Failed: ${{{{ github.job }}}}\",\"head_sha\":\"$HEAD_SHA\",\"status\":\"completed\",\"conclusion\":\"failure\",\"details_url\":\"$DETAILS_URL\",\"output\":{{\"title\":\"Job ${{{{ github.job }}}} failed and cancelled the workflow. [View logs]($DETAILS_URL)\",\"summary\":\"\"}}}}"
+  -d "{{\"name\":\"Failed: ${{{{ github.job }}}}\",\"head_sha\":\"$HEAD_SHA\",\"status\":\"completed\",\"conclusion\":\"failure\",\"details_url\":\"$DETAILS_URL\",\"output\":{{\"title\":\"Job failed\",\"summary\":\"Job ${{{{ github.job }}}} failed and cancelled the workflow. [View logs]($DETAILS_URL)\"}}}}"
 "##))
         .shell(BASH_SHELL)
         .add_env(("GITHUB_TOKEN", token.to_string()))
