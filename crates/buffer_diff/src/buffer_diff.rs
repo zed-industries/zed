@@ -1090,7 +1090,6 @@ fn compare_hunks(
                                 end.replace(new_hunk.buffer_range.end);
                             }
 
-                            // FIXME max
                             base_text_end.replace(
                                 old_hunk
                                     .diff_base_byte_range
