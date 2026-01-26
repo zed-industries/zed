@@ -177,8 +177,9 @@ impl AcpThreadHistory {
             return;
         };
         let Some(rx) = session_list.watch(cx) else {
+            // No watch support - do a one-time refresh
             self._watch_task = None;
-            cx.notify();
+            self.refresh_sessions(false, cx);
             return;
         };
         session_list.notify_refresh();
