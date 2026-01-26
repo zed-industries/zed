@@ -16,7 +16,10 @@ use util::ResultExt;
 
 use crate::STARTUP_TIME;
 
+const MAX_HANG_TRACES: usize = 3;
+
 pub fn init(client: Arc<Client>, cx: &mut App) {
+    cleanup_old_hang_traces();
     monitor_hangs(cx);
 
     if client.telemetry().diagnostics_enabled() {
@@ -115,11 +118,51 @@ fn monitor_hangs(cx: &App) {
         .detach();
 }
 
+fn cleanup_old_hang_traces() {
+    if let Ok(entries) = std::fs::read_dir(paths::hang_traces_dir()) {
+        let mut files: Vec<_> = entries
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext == "miniprof")
+            })
+            .collect();
+
+        if files.len() > MAX_HANG_TRACES {
+            files.sort_by_key(|entry| entry.file_name());
+            for entry in files.iter().take(files.len() - MAX_HANG_TRACES) {
+                std::fs::remove_file(entry.path()).log_err();
+            }
+        }
+    }
+}
+
 fn save_hang_trace(
     main_thread_id: ThreadId,
     background_executor: &gpui::BackgroundExecutor,
     hang_time: chrono::DateTime<chrono::Local>,
 ) {
+    if let Ok(entries) = std::fs::read_dir(paths::hang_traces_dir()) {
+        let mut files: Vec<_> = entries
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext == "miniprof")
+            })
+            .collect();
+
+        if files.len() >= MAX_HANG_TRACES {
+            files.sort_by_key(|entry| entry.file_name());
+            for entry in files.iter().take(files.len() - (MAX_HANG_TRACES - 1)) {
+                std::fs::remove_file(entry.path()).log_err();
+            }
+        }
+    }
+
     let thread_timings = background_executor.dispatcher().get_all_timings();
     let thread_timings = thread_timings
         .into_iter()
