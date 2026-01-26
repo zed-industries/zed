@@ -104,7 +104,7 @@ jobs:
         mkdir -p /tmp/ext-output
         ./zed-extension --source-dir . --scratch-dir /tmp/ext-scratch --output-dir /tmp/ext-output
       shell: bash -euxo pipefail {0}
-    timeout-minutes: 2
+    timeout-minutes: 4
   tests_pass:
     needs:
     - orchestrate
