@@ -26,8 +26,12 @@
   freetype,
   git,
   glib,
+  libdrm,
+  libgbm,
   libgit2,
   libglvnd,
+  libxdamage,
+  libxfixes,
   libxkbcommon,
   nodejs_22,
   openssl,
@@ -165,6 +169,10 @@ let
       ++ lib.optionals stdenv'.hostPlatform.isLinux [
         alsa-lib
         libxkbcommon
+        libdrm
+        libgbm
+        libxdamage
+        libxfixes
         wayland
         gpu-lib
         xorg.libX11
