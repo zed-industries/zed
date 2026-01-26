@@ -10,7 +10,7 @@ use anyhow::Context as _;
 use client::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
-use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
+use extension_host::{ExtensionIndexEntry, ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
     Action, App, ClipboardItem, Context, Corner, Entity, EventEmitter, Focusable,
@@ -302,6 +302,7 @@ pub struct ExtensionsPage {
     remote_extension_entries: Vec<ExtensionMetadata>,
     dev_extension_entries: Vec<Arc<ExtensionManifest>>,
     filtered_remote_extension_indices: Vec<usize>,
+    filtered_installed_extension_entries: Vec<ExtensionIndexEntry>,
     query_editor: Entity<Editor>,
     query_contains_error: bool,
     provides_filter: Option<ExtensionProvides>,
@@ -362,6 +363,7 @@ impl ExtensionsPage {
                 filter: ExtensionFilter::All,
                 dev_extension_entries: Vec::new(),
                 filtered_remote_extension_indices: Vec::new(),
+                filtered_installed_extension_entries: Vec::new(),
                 remote_extension_entries: Vec::new(),
                 query_contains_error: false,
                 provides_filter,
@@ -451,6 +453,11 @@ impl ExtensionsPage {
 
     fn filter_extension_entries(&mut self, cx: &mut Context<Self>) {
         self.filtered_remote_extension_indices.clear();
+        self.filtered_installed_extension_entries.clear();
+
+        let search = self.search_query(cx);
+        self.filter_local_installed_extensions(search.as_deref(), cx);
+
         self.filtered_remote_extension_indices.extend(
             self.remote_extension_entries
                 .iter()
@@ -470,6 +477,46 @@ impl ExtensionsPage {
                 .map(|(ix, _)| ix),
         );
         cx.notify();
+    }
+
+    fn filter_local_installed_extensions(&mut self, search: Option<&str>, cx: &mut Context<Self>) {
+        let store = ExtensionStore::global(cx).read(cx);
+
+        let query = search.map(|s| s.trim()).filter(|s| !s.is_empty());
+
+        self.filtered_installed_extension_entries.clear();
+        self.filtered_installed_extension_entries.extend(
+            store
+                .installed_extensions()
+                .values()
+                .filter(|entry| {
+                    if let Some(p) = self.provides_filter {
+                        if !entry.manifest.is_providing(p) {
+                            return false;
+                        }
+                    }
+
+                    let Some(q) = query else {
+                        return true;
+                    };
+
+                    if let Some(id) = q.strip_prefix("id:") {
+                        return entry.manifest.id.contains(id);
+                    } else {
+                        let q = q.to_lowercase();
+                        entry.manifest.name.to_lowercase().contains(&q)
+                            || entry.manifest.id.to_lowercase().contains(&q)
+                            || entry
+                                .manifest
+                                .description
+                                .as_deref()
+                                .unwrap_or("")
+                                .to_lowercase()
+                                .contains(&q)
+                    }
+                })
+                .cloned(),
+        );
     }
 
     fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
@@ -581,17 +628,36 @@ impl ExtensionsPage {
         } else {
             0
         };
+
+        let show_local_installed = matches!(
+            self.filter,
+            ExtensionFilter::Installed | ExtensionFilter::All
+        ) && self.fetch_failed;
+        let installed_extension_entries_len = if show_local_installed {
+            self.filtered_installed_extension_entries.len()
+        } else {
+            0
+        };
+
         range
             .map(|ix| {
                 if ix < dev_extension_entries_len {
                     let extension = &self.dev_extension_entries[ix];
-                    self.render_dev_extension(extension, cx)
-                } else {
-                    let extension_ix =
-                        self.filtered_remote_extension_indices[ix - dev_extension_entries_len];
-                    let extension = &self.remote_extension_entries[extension_ix];
-                    self.render_remote_extension(extension, cx)
+                    return self.render_dev_extension(extension, cx);
                 }
+
+                let ix = ix - dev_extension_entries_len;
+
+                if ix < installed_extension_entries_len {
+                    let entry = &self.filtered_installed_extension_entries[ix];
+                    return self.render_installed_extension(entry, cx);
+                }
+
+                let ix = ix - installed_extension_entries_len;
+
+                let extension_ix = self.filtered_remote_extension_indices[ix];
+                let extension = &self.remote_extension_entries[extension_ix];
+                self.render_remote_extension(extension, cx)
             })
             .collect()
     }
@@ -728,6 +794,189 @@ impl ExtensionsPage {
                         }))
                         .tooltip(Tooltip::text(repository_url))
                     })),
+            )
+    }
+
+    fn render_installed_extension(
+        &self,
+        extension: &ExtensionIndexEntry,
+        cx: &mut Context<Self>,
+    ) -> ExtensionCard {
+        let this = cx.weak_entity();
+        let has_dev_extension = Self::dev_extension_exists(&extension.manifest.id, cx);
+
+        let extension_id = extension.manifest.id.clone();
+        let version = extension.manifest.version.clone();
+        let name = extension.manifest.name.clone();
+        let repository_url = extension.manifest.repository.clone();
+        let authors = extension.manifest.authors.clone();
+
+        let installed_version = match Self::extension_status(&extension.manifest.id, cx) {
+            ExtensionStatus::Installed(installed_version) => Some(installed_version),
+            _ => None,
+        };
+
+        ExtensionCard::new()
+            .overridden_by_dev_extension(has_dev_extension)
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(Headline::new(name).size(HeadlineSize::Small))
+                            .child(Headline::new(format!("v{version}")).size(HeadlineSize::XSmall))
+                            .children(
+                                installed_version
+                                    .filter(|installed_version| *installed_version != version)
+                                    .map(|installed_version| {
+                                        Headline::new(format!("(v{installed_version} installed)",))
+                                            .size(HeadlineSize::XSmall)
+                                    }),
+                            )
+                            .map(|parent| {
+                                parent.child(
+                                    h_flex().gap_1().children(
+                                        extension
+                                            .manifest
+                                            .provides_iter()
+                                            .filter_map(|provides| {
+                                                match provides {
+                                                    ExtensionProvides::SlashCommands
+                                                    | ExtensionProvides::IndexedDocsProviders => {
+                                                        return None;
+                                                    }
+                                                    _ => {}
+                                                }
+
+                                                Some(Chip::new(extension_provides_label(provides)))
+                                            })
+                                            .collect::<Vec<_>>(),
+                                    ),
+                                )
+                            }),
+                    )
+                    .child(
+                        h_flex().gap_1().child(
+                            Button::new(
+                                SharedString::from(extension.manifest.id.clone()),
+                                "Uninstall",
+                            )
+                            .style(ButtonStyle::OutlinedGhost)
+                            .on_click({
+                                let extension_id = extension.manifest.id.clone();
+                                move |_, _, cx| {
+                                    telemetry::event!("Extension Uninstalled", extension_id);
+                                    ExtensionStore::global(cx).update(cx, |store, cx| {
+                                        store
+                                            .uninstall_extension(extension_id.clone(), cx)
+                                            .detach_and_log_err(cx);
+                                    });
+                                }
+                            }),
+                        ),
+                    ),
+            )
+            .child(h_flex().gap_2().justify_between().children(
+                extension.manifest.description.as_ref().map(|description| {
+                    Label::new(description.clone())
+                        .size(LabelSize::Small)
+                        .color(Color::Default)
+                        .truncate()
+                }),
+            ))
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(
+                        h_flex().justify_between().child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::Person)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    Label::new(extension.manifest.authors.join(", "))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .truncate(),
+                                ),
+                        ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child({
+                                if let Some(repository_url) = repository_url {
+                                    let repo_url_for_tooltip = repository_url.clone();
+
+                                    IconButton::new(
+                                        SharedString::from(format!(
+                                            "repository-{}",
+                                            extension.manifest.id
+                                        )),
+                                        IconName::Github,
+                                    )
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(move |_, cx| {
+                                        Tooltip::with_meta(
+                                            "Visit Extension Repository",
+                                            None,
+                                            repo_url_for_tooltip.clone(),
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(cx.listener({
+                                        move |_, _, _, cx| {
+                                            cx.open_url(&repository_url);
+                                        }
+                                    }))
+                                } else {
+                                    IconButton::new(
+                                        SharedString::from(format!(
+                                            "repository-{}",
+                                            extension.manifest.id
+                                        )),
+                                        IconName::Github,
+                                    )
+                                    .icon_size(IconSize::Small)
+                                    .disabled(true)
+                                }
+                            })
+                            .child(
+                                PopoverMenu::new(SharedString::from(format!(
+                                    "more-{}",
+                                    extension.manifest.id
+                                )))
+                                .trigger(
+                                    IconButton::new(
+                                        SharedString::from(format!(
+                                            "more-{}",
+                                            extension.manifest.id
+                                        )),
+                                        IconName::Ellipsis,
+                                    )
+                                    .icon_size(IconSize::Small),
+                                )
+                                .anchor(Corner::TopRight)
+                                .offset(Point {
+                                    x: px(0.0),
+                                    y: px(2.0),
+                                })
+                                .menu(move |window, cx| {
+                                    this.upgrade().map(|_| {
+                                        Self::render_installed_extension_context_menu(
+                                            extension_id.clone(),
+                                            authors.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                }),
+                            ),
+                    ),
             )
     }
 
@@ -972,6 +1221,29 @@ impl ExtensionsPage {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    fn render_installed_extension_context_menu(
+        extension_id: Arc<str>,
+        authors: Vec<String>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |context_menu, _, _| {
+            context_menu
+                .entry("Copy Extension ID", None, {
+                    let extension_id = extension_id.clone();
+                    move |_, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(extension_id.to_string()));
+                    }
+                })
+                .entry("Copy Author Info", None, {
+                    let authors = authors.clone();
+                    move |_, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(authors.join(", ")));
+                    }
+                })
+        })
     }
 
     fn buttons_for_entry(
@@ -1227,6 +1499,13 @@ impl ExtensionsPage {
     }
 
     fn refresh_search(&mut self, cx: &mut Context<Self>) {
+        if self.fetch_failed {
+            let search = self.search_query(cx);
+            self.filter_local_installed_extensions(search.as_deref(), cx);
+            self.refresh_feature_upsells(cx);
+            return;
+        }
+
         self.fetch_extensions_debounced(
             Some(Box::new(|this, cx| {
                 this.scroll_to_top(cx);
@@ -1298,11 +1577,15 @@ impl ExtensionsPage {
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_search = self.search_query(cx).is_some();
+        let remote_relevant = matches!(
+            self.filter,
+            ExtensionFilter::All | ExtensionFilter::NotInstalled
+        );
 
         let message = if self.is_fetching_extensions {
             "Loading extensions…"
-        } else if self.fetch_failed {
-            "Failed to load extensions. Please check your connection and try again."
+        } else if self.fetch_failed && remote_relevant {
+            "Failed to load remote extensions. Please check your connection and try again."
         } else {
             match self.filter {
                 ExtensionFilter::All => {
@@ -1731,9 +2014,26 @@ impl Render for ExtensionsPage {
             )
             .child(self.render_feature_upsells(cx))
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
-                let mut count = self.filtered_remote_extension_indices.len();
+                let mut count = 0;
+
                 if self.filter.include_dev_extensions() {
                     count += self.dev_extension_entries.len();
+                }
+
+                let show_local_installed = matches!(
+                    self.filter,
+                    ExtensionFilter::All | ExtensionFilter::Installed
+                ) && self.fetch_failed;
+
+                if !show_local_installed {
+                    count += self.filtered_remote_extension_indices.len();
+                } else {
+                    match self.filter {
+                        ExtensionFilter::All | ExtensionFilter::Installed => {
+                            count += self.filtered_installed_extension_entries.len();
+                        }
+                        _ => {}
+                    }
                 }
 
                 if count == 0 {

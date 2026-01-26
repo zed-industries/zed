@@ -3,6 +3,7 @@ use collections::{BTreeMap, HashMap};
 use fs::Fs;
 use language::LanguageName;
 use lsp::LanguageServerName;
+use rpc::ExtensionProvides;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -147,6 +148,39 @@ impl ExtensionManifest {
         !self.language_servers.is_empty()
             || !self.debug_adapters.is_empty()
             || !self.debug_locators.is_empty()
+    }
+
+    pub fn is_providing(&self, p: ExtensionProvides) -> bool {
+        match p {
+            ExtensionProvides::Themes => !self.themes.is_empty(),
+            ExtensionProvides::IconThemes => !self.icon_themes.is_empty(),
+            ExtensionProvides::Languages => !self.languages.is_empty(),
+            ExtensionProvides::Grammars => !self.grammars.is_empty(),
+            ExtensionProvides::LanguageServers => !self.language_servers.is_empty(),
+            ExtensionProvides::ContextServers => !self.context_servers.is_empty(),
+            ExtensionProvides::AgentServers => !self.agent_servers.is_empty(),
+            ExtensionProvides::Snippets => self.snippets.is_some(),
+            ExtensionProvides::DebugAdapters => !self.debug_adapters.is_empty(),
+            ExtensionProvides::SlashCommands => !self.slash_commands.is_empty(),
+            ExtensionProvides::IndexedDocsProviders => false,
+        }
+    }
+
+    pub fn provides_iter(&self) -> impl Iterator<Item = ExtensionProvides> + '_ {
+        [
+            ExtensionProvides::Themes,
+            ExtensionProvides::IconThemes,
+            ExtensionProvides::Languages,
+            ExtensionProvides::Grammars,
+            ExtensionProvides::LanguageServers,
+            ExtensionProvides::ContextServers,
+            ExtensionProvides::AgentServers,
+            ExtensionProvides::SlashCommands,
+            ExtensionProvides::Snippets,
+            ExtensionProvides::DebugAdapters,
+        ]
+        .into_iter()
+        .filter(move |p| self.is_providing(*p))
     }
 }
 
