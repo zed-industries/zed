@@ -2374,10 +2374,6 @@
   "ssh_connections": [],
   // Whether to read ~/.ssh/config for ssh connection sources.
   "read_ssh_config": true,
-  // How many remote server archives to keep per channel and platform.
-  // Set to 0 to disable cleanup.
-  // Default: 5
-  "remote_server_cache_limit": 5,
   // Default timeout in seconds for all context server tool calls.
   // Individual servers can override this in their configuration.
   // Examples:

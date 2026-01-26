@@ -31,6 +31,7 @@ use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const REMOTE_SERVER_CACHE_LIMIT: usize = 5;
 
 actions!(
     auto_update,
@@ -158,18 +159,6 @@ struct AutoUpdateSetting(bool);
 impl Settings for AutoUpdateSetting {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         Self(content.auto_update.unwrap())
-    }
-}
-
-#[derive(Clone, Copy, Debug, RegisterSetting)]
-struct RemoteServerCacheLimitSetting(usize);
-
-/// How many remote server archives to keep per channel and platform.
-///
-/// Default: 5
-impl Settings for RemoteServerCacheLimitSetting {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
-        Self(content.remote.remote_server_cache_limit.unwrap_or(5))
     }
 }
 
@@ -481,10 +470,9 @@ impl AutoUpdater {
             download_remote_server_binary(&version_path, release, client).await?;
         }
 
-        let cache_limit =
-            cx.update(|cx| RemoteServerCacheLimitSetting::get_global(cx).0)?;
         if let Err(error) =
-            cleanup_remote_server_cache(&platform_dir, &version_path, cache_limit).await
+            cleanup_remote_server_cache(&platform_dir, &version_path, REMOTE_SERVER_CACHE_LIMIT)
+                .await
         {
             log::warn!(
                 "Failed to clean up remote server cache in {:?}: {error:#}",
