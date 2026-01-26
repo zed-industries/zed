@@ -173,6 +173,7 @@ pub fn capture_example(
             expected_patches,
             rejected_patch,
             captured_prompt_input: prompt_input,
+            telemetry: None,
         };
         spec.set_cursor_excerpt(
             &cursor_excerpt,
@@ -599,6 +600,7 @@ mod tests {
                     .to_string()
                 ),
                 captured_prompt_input: example.captured_prompt_input.clone(),
+                telemetry: None,
             }
         );
 

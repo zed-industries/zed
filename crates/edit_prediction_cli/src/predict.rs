@@ -107,7 +107,9 @@ pub async fn run_prediction(
             }
             PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
             PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
-            PredictionProvider::Teacher(..) | PredictionProvider::TeacherNonBatching(..) => {
+            PredictionProvider::Teacher(..)
+            | PredictionProvider::TeacherNonBatching(..)
+            | PredictionProvider::Repair => {
                 unreachable!()
             }
         };

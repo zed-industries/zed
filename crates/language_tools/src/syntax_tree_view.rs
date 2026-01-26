@@ -1,21 +1,19 @@
-use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use editor::{Anchor, Editor, ExcerptId, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
 use gpui::{
-    Action, App, AppContext as _, Context, Corner, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled, Task,
-    UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
+    App, AppContext as _, Context, Div, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
+    Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
+    ParentElement, Render, ScrollStrategy, SharedString, Styled, Task, UniformListScrollHandle,
+    WeakEntity, Window, actions, div, rems, uniform_list,
 };
-use language::{Buffer, BufferSnapshot, OffsetUtf16, OwnedSyntaxLayer, PointUtf16};
-use project::lsp_store::RawSemanticTokens;
+use language::{Buffer, OwnedSyntaxLayer};
 use std::{any::TypeId, mem, ops::Range};
 use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
 use ui::{
-    ButtonCommon, ButtonLike, ButtonStyle, Clickable, Color, ContextMenu, FluentBuilder as _,
-    IconButton, IconName, IconPosition, IconSize, Label, LabelCommon, LabelSize, PopoverMenu,
-    PopoverMenuHandle, StyledExt, Toggleable, Tooltip, WithScrollbar, h_flex, v_flex,
+    ButtonCommon, ButtonLike, Clickable, Color, ContextMenu, FluentBuilder as _, IconButton,
+    IconName, Label, LabelCommon, LabelSize, PopoverMenu, StyledExt, Tooltip, WithScrollbar,
+    h_flex, v_flex,
 };
 use workspace::{
     Event as WorkspaceEvent, SplitDirection, ToolbarItemEvent, ToolbarItemLocation,
@@ -35,9 +33,7 @@ actions!(
     syntax_tree_view,
     [
         /// Update the syntax tree view to show the last focused file.
-        UseActiveEditor,
-        /// Toggles showing semantic tokens.
-        ToggleSemanticTokens,
+        UseActiveEditor
     ]
 );
 
@@ -102,13 +98,11 @@ pub struct SyntaxTreeView {
     selected_descendant_ix: Option<usize>,
     hovered_descendant_ix: Option<usize>,
     focus_handle: FocusHandle,
-    semantic_tokens: bool,
 }
 
 pub struct SyntaxTreeToolbarItemView {
     tree_view: Option<Entity<SyntaxTreeView>>,
     subscription: Option<gpui::Subscription>,
-    toggle_settings_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 struct EditorState {
@@ -116,12 +110,6 @@ struct EditorState {
     active_buffer: Option<BufferState>,
     _subscription: gpui::Subscription,
 }
-
-type SemanticTokenState = Option<(
-    HashMap<lsp::LanguageServerId, lsp::SemanticTokensLegend>,
-    RawSemanticTokens,
-    BufferSnapshot,
-)>;
 
 impl EditorState {
     fn has_language(&self) -> bool {
@@ -153,7 +141,6 @@ impl SyntaxTreeView {
             hovered_descendant_ix: None,
             selected_descendant_ix: None,
             focus_handle: cx.focus_handle(),
-            semantic_tokens: true,
         };
 
         this.handle_item_updated(active_item, window, cx);
@@ -352,7 +339,7 @@ impl SyntaxTreeView {
         descendant_ix: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
-        mut f: impl FnMut(&mut Editor, Range<Anchor>, &mut Window, &mut Context<Editor>),
+        mut f: impl FnMut(&mut Editor, Range<Anchor>, usize, &mut Window, &mut Context<Editor>),
     ) -> Option<()> {
         let editor_state = self.editor.as_ref()?;
         let buffer_state = editor_state.active_buffer.as_ref()?;
@@ -373,21 +360,16 @@ impl SyntaxTreeView {
         let multibuffer = multibuffer.read(cx).snapshot(cx);
         let excerpt_id = buffer_state.excerpt_id;
         let range = multibuffer.anchor_range_in_excerpt(excerpt_id, range)?;
+        let key = cx.entity_id().as_u64() as usize;
 
         // Update the editor with the anchor range.
         editor_state.editor.update(cx, |editor, cx| {
-            f(editor, range, window, cx);
+            f(editor, range, key, window, cx);
         });
         Some(())
     }
 
-    fn render_node(
-        cursor: &TreeCursor,
-        depth: u32,
-        selected: bool,
-        semantic_tokens: &SemanticTokenState,
-        cx: &App,
-    ) -> Div {
+    fn render_node(cursor: &TreeCursor, depth: u32, selected: bool, cx: &App) -> Div {
         let colors = cx.theme().colors();
         let mut row = h_flex();
         if let Some(field_name) = cursor.field_name() {
@@ -395,78 +377,17 @@ impl SyntaxTreeView {
         }
 
         let node = cursor.node();
-        row = row
-            .child(if node.is_named() {
-                Label::new(node.kind()).color(Color::Default)
-            } else {
-                Label::new(format!("\"{}\"", node.kind())).color(Color::Created)
-            })
-            .child(
-                div()
-                    .child(Label::new(format_node_range(node)).color(Color::Muted))
-                    .pl_1(),
-            );
-
-        if node.child_count() == 0 {
-            if let Some((legends, sema, buffer)) = semantic_tokens {
-                for (server, semantic_token) in sema.all_tokens().filter(|(_, semantic_token)| {
-                    let node_range = cursor.node().byte_range();
-                    let start_point = PointUtf16::new(semantic_token.line, semantic_token.start);
-                    let token_start = buffer.point_utf16_to_offset(start_point);
-                    let start_offset_utf16 = buffer.offset_to_offset_utf16(token_start);
-                    let end_offset_utf16 =
-                        start_offset_utf16 + OffsetUtf16(semantic_token.length as usize);
-                    let token_end = buffer.offset_utf16_to_offset(end_offset_utf16);
-                    token_start >= node_range.start && token_end < node_range.end
-                }) {
-                    let Some(legend) = legends.get(&server) else {
-                        continue;
-                    };
-
-                    row = row
-                        .child(div().pl_4())
-                        .child(Label::new("LSP: "))
-                        .child(
-                            Label::new(format!(
-                                "({}:{} - {}:{}) ",
-                                semantic_token.line + 1,
-                                semantic_token.start + 1,
-                                semantic_token.line + 1,
-                                semantic_token.start + semantic_token.length + 1,
-                            ))
-                            .color(Color::Muted),
-                        )
-                        .child(Label::new(
-                            legend.token_types[semantic_token.token_type as usize]
-                                .as_str()
-                                .to_string(),
-                        ))
-                        .when(semantic_token.token_modifiers != 0, |row| {
-                            row.child(
-                                Label::new(format!(
-                                    " ({})",
-                                    legend
-                                        .token_modifiers
-                                        .iter()
-                                        .enumerate()
-                                        .filter_map(|(i, modifier)| {
-                                            if (semantic_token.token_modifiers & (1 << i)) != 0 {
-                                                Some(modifier.as_str())
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
-                                ))
-                                .color(Color::Muted),
-                            )
-                        });
-                }
-            }
-        }
-
-        row.text_bg(if selected {
+        row.child(if node.is_named() {
+            Label::new(node.kind()).color(Color::Default)
+        } else {
+            Label::new(format!("\"{}\"", node.kind())).color(Color::Created)
+        })
+        .child(
+            div()
+                .child(Label::new(format_node_range(node)).color(Color::Muted))
+                .pl_1(),
+        )
+        .text_bg(if selected {
             colors.element_selected
         } else {
             Hsla::default()
@@ -481,8 +402,6 @@ impl SyntaxTreeView {
         range: Range<usize>,
         cx: &Context<Self>,
     ) -> Vec<Div> {
-        let semantic_tokens = self.lookup_semantic_tokens(cx);
-
         let mut items = Vec::new();
         let mut cursor = layer.node().walk();
         let mut descendant_ix = range.start;
@@ -504,7 +423,6 @@ impl SyntaxTreeView {
                         &cursor,
                         depth,
                         Some(descendant_ix) == self.selected_descendant_ix,
-                        &semantic_tokens,
                         cx,
                     )
                     .on_mouse_down(
@@ -514,7 +432,7 @@ impl SyntaxTreeView {
                                 descendant_ix,
                                 window,
                                 cx,
-                                |editor, mut range, window, cx| {
+                                |editor, mut range, _, window, cx| {
                                     // Put the cursor at the beginning of the node.
                                     mem::swap(&mut range.start, &mut range.end);
 
@@ -523,7 +441,7 @@ impl SyntaxTreeView {
                                         window,
                                         cx,
                                         |selections| {
-                                            selections.select_ranges(vec![range]);
+                                            selections.select_ranges([range]);
                                         },
                                     );
                                 },
@@ -538,17 +456,8 @@ impl SyntaxTreeView {
                                     descendant_ix,
                                     window,
                                     cx,
-                                    |editor, range, _, cx| {
-                                        editor.clear_background_highlights::<Self>(cx);
-                                        editor.highlight_background::<Self>(
-                                            &[range],
-                                            |_, theme| {
-                                                theme
-                                                    .colors()
-                                                    .editor_document_highlight_write_background
-                                            },
-                                            cx,
-                                        );
+                                    |editor, range, key, _, cx| {
+                                        Self::set_editor_highlights(editor, key, &[range], cx);
                                     },
                                 );
                                 cx.notify();
@@ -567,42 +476,25 @@ impl SyntaxTreeView {
         items
     }
 
-    fn lookup_semantic_tokens(&self, cx: &Context<Self>) -> SemanticTokenState {
-        if !self.semantic_tokens {
-            return None;
-        }
+    fn set_editor_highlights(
+        editor: &mut Editor,
+        key: usize,
+        ranges: &[Range<Anchor>],
+        cx: &mut Context<Editor>,
+    ) {
+        editor.highlight_background_key::<Self>(
+            key,
+            ranges,
+            |_, theme| theme.colors().editor_document_highlight_write_background,
+            cx,
+        );
+    }
 
-        let editor_state = self.editor.as_ref()?;
-        let buffer = editor_state.active_buffer.as_ref()?.buffer.read(cx);
-        let buffer_id = buffer.remote_id();
-
-        let lsp_store = editor_state
-            .editor
-            .read(cx)
-            .project()?
-            .read(cx)
-            .lsp_store()
-            .read(cx);
-        let semantic_tokens = lsp_store.current_semantic_tokens(buffer_id)?;
-
-        let legends = semantic_tokens
-            .servers
-            .keys()
-            .filter_map(|server_id| {
-                let caps = lsp_store.lsp_server_capabilities.get(server_id)?;
-                let legend = match caps.semantic_tokens_provider.as_ref()? {
-                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => {
-                        &opts.legend
-                    }
-                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
-                        opts,
-                    ) => &opts.semantic_tokens_options.legend,
-                };
-                Some((*server_id, legend.clone()))
-            })
-            .collect::<HashMap<_, _>>();
-
-        Some((legends, semantic_tokens, buffer.snapshot()))
+    fn clear_editor_highlights(editor: &Entity<Editor>, cx: &mut Context<Self>) {
+        let highlight_key = cx.entity_id().as_u64() as usize;
+        editor.update(cx, |editor, cx| {
+            editor.clear_background_highlights_key::<Self>(highlight_key, cx);
+        });
     }
 }
 
@@ -710,6 +602,12 @@ impl Item for SyntaxTreeView {
             clone
         })))
     }
+
+    fn on_removed(&self, cx: &mut Context<Self>) {
+        if let Some(state) = self.editor.as_ref() {
+            Self::clear_editor_highlights(&state.editor, cx);
+        }
+    }
 }
 
 impl Default for SyntaxTreeToolbarItemView {
@@ -723,7 +621,6 @@ impl SyntaxTreeToolbarItemView {
         Self {
             tree_view: None,
             subscription: None,
-            toggle_settings_handle: Default::default(),
         }
     }
 
@@ -811,52 +708,6 @@ impl SyntaxTreeToolbarItemView {
             })
         })
     }
-
-    fn render_settings_button(&self, cx: &Context<Self>) -> PopoverMenu<ContextMenu> {
-        let semantic_tokens_enabled = self
-            .tree_view
-            .as_ref()
-            .map_or(false, |view| view.read(cx).semantic_tokens);
-        let tree_view = self.tree_view.as_ref().map(|v| v.downgrade());
-
-        PopoverMenu::new("syntax-tree-settings")
-            .trigger_with_tooltip(
-                IconButton::new("toggle-syntax-tree-settings-icon", IconName::Sliders)
-                    .icon_size(IconSize::Small)
-                    .style(ButtonStyle::Subtle)
-                    .toggle_state(self.toggle_settings_handle.is_deployed()),
-                Tooltip::text("Syntax Tree Settings"),
-            )
-            .anchor(Corner::TopRight)
-            .menu(move |window, cx| {
-                let menu = ContextMenu::build(window, cx, {
-                    |mut menu, _, _| {
-                        menu = menu.toggleable_entry(
-                            "Semantic Tokens",
-                            semantic_tokens_enabled,
-                            IconPosition::Start,
-                            Some(ToggleSemanticTokens.boxed_clone()),
-                            {
-                                let tree_view = tree_view.clone();
-                                move |_, cx| {
-                                    if let Some(view) = tree_view.as_ref() {
-                                        view.update(cx, |view, cx| {
-                                            view.semantic_tokens = !view.semantic_tokens;
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                    }
-                                }
-                            },
-                        );
-
-                        menu
-                    }
-                });
-
-                Some(menu)
-            })
-    }
 }
 
 fn format_node_range(node: Node) -> String {
@@ -875,15 +726,8 @@ impl Render for SyntaxTreeToolbarItemView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .gap_1()
-            .size_full()
-            .justify_between()
-            .child(
-                h_flex()
-                    .gap_1()
-                    .children(self.render_menu(cx))
-                    .children(self.render_update_button(cx)),
-            )
-            .child(self.render_settings_button(cx))
+            .children(self.render_menu(cx))
+            .children(self.render_update_button(cx))
     }
 }
 

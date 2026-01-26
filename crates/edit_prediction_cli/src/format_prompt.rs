@@ -153,7 +153,7 @@ pub fn zeta2_output_for_patch(
 pub struct TeacherPrompt;
 
 impl TeacherPrompt {
-    const PROMPT: &str = include_str!("teacher.prompt.md");
+    const PROMPT: &str = include_str!("prompts/teacher.md");
     pub(crate) const EDITABLE_REGION_START: &str = "<|editable_region_start|>\n";
     pub(crate) const EDITABLE_REGION_END: &str = "\n<|editable_region_end|>";
     pub(crate) const USER_CURSOR_MARKER: &str = "<|user_cursor|>";
@@ -249,7 +249,7 @@ impl TeacherPrompt {
         history_lines.join("\n")
     }
 
-    fn format_context(example: &Example) -> String {
+    pub fn format_context(example: &Example) -> String {
         let related_files = example
             .prompt_inputs
             .as_ref()
@@ -329,6 +329,52 @@ impl TeacherPrompt {
             || s.starts_with("+++")
             || s.starts_with("@@")
     }
+}
+
+/// Extract the cursor excerpt from an example.
+/// First tries to extract from an existing prompt, then falls back to constructing from prompt_inputs.
+pub fn extract_cursor_excerpt_from_example(example: &Example) -> Option<String> {
+    // If we have the original prompt, extract the cursor excerpt from it
+    if let Some(prompt) = &example.prompt {
+        // Find "# 3. Current File" section and extract the content
+        if let Some(start) = prompt.input.find("# 3. Current File") {
+            let content_start = prompt.input[start..].find('`').map(|i| start + i)?;
+            let backtick_count = prompt.input[content_start..]
+                .chars()
+                .take_while(|&c| c == '`')
+                .count();
+            let content_start = content_start + backtick_count;
+
+            // Find the path line and skip it
+            let newline_pos = prompt.input[content_start..].find('\n')?;
+            let text_start = content_start + newline_pos + 1;
+
+            // Find the closing backticks
+            let closing_pattern = "`".repeat(backtick_count);
+            let text_end = prompt.input[text_start..].find(&closing_pattern)?;
+            let cursor_excerpt = &prompt.input[text_start..text_start + text_end];
+
+            let path_str = example.spec.cursor_path.to_string_lossy();
+            return Some(format!("`````{path_str}\n{cursor_excerpt}`````"));
+        }
+    }
+
+    // Fallback: construct from prompt_inputs if available
+    let prompt_inputs = example.prompt_inputs.as_ref()?;
+    let content = &prompt_inputs.content;
+    let cursor_offset = prompt_inputs.cursor_offset;
+
+    // Simple fallback: just show content around cursor with markers
+    let path_str = example.spec.cursor_path.to_string_lossy();
+    let mut result = format!("`````{path_str}\n");
+    result.push_str(TeacherPrompt::EDITABLE_REGION_START);
+    result.push_str(&content[..cursor_offset]);
+    result.push_str(TeacherPrompt::USER_CURSOR_MARKER);
+    result.push_str(&content[cursor_offset..]);
+    result.push_str(TeacherPrompt::EDITABLE_REGION_END);
+    result.push_str("\n`````");
+
+    Some(result)
 }
 
 fn extract_last_codeblock(text: &str) -> String {

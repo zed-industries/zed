@@ -789,7 +789,7 @@ impl Item for Editor {
         self.nav_history = Some(history);
     }
 
-    fn on_removed(&self, cx: &App) {
+    fn on_removed(&self, cx: &mut Context<Self>) {
         self.report_editor_event(ReportEditorEvent::Closed, None, cx);
     }
 

@@ -52,9 +52,9 @@ use text::{Anchor, ToPoint as _};
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
     Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, DecoratedIcon,
-    DiffStat, Disclosure, Divider, DividerColor, IconDecoration, IconDecorationKind, KeyBinding,
-    PopoverMenu, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
-    right_click_menu,
+    DiffStat, Disclosure, Divider, DividerColor, IconButtonShape, IconDecoration,
+    IconDecorationKind, KeyBinding, PopoverMenu, PopoverMenuHandle, SpinnerLabel, TintColor,
+    Tooltip, WithScrollbar, prelude::*, right_click_menu,
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
@@ -2248,7 +2248,13 @@ impl AcpThreadView {
                         if let Some(workspace) = self.workspace.upgrade() {
                             let project = self.project.clone();
                             let authenticate = Self::spawn_external_agent_login(
-                                login, workspace, project, false, true, window, cx,
+                                login,
+                                workspace,
+                                project,
+                                method.clone(),
+                                false,
+                                window,
+                                cx,
                             );
                             cx.notify();
                             self.auth_task = Some(cx.spawn_in(window, {
@@ -2349,14 +2355,17 @@ impl AcpThreadView {
         self.thread_error.take();
         configuration_view.take();
         pending_auth_method.replace(method.clone());
-        let authenticate = if (method.0.as_ref() == "claude-login"
-            || method.0.as_ref() == "spawn-gemini-cli")
-            && let Some(login) = self.login.clone()
-        {
+        let authenticate = if let Some(login) = self.login.clone() {
             if let Some(workspace) = self.workspace.upgrade() {
                 let project = self.project.clone();
                 Self::spawn_external_agent_login(
-                    login, workspace, project, false, false, window, cx,
+                    login,
+                    workspace,
+                    project,
+                    method.clone(),
+                    false,
+                    window,
+                    cx,
                 )
             } else {
                 Task::ready(Ok(()))
@@ -2403,8 +2412,8 @@ impl AcpThreadView {
         login: task::SpawnInTerminal,
         workspace: Entity<Workspace>,
         project: Entity<Project>,
+        method: acp::AuthMethodId,
         previous_attempt: bool,
-        check_exit_code: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
@@ -2454,25 +2463,29 @@ impl AcpThreadView {
                 })?
                 .await?;
 
-            if check_exit_code {
-                // For extension-based auth, wait for the process to exit and check exit code
+            let success_patterns = match method.0.as_ref() {
+                "claude-login" | "spawn-gemini-cli" => vec![
+                    "Login successful".to_string(),
+                    "Type your message".to_string(),
+                ],
+                _ => Vec::new(),
+            };
+            if success_patterns.is_empty() {
+                // No success patterns specified: wait for the process to exit and check exit code
                 let exit_status = terminal
                     .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
                     .await;
 
                 match exit_status {
-                    Some(status) if status.success() => {
-                        Ok(())
-                    }
-                    Some(status) => {
-                        Err(anyhow!("Login command failed with exit code: {:?}", status.code()))
-                    }
-                    None => {
-                        Err(anyhow!("Login command terminated without exit status"))
-                    }
+                    Some(status) if status.success() => Ok(()),
+                    Some(status) => Err(anyhow!(
+                        "Login command failed with exit code: {:?}",
+                        status.code()
+                    )),
+                    None => Err(anyhow!("Login command terminated without exit status")),
                 }
             } else {
-                // For hardcoded agents (claude-login, gemini-cli): look for specific output
+                // Look for specific output patterns to detect successful login
                 let mut exit_status = terminal
                     .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
                     .fuse();
@@ -2485,8 +2498,7 @@ impl AcpThreadView {
                                 cx.background_executor().timer(Duration::from_secs(1)).await;
                                 let content =
                                     terminal.update(cx, |terminal, _cx| terminal.get_content())?;
-                                if content.contains("Login successful")
-                                    || content.contains("Type your message")
+                                if success_patterns.iter().any(|pattern| content.contains(pattern))
                                 {
                                     return anyhow::Ok(());
                                 }
@@ -2504,7 +2516,7 @@ impl AcpThreadView {
                     }
                     _ = exit_status => {
                         if !previous_attempt && project.read_with(cx, |project, _| project.is_via_remote_server()) && login.label.contains("gemini") {
-                            return cx.update(|window, cx| Self::spawn_external_agent_login(login, workspace, project.clone(), true, false, window, cx))?.await
+                            return cx.update(|window, cx| Self::spawn_external_agent_login(login, workspace, project.clone(), method, true, window, cx))?.await
                         }
                         return Err(anyhow!("exited before logging in"));
                     }
@@ -3815,30 +3827,70 @@ impl AcpThreadView {
                                 )
                             }),
                     )
-                    .when(has_expandable_content, |this| {
-                        this.child(
-                            Disclosure::new(
-                                SharedString::from(format!(
-                                    "subagent-disclosure-inner-{}-{}",
-                                    entry_ix, context_ix
-                                )),
-                                is_expanded,
-                            )
-                            .opened_icon(IconName::ChevronUp)
-                            .closed_icon(IconName::ChevronDown)
-                            .visible_on_hover(card_header_id)
-                            .on_click(cx.listener({
-                                move |this, _, _, cx| {
-                                    if this.expanded_subagents.contains(&session_id) {
-                                        this.expanded_subagents.remove(&session_id);
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .when(is_running, |buttons| {
+                                buttons.child(
+                                    Button::new(
+                                        SharedString::from(format!(
+                                            "stop-subagent-{}-{}",
+                                            entry_ix, context_ix
+                                        )),
+                                        "Stop",
+                                    )
+                                    .icon(IconName::Stop)
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Error)
+                                    .label_size(LabelSize::Small)
+                                    .tooltip(Tooltip::text("Stop this subagent"))
+                                    .on_click({
+                                        let thread = thread.clone();
+                                        cx.listener(move |_this, _event, _window, cx| {
+                                            thread.update(cx, |thread, _cx| {
+                                                thread.stop_by_user();
+                                            });
+                                        })
+                                    }),
+                                )
+                            })
+                            .child(
+                                IconButton::new(
+                                    SharedString::from(format!(
+                                        "subagent-disclosure-{}-{}",
+                                        entry_ix, context_ix
+                                    )),
+                                    if is_expanded {
+                                        IconName::ChevronUp
                                     } else {
-                                        this.expanded_subagents.insert(session_id.clone());
-                                    }
-                                    cx.notify();
-                                }
-                            })),
-                        )
-                    }),
+                                        IconName::ChevronDown
+                                    },
+                                )
+                                .shape(IconButtonShape::Square)
+                                .icon_color(Color::Muted)
+                                .icon_size(IconSize::Small)
+                                .disabled(!has_expandable_content)
+                                .when(has_expandable_content, |button| {
+                                    button.on_click(cx.listener({
+                                        move |this, _, _, cx| {
+                                            if this.expanded_subagents.contains(&session_id) {
+                                                this.expanded_subagents.remove(&session_id);
+                                            } else {
+                                                this.expanded_subagents.insert(session_id.clone());
+                                            }
+                                            cx.notify();
+                                        }
+                                    }))
+                                })
+                                .when(
+                                    !has_expandable_content,
+                                    |button| {
+                                        button.tooltip(Tooltip::text("Waiting for content..."))
+                                    },
+                                ),
+                            ),
+                    ),
             )
             .when(is_expanded, |this| {
                 this.child(
