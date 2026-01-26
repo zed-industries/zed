@@ -14,6 +14,7 @@ use zeta_prompt::ZetaPromptInput;
 use crate::example::Example;
 use crate::progress::{InfoStyle, Progress, Step};
 use edit_prediction::example_spec::{CapturedEvent, CapturedPromptInput, CapturedRelatedExcerpt, CapturedRelatedFile, ExampleSpec, TelemetrySource};
+use std::fmt::Write as _;
 
 const SNOWFLAKE_SUCCESS_CODE: &str = "090001";
 const SNOWFLAKE_ASYNC_IN_PROGRESS_CODE: &str = "333334";
@@ -707,6 +708,13 @@ fn build_rejected_example(
         edit_history.push('\n');
     }
 
+    let rejected_patch = build_rejected_patch(
+        &input.cursor_path,
+        cursor_excerpt,
+        &input.editable_range_in_excerpt,
+        &output,
+    );
+
     let spec = ExampleSpec {
         name: request_id.clone(),
         repository_url: String::new(),
@@ -718,7 +726,7 @@ fn build_rejected_example(
         cursor_position: build_cursor_position(cursor_excerpt, cursor_offset),
         edit_history,
         expected_patches: Vec::new(),
-        rejected_patch: Some(output),
+        rejected_patch: Some(rejected_patch),
         captured_prompt_input: Some(CapturedPromptInput {
             cursor_file_content: cursor_excerpt.to_string(),
             cursor_offset,
@@ -766,6 +774,33 @@ fn build_cursor_position(excerpt: &str, cursor_offset: usize) -> String {
     let before = &excerpt[..cursor_offset.min(excerpt.len())];
     let after = &excerpt[cursor_offset.min(excerpt.len())..];
     format!("{}[CURSOR_POSITION]{}", before, after)
+}
+
+fn build_rejected_patch(
+    cursor_path: &std::path::Path,
+    cursor_excerpt: &str,
+    editable_range: &std::ops::Range<usize>,
+    model_output: &str,
+) -> String {
+    let old_text = &cursor_excerpt[editable_range.clone()];
+
+    let editable_start_row = cursor_excerpt[..editable_range.start]
+        .chars()
+        .filter(|&c| c == '\n')
+        .count() as u32;
+
+    let diff_body = language::unified_diff_with_offsets(
+        old_text,
+        model_output,
+        editable_start_row,
+        editable_start_row,
+    );
+
+    let mut patch = String::new();
+    writeln!(&mut patch, "--- a/{}", cursor_path.display()).ok();
+    writeln!(&mut patch, "+++ b/{}", cursor_path.display()).ok();
+    patch.push_str(&diff_body);
+    patch
 }
 
 fn get_column_indices(
