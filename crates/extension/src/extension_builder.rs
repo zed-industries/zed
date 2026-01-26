@@ -9,7 +9,9 @@ use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
 use serde::Deserialize;
 use std::{
-    env, fs, mem,
+    env,
+    ffi::OsStr,
+    fs, mem,
     path::{Path, PathBuf},
     process::Stdio,
     str::FromStr,
@@ -559,6 +561,8 @@ async fn populate_defaults(
     extension_path: &Path,
     fs: Arc<dyn Fs>,
 ) -> Result<()> {
+    const JSON_FILE_EXTENSIONS: [&str; 2] = ["json", "jsonc"];
+
     // For legacy extensions on the v0 schema (aka, using `extension.json`), clear out any existing
     // contents of the computed fields, since we don't care what the existing values are.
     if manifest.schema_version.is_v0() {
@@ -601,7 +605,11 @@ async fn populate_defaults(
 
         while let Some(theme_path) = theme_dir_entries.next().await {
             let theme_path = theme_path?;
-            if theme_path.extension() == Some("json".as_ref()) {
+            if theme_path
+                .extension()
+                .and_then(OsStr::to_str)
+                .is_some_and(|extension| JSON_FILE_EXTENSIONS.contains(&extension))
+            {
                 let relative_theme_path = theme_path.strip_prefix(extension_path)?.to_path_buf();
                 if !manifest.themes.contains(&relative_theme_path) {
                     manifest.themes.push(relative_theme_path);
@@ -619,7 +627,11 @@ async fn populate_defaults(
 
         while let Some(icon_theme_path) = icon_theme_dir_entries.next().await {
             let icon_theme_path = icon_theme_path?;
-            if icon_theme_path.extension() == Some("json".as_ref()) {
+            if icon_theme_path
+                .extension()
+                .and_then(OsStr::to_str)
+                .is_some_and(|extension| JSON_FILE_EXTENSIONS.contains(&extension))
+            {
                 let relative_icon_theme_path =
                     icon_theme_path.strip_prefix(extension_path)?.to_path_buf();
                 if !manifest.icon_themes.contains(&relative_icon_theme_path) {
