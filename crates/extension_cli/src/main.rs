@@ -5,13 +5,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ::fs::{CopyOptions, Fs, RealFs, copy_recursive};
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use clap::Parser;
-use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
+use extension::{ExtensionManifest, ExtensionSnippets};
 use language::LanguageConfig;
 use reqwest_client::ReqwestClient;
 use rpc::ExtensionProvides;
+use snippet_provider::file_to_snippets;
+use snippet_provider::format::VsSnippetsFile;
 use tokio::process::Command;
 use tree_sitter::{Language, Query, WasmStore};
 
@@ -79,6 +81,7 @@ async fn main() -> Result<()> {
     let grammars = test_grammars(&manifest, &extension_path, &mut wasm_store)?;
     test_languages(&manifest, &extension_path, &grammars)?;
     test_themes(&manifest, &extension_path, fs.clone()).await?;
+    test_snippets(&manifest, &extension_path, fs.clone()).await?;
 
     let archive_dir = output_dir.join("archive");
     fs::remove_dir_all(&archive_dir).ok();
@@ -419,6 +422,35 @@ async fn test_themes(
                 )
             }
         }
+    }
+
+    Ok(())
+}
+
+async fn test_snippets(
+    manifest: &ExtensionManifest,
+    extension_path: &Path,
+    fs: Arc<dyn Fs>,
+) -> Result<()> {
+    for relative_snippet_path in manifest
+        .snippets
+        .as_ref()
+        .map(ExtensionSnippets::paths)
+        .into_iter()
+        .flatten()
+    {
+        let snippet_path = extension_path.join(relative_snippet_path);
+        let snippets_content = fs.load_bytes(&snippet_path).await?;
+        let snippets_file = serde_json_lenient::from_slice::<VsSnippetsFile>(&snippets_content)
+            .with_context(|| anyhow!("Failed to load snippet file at {snippet_path:?}"))?;
+        let snippet_errors = file_to_snippets(snippets_file, &snippet_path)
+            .flat_map(Result::err)
+            .collect::<Vec<_>>();
+
+        anyhow::ensure!(
+            snippet_errors.len() == 0,
+            "Could not parse all snippets in file {snippet_path:?}: {snippet_errors:?}"
+        );
     }
 
     Ok(())
