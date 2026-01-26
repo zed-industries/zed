@@ -503,8 +503,11 @@ impl SplittableEditor {
                 .collect()
         };
 
+        let primary_folded_buffers = primary_display_map.read(cx).folded_buffers().clone();
+
         let mut companion = Companion::new(
             rhs_display_map_id,
+            primary_folded_buffers,
             convert_rhs_rows_to_lhs,
             convert_lhs_rows_to_rhs,
         );
@@ -545,13 +548,15 @@ impl SplittableEditor {
             let this = this.clone();
             editor.set_on_local_selections_changed(Some(Box::new(
                 move |cursor_position, window, cx| {
-                    if let Some(this) = this.upgrade() {
+                    let this = this.clone();
+                    window.defer(cx, move |window, cx| {
                         this.update(cx, |this, cx| {
                             if this.locked_cursors {
                                 this.sync_cursor_to_other_side(true, cursor_position, window, cx);
                             }
-                        });
-                    }
+                        })
+                        .ok();
+                    })
                 },
             )));
         });
@@ -560,13 +565,15 @@ impl SplittableEditor {
             let this = this.clone();
             editor.set_on_local_selections_changed(Some(Box::new(
                 move |cursor_position, window, cx| {
-                    if let Some(this) = this.upgrade() {
+                    let this = this.clone();
+                    window.defer(cx, move |window, cx| {
                         this.update(cx, |this, cx| {
                             if this.locked_cursors {
                                 this.sync_cursor_to_other_side(false, cursor_position, window, cx);
                             }
-                        });
-                    }
+                        })
+                        .ok();
+                    })
                 },
             )));
         });
@@ -1573,10 +1580,6 @@ impl SecondaryEditor {
             })
             .collect();
 
-        let main_buffer = primary_multibuffer_ref
-            .buffer(main_buffer.remote_id())
-            .unwrap();
-
         self.editor.update(cx, |editor, cx| {
             editor.buffer().update(cx, |buffer, cx| {
                 let (ids, _) = buffer.update_path_excerpts(
@@ -1591,7 +1594,7 @@ impl SecondaryEditor {
                         .diff_for(base_text_buffer.read(cx).remote_id())
                         .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
                 {
-                    buffer.add_inverted_diff(diff, main_buffer, cx);
+                    buffer.add_inverted_diff(diff, cx);
                 }
             })
         });
@@ -3348,6 +3351,176 @@ mod tests {
             ccc
             ddd
             eee"
+            .unindent(),
+            &mut cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_added_file_at_end(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx).await;
+
+        let base_text = "";
+        let current_text = "
+            aaaa bbbb cccc dddd eeee ffff
+            bbb
+            ccc
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
+            editor.set_excerpts_for_path(
+                path,
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaaa bbbb cccc dddd eeee ffff
+            bbb
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            § spacer
+            § spacer
+            § spacer"
+                .unindent(),
+            &mut cx,
+        );
+
+        assert_split_content_with_widths(
+            &editor,
+            px(200.0),
+            px(200.0),
+            "
+            § <no file>
+            § -----
+            aaaa bbbb\x20
+            cccc dddd\x20
+            eeee ffff
+            bbb
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            § spacer
+            § spacer
+            § spacer
+            § spacer
+            § spacer"
+                .unindent(),
+            &mut cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_adding_line_to_addition_hunk(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx).await;
+
+        let base_text = "
+            aaa
+            bbb
+            ccc
+        "
+        .unindent();
+
+        let current_text = "
+            aaa
+            bbb
+            xxx
+            yyy
+            ccc
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
+            editor.set_excerpts_for_path(
+                path,
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            xxx
+            yyy
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            § spacer
+            § spacer
+            ccc"
+            .unindent(),
+            &mut cx,
+        );
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(3, 3)..Point::new(3, 3), "\nzzz")], None, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            xxx
+            yyy
+            zzz
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            § spacer
+            § spacer
+            § spacer
+            ccc"
             .unindent(),
             &mut cx,
         );

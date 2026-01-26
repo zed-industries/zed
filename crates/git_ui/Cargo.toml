@@ -57,6 +57,7 @@ theme.workspace = true
 time.workspace = true
 time_format.workspace = true
 ui.workspace = true
+ui_input.workspace = true
 util.workspace = true
 watch.workspace = true
 workspace.workspace = true

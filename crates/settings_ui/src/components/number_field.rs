@@ -5,7 +5,7 @@ use std::{
     str::FromStr,
 };
 
-use editor::{Editor, actions::MoveDown, actions::MoveUp};
+use editor::Editor;
 use gpui::{
     ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers, TextAlign,
     TextStyleRefinement, WeakEntity,
@@ -16,6 +16,7 @@ use settings::{
     MinimumContrast,
 };
 use ui::prelude::*;
+use zed_actions::editor::{MoveDown, MoveUp};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NumberFieldMode {
@@ -316,26 +317,6 @@ impl<T: NumberFieldType> NumberField<T> {
         }
     }
 
-    pub fn format(mut self, format: impl FnOnce(&T) -> String + 'static) -> Self {
-        self.format = Box::new(format);
-        self
-    }
-
-    pub fn small_step(mut self, step: T) -> Self {
-        self.small_step = step;
-        self
-    }
-
-    pub fn normal_step(mut self, step: T) -> Self {
-        self.step = step;
-        self
-    }
-
-    pub fn large_step(mut self, step: T) -> Self {
-        self.large_step = step;
-        self
-    }
-
     pub fn min(mut self, min: T) -> Self {
         self.min_value = min;
         self
@@ -348,14 +329,6 @@ impl<T: NumberFieldType> NumberField<T> {
 
     pub fn mode(self, mode: NumberFieldMode, cx: &mut App) -> Self {
         self.mode.write(cx, mode);
-        self
-    }
-
-    pub fn on_reset(
-        mut self,
-        on_reset: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.on_reset = Some(Box::new(on_reset));
         self
     }
 

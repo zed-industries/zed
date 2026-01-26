@@ -526,8 +526,12 @@ impl ListState {
 }
 
 impl StateInner {
-    fn visible_range(&self, height: Pixels, scroll_top: &ListOffset) -> Range<usize> {
-        let mut cursor = self.items.cursor::<ListItemSummary>(());
+    fn visible_range(
+        items: &SumTree<ListItem>,
+        height: Pixels,
+        scroll_top: &ListOffset,
+    ) -> Range<usize> {
+        let mut cursor = items.cursor::<ListItemSummary>(());
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
         let start_y = cursor.start().height + scroll_top.offset_in_item;
         cursor.seek_forward(&Height(start_y + height), Bias::Left);
@@ -570,9 +574,9 @@ impl StateInner {
             });
         }
 
-        if self.scroll_handler.is_some() {
-            let visible_range = self.visible_range(height, scroll_top);
-            self.scroll_handler.as_mut().unwrap()(
+        if let Some(handler) = self.scroll_handler.as_mut() {
+            let visible_range = Self::visible_range(&self.items, height, scroll_top);
+            handler(
                 &ListScrollEvent {
                     visible_range,
                     count: self.items.summary().count,
