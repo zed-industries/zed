@@ -197,24 +197,28 @@ EXIT_CODE=0
 
 # Check for original failure artifacts and write to step summary
 if [ -d "failed-jobs" ] && [ "$(ls -A failed-jobs 2>/dev/null)" ]; then
-  echo "# :x: Original Failure(s)" >> $GITHUB_STEP_SUMMARY
-  echo "" >> $GITHUB_STEP_SUMMARY
-  echo "The following job(s) failed and cancelled the rest of the workflow:" >> $GITHUB_STEP_SUMMARY
-  echo "" >> $GITHUB_STEP_SUMMARY
+  {
+    echo "# :x: Original Failure(s)"
+    echo ""
+    echo "The following job(s) failed and cancelled the rest of the workflow:"
+    echo ""
+  } >> "$GITHUB_STEP_SUMMARY"
   for f in failed-jobs/*; do
     if [ -f "$f" ]; then
       job_name=$(cat "$f")
-      echo "- **$job_name**" >> $GITHUB_STEP_SUMMARY
-      echo "FAILED: $job_name"
+      echo "- **${job_name}**" >> "$GITHUB_STEP_SUMMARY"
+      echo "FAILED: ${job_name}"
     fi
   done
-  echo "" >> $GITHUB_STEP_SUMMARY
+  echo "" >> "$GITHUB_STEP_SUMMARY"
 fi
 
-echo "# Job Results" >> $GITHUB_STEP_SUMMARY
-echo "" >> $GITHUB_STEP_SUMMARY
-echo "| Job | Result |" >> $GITHUB_STEP_SUMMARY
-echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+{
+  echo "# Job Results"
+  echo ""
+  echo "| Job | Result |"
+  echo "|-----|--------|"
+} >> "$GITHUB_STEP_SUMMARY"
 
 check_result() {
   local md_icon=":white_check_mark:"
@@ -226,7 +230,7 @@ check_result() {
     md_icon=":fast_forward:"
   fi
   echo "  $1: $2"
-  echo "| $1 | $md_icon $2 |" >> $GITHUB_STEP_SUMMARY
+  echo "| $1 | ${md_icon} $2 |" >> "$GITHUB_STEP_SUMMARY"
   if [[ "$2" != "skipped" && "$2" != "success" ]]; then EXIT_CODE=1; fi
 }
 
