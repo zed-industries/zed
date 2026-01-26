@@ -3871,9 +3871,12 @@ impl AcpThreadView {
                                         }
                                     }))
                                 })
-                                .when(!has_expandable_content, |button| {
-                                    button.tooltip(Tooltip::text("Waiting for content..."))
-                                }),
+                                .when(
+                                    !has_expandable_content,
+                                    |button| {
+                                        button.tooltip(Tooltip::text("Waiting for content..."))
+                                    },
+                                ),
                             ),
                     ),
             )

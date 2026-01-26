@@ -523,10 +523,7 @@ mod tests {
         );
         let properties = schema_json.get("properties").unwrap();
 
-        assert!(
-            properties.get("label").is_some(),
-            "should have label field"
-        );
+        assert!(properties.get("label").is_some(), "should have label field");
         assert!(
             properties.get("task_prompt").is_some(),
             "should have task_prompt field"

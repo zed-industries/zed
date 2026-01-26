@@ -1217,8 +1217,7 @@ impl AcpThread {
     }
 
     pub fn was_stopped_by_user(&self) -> bool {
-        self.user_stopped
-            .load(std::sync::atomic::Ordering::SeqCst)
+        self.user_stopped.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     pub fn user_stop_receiver(&self) -> watch::Receiver<bool> {
