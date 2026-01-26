@@ -1546,7 +1546,7 @@ impl TextThreadEditor {
             project_diff
                 .editor()
                 .read(cx)
-                .primary_editor()
+                .rhs_editor()
                 .read(cx)
                 .buffer()
                 .clone()
@@ -1555,7 +1555,7 @@ impl TextThreadEditor {
         // Extract all stored comments from all hunks
         let all_comments: Vec<(DiffHunkKey, Vec<StoredReviewComment>)> =
             project_diff.update(cx, |project_diff, cx| {
-                let editor = project_diff.editor().read(cx).primary_editor().clone();
+                let editor = project_diff.editor().read(cx).rhs_editor().clone();
                 editor.update(cx, |editor, cx| editor.take_all_review_comments(cx))
             });
 
