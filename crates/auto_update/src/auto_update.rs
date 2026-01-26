@@ -835,9 +835,7 @@ async fn cleanup_remote_server_cache(
     }
 
     candidates.sort_by(|(path_a, time_a), (path_b, time_b)| {
-        time_b
-            .cmp(time_a)
-            .then_with(|| path_a.cmp(path_b))
+        time_b.cmp(time_a).then_with(|| path_a.cmp(path_b))
     });
 
     for (index, (path, _)) in candidates.into_iter().enumerate() {
@@ -846,7 +844,11 @@ async fn cleanup_remote_server_cache(
         }
 
         if let Err(error) = smol::fs::remove_file(&path).await {
-            log::warn!("Failed to remove old remote server archive {:?}: {}", path, error);
+            log::warn!(
+                "Failed to remove old remote server archive {:?}: {}",
+                path,
+                error
+            );
         }
     }
 
