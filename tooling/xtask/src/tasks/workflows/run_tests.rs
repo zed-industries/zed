@@ -1,5 +1,6 @@
 use gh_workflow::{
-    Concurrency, Container, Env, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use, Workflow,
+    Concurrency, Container, Env, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use,
+    Workflow,
 };
 use indexmap::IndexMap;
 
@@ -368,10 +369,9 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
             })
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
-            .when(
-                 platform == Platform::Mac,
-                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
-            )
+            .when(platform == Platform::Mac, |this| {
+                this.add_step(steps::cache_rust_dependencies_namespace())
+            })
             .when(platform == Platform::Linux, |this| {
                 use_clang(this.add_step(steps::cache_rust_dependencies_namespace()))
             })
