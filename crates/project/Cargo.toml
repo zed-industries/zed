@@ -11,6 +11,12 @@ workspace = true
 [lib]
 path = "src/project.rs"
 doctest = false
+test = false
+
+[[test]]
+name = "integration"
+required-features = ["test-support"]
+path = "tests/integration/project_tests.rs"
 
 [features]
 test-support = [
@@ -41,7 +47,6 @@ clock.workspace = true
 collections.workspace = true
 context_server.workspace = true
 dap.workspace = true
-encoding_rs.workspace = true
 extension.workspace = true
 fancy-regex.workspace = true
 fs.workspace = true
@@ -112,6 +117,7 @@ language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 prettier = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
+project = {workspace = true, features = ["test-support"]}
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 snippet_provider = { workspace = true, features = ["test-support"] }

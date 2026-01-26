@@ -1,4 +1,5 @@
-use crate::QueueMessage;
+use crate::SendImmediately;
+use crate::acp::AcpThreadHistory;
 use crate::{
     ChatWithFollow,
     completion_provider::{
@@ -8,8 +9,9 @@ use crate::{
     mention_set::{
         Mention, MentionImage, MentionSet, insert_crease_for_mention, paste_images_as_context,
     },
+    user_slash_command::{self, CommandLoadError, UserSlashCommand},
 };
-use acp_thread::{AgentSessionInfo, AgentSessionList, MentionUri};
+use acp_thread::{AgentSessionInfo, MentionUri};
 use agent::ThreadStore;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
@@ -20,6 +22,7 @@ use editor::{
     MultiBufferSnapshot, ToOffset, actions::Paste, code_context_menus::CodeContextMenu,
     scroll::Autoscroll,
 };
+use feature_flags::{FeatureFlagAppExt as _, UserSlashCommandsFeatureFlag};
 use futures::{FutureExt as _, future::join_all};
 use gpui::{
     AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageFormat,
@@ -32,10 +35,21 @@ use rope::Point;
 use settings::Settings;
 use std::{cell::RefCell, fmt::Write, rc::Rc, sync::Arc};
 use theme::ThemeSettings;
-use ui::{ContextMenu, prelude::*};
+use ui::{ButtonLike, ButtonStyle, ContextMenu, Disclosure, ElevationIndex, prelude::*};
 use util::{ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, PasteRaw};
+
+enum UserSlashCommands {
+    Cached {
+        commands: collections::HashMap<String, user_slash_command::UserSlashCommand>,
+        errors: Vec<user_slash_command::CommandLoadError>,
+    },
+    FromFs {
+        fs: Arc<dyn fs::Fs>,
+        worktree_roots: Vec<std::path::PathBuf>,
+    },
+}
 
 pub struct MessageEditor {
     mention_set: Entity<MentionSet>,
@@ -43,6 +57,8 @@ pub struct MessageEditor {
     workspace: WeakEntity<Workspace>,
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+    cached_user_commands: Rc<RefCell<collections::HashMap<String, UserSlashCommand>>>,
+    cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
     agent_name: SharedString,
     thread_store: Option<Entity<ThreadStore>>,
     _subscriptions: Vec<Subscription>,
@@ -52,7 +68,7 @@ pub struct MessageEditor {
 #[derive(Clone, Copy, Debug)]
 pub enum MessageEditorEvent {
     Send,
-    Queue,
+    SendImmediately,
     Cancel,
     Focus,
     LostFocus,
@@ -73,7 +89,11 @@ impl PromptCompletionProviderDelegate for Entity<MessageEditor> {
             if self.read(cx).thread_store.is_some() {
                 supported.push(PromptContextType::Thread);
             }
-            supported.extend(&[PromptContextType::Fetch, PromptContextType::Rules]);
+            supported.extend(&[
+                PromptContextType::Diagnostics,
+                PromptContextType::Fetch,
+                PromptContextType::Rules,
+            ]);
         }
         supported
     }
@@ -87,12 +107,34 @@ impl PromptCompletionProviderDelegate for Entity<MessageEditor> {
                 name: cmd.name.clone().into(),
                 description: cmd.description.clone().into(),
                 requires_argument: cmd.input.is_some(),
+                source: crate::completion_provider::CommandSource::Server,
             })
             .collect()
     }
 
     fn confirm_command(&self, cx: &mut App) {
         self.update(cx, |this, cx| this.send(cx));
+    }
+
+    fn cached_user_commands(
+        &self,
+        cx: &App,
+    ) -> Option<collections::HashMap<String, UserSlashCommand>> {
+        let commands = self.read(cx).cached_user_commands.borrow();
+        if commands.is_empty() {
+            None
+        } else {
+            Some(commands.clone())
+        }
+    }
+
+    fn cached_user_command_errors(&self, cx: &App) -> Option<Vec<CommandLoadError>> {
+        let errors = self.read(cx).cached_user_command_errors.borrow();
+        if errors.is_empty() {
+            None
+        } else {
+            Some(errors.clone())
+        }
     }
 }
 
@@ -101,10 +143,46 @@ impl MessageEditor {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        session_list: Rc<RefCell<Option<Rc<dyn AgentSessionList>>>>,
+        history: WeakEntity<AcpThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+        agent_name: SharedString,
+        placeholder: &str,
+        mode: EditorMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let cached_user_commands = Rc::new(RefCell::new(collections::HashMap::default()));
+        let cached_user_command_errors = Rc::new(RefCell::new(Vec::new()));
+        Self::new_with_cache(
+            workspace,
+            project,
+            thread_store,
+            history,
+            prompt_store,
+            prompt_capabilities,
+            available_commands,
+            cached_user_commands,
+            cached_user_command_errors,
+            agent_name,
+            placeholder,
+            mode,
+            window,
+            cx,
+        )
+    }
+
+    pub fn new_with_cache(
+        workspace: WeakEntity<Workspace>,
+        project: WeakEntity<Project>,
+        thread_store: Option<Entity<ThreadStore>>,
+        history: WeakEntity<AcpThreadHistory>,
+        prompt_store: Option<Entity<PromptStore>>,
+        prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
+        available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+        cached_user_commands: Rc<RefCell<collections::HashMap<String, UserSlashCommand>>>,
+        cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
         agent_name: SharedString,
         placeholder: &str,
         mode: EditorMode,
@@ -158,8 +236,7 @@ impl MessageEditor {
             cx.entity(),
             editor.downgrade(),
             mention_set.clone(),
-            thread_store.clone(),
-            session_list,
+            history,
             prompt_store.clone(),
             workspace.clone(),
         ));
@@ -216,6 +293,8 @@ impl MessageEditor {
             workspace,
             prompt_capabilities,
             available_commands,
+            cached_user_commands,
+            cached_user_command_errors,
             agent_name,
             thread_store,
             _subscriptions: subscriptions,
@@ -385,14 +464,46 @@ impl MessageEditor {
         full_mention_content: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
-        // Check for unsupported slash commands before spawning async task
+        self.contents_with_cache(full_mention_content, None, None, cx)
+    }
+
+    pub fn contents_with_cache(
+        &self,
+        full_mention_content: bool,
+        cached_user_commands: Option<
+            collections::HashMap<String, user_slash_command::UserSlashCommand>,
+        >,
+        cached_user_command_errors: Option<Vec<user_slash_command::CommandLoadError>>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
         let text = self.editor.read(cx).text(cx);
         let available_commands = self.available_commands.borrow().clone();
-        if let Err(err) =
-            Self::validate_slash_commands(&text, &available_commands, &self.agent_name)
-        {
-            return Task::ready(Err(err));
-        }
+        let agent_name = self.agent_name.clone();
+
+        let user_slash_commands = if !cx.has_flag::<UserSlashCommandsFeatureFlag>() {
+            UserSlashCommands::Cached {
+                commands: collections::HashMap::default(),
+                errors: Vec::new(),
+            }
+        } else if let Some(cached) = cached_user_commands {
+            UserSlashCommands::Cached {
+                commands: cached,
+                errors: cached_user_command_errors.unwrap_or_default(),
+            }
+        } else if let Some(workspace) = self.workspace.upgrade() {
+            let fs = workspace.read(cx).project().read(cx).fs().clone();
+            let worktree_roots: Vec<std::path::PathBuf> = workspace
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect();
+            UserSlashCommands::FromFs { fs, worktree_roots }
+        } else {
+            UserSlashCommands::Cached {
+                commands: collections::HashMap::default(),
+                errors: Vec::new(),
+            }
+        };
 
         let contents = self
             .mention_set
@@ -401,6 +512,59 @@ impl MessageEditor {
         let supports_embedded_context = self.prompt_capabilities.borrow().embedded_context;
 
         cx.spawn(async move |_, cx| {
+            let (mut user_commands, mut user_command_errors) = match user_slash_commands {
+                UserSlashCommands::Cached { commands, errors } => (commands, errors),
+                UserSlashCommands::FromFs { fs, worktree_roots } => {
+                    let load_result =
+                        user_slash_command::load_all_commands_async(&fs, &worktree_roots).await;
+
+                    (
+                        user_slash_command::commands_to_map(&load_result.commands),
+                        load_result.errors,
+                    )
+                }
+            };
+
+            let server_command_names = available_commands
+                .iter()
+                .map(|command| command.name.clone())
+                .collect::<HashSet<_>>();
+            user_slash_command::apply_server_command_conflicts_to_map(
+                &mut user_commands,
+                &mut user_command_errors,
+                &server_command_names,
+            );
+
+            // Check if the user is trying to use an errored slash command.
+            // If so, report the error to the user.
+            if let Some(parsed) = user_slash_command::try_parse_user_command(&text) {
+                for error in &user_command_errors {
+                    if let Some(error_cmd_name) = error.command_name() {
+                        if error_cmd_name == parsed.name {
+                            return Err(anyhow::anyhow!(
+                                "Failed to load /{}: {}",
+                                parsed.name,
+                                error.message
+                            ));
+                        }
+                    }
+                }
+            }
+            // Errors for commands that don't match the user's input are silently ignored here,
+            // since the user will see them via the error callout in the thread view.
+
+            // Check if this is a user-defined slash command and expand it
+            match user_slash_command::try_expand_from_commands(&text, &user_commands) {
+                Ok(Some(expanded)) => return Ok((vec![expanded.into()], Vec::new())),
+                Err(err) => return Err(err),
+                Ok(None) => {} // Not a user command, continue with normal processing
+            }
+
+            if let Err(err) = Self::validate_slash_commands(&text, &available_commands, &agent_name)
+            {
+                return Err(err);
+            }
+
             let contents = contents.await?;
             let mut all_tracked_buffers = Vec::new();
 
@@ -499,25 +663,12 @@ impl MessageEditor {
     }
 
     pub fn send(&mut self, cx: &mut Context<Self>) {
-        if self.is_empty(cx) {
-            return;
+        if !self.is_empty(cx) {
+            self.editor.update(cx, |editor, cx| {
+                editor.clear_inlay_hints(cx);
+            });
         }
-        self.editor.update(cx, |editor, cx| {
-            editor.clear_inlay_hints(cx);
-        });
         cx.emit(MessageEditorEvent::Send)
-    }
-
-    pub fn queue(&mut self, cx: &mut Context<Self>) {
-        if self.is_empty(cx) {
-            return;
-        }
-
-        self.editor.update(cx, |editor, cx| {
-            editor.clear_inlay_hints(cx);
-        });
-
-        cx.emit(MessageEditorEvent::Queue)
     }
 
     pub fn trigger_completion_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -563,8 +714,16 @@ impl MessageEditor {
         self.send(cx);
     }
 
-    fn queue_message(&mut self, _: &QueueMessage, _: &mut Window, cx: &mut Context<Self>) {
-        self.queue(cx);
+    fn send_immediately(&mut self, _: &SendImmediately, _: &mut Window, cx: &mut Context<Self>) {
+        if self.is_empty(cx) {
+            return;
+        }
+
+        self.editor.update(cx, |editor, cx| {
+            editor.clear_inlay_hints(cx);
+        });
+
+        cx.emit(MessageEditorEvent::SendImmediately)
     }
 
     fn chat_with_follow(
@@ -807,6 +966,72 @@ impl MessageEditor {
         .detach();
     }
 
+    /// Inserts code snippets as creases into the editor.
+    /// Each tuple contains (code_text, crease_title).
+    pub fn insert_code_creases(
+        &mut self,
+        creases: Vec<(String, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use editor::display_map::{Crease, FoldPlaceholder};
+        use multi_buffer::MultiBufferRow;
+        use rope::Point;
+
+        self.editor.update(cx, |editor, cx| {
+            editor.insert("\n", window, cx);
+            for (text, crease_title) in creases {
+                let point = editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .head();
+                let start_row = MultiBufferRow(point.row);
+
+                editor.insert(&text, window, cx);
+
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                let anchor_before = snapshot.anchor_after(point);
+                let anchor_after = editor
+                    .selections
+                    .newest_anchor()
+                    .head()
+                    .bias_left(&snapshot);
+
+                editor.insert("\n", window, cx);
+
+                let fold_placeholder = FoldPlaceholder {
+                    render: Arc::new({
+                        let title = crease_title.clone();
+                        move |_fold_id, _fold_range, _cx| {
+                            ButtonLike::new("code-crease")
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::ElevatedSurface)
+                                .child(Icon::new(IconName::TextSnippet))
+                                .child(Label::new(title.clone()).single_line())
+                                .into_any_element()
+                        }
+                    }),
+                    merge_adjacent: false,
+                    ..Default::default()
+                };
+
+                let crease = Crease::inline(
+                    anchor_before..anchor_after,
+                    fold_placeholder,
+                    |row, is_folded, fold, _window, _cx| {
+                        Disclosure::new(("code-crease-toggle", row.0 as u64), !is_folded)
+                            .toggle_state(is_folded)
+                            .on_click(move |_e, window, cx| fold(!is_folded, window, cx))
+                            .into_any_element()
+                    },
+                    |_, _, _, _| gpui::Empty.into_any(),
+                );
+                editor.insert_creases(vec![crease], cx);
+                editor.fold_at(start_row, window, cx);
+            }
+        });
+    }
+
     pub fn insert_selections(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let editor = self.editor.read(cx);
         let editor_buffer = editor.buffer().read(cx);
@@ -1009,7 +1234,7 @@ impl Render for MessageEditor {
         div()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
-            .on_action(cx.listener(Self::queue_message))
+            .on_action(cx.listener(Self::send_immediately))
             .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::paste_raw))
@@ -1076,6 +1301,7 @@ mod tests {
     use agent::{ThreadStore, outline};
     use agent_client_protocol as acp;
     use editor::{AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset};
+
     use fs::FakeFs;
     use futures::StreamExt as _;
     use gpui::{
@@ -1085,6 +1311,7 @@ mod tests {
     use lsp::{CompletionContext, CompletionTriggerKind};
     use project::{CompletionIntent, Project, ProjectPath};
     use serde_json::json;
+
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
     use util::{path, paths::PathStyle, rel_path::rel_path};
@@ -1108,16 +1335,19 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = None;
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
+                    Default::default(),
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     "Test Agent".into(),
@@ -1187,7 +1417,9 @@ mod tests {
         });
 
         let (content, _) = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .update(cx, |message_editor, cx| {
+                message_editor.contents_with_cache(false, None, None, cx)
+            })
             .await
             .unwrap();
 
@@ -1214,24 +1446,27 @@ mod tests {
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let thread_store = None;
-        let session_list = Rc::new(RefCell::new(None));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         // Start with no available commands - simulating Claude which doesn't support slash commands
         let available_commands = Rc::new(RefCell::new(vec![]));
 
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
         let workspace_handle = workspace.downgrade();
         let message_editor = workspace.update_in(cx, |_, window, cx| {
             cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace_handle.clone(),
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
                     prompt_capabilities.clone(),
                     available_commands.clone(),
+                    Default::default(),
+                    Default::default(),
                     "Claude Code".into(),
                     "Test",
                     EditorMode::AutoHeight {
@@ -1251,7 +1486,9 @@ mod tests {
         });
 
         let contents_result = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .update(cx, |message_editor, cx| {
+                message_editor.contents_with_cache(false, None, None, cx)
+            })
             .await;
 
         // Should fail because available_commands is empty (no commands supported)
@@ -1269,7 +1506,9 @@ mod tests {
         });
 
         let contents_result = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .update(cx, |message_editor, cx| {
+                message_editor.contents_with_cache(false, None, None, cx)
+            })
             .await;
 
         assert!(contents_result.is_err());
@@ -1284,7 +1523,9 @@ mod tests {
         });
 
         let contents_result = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .update(cx, |message_editor, cx| {
+                message_editor.contents_with_cache(false, None, None, cx)
+            })
             .await;
 
         // Should succeed because /help is in available_commands
@@ -1296,7 +1537,9 @@ mod tests {
         });
 
         let (content, _) = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .update(cx, |message_editor, cx| {
+                message_editor.contents_with_cache(false, None, None, cx)
+            })
             .await
             .unwrap();
 
@@ -1314,7 +1557,9 @@ mod tests {
 
         // The @ mention functionality should not be affected
         let (content, _) = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .update(cx, |message_editor, cx| {
+                message_editor.contents_with_cache(false, None, None, cx)
+            })
             .await
             .unwrap();
 
@@ -1372,7 +1617,8 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window, cx);
 
         let thread_store = None;
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![
             acp::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
@@ -1386,14 +1632,16 @@ mod tests {
         let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
             let message_editor = cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
                     prompt_capabilities.clone(),
                     available_commands.clone(),
+                    Default::default(),
+                    Default::default(),
                     "Test Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
@@ -1603,19 +1851,22 @@ mod tests {
         }
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
             let message_editor = cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
                     prompt_capabilities.clone(),
+                    Default::default(),
+                    Default::default(),
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -2097,16 +2348,19 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
-                let editor = MessageEditor::new(
+                let editor = MessageEditor::new_with_cache(
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
+                    Default::default(),
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     "Test Agent".into(),
@@ -2196,7 +2450,8 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         // Create a thread metadata to insert as summary
         let thread_metadata = AgentSessionInfo {
@@ -2209,12 +2464,14 @@ mod tests {
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
-                let mut editor = MessageEditor::new(
+                let mut editor = MessageEditor::new_with_cache(
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
+                    Default::default(),
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     "Test Agent".into(),
@@ -2276,7 +2533,8 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = None;
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         let thread_metadata = AgentSessionInfo {
             session_id: acp::SessionId::new("thread-123"),
@@ -2288,12 +2546,14 @@ mod tests {
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
-                let mut editor = MessageEditor::new(
+                let mut editor = MessageEditor::new_with_cache(
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
+                    Default::default(),
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     "Test Agent".into(),
@@ -2334,16 +2594,19 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = None;
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
+                    Default::default(),
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     "Test Agent".into(),
@@ -2387,16 +2650,19 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
+                    Default::default(),
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     "Test Agent".into(),
@@ -2441,16 +2707,19 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         let message_editor = cx.update(|window, cx| {
             cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
+                    Default::default(),
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     "Test Agent".into(),
@@ -2473,7 +2742,9 @@ mod tests {
         });
 
         let (content, _) = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(false, cx))
+            .update(cx, |message_editor, cx| {
+                message_editor.contents_with_cache(false, None, None, cx)
+            })
             .await
             .unwrap();
 
@@ -2504,17 +2775,20 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         let (message_editor, editor) = workspace.update_in(cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
             let message_editor = cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
+                    Default::default(),
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     "Test Agent".into(),
@@ -2551,7 +2825,9 @@ mod tests {
         });
 
         let content = message_editor
-            .update(cx, |editor, cx| editor.contents(false, cx))
+            .update(cx, |editor, cx| {
+                editor.contents_with_cache(false, None, None, cx)
+            })
             .await
             .unwrap()
             .0;
@@ -2578,7 +2854,9 @@ mod tests {
         });
 
         let content = message_editor
-            .update(cx, |editor, cx| editor.contents(false, cx))
+            .update(cx, |editor, cx| {
+                editor.contents_with_cache(false, None, None, cx)
+            })
             .await
             .unwrap()
             .0;
@@ -2660,7 +2938,8 @@ mod tests {
         });
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
-        let session_list = Rc::new(RefCell::new(None));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         // Create a new `MessageEditor`. The `EditorMode::full()` has to be used
         // to ensure we have a fixed viewport, so we can eventually actually
@@ -2668,12 +2947,14 @@ mod tests {
         let message_editor = workspace.update_in(&mut cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
             let message_editor = cx.new(|cx| {
-                MessageEditor::new(
+                MessageEditor::new_with_cache(
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    session_list.clone(),
+                    history.downgrade(),
                     None,
+                    Default::default(),
+                    Default::default(),
                     Default::default(),
                     Default::default(),
                     "Test Agent".into(),

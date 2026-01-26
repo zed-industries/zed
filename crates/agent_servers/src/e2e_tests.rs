@@ -2,7 +2,7 @@ use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
 use agent_client_protocol as acp;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
-use gpui::{AppContext, Entity, TestAppContext};
+use gpui::{Entity, TestAppContext};
 use indoc::indoc;
 #[cfg(test)]
 use project::agent_server_store::BuiltinAgentServerSettings;
@@ -410,9 +410,7 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
         let http_client = reqwest_client::ReqwestClient::user_agent("agent tests").unwrap();
         cx.set_http_client(Arc::new(http_client));
         let client = client::Client::production(cx);
-        let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
-        language_model::init(client.clone(), cx);
-        language_models::init(user_store, client, cx);
+        language_model::init(client, cx);
 
         #[cfg(test)]
         project::agent_server_store::AllAgentServersSettings::override_global(
@@ -474,9 +472,7 @@ pub async fn run_until_first_tool_call(
     });
 
     select! {
-        // We have to use a smol timer here because
-        // cx.background_executor().timer isn't real in the test context
-        _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(20))) => {
+        _ = futures::FutureExt::fuse(cx.background_executor.timer(Duration::from_secs(20))) => {
             panic!("Timeout waiting for tool call")
         }
         ix = rx.next().fuse() => {

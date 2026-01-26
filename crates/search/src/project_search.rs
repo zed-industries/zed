@@ -642,7 +642,7 @@ impl Item for ProjectSearchView {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -2626,9 +2626,8 @@ pub mod tests {
                 (dp(2, 32)..dp(2, 35), "active"),
                 (dp(2, 37)..dp(2, 40), "selection"),
                 (dp(2, 37)..dp(2, 40), "match"),
+                (dp(5, 6)..dp(5, 9), "selection"),
                 (dp(5, 6)..dp(5, 9), "match"),
-                // TODO: we should be getting selection highlight here after project search
-                // but for some reason we are not getting it here
             ],
         );
         select_match(&search_view, cx, Direction::Next);

@@ -11,8 +11,8 @@ use project::Project;
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
+    collections::VecDeque,
     io::Read,
-    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -60,8 +60,6 @@ pub struct ExamplePromptInputs {
     pub cursor_row: u32,
     pub cursor_column: u32,
     pub cursor_offset: usize,
-    pub context_range: Range<usize>,
-    pub editable_range: Range<usize>,
     pub edit_history: Vec<Arc<zeta_prompt::Event>>,
     pub related_files: Option<Vec<RelatedFile>>,
 }
@@ -75,14 +73,33 @@ pub struct ExamplePrompt {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExamplePrediction {
-    pub actual_patch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_patch: Option<String>,
+    #[serde(deserialize_with = "deserialize_null_as_empty_string")]
     pub actual_output: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
     pub provider: PredictionProvider,
+}
+
+fn deserialize_null_as_empty_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<String>::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExampleScore {
     pub delta_chr_f: f32,
+    pub braces_disbalance: usize,
+    #[serde(default)]
+    pub exact_lines_tp: usize,
+    #[serde(default)]
+    pub exact_lines_fp: usize,
+    #[serde(default)]
+    pub exact_lines_fn: usize,
 }
 
 impl Example {
@@ -217,9 +234,9 @@ pub fn sort_examples_by_repo_and_rev(examples: &mut [Example]) {
     });
 }
 
-pub fn group_examples_by_repo(examples: &mut [Example]) -> Vec<Vec<&mut Example>> {
+pub fn group_examples_by_repo(examples: Vec<Example>) -> VecDeque<Vec<Example>> {
     let mut examples_by_repo = HashMap::default();
-    for example in examples.iter_mut() {
+    for example in examples {
         examples_by_repo
             .entry(example.spec.repository_url.clone())
             .or_insert_with(Vec::new)

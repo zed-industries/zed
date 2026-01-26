@@ -2,7 +2,7 @@ mod create_file_parser;
 mod edit_parser;
 #[cfg(test)]
 mod evals;
-mod streaming_fuzzy_matcher;
+pub mod streaming_fuzzy_matcher;
 
 use crate::{Template, Templates};
 use action_log::ActionLog;
@@ -726,7 +726,6 @@ impl EditAgent {
             thread_id: conversation.thread_id,
             prompt_id: conversation.prompt_id,
             intent: Some(intent),
-            mode: conversation.mode,
             messages: conversation.messages,
             tool_choice,
             tools,

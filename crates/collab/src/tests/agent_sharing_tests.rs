@@ -24,7 +24,6 @@ async fn test_share_and_retrieve_thread(
         messages: vec![],
         updated_at: chrono::Utc::now(),
         model: None,
-        completion_mode: None,
         version: SharedThread::VERSION.to_string(),
     };
 
@@ -153,7 +152,6 @@ async fn test_sync_imported_thread(
         messages: vec![],
         updated_at: chrono::Utc::now(),
         model: None,
-        completion_mode: None,
         version: SharedThread::VERSION.to_string(),
     };
 
@@ -186,7 +184,6 @@ async fn test_sync_imported_thread(
         messages: vec![],
         updated_at: chrono::Utc::now(),
         model: None,
-        completion_mode: None,
         version: SharedThread::VERSION.to_string(),
     };
 
