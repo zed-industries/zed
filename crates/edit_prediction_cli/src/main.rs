@@ -14,6 +14,7 @@ mod progress;
 mod pull_examples;
 mod reorder_patch;
 mod retrieve_context;
+mod reversal_tracking;
 mod score;
 mod split_commit;
 mod split_dataset;
@@ -159,6 +160,8 @@ enum Command {
     FilterLanguages(FilterLanguagesArgs),
     /// Import Anthropic batch results by batch IDs (useful for recovering after database loss)
     ImportBatch(ImportBatchArgs),
+    /// Filter examples where prediction reverses user edits above a threshold
+    FilterReversals(FilterReversalsArgs),
 }
 
 impl Display for Command {
@@ -193,6 +196,9 @@ impl Display for Command {
             Command::FilterLanguages(_) => write!(f, "filter-languages"),
             Command::ImportBatch(args) => {
                 write!(f, "import-batch --batch-ids {}", args.batch_ids.join(" "))
+            }
+            Command::FilterReversals(args) => {
+                write!(f, "filter-reversals --threshold {}", args.threshold)
             }
         }
     }
@@ -327,6 +333,17 @@ struct ImportBatchArgs {
     /// Anthropic batch IDs to import (e.g., msgbatch_xxx)
     #[clap(long, required = true, num_args = 1..)]
     batch_ids: Vec<String>,
+}
+
+#[derive(Debug, Args, Clone)]
+struct FilterReversalsArgs {
+    /// Minimum reversal ratio threshold (0.0-1.0). Examples with reversal ratio >= threshold are kept.
+    #[clap(long, short = 't', default_value_t = 0.9)]
+    threshold: f32,
+
+    /// Instead of filtering, output statistics (average reversal ratio, distribution, etc.)
+    #[clap(long)]
+    stats: bool,
 }
 
 impl EpArgs {
@@ -558,6 +575,18 @@ fn main() {
             }
             return;
         }
+        Command::FilterReversals(filter_args) => {
+            if let Err(error) = reversal_tracking::run_filter_reversals(
+                filter_args.threshold,
+                filter_args.stats,
+                &args.inputs,
+                args.output.as_ref(),
+            ) {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
         _ => {}
     }
 
@@ -724,7 +753,8 @@ fn main() {
                                         | Command::SplitCommit(_)
                                         | Command::Split(_)
                                         | Command::FilterLanguages(_)
-                                        | Command::ImportBatch(_) => {
+                                        | Command::ImportBatch(_)
+                                        | Command::FilterReversals(_) => {
                                             unreachable!()
                                         }
                                     }
