@@ -363,7 +363,6 @@ pub fn generate_evaluation_example_from_ordered_commit(
         repository_url: repository_url.to_string(),
         revision: format!("{}~1", commit_hash),
         edit_history: split_commit.source_patch.clone(),
-        // cursor_position: cursor.to_string(),
         cursor_path: Path::new(&cursor.file).into(),
         cursor_position: cursor_excerpt,
         expected_patches: vec![split_commit.target_patch],
@@ -372,6 +371,7 @@ pub fn generate_evaluation_example_from_ordered_commit(
         uncommitted_diff: String::new(),
         rejected_patch: None,
         captured_prompt_input: None,
+        telemetry: None,
     })
 }
 

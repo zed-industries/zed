@@ -173,6 +173,7 @@ pub fn capture_example(
             expected_patches,
             rejected_patch,
             captured_prompt_input: prompt_input,
+            telemetry: None,
         };
         spec.set_cursor_excerpt(
             &cursor_excerpt,

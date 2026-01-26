@@ -3,17 +3,17 @@ use flate2::read::GzDecoder;
 use gpui::BackgroundExecutor;
 use http_client::{AsyncBody, HttpClient, Method, Request};
 use indoc::indoc;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
-use uuid::Uuid;
+
 use zeta_prompt::ZetaPromptInput;
 
 use crate::example::Example;
 use crate::progress::{InfoStyle, Progress, Step};
-use edit_prediction::example_spec::ExampleSpec;
+use edit_prediction::example_spec::{CapturedEvent, CapturedPromptInput, CapturedRelatedExcerpt, CapturedRelatedFile, ExampleSpec, TelemetrySource};
 
 const SNOWFLAKE_SUCCESS_CODE: &str = "090001";
 const SNOWFLAKE_ASYNC_IN_PROGRESS_CODE: &str = "333334";
@@ -424,25 +424,12 @@ async fn run_sql(
         .context("failed to parse Snowflake SQL API response JSON")
 }
 
-/// A rejected edit prediction with its associated request data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RejectedPrediction {
-    pub request_id: Uuid,
-    pub device_id: String,
-    pub time: String,
-    pub input: ZetaPromptInput,
-    pub prompt: String,
-    pub output: String,
-    pub was_shown: bool,
-    pub reason: String,
-}
-
-pub async fn fetch_rejected_predictions_after(
+pub async fn fetch_rejected_examples_after(
     http_client: Arc<dyn HttpClient>,
     after_timestamps: &[String],
     max_rows_per_timestamp: usize,
     background_executor: BackgroundExecutor,
-) -> Result<Vec<RejectedPrediction>> {
+) -> Result<Vec<Example>> {
     if after_timestamps.is_empty() {
         return Ok(Vec::new());
     }
@@ -456,7 +443,7 @@ pub async fn fetch_rejected_predictions_after(
     )?;
     let role = std::env::var("EP_SNOWFLAKE_ROLE").ok();
 
-    let mut all_predictions = Vec::new();
+    let mut all_examples = Vec::new();
 
     for after_date in after_timestamps.iter() {
         let step_progress_name = format!("rejected>{after_date}");
@@ -530,7 +517,7 @@ pub async fn fetch_rejected_predictions_after(
         step_progress.set_info(format!("{} rows", total_rows), InfoStyle::Normal);
         step_progress.set_substatus("parsing");
 
-        all_predictions.extend(rejected_predictions_from_response(&response)?);
+        all_examples.extend(rejected_examples_from_response(&response)?);
 
         if num_partitions > 1 {
             let statement_handle = response
@@ -554,19 +541,19 @@ pub async fn fetch_rejected_predictions_after(
                 )
                 .await?;
 
-                all_predictions.extend(rejected_predictions_from_response(&partition_response)?);
+                all_examples.extend(rejected_examples_from_response(&partition_response)?);
             }
         }
 
         step_progress.set_substatus("done");
     }
 
-    Ok(all_predictions)
+    Ok(all_examples)
 }
 
-fn rejected_predictions_from_response(
+fn rejected_examples_from_response(
     response: &SnowflakeStatementResponse,
-) -> Result<impl Iterator<Item = RejectedPrediction> + '_> {
+) -> Result<impl Iterator<Item = Example> + '_> {
     if let Some(code) = &response.code {
         if code != SNOWFLAKE_SUCCESS_CODE {
             anyhow::bail!(
@@ -623,38 +610,34 @@ fn rejected_predictions_from_response(
             };
 
             let request_id_str = get_string("request_id");
-            let request_id = request_id_str.as_ref().and_then(|s| Uuid::parse_str(s).ok());
             let device_id = get_string("device_id");
             let time = get_string("time");
             let input_json = get_json("input");
             let input: Option<ZetaPromptInput> =
                 input_json.clone().and_then(|v| serde_json::from_value(v).ok());
-            let prompt = get_string("prompt");
             let output = get_string("output");
             let was_shown = get_bool("was_shown");
             let reason = get_string("reason");
 
-            match (request_id, device_id.clone(), time.clone(), input, prompt.clone(), output.clone(), was_shown, reason.clone()) {
-                (Some(request_id), Some(device_id), Some(time), Some(input), Some(prompt), Some(output), Some(was_shown), Some(reason)) => {
-                    Some(RejectedPrediction {
+            match (request_id_str.clone(), device_id.clone(), time.clone(), input, output.clone(), was_shown, reason.clone()) {
+                (Some(request_id), Some(device_id), Some(time), Some(input), Some(output), Some(was_shown), Some(reason)) => {
+                    Some(build_rejected_example(
                         request_id,
                         device_id,
                         time,
                         input,
-                        prompt,
                         output,
                         was_shown,
                         reason,
-                    })
+                    ))
                 }
                 _ => {
                     log::warn!(
-                        "skipping row {row_index}: missing fields - request_id={:?} device_id={:?} time={:?} input={:?} prompt={:?} output={:?} was_shown={:?} reason={:?}",
+                        "skipping row {row_index}: missing fields - request_id={:?} device_id={:?} time={:?} input={:?} output={:?} was_shown={:?} reason={:?}",
                         request_id_str.is_some(),
                         device_id.is_some(), 
                         time.is_some(),
                         input_json.is_some(),
-                        prompt.is_some(),
                         output.is_some(),
                         was_shown.is_some(),
                         reason.is_some()
@@ -665,6 +648,124 @@ fn rejected_predictions_from_response(
         });
 
     Ok(iter)
+}
+
+fn build_rejected_example(
+    request_id: String,
+    device_id: String,
+    time: String,
+    input: ZetaPromptInput,
+    output: String,
+    was_shown: bool,
+    reason: String,
+) -> Example {
+    let events: Vec<CapturedEvent> = input
+        .events
+        .iter()
+        .filter_map(|event| match event.as_ref() {
+            zeta_prompt::Event::BufferChange {
+                path,
+                old_path,
+                diff,
+                predicted,
+                in_open_source_repo,
+            } => Some(CapturedEvent {
+                path: path.clone(),
+                old_path: old_path.clone(),
+                diff: diff.clone(),
+                predicted: *predicted,
+                in_open_source_repo: *in_open_source_repo,
+            }),
+        })
+        .collect();
+
+    let related_files: Vec<CapturedRelatedFile> = input
+        .related_files
+        .iter()
+        .map(|rf| CapturedRelatedFile {
+            path: rf.path.clone(),
+            max_row: rf.max_row,
+            excerpts: rf
+                .excerpts
+                .iter()
+                .map(|e| CapturedRelatedExcerpt {
+                    row_range: e.row_range.clone(),
+                    text: e.text.to_string(),
+                })
+                .collect(),
+        })
+        .collect();
+
+    let cursor_excerpt = input.cursor_excerpt.as_ref();
+    let cursor_offset = input.cursor_offset_in_excerpt;
+
+    let (cursor_row, cursor_column) = compute_row_column(cursor_excerpt, cursor_offset);
+
+    let mut edit_history = String::new();
+    for event in &input.events {
+        zeta_prompt::write_event(&mut edit_history, event);
+        edit_history.push('\n');
+    }
+
+    let spec = ExampleSpec {
+        name: request_id.clone(),
+        repository_url: String::new(),
+        revision: String::new(),
+        tags: vec![format!("rejection:{}", reason.to_lowercase())],
+        reasoning: None,
+        uncommitted_diff: String::new(),
+        cursor_path: input.cursor_path.clone(),
+        cursor_position: build_cursor_position(cursor_excerpt, cursor_offset),
+        edit_history,
+        expected_patches: Vec::new(),
+        rejected_patch: Some(output),
+        captured_prompt_input: Some(CapturedPromptInput {
+            cursor_file_content: cursor_excerpt.to_string(),
+            cursor_offset,
+            cursor_row,
+            cursor_column,
+            events,
+            related_files,
+        }),
+        telemetry: Some(TelemetrySource {
+            request_id,
+            device_id,
+            time,
+            rejection_reason: reason,
+            was_shown,
+        }),
+    };
+
+    Example {
+        spec,
+        prompt_inputs: None,
+        prompt: None,
+        predictions: Vec::new(),
+        score: Vec::new(),
+        state: None,
+    }
+}
+
+fn compute_row_column(text: &str, offset: usize) -> (u32, u32) {
+    let mut row = 0u32;
+    let mut last_newline_offset = 0;
+    for (i, c) in text.char_indices() {
+        if i >= offset {
+            break;
+        }
+        if c == '\n' {
+            row += 1;
+            last_newline_offset = i + 1;
+        }
+    }
+    let column = (offset - last_newline_offset) as u32;
+    (row, column)
+}
+
+fn build_cursor_position(excerpt: &str, cursor_offset: usize) -> String {
+    let before = &excerpt[..cursor_offset.min(excerpt.len())];
+    let after = &excerpt[cursor_offset.min(excerpt.len())..];
+    format!("{}[CURSOR_POSITION]{}", before, after)
 }
 
 fn get_column_indices(
