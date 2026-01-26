@@ -1191,7 +1191,7 @@ pub struct Workspace {
     panes: Vec<Entity<Pane>>,
     active_worktree_override: Option<WorktreeId>,
     panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
-    panes_hosts: Vec<WindowHandle<WorkspaceSatellite>>,
+    satellites: Vec<WindowHandle<WorkspaceSatellite>>,
     active_pane: Entity<Pane>,
     last_active_center_pane: Option<WeakEntity<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
@@ -1602,7 +1602,7 @@ impl Workspace {
             center,
             panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
-            panes_hosts: Default::default(),
+            satellites: Default::default(),
             active_pane: center_pane.clone(),
             last_active_center_pane: Some(center_pane.downgrade()),
             last_active_view_id: None,
@@ -3303,7 +3303,7 @@ impl Workspace {
             );
         })?;
 
-        self.panes_hosts.push(window_handle);
+        self.satellites.push(window_handle);
 
         cx.notify();
         Ok(window_handle)
