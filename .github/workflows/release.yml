@@ -11,7 +11,7 @@ on:
 jobs:
   run_tests_mac:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -22,10 +22,16 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
       shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
+    - name: steps::cargo_install_nextest
+      uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
       shell: bash -euxo pipefail {0}
@@ -82,6 +88,14 @@ jobs:
         rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+        - 5432:5432
+        options: --health-cmd pg_isready --health-interval 500ms --health-timeout 5s --health-retries 10
   run_tests_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: self-32vcpu-windows-2022
@@ -113,7 +127,7 @@ jobs:
     timeout-minutes: 60
   clippy_mac:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -322,7 +336,7 @@ jobs:
     - run_tests_mac
     - clippy_mac
     - check_scripts
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -369,7 +383,7 @@ jobs:
     - run_tests_mac
     - clippy_mac
     - check_scripts
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
