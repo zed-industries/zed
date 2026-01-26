@@ -131,12 +131,14 @@ echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
     let create_check = Step::new("Create failed check")
         .run(format!(r##"echo "Creating check run for job: ${{{{ github.job }}}}"
 echo "Repository: ${{{{ github.repository }}}}"
-echo "SHA: ${{{{ github.sha }}}}"
+# Use PR head SHA for pull_request events, otherwise use github.sha
+HEAD_SHA="${{{{ github.event.pull_request.head.sha || github.sha }}}}"
+echo "SHA: $HEAD_SHA"
 curl -v -X POST \
   -H "Authorization: Bearer $GITHUB_TOKEN" \
   -H "Accept: application/vnd.github+json" \
   "https://api.github.com/repos/${{{{ github.repository }}}}/check-runs" \
-  -d '{{"name":"Failed: ${{{{ github.job }}}}","head_sha":"${{{{ github.sha }}}}","status":"completed","conclusion":"failure","output":{{"title":"Job failed","summary":"Job ${{{{ github.job }}}} failed and cancelled the workflow."}}}}'
+  -d "{{\"name\":\"Failed: ${{{{ github.job }}}}\",\"head_sha\":\"$HEAD_SHA\",\"status\":\"completed\",\"conclusion\":\"failure\",\"output\":{{\"title\":\"Job failed\",\"summary\":\"Job ${{{{ github.job }}}} failed and cancelled the workflow.\"}}}}"
 "##))
         .shell(BASH_SHELL)
         .add_env(("GITHUB_TOKEN", token.to_string()))
