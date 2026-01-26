@@ -447,11 +447,22 @@ pub fn into_open_ai(
                     );
                 }
                 MessageContent::ToolUse(tool_use) => {
+                    let mut tool_id = tool_use.id.to_string();
+                    // Generate valid ID if empty (some OpenAI-compatible APIs return empty values)
+                    if tool_id.is_empty() {
+                        tool_id = format!("call_{}", uuid::Uuid::new_v4());
+                    }
+                    
+                    let mut tool_name = tool_use.name.to_string();
+                    if tool_name.is_empty() {
+                        log::warn!("Tool call has empty name when sending to API, this may cause issues");
+                    }
+                    
                     let tool_call = open_ai::ToolCall {
-                        id: tool_use.id.to_string(),
+                        id: tool_id,
                         content: open_ai::ToolCallContent::Function {
                             function: open_ai::FunctionContent {
-                                name: tool_use.name.to_string(),
+                                name: tool_name,
                                 arguments: serde_json::to_string(&tool_use.input)
                                     .unwrap_or_default(),
                             },
@@ -1967,5 +1978,60 @@ mod tests {
             _ => panic!("Expected ToolUse event"),
         }
     }
+
+    #[test]
+    fn into_open_ai_generates_ids_for_empty_tool_calls() {
+        // Test the full round-trip: receive a tool call (possibly with empty ID),
+        // add it to conversation history, and serialize for API request.
+        // This validates the fix for #47696 where Zed sends empty tool call IDs back to the API.
+        
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::ToolUse(LanguageModelToolUse {
+                    id: LanguageModelToolUseId::from(""),  // Empty ID (as received from some APIs)
+                    name: "create_directory".into(),
+                    raw_input: r#"{"path":"test"}"#.to_string(),
+                    input: serde_json::json!({"path": "test"}),
+                    is_input_complete: true,
+                    thought_signature: None,
+                })],
+                cache: false,
+                reasoning_details: None,
+            }],
+            tools: vec![],
+            tool_choice: None,
+            stop: vec![],
+            temperature: None,
+            thinking_allowed: false,
+        };
+
+        let open_ai_request = into_open_ai(&request, "gpt-4o", false, false, None, None);
+
+        // Verify the serialized request has valid non-empty tool call IDs
+        if let Some(open_ai::RequestMessage::Assistant { tool_calls, .. }) = open_ai_request.messages.last()
+        {
+            assert!(!tool_calls.is_empty());
+            for tool_call in tool_calls {
+                // The ID should not be empty
+                assert!(!tool_call.id.is_empty(), "Tool call ID should not be empty");
+                // It should follow our naming convention
+                assert!(
+                    tool_call.id.starts_with("call_"),
+                    "Tool call ID should start with 'call_'"
+                );
+                // Function content should have the correct name
+                if let open_ai::ToolCallContent::Function { function } = &tool_call.content {
+                    assert_eq!(function.name, "create_directory");
+                }
+            }
+        } else {
+            panic!("Expected Assistant message with tool calls in serialized request");
+        }
+    }
 }
+
 
