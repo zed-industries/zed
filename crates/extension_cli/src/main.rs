@@ -442,14 +442,21 @@ async fn test_snippets(
         let snippet_path = extension_path.join(relative_snippet_path);
         let snippets_content = fs.load_bytes(&snippet_path).await?;
         let snippets_file = serde_json_lenient::from_slice::<VsSnippetsFile>(&snippets_content)
-            .with_context(|| anyhow!("Failed to load snippet file at {snippet_path:?}"))?;
+            .with_context(|| anyhow!("Failed to parse snippet file at {snippet_path:?}"))?;
         let snippet_errors = file_to_snippets(snippets_file, &snippet_path)
             .flat_map(Result::err)
             .collect::<Vec<_>>();
+        let error_count = snippet_errors.len();
 
         anyhow::ensure!(
-            snippet_errors.len() == 0,
-            "Could not parse all snippets in file {snippet_path:?}: {snippet_errors:?}"
+            error_count == 0,
+            "Could not parse {error_count} snippet{suffix} in file {snippet_path:?}:\n\n{snippet_errors}",
+            suffix = if error_count == 1 { "" } else { "s" },
+            snippet_errors = snippet_errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 
