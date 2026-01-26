@@ -117,9 +117,11 @@ pub fn cancel_workflow_on_failure(job: Job) -> Job {
     let authenticate = authenticate.if_condition(Expression::new("failure()"));
 
     let record_failure = Step::new("Record failure")
-        .run(r##"mkdir -p failed-jobs
+        .run(
+            r##"mkdir -p failed-jobs
 echo "${{ github.job }}" > failed-jobs/${{ github.job }}
-"##)
+"##,
+        )
         .shell(BASH_SHELL)
         .if_condition(Expression::new("failure()"));
 
