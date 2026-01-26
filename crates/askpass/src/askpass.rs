@@ -7,6 +7,7 @@ use smol::lock::Mutex;
 use util::fs::make_file_executable;
 
 use std::ffi::OsStr;
+use std::io::BufRead;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -300,15 +301,11 @@ pub fn main(socket: &str) {
     };
 
     let mut buffer = Vec::new();
-    if let Err(err) = io::stdin().read_to_end(&mut buffer) {
+    if let Err(err) = std::io::BufReader::new(io::stdin()).read_until(b'\0', &mut buffer) {
         eprintln!("Error reading from stdin: {}", err);
         exit(1);
     }
 
-    #[cfg(target_os = "windows")]
-    while buffer.last().is_some_and(|&b| b == b'\n' || b == b'\r') {
-        buffer.pop();
-    }
     if buffer.last() != Some(&b'\0') {
         buffer.push(b'\0');
     }
