@@ -504,6 +504,46 @@ impl Model {
         }
     }
 
+    pub fn supports_images(&self) -> bool {
+        match self {
+            // Anthropic Claude 3+ models (all support vision)
+            Self::Claude3Opus
+            | Self::Claude3Sonnet
+            | Self::Claude3_5Sonnet
+            | Self::Claude3_5SonnetV2
+            | Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking
+            | Self::ClaudeOpus4
+            | Self::ClaudeOpus4Thinking
+            | Self::ClaudeOpus4_1
+            | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_5Thinking
+            | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet4Thinking
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4_5Thinking
+            | Self::Claude3_5Haiku
+            | Self::ClaudeHaiku4_5
+            | Self::Claude3Haiku => true,
+
+            // Amazon Nova visual models
+            Self::AmazonNovaPro | Self::AmazonNovaLite => true,
+
+            // Meta Llama 3.2 Vision models
+            Self::MetaLlama3211BInstructV1 | Self::MetaLlama3290BInstructV1 => true,
+
+            // Mistral Pixtral (visual model)
+            Self::MistralPixtralLarge2502V1 => true,
+
+            // Custom models default to no image support
+            Self::Custom { .. } => false,
+
+            // All other models don't support images
+            _ => false,
+        }
+    }
+
     pub fn supports_caching(&self) -> bool {
         match self {
             // Only Claude models on Bedrock support caching

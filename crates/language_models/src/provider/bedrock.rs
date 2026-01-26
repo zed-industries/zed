@@ -14,11 +14,12 @@ use bedrock::bedrock_client::types::{
     ReasoningContentBlockDelta, StopReason,
 };
 use bedrock::{
-    BedrockAnyToolChoice, BedrockAutoToolChoice, BedrockBlob, BedrockError, BedrockInnerContent,
-    BedrockMessage, BedrockModelMode, BedrockStreamingResponse, BedrockThinkingBlock,
-    BedrockThinkingTextBlock, BedrockTool, BedrockToolChoice, BedrockToolConfig,
-    BedrockToolInputSchema, BedrockToolResultBlock, BedrockToolResultContentBlock,
-    BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock, Model, value_to_aws_document,
+    BedrockAnyToolChoice, BedrockAutoToolChoice, BedrockBlob, BedrockError, BedrockImageBlock,
+    BedrockImageFormat, BedrockImageSource, BedrockInnerContent, BedrockMessage, BedrockModelMode,
+    BedrockStreamingResponse, BedrockThinkingBlock, BedrockThinkingTextBlock, BedrockTool,
+    BedrockToolChoice, BedrockToolConfig, BedrockToolInputSchema, BedrockToolResultBlock,
+    BedrockToolResultContentBlock, BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock,
+    Model, value_to_aws_document,
 };
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
@@ -623,7 +624,7 @@ impl LanguageModel for BedrockModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.supports_images()
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -815,11 +816,34 @@ pub fn into_bedrock(
                                     LanguageModelToolResultContent::Text(text) => {
                                         BedrockToolResultContentBlock::Text(text.to_string())
                                     }
-                                    LanguageModelToolResultContent::Image(_) => {
-                                        BedrockToolResultContentBlock::Text(
-                                            // TODO: Bedrock image support
-                                            "[Tool responded with an image, but Zed doesn't support these in Bedrock models yet]".to_string()
-                                        )
+                                    LanguageModelToolResultContent::Image(image) => {
+                                        use base64::Engine;
+
+                                        match base64::engine::general_purpose::STANDARD
+                                            .decode(image.source.as_bytes())
+                                        {
+                                            Ok(image_bytes) => {
+                                                match BedrockImageBlock::builder()
+                                                    .format(BedrockImageFormat::Png)
+                                                    .source(BedrockImageSource::Bytes(BedrockBlob::new(
+                                                        image_bytes,
+                                                    )))
+                                                    .build()
+                                                {
+                                                    Ok(image_block) => {
+                                                        BedrockToolResultContentBlock::Image(image_block)
+                                                    }
+                                                    Err(err) => BedrockToolResultContentBlock::Text(format!(
+                                                        "[Failed to build image block: {}]",
+                                                        err
+                                                    )),
+                                                }
+                                            }
+                                            Err(err) => BedrockToolResultContentBlock::Text(format!(
+                                                "[Failed to decode tool result image: {}]",
+                                                err
+                                            )),
+                                        }
                                     }
                                 })
                                 .status({
@@ -834,7 +858,22 @@ pub fn into_bedrock(
                                 .log_err()
                                 .map(BedrockInnerContent::ToolResult)
                         }
-                        _ => None,
+                        MessageContent::Image(image) => {
+                            use base64::Engine;
+
+                            let image_bytes = base64::engine::general_purpose::STANDARD
+                                .decode(image.source.as_bytes())
+                                .context("failed to decode base64 image data")
+                                .log_err()?;
+
+                            BedrockImageBlock::builder()
+                                .format(BedrockImageFormat::Png)
+                                .source(BedrockImageSource::Bytes(BedrockBlob::new(image_bytes)))
+                                .build()
+                                .context("failed to build Bedrock image block")
+                                .log_err()
+                                .map(BedrockInnerContent::Image)
+                        }
                     })
                     .collect();
                 if message.cache && supports_caching {

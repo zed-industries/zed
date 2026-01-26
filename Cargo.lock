@@ -9056,6 +9056,7 @@ dependencies = [
  "aws-config",
  "aws-credential-types",
  "aws_http_client",
+ "base64 0.22.1",
  "bedrock",
  "chrono",
  "client",

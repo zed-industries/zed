@@ -18,6 +18,7 @@ anyhow.workspace = true
 aws-config = { workspace = true, features = ["behavior-version-latest"] }
 aws-credential-types = { workspace = true, features = ["hardcoded-credentials"] }
 aws_http_client.workspace = true
+base64.workspace = true
 bedrock.workspace = true
 chrono.workspace = true
 client.workspace = true
