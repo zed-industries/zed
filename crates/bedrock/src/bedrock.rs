@@ -16,7 +16,8 @@ pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStrea
 pub use bedrock::types::{
     ContentBlock as BedrockRequestContent, ConversationRole as BedrockRole,
     ConverseOutput as BedrockResponse, ConverseStreamOutput as BedrockStreamingResponse,
-    ImageBlock as BedrockImageBlock, Message as BedrockMessage,
+    ImageBlock as BedrockImageBlock, ImageFormat as BedrockImageFormat,
+    ImageSource as BedrockImageSource, Message as BedrockMessage,
     ReasoningContentBlock as BedrockThinkingBlock, ReasoningTextBlock as BedrockThinkingTextBlock,
     ResponseStream as BedrockResponseStream, SystemContentBlock as BedrockSystemContentBlock,
     ToolResultBlock as BedrockToolResultBlock,
