@@ -2746,8 +2746,6 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_agent_connection(cx: &mut TestAppContext) {
     cx.update(settings::init);
-    let templates = Templates::new();
-
     // Initialize language model system with test provider
     cx.update(|cx| {
         gpui_tokio::init(cx);
@@ -2773,7 +2771,6 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     let agent = NativeAgent::new(
         project.clone(),
         thread_store,
-        templates.clone(),
         None,
         fake_fs.clone(),
         &mut cx.to_async(),

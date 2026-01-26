@@ -27,6 +27,7 @@ use acp_thread::{
     AgentSessionListResponse, UserMessageId,
 };
 use agent_client_protocol as acp;
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, IndexMap};
@@ -44,6 +45,7 @@ use prompt_store::{
     WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
+use settings::Settings as _;
 use settings::{LanguageModelSelection, update_settings_file};
 use std::any::Any;
 use std::path::{Path, PathBuf};
@@ -235,8 +237,6 @@ pub struct NativeAgent {
     project_context_needs_refresh: watch::Sender<()>,
     _maintain_project_context: Task<Result<()>>,
     context_server_registry: Entity<ContextServerRegistry>,
-    /// Shared templates for all threads
-    templates: Arc<Templates>,
     /// Cached model information
     models: LanguageModels,
     project: Entity<Project>,
@@ -249,7 +249,6 @@ impl NativeAgent {
     pub async fn new(
         project: Entity<Project>,
         thread_store: Entity<ThreadStore>,
-        templates: Arc<Templates>,
         prompt_store: Option<Entity<PromptStore>>,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncApp,
@@ -295,7 +294,6 @@ impl NativeAgent {
                     Self::maintain_project_context(this, project_context_needs_refresh_rx, cx).await
                 }),
                 context_server_registry,
-                templates,
                 models: LanguageModels::new(cx),
                 project,
                 prompt_store,
@@ -744,13 +742,18 @@ impl NativeAgent {
                     .map(|c| c.model);
 
                 cx.new(|cx| {
+                    let profile_id = db_thread
+                        .profile
+                        .clone()
+                        .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
+                    let templates = Thread::templates_for_profile(&profile_id, cx);
                     let mut thread = Thread::from_db(
                         id.clone(),
                         db_thread,
                         this.project.clone(),
                         this.project_context.clone(),
                         this.context_server_registry.clone(),
-                        this.templates.clone(),
+                        templates,
                         cx,
                     );
                     thread.set_summarization_model(summarization_model, cx);
@@ -840,7 +843,6 @@ impl NativeAgent {
         cx.spawn(async move |this, cx| {
             let prompt =
                 crate::get_prompt(&server_store, &server_id, &prompt_name, arguments, cx).await?;
-
             let (acp_thread, thread) = this.update(cx, |this, _cx| {
                 let session = this
                     .sessions
@@ -1206,11 +1208,13 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                         .model_from_id(&LanguageModels::model_id(&default_model.model))
                 });
                 cx.new(|cx| {
+                    let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+                    let templates = Thread::templates_for_profile(&profile_id, cx);
                     Thread::new(
                         project.clone(),
                         agent.project_context.clone(),
                         agent.context_server_registry.clone(),
-                        agent.templates.clone(),
+                        templates,
                         default_model,
                         cx,
                     )
@@ -1631,7 +1635,6 @@ mod internal_tests {
         let agent = NativeAgent::new(
             project.clone(),
             thread_store,
-            Templates::new(),
             None,
             fs.clone(),
             &mut cx.to_async(),
@@ -1692,7 +1695,6 @@ mod internal_tests {
             NativeAgent::new(
                 project.clone(),
                 thread_store,
-                Templates::new(),
                 None,
                 fs.clone(),
                 &mut cx.to_async(),
@@ -1769,7 +1771,6 @@ mod internal_tests {
         let agent = NativeAgent::new(
             project.clone(),
             thread_store,
-            Templates::new(),
             None,
             fs.clone(),
             &mut cx.to_async(),
@@ -1838,7 +1839,6 @@ mod internal_tests {
         let agent = NativeAgent::new(
             project.clone(),
             thread_store.clone(),
-            Templates::new(),
             None,
             fs.clone(),
             &mut cx.to_async(),

@@ -6,8 +6,8 @@ use convert_case::{Case, Casing as _};
 use fs::Fs;
 use gpui::{App, SharedString};
 use settings::{
-    AgentProfileContent, ContextServerPresetContent, LanguageModelSelection, Settings as _,
-    SettingsContent, update_settings_file,
+    AgentProfileContent, ContextServerPresetContent, LanguageModelSelection,
+    PromptSectionOverrideContent, Settings as _, SettingsContent, update_settings_file,
 };
 use util::ResultExt as _;
 
@@ -70,6 +70,13 @@ impl AgentProfile {
         let default_model = base_profile
             .as_ref()
             .and_then(|profile| profile.default_model.clone());
+        let prompt_section_overrides = base_profile
+            .as_ref()
+            .map(|profile| profile.prompt_section_overrides.clone())
+            .unwrap_or_default();
+        let system_prompt_provider = base_profile
+            .as_ref()
+            .and_then(|profile| profile.system_prompt_provider.clone());
 
         let profile_settings = AgentProfileSettings {
             name: name.into(),
@@ -77,6 +84,8 @@ impl AgentProfile {
             enable_all_context_servers,
             context_servers,
             default_model,
+            prompt_section_overrides,
+            system_prompt_provider,
         };
 
         update_settings_file(fs, cx, {
@@ -109,6 +118,10 @@ pub struct AgentProfileSettings {
     pub context_servers: IndexMap<Arc<str>, ContextServerPreset>,
     /// Default language model to apply when this profile becomes active.
     pub default_model: Option<LanguageModelSelection>,
+    /// Inline prompt section overrides for this profile.
+    pub prompt_section_overrides: Vec<PromptSectionOverride>,
+    /// Extension-provided prompt provider for this profile.
+    pub system_prompt_provider: Option<Arc<str>>,
 }
 
 impl AgentProfileSettings {
@@ -158,6 +171,13 @@ impl AgentProfileSettings {
                     })
                     .collect(),
                 default_model: self.default_model.clone(),
+                prompt_section_overrides: self
+                    .prompt_section_overrides
+                    .iter()
+                    .cloned()
+                    .map(PromptSectionOverrideContent::from)
+                    .collect(),
+                system_prompt_provider: self.system_prompt_provider.clone(),
             },
         );
 
@@ -173,6 +193,8 @@ impl From<AgentProfileContent> for AgentProfileSettings {
             enable_all_context_servers,
             context_servers,
             default_model,
+            prompt_section_overrides,
+            system_prompt_provider,
         } = content;
 
         Self {
@@ -184,6 +206,35 @@ impl From<AgentProfileContent> for AgentProfileSettings {
                 .map(|(server_id, preset)| (server_id, preset.into()))
                 .collect(),
             default_model,
+            prompt_section_overrides: prompt_section_overrides
+                .into_iter()
+                .map(PromptSectionOverride::from)
+                .collect(),
+            system_prompt_provider,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PromptSectionOverride {
+    pub section: Arc<str>,
+    pub replacement: Arc<str>,
+}
+
+impl From<PromptSectionOverrideContent> for PromptSectionOverride {
+    fn from(content: PromptSectionOverrideContent) -> Self {
+        Self {
+            section: content.section,
+            replacement: content.replacement,
+        }
+    }
+}
+
+impl From<PromptSectionOverride> for PromptSectionOverrideContent {
+    fn from(content: PromptSectionOverride) -> Self {
+        Self {
+            section: content.section,
+            replacement: content.replacement,
         }
     }
 }

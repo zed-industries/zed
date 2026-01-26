@@ -3,8 +3,8 @@ use crate::{
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
     RestoreFileFromDiskTool, SaveFileTool, StreamingEditFileTool, SubagentTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, ToolPermissionDecision,
-    WebSearchTool, decide_permission_from_settings,
+    SystemPromptTemplate, Template, TemplateSectionConfig, Templates, TerminalTool, ThinkingTool,
+    ToolPermissionDecision, WebSearchTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -1202,13 +1202,13 @@ impl Thread {
             self.project.clone(),
             cx.weak_entity(),
             language_registry.clone(),
-            Templates::new(),
+            self.templates.clone(),
         ));
         self.add_tool(StreamingEditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
             language_registry,
-            Templates::new(),
+            self.templates.clone(),
         ));
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
         self.add_tool(FindPathTool::new(self.project.clone()));
@@ -1264,6 +1264,7 @@ impl Thread {
         }
 
         self.profile_id = profile_id;
+        self.templates = Self::templates_for_profile(&self.profile_id, cx);
 
         // Swap to the profile's preferred model when available.
         if let Some(model) = Self::resolve_profile_model(&self.profile_id, cx) {
@@ -1387,6 +1388,24 @@ impl Thread {
             .default_model
             .clone()?;
         Self::resolve_model_from_selection(&selection, cx)
+    }
+
+    pub(crate) fn templates_for_profile(profile_id: &AgentProfileId, cx: &App) -> Arc<Templates> {
+        let profile = AgentSettings::get_global(cx).profiles.get(profile_id);
+        let Some(profile) = profile else {
+            return Templates::new();
+        };
+        if profile.prompt_section_overrides.is_empty() {
+            return Templates::new();
+        }
+        let mut section_config = TemplateSectionConfig::default();
+        for override_entry in &profile.prompt_section_overrides {
+            section_config.insert_replace(
+                override_entry.section.as_ref(),
+                override_entry.replacement.as_ref(),
+            );
+        }
+        Templates::new_with_section_config(Some(section_config))
     }
 
     /// Translate a stored model selection into the configured model from the registry.
