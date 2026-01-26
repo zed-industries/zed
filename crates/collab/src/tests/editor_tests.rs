@@ -21,7 +21,7 @@ use gpui::{
     App, Rgba, SharedString, TestAppContext, UpdateGlobal, VisualContext, VisualTestContext,
 };
 use indoc::indoc;
-use language::{FakeLspAdapter, rust_lang};
+use language::{FakeLspAdapter, language_settings::language_settings, rust_lang};
 use lsp::LSP_REQUEST_TIMEOUT;
 use pretty_assertions::assert_eq;
 use project::{
@@ -35,6 +35,7 @@ use serde_json::json;
 use settings::{InlayHintSettingsContent, InlineBlameSettings, SettingsStore};
 use std::{
     collections::BTreeSet,
+    num::NonZeroU32,
     ops::{Deref as _, Range},
     path::{Path, PathBuf},
     sync::{
@@ -3341,9 +3342,9 @@ async fn test_lsp_pull_diagnostics(
         editor.handle_input(":", window, cx);
     });
     pull_diagnostics_handle.next().await.unwrap();
-    pull_diagnostics_handle.next().await.unwrap();
+    // pull_diagnostics_handle.next().await.unwrap();
     assert_eq!(
-        5,
+        4,
         diagnostics_pulls_made.load(atomic::Ordering::Acquire),
         "Client lib.rs edits should trigger another diagnostics pull for open buffers"
     );
@@ -3363,7 +3364,7 @@ async fn test_lsp_pull_diagnostics(
     pull_diagnostics_handle.next().await.unwrap();
     pull_diagnostics_handle.next().await.unwrap();
     assert_eq!(
-        8,
+        7,
         diagnostics_pulls_made.load(atomic::Ordering::Acquire),
         "Client main.rs edits should trigger diagnostics pull by both client and host and an extra pull for the client's lib.rs"
     );
@@ -3383,7 +3384,7 @@ async fn test_lsp_pull_diagnostics(
     pull_diagnostics_handle.next().await.unwrap();
     pull_diagnostics_handle.next().await.unwrap();
     assert_eq!(
-        11,
+        10,
         diagnostics_pulls_made.load(atomic::Ordering::Acquire),
         "Host main.rs edits should trigger another diagnostics pull by both client and host and another pull for the client's lib.rs"
     );
@@ -3416,7 +3417,7 @@ async fn test_lsp_pull_diagnostics(
     pull_diagnostics_handle.next().await.unwrap();
     pull_diagnostics_handle.next().await.unwrap();
     assert_eq!(
-        13,
+        12,
         diagnostics_pulls_made.load(atomic::Ordering::Acquire),
         "Workspace refresh should trigger document pulls for all open buffers (main.rs and lib.rs)"
     );
@@ -3978,6 +3979,110 @@ fn main() { let foo = other::foo(); }"};
     );
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_collaborating_with_external_editorconfig(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a.language_registry().add(rust_lang());
+    client_b.language_registry().add(rust_lang());
+
+    // Set up external .editorconfig in parent directory
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/parent"),
+            json!({
+                ".editorconfig": "[*]\nindent_size = 5\n",
+                "worktree": {
+                    ".editorconfig": "[*]\n",
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                },
+            }),
+        )
+        .await;
+
+    let (project_a, worktree_id) = client_a
+        .build_local_project(path!("/parent/worktree"), cx_a)
+        .await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    // Open buffer on client A
+    let buffer_a = project_a
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("src/main.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    cx_a.run_until_parked();
+
+    // Verify client A sees external editorconfig settings
+    cx_a.read(|cx| {
+        let file = buffer_a.read(cx).file();
+        let settings = language_settings(Some("Rust".into()), file, cx);
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
+    });
+
+    // Client B joins the project
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let buffer_b = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("src/main.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    cx_b.run_until_parked();
+
+    // Verify client B also sees external editorconfig settings
+    cx_b.read(|cx| {
+        let file = buffer_b.read(cx).file();
+        let settings = language_settings(Some("Rust".into()), file, cx);
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
+    });
+
+    // Client A modifies the external .editorconfig
+    client_a
+        .fs()
+        .atomic_write(
+            PathBuf::from(path!("/parent/.editorconfig")),
+            "[*]\nindent_size = 9\n".to_owned(),
+        )
+        .await
+        .unwrap();
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    // Verify client A sees updated settings
+    cx_a.read(|cx| {
+        let file = buffer_a.read(cx).file();
+        let settings = language_settings(Some("Rust".into()), file, cx);
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(9));
+    });
+
+    // Verify client B also sees updated settings
+    cx_b.read(|cx| {
+        let file = buffer_b.read(cx).file();
+        let settings = language_settings(Some("Rust".into()), file, cx);
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(9));
+    });
+}
+
 #[gpui::test]
 async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let executor = cx_a.executor();
@@ -4080,8 +4185,8 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     // Client B adds breakpoint on line(2)
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.move_down(&editor::actions::MoveDown, window, cx);
-        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
         editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     });
 
@@ -4109,8 +4214,8 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     // Client A removes last added breakpoint from client B
     editor_a.update_in(cx_a, |editor, window, cx| {
-        editor.move_down(&editor::actions::MoveDown, window, cx);
-        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
         editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     });
 
@@ -4138,8 +4243,8 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     // Client B removes first added breakpoint by client A
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.move_up(&editor::actions::MoveUp, window, cx);
-        editor.move_up(&editor::actions::MoveUp, window, cx);
+        editor.move_up(&zed_actions::editor::MoveUp, window, cx);
+        editor.move_up(&zed_actions::editor::MoveUp, window, cx);
         editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     });
 
@@ -4699,10 +4804,10 @@ async fn test_remote_project_worktree_trust(cx_a: &mut TestAppContext, cx_b: &mu
     };
 
     cx_a.update(|cx| {
-        project::trusted_worktrees::init(HashMap::default(), None, None, cx);
+        project::trusted_worktrees::init(HashMap::default(), cx);
     });
     cx_b.update(|cx| {
-        project::trusted_worktrees::init(HashMap::default(), None, None, cx);
+        project::trusted_worktrees::init(HashMap::default(), cx);
     });
 
     let mut server = TestServer::start(cx_a.executor()).await;

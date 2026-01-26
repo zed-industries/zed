@@ -176,7 +176,15 @@ pub fn block_content_for_tests(
 }
 
 pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> String {
-    let draw_size = size(px(3000.0), px(3000.0));
+    editor_content_with_blocks_and_width(editor, px(3000.), cx)
+}
+
+pub fn editor_content_with_blocks_and_width(
+    editor: &Entity<Editor>,
+    width: Pixels,
+    cx: &mut VisualTestContext,
+) -> String {
+    let draw_size = size(width, px(3000.0));
     cx.simulate_resize(draw_size);
     cx.draw(gpui::Point::default(), draw_size, |_, _| editor.clone());
     let (snapshot, mut lines, blocks) = editor.update_in(cx, |editor, window, cx| {
@@ -224,7 +232,14 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
                 height,
             } => {
                 lines[row.0 as usize].push_str(&cx.update(|_, cx| {
-                    format!("§ {}", first_excerpt.buffer.file().unwrap().file_name(cx))
+                    format!(
+                        "§ {}",
+                        first_excerpt
+                            .buffer
+                            .file()
+                            .map(|file| file.file_name(cx))
+                            .unwrap_or("<no file>")
+                    )
                 }));
                 for row in row.0 + 1..row.0 + height {
                     lines[row as usize].push_str("§ -----");
@@ -236,13 +251,26 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
                 }
             }
             Block::BufferHeader { excerpt, height } => {
-                lines[row.0 as usize].push_str(
-                    &cx.update(|_, cx| {
-                        format!("§ {}", excerpt.buffer.file().unwrap().file_name(cx))
-                    }),
-                );
+                lines[row.0 as usize].push_str(&cx.update(|_, cx| {
+                    format!(
+                        "§ {}",
+                        excerpt
+                            .buffer
+                            .file()
+                            .map(|file| file.file_name(cx))
+                            .unwrap_or("<no file>")
+                    )
+                }));
                 for row in row.0 + 1..row.0 + height {
                     lines[row as usize].push_str("§ -----");
+                }
+            }
+            Block::Spacer { height, .. } => {
+                for row in row.0..row.0 + height {
+                    while lines.len() <= row as usize {
+                        lines.push(String::new());
+                    }
+                    lines[row as usize].push_str("§ spacer");
                 }
             }
         }
