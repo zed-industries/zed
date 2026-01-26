@@ -46,7 +46,10 @@ fn main() -> anyhow::Result<()> {
         if let Err(e) = &res
             && let Some(e) = e.downcast_ref::<ExecuteProxyError>()
         {
-            eprintln!("{e:#}");
+            use std::io::Write as _;
+
+            let error = format!("{e:#}\n");
+            std::io::stderr().write_all(error.as_bytes()).ok();
             // It is important for us to report the proxy spawn exit code here
             // instead of the generic 1 that result returns
             // The client reads the exit code to determine if the server process has died when trying to reconnect
