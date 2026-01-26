@@ -4109,7 +4109,17 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 **Options**
 
-1. Use the current file's project directory. Fallback to the first project directory strategy if unsuccessful.
+1. Use the directory of the currently open file, falling back to the project directory, then the first project in the workspace.
+
+```json [settings]
+{
+  "terminal": {
+    "working_directory": "current_file_directory"
+  }
+}
+```
+
+2. Use the current file's project directory. Fallback to the first project directory strategy if unsuccessful.
 
 ```json [settings]
 {
@@ -4119,7 +4129,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-2. Use the first project in this workspace's directory. Fallback to using this platform's home directory.
+3. Use the first project in this workspace's directory. Fallback to using this platform's home directory.
 
 ```json [settings]
 {
@@ -4129,7 +4139,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-3. Always use this platform's home directory if it can be found.
+4. Always use this platform's home directory if it can be found.
 
 ```json [settings]
 {
@@ -4139,7 +4149,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-4. Always use a specific directory. This value will be shell expanded. If this path is not a valid directory the terminal will default to this platform's home directory.
+5. Always use a specific directory. This value will be shell expanded. If this path is not a valid directory the terminal will default to this platform's home directory.
 
 ```json [settings]
 {
