@@ -52,9 +52,9 @@ use text::{Anchor, ToPoint as _};
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
     Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, DecoratedIcon,
-    DiffStat, Disclosure, Divider, DividerColor, IconDecoration, IconDecorationKind, KeyBinding,
-    PopoverMenu, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
-    right_click_menu,
+    DiffStat, Disclosure, Divider, DividerColor, IconButtonShape, IconDecoration,
+    IconDecorationKind, KeyBinding, PopoverMenu, PopoverMenuHandle, SpinnerLabel, TintColor,
+    Tooltip, WithScrollbar, prelude::*, right_click_menu,
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
@@ -3827,30 +3827,70 @@ impl AcpThreadView {
                                 )
                             }),
                     )
-                    .when(has_expandable_content, |this| {
-                        this.child(
-                            Disclosure::new(
-                                SharedString::from(format!(
-                                    "subagent-disclosure-inner-{}-{}",
-                                    entry_ix, context_ix
-                                )),
-                                is_expanded,
-                            )
-                            .opened_icon(IconName::ChevronUp)
-                            .closed_icon(IconName::ChevronDown)
-                            .visible_on_hover(card_header_id)
-                            .on_click(cx.listener({
-                                move |this, _, _, cx| {
-                                    if this.expanded_subagents.contains(&session_id) {
-                                        this.expanded_subagents.remove(&session_id);
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .when(is_running, |buttons| {
+                                buttons.child(
+                                    Button::new(
+                                        SharedString::from(format!(
+                                            "stop-subagent-{}-{}",
+                                            entry_ix, context_ix
+                                        )),
+                                        "Stop",
+                                    )
+                                    .icon(IconName::Stop)
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Error)
+                                    .label_size(LabelSize::Small)
+                                    .tooltip(Tooltip::text("Stop this subagent"))
+                                    .on_click({
+                                        let thread = thread.clone();
+                                        cx.listener(move |_this, _event, _window, cx| {
+                                            thread.update(cx, |thread, _cx| {
+                                                thread.stop_by_user();
+                                            });
+                                        })
+                                    }),
+                                )
+                            })
+                            .child(
+                                IconButton::new(
+                                    SharedString::from(format!(
+                                        "subagent-disclosure-{}-{}",
+                                        entry_ix, context_ix
+                                    )),
+                                    if is_expanded {
+                                        IconName::ChevronUp
                                     } else {
-                                        this.expanded_subagents.insert(session_id.clone());
-                                    }
-                                    cx.notify();
-                                }
-                            })),
-                        )
-                    }),
+                                        IconName::ChevronDown
+                                    },
+                                )
+                                .shape(IconButtonShape::Square)
+                                .icon_color(Color::Muted)
+                                .icon_size(IconSize::Small)
+                                .disabled(!has_expandable_content)
+                                .when(has_expandable_content, |button| {
+                                    button.on_click(cx.listener({
+                                        move |this, _, _, cx| {
+                                            if this.expanded_subagents.contains(&session_id) {
+                                                this.expanded_subagents.remove(&session_id);
+                                            } else {
+                                                this.expanded_subagents.insert(session_id.clone());
+                                            }
+                                            cx.notify();
+                                        }
+                                    }))
+                                })
+                                .when(
+                                    !has_expandable_content,
+                                    |button| {
+                                        button.tooltip(Tooltip::text("Waiting for content..."))
+                                    },
+                                ),
+                            ),
+                    ),
             )
             .when(is_expanded, |this| {
                 this.child(
