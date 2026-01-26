@@ -64,10 +64,14 @@ fn main() -> anyhow::Result<()> {
 
     #[cfg(windows)]
     if let Some(_) = cli.command {
-        eprintln!("run is not supported on Windows");
+        std::io::stderr()
+            .write_all(b"run is not supported on Windows\n")
+            .ok();
         std::process::exit(2);
     } else {
-        eprintln!("usage: remote <run|proxy|version>");
+        std::io::stderr()
+            .write_all(b"usage: remote <run|proxy|version>\n")
+            .ok();
         std::process::exit(1);
     }
 }
