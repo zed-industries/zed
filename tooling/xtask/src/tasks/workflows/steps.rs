@@ -133,13 +133,13 @@ echo "SHA: $HEAD_SHA"
 JOB_ID=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
   "https://api.github.com/repos/${{{{ github.repository }}}}/actions/runs/${{{{ github.run_id }}}}/jobs" \
   | jq -r '.jobs[] | select(.name == "${{{{ github.job }}}}") | .id')
-DETAILS_URL="https://github.com/${{{{ github.repository }}}}/actions/runs/${{{{ github.run_id }}}}/job/$JOB_ID"
+DETAILS_URL="https://github.com/${{{{ github.repository }}}}/actions/runs/${{{{ github.run_id }}}}/job/${{JOB_ID}}"
 echo "Details URL: $DETAILS_URL"
 curl -v -X POST \
   -H "Authorization: Bearer $GITHUB_TOKEN" \
   -H "Accept: application/vnd.github+json" \
   "https://api.github.com/repos/${{{{ github.repository }}}}/check-runs" \
-  -d "{{\"name\":\"Failed: ${{{{ github.job }}}}\",\"head_sha\":\"$HEAD_SHA\",\"status\":\"completed\",\"conclusion\":\"failure\",\"details_url\":\"$DETAILS_URL\",\"output\":{{\"title\":\"Job failed\",\"summary\":\"Job ${{{{ github.job }}}} failed and cancelled the workflow. [View logs]($DETAILS_URL)\"}}}}"
+  -d "{{\"name\":\"Failed: ${{{{ github.job }}}}\",\"head_sha\":\"${{HEAD_SHA}}\",\"status\":\"completed\",\"conclusion\":\"failure\",\"details_url\":\"${{DETAILS_URL}}\",\"output\":{{\"title\":\"Job failed\",\"summary\":\"Job ${{{{ github.job }}}} failed and cancelled the workflow. [View logs](${{DETAILS_URL}})\"}}}}"
 "##))
         .shell(BASH_SHELL)
         .add_env(("GITHUB_TOKEN", token.to_string()))
