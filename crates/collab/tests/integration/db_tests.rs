@@ -122,9 +122,13 @@ impl TestDb {
 #[macro_export]
 macro_rules! test_both_dbs {
     ($test_name:ident, $postgres_test_name:ident, $sqlite_test_name:ident) => {
-        #[cfg(target_os = "macos")]
         #[gpui::test]
         async fn $postgres_test_name(cx: &mut gpui::TestAppContext) {
+            // In CI, only run postgres tests on Linux (where we have the postgres service).
+            // Locally, always run them (assuming postgres is available).
+            if std::env::var("CI").is_ok() && !cfg!(target_os = "linux") {
+                return;
+            }
             let test_db = $crate::db_tests::TestDb::postgres(cx.executor().clone());
             $test_name(test_db.db()).await;
         }

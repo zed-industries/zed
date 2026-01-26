@@ -542,9 +542,13 @@ fn test_fuzzy_like_string() {
     assert_eq!(Database::fuzzy_like_string(" z  "), "%z%");
 }
 
-#[cfg(target_os = "macos")]
 #[gpui::test]
 async fn test_fuzzy_search_users(cx: &mut gpui::TestAppContext) {
+    // In CI, only run postgres tests on Linux (where we have the postgres service).
+    // Locally, always run them (assuming postgres is available).
+    if std::env::var("CI").is_ok() && !cfg!(target_os = "linux") {
+        return;
+    }
     let test_db = TestDb::postgres(cx.executor());
     let db = test_db.db();
     for (i, github_login) in [
