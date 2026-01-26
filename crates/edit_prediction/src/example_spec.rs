@@ -1,9 +1,14 @@
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, fmt::Write as _, mem, path::Path, sync::Arc};
+use std::{borrow::Cow, fmt::Write as _, mem, ops::Range, path::Path, sync::Arc};
 
 pub const CURSOR_POSITION_MARKER: &str = "[CURSOR_POSITION]";
 pub const INLINE_CURSOR_MARKER: &str = "<|user_cursor|>";
+
+/// Maximum cursor file size to capture (64KB).
+/// Files larger than this will not have their content captured,
+/// falling back to git-based loading.
+pub const MAX_CURSOR_FILE_SIZE: usize = 64 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ExampleSpec {
@@ -23,6 +28,82 @@ pub struct ExampleSpec {
     pub expected_patches: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rejected_patch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub captured_prompt_input: Option<CapturedPromptInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry: Option<TelemetrySource>,
+}
+
+/// Metadata for examples sourced from production telemetry (rejected predictions).
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct TelemetrySource {
+    pub request_id: String,
+    pub device_id: String,
+    pub time: String,
+    pub rejection_reason: String,
+    pub was_shown: bool,
+}
+
+/// All data needed to run format_prompt without loading the project.
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct CapturedPromptInput {
+    pub cursor_file_content: String,
+    pub cursor_offset: usize,
+    pub cursor_row: u32,
+    pub cursor_column: u32,
+    pub events: Vec<CapturedEvent>,
+    pub related_files: Vec<CapturedRelatedFile>,
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct CapturedEvent {
+    pub path: Arc<Path>,
+    pub old_path: Arc<Path>,
+    pub diff: String,
+    pub predicted: bool,
+    pub in_open_source_repo: bool,
+}
+
+impl CapturedEvent {
+    pub fn to_event(&self) -> zeta_prompt::Event {
+        zeta_prompt::Event::BufferChange {
+            path: self.path.clone(),
+            old_path: self.old_path.clone(),
+            diff: self.diff.clone(),
+            predicted: self.predicted,
+            in_open_source_repo: self.in_open_source_repo,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct CapturedRelatedFile {
+    pub path: Arc<Path>,
+    pub max_row: u32,
+    pub excerpts: Vec<CapturedRelatedExcerpt>,
+}
+
+impl CapturedRelatedFile {
+    pub fn to_related_file(&self) -> zeta_prompt::RelatedFile {
+        zeta_prompt::RelatedFile {
+            path: self.path.clone(),
+            max_row: self.max_row,
+            excerpts: self
+                .excerpts
+                .iter()
+                .map(|e| zeta_prompt::RelatedExcerpt {
+                    row_range: e.row_range.clone(),
+                    text: e.text.clone().into(),
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct CapturedRelatedExcerpt {
+    pub row_range: Range<u32>,
+    pub text: String,
 }
 
 const REASONING_HEADING: &str = "Reasoning";
@@ -169,6 +250,8 @@ impl ExampleSpec {
             edit_history: String::new(),
             expected_patches: Vec::new(),
             rejected_patch: None,
+            captured_prompt_input: None,
+            telemetry: None,
         };
 
         if let Some(rest) = input.strip_prefix("+++\n")
@@ -415,6 +498,8 @@ mod tests {
             edit_history: String::new(),
             expected_patches: Vec::new(),
             rejected_patch: None,
+            captured_prompt_input: None,
+            telemetry: None,
         };
 
         // Cursor before `42`
@@ -548,6 +633,8 @@ mod tests {
             edit_history: String::new(),
             expected_patches: Vec::new(),
             rejected_patch: None,
+            captured_prompt_input: None,
+            telemetry: None,
         };
 
         // Cursor before `42` using inline marker

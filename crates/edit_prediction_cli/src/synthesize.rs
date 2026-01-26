@@ -792,6 +792,8 @@ async fn build_example(
         edit_history,
         expected_patches: vec![expected_patch_with_header],
         rejected_patch: None,
+        captured_prompt_input: None,
+        telemetry: None,
     };
     spec.set_cursor_excerpt(&excerpt, cursor_offset, comment_prefix);
 

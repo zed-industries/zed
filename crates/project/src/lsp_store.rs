@@ -104,7 +104,7 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     cmp::{Ordering, Reverse},
-    collections::hash_map,
+    collections::{VecDeque, hash_map},
     convert::TryInto,
     ffi::OsStr,
     future::ready,
@@ -125,7 +125,7 @@ use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, ToPoint as _};
 
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
-    paths::{PathStyle, SanitizedPath},
+    paths::{PathStyle, SanitizedPath, UrlExt},
     post_inc,
     redact::redact_command,
     rel_path::RelPath,
@@ -301,6 +301,10 @@ pub struct LocalLspStore {
         HashMap<Option<SharedString>, HashMap<PathBuf, Option<SharedString>>>,
     >,
     restricted_worktrees_tasks: HashMap<WorktreeId, (Subscription, watch::Receiver<bool>)>,
+
+    buffers_to_refresh_hash_set: HashSet<BufferId>,
+    buffers_to_refresh_queue: VecDeque<BufferId>,
+    _background_diagnostics_worker: Shared<Task<()>>,
 }
 
 impl LocalLspStore {
@@ -1073,7 +1077,7 @@ impl LocalLspStore {
                                 })
                                 .transpose()?;
                             anyhow::Ok(
-                                lsp_store.pull_document_diagnostics_for_server(server_id, cx),
+                                lsp_store.pull_document_diagnostics_for_server(server_id, None, cx),
                             )
                         })??
                         .await;
@@ -3008,7 +3012,7 @@ impl LocalLspStore {
     }
 
     #[allow(clippy::type_complexity)]
-    pub(crate) fn edits_from_lsp(
+    pub fn edits_from_lsp(
         &mut self,
         buffer: &Entity<Buffer>,
         lsp_edits: impl 'static + Send + IntoIterator<Item = lsp::TextEdit>,
@@ -4052,6 +4056,9 @@ impl LspStore {
                 language_server_paths_watched_for_rename: Default::default(),
                 language_server_dynamic_registrations: Default::default(),
                 buffers_being_formatted: Default::default(),
+                buffers_to_refresh_hash_set: HashSet::default(),
+                buffers_to_refresh_queue: VecDeque::new(),
+                _background_diagnostics_worker: Task::ready(()).shared(),
                 buffer_snapshots: Default::default(),
                 prettier_store,
                 environment,
@@ -4302,6 +4309,47 @@ impl LspStore {
         }
 
         Ok(())
+    }
+
+    pub fn refresh_background_diagnostics_for_buffers(
+        &mut self,
+        buffers: HashSet<BufferId>,
+        cx: &mut Context<Self>,
+    ) -> Shared<Task<()>> {
+        let Some(local) = self.as_local_mut() else {
+            return Task::ready(()).shared();
+        };
+        for buffer in buffers {
+            if local.buffers_to_refresh_hash_set.insert(buffer) {
+                local.buffers_to_refresh_queue.push_back(buffer);
+                if local.buffers_to_refresh_queue.len() == 1 {
+                    local._background_diagnostics_worker =
+                        Self::background_diagnostics_worker(cx).shared();
+                }
+            }
+        }
+
+        local._background_diagnostics_worker.clone()
+    }
+
+    fn refresh_next_buffer(&mut self, cx: &mut Context<Self>) -> Option<Task<Result<()>>> {
+        let buffer_store = self.buffer_store.clone();
+        let local = self.as_local_mut()?;
+        while let Some(buffer_id) = local.buffers_to_refresh_queue.pop_front() {
+            local.buffers_to_refresh_hash_set.remove(&buffer_id);
+            if let Some(buffer) = buffer_store.read(cx).get(buffer_id) {
+                return Some(self.pull_diagnostics_for_buffer(buffer, cx));
+            }
+        }
+        None
+    }
+
+    fn background_diagnostics_worker(cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            while let Ok(Some(task)) = this.update(cx, |this, cx| this.refresh_next_buffer(cx)) {
+                task.await.log_err();
+            }
+        })
     }
 
     pub(crate) fn register_buffer_with_language_servers(
@@ -8426,7 +8474,7 @@ impl LspStore {
             .collect();
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub fn update_diagnostic_entries(
         &mut self,
         server_id: LanguageServerId,
@@ -8719,13 +8767,14 @@ impl LspStore {
         language_server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
+        let path_style = self.worktree_store.read(cx).path_style();
         cx.spawn(async move |lsp_store, cx| {
             // Escape percent-encoded string.
             let current_scheme = abs_path.scheme().to_owned();
             // Uri is immutable, so we can't modify the scheme
 
             let abs_path = abs_path
-                .to_file_path()
+                .to_file_path_ext(path_style)
                 .map_err(|()| anyhow!("can't convert URI to path"))?;
             let p = abs_path.clone();
             let yarn_worktree = lsp_store
@@ -9289,6 +9338,11 @@ impl LspStore {
                 false,
                 cx,
             );
+            // Pull diagnostics for the buffer even if it was already registered.
+            // This is needed to make test_streamed_lsp_pull_diagnostics pass,
+            // but it's unclear if we need it.
+            this.pull_diagnostics_for_buffer(buffer.clone(), cx)
+                .detach();
             this.buffer_store().update(cx, |buffer_store, _| {
                 buffer_store.register_shared_lsp_handle(peer_id, buffer_id, handle);
             });
@@ -12249,39 +12303,37 @@ impl LspStore {
     pub fn pull_document_diagnostics_for_server(
         &mut self,
         server_id: LanguageServerId,
+        source_buffer_id: Option<BufferId>,
         cx: &mut Context<Self>,
-    ) -> Task<()> {
-        let buffers_to_pull = self
-            .as_local()
-            .into_iter()
-            .flat_map(|local| {
-                self.buffer_store.read(cx).buffers().filter(|buffer| {
-                    let buffer_id = buffer.read(cx).remote_id();
-                    local
-                        .buffers_opened_in_servers
-                        .get(&buffer_id)
-                        .is_some_and(|servers| servers.contains(&server_id))
-                })
-            })
-            .collect::<Vec<_>>();
-
-        let pulls = join_all(buffers_to_pull.into_iter().map(|buffer| {
-            let buffer_path = buffer.read(cx).file().map(|f| f.full_path(cx));
-            let pull_task = self.pull_diagnostics_for_buffer(buffer, cx);
-            async move { (buffer_path, pull_task.await) }
-        }));
-        cx.background_spawn(async move {
-            for (pull_task_path, pull_task_result) in pulls.await {
-                if let Err(e) = pull_task_result {
-                    match pull_task_path {
-                        Some(path) => {
-                            log::error!("Failed to pull diagnostics for buffer {path:?}: {e:#}");
-                        }
-                        None => log::error!("Failed to pull diagnostics: {e:#}"),
-                    }
-                }
+    ) -> Shared<Task<()>> {
+        let Some(local) = self.as_local_mut() else {
+            return Task::ready(()).shared();
+        };
+        let mut buffers_to_refresh = HashSet::default();
+        for (buffer_id, server_ids) in &local.buffers_opened_in_servers {
+            if server_ids.contains(&server_id) && Some(buffer_id) != source_buffer_id.as_ref() {
+                buffers_to_refresh.insert(*buffer_id);
             }
-        })
+        }
+
+        self.refresh_background_diagnostics_for_buffers(buffers_to_refresh, cx)
+    }
+
+    pub fn pull_document_diagnostics_for_buffer_edit(
+        &mut self,
+        buffer_id: BufferId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(local) = self.as_local_mut() else {
+            return;
+        };
+        let Some(languages_servers) = local.buffers_opened_in_servers.get(&buffer_id).cloned()
+        else {
+            return;
+        };
+        for server_id in languages_servers {
+            let _ = self.pull_document_diagnostics_for_server(server_id, Some(buffer_id), cx);
+        }
     }
 
     fn apply_workspace_diagnostic_report(
@@ -12724,8 +12776,7 @@ impl LspStore {
 
                         notify_server_capabilities_updated(&server, cx);
 
-                        self.pull_document_diagnostics_for_server(server_id, cx)
-                            .detach();
+                        let _ = self.pull_document_diagnostics_for_server(server_id, None, cx);
                     }
                 }
                 "textDocument/documentColor" => {
@@ -14056,7 +14107,7 @@ pub enum ResolvedHint {
     Resolving(Shared<Task<()>>),
 }
 
-fn glob_literal_prefix(glob: &Path) -> PathBuf {
+pub fn glob_literal_prefix(glob: &Path) -> PathBuf {
     glob.components()
         .take_while(|component| match component {
             path::Component::Normal(part) => !part.to_string_lossy().contains(['*', '?', '{', '}']),
@@ -14464,7 +14515,7 @@ fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
 /// breaking the completions menu presentation.
 ///
 /// Sanitize the text to ensure there are no newlines, or, if there are some, remove them and also remove long space sequences if there were newlines.
-fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
+pub fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
     let mut new_text = String::with_capacity(label.text.len());
     let mut offset_map = vec![0; label.text.len() + 1];
     let mut last_char_was_space = false;
@@ -14561,81 +14612,4 @@ fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
     }
 
     label.text = new_text;
-}
-
-#[cfg(test)]
-mod tests {
-    use language::HighlightId;
-
-    use super::*;
-
-    #[test]
-    fn test_glob_literal_prefix() {
-        assert_eq!(glob_literal_prefix(Path::new("**/*.js")), Path::new(""));
-        assert_eq!(
-            glob_literal_prefix(Path::new("node_modules/**/*.js")),
-            Path::new("node_modules")
-        );
-        assert_eq!(
-            glob_literal_prefix(Path::new("foo/{bar,baz}.js")),
-            Path::new("foo")
-        );
-        assert_eq!(
-            glob_literal_prefix(Path::new("foo/bar/baz.js")),
-            Path::new("foo/bar/baz.js")
-        );
-
-        #[cfg(target_os = "windows")]
-        {
-            assert_eq!(glob_literal_prefix(Path::new("**\\*.js")), Path::new(""));
-            assert_eq!(
-                glob_literal_prefix(Path::new("node_modules\\**/*.js")),
-                Path::new("node_modules")
-            );
-            assert_eq!(
-                glob_literal_prefix(Path::new("foo/{bar,baz}.js")),
-                Path::new("foo")
-            );
-            assert_eq!(
-                glob_literal_prefix(Path::new("foo\\bar\\baz.js")),
-                Path::new("foo/bar/baz.js")
-            );
-        }
-    }
-
-    #[test]
-    fn test_multi_len_chars_normalization() {
-        let mut label = CodeLabel::new(
-            "myElˇ (parameter) myElˇ: {\n    foo: string;\n}".to_string(),
-            0..6,
-            vec![(0..6, HighlightId(1))],
-        );
-        ensure_uniform_list_compatible_label(&mut label);
-        assert_eq!(
-            label,
-            CodeLabel::new(
-                "myElˇ (parameter) myElˇ: { foo: string; }".to_string(),
-                0..6,
-                vec![(0..6, HighlightId(1))],
-            )
-        );
-    }
-
-    #[test]
-    fn test_trailing_newline_in_completion_documentation() {
-        let doc = lsp::Documentation::String(
-            "Inappropriate argument value (of correct type).\n".to_string(),
-        );
-        let completion_doc: CompletionDocumentation = doc.into();
-        assert!(
-            matches!(completion_doc, CompletionDocumentation::SingleLine(s) if s == "Inappropriate argument value (of correct type).")
-        );
-
-        let doc = lsp::Documentation::String("  some value  \n".to_string());
-        let completion_doc: CompletionDocumentation = doc.into();
-        assert!(matches!(
-            completion_doc,
-            CompletionDocumentation::SingleLine(s) if s == "some value"
-        ));
-    }
 }

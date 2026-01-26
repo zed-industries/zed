@@ -10,6 +10,7 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use file_icons::FileIcons;
+use fs::MTime;
 use futures::future::try_join_all;
 use git::status::GitSummary;
 use gpui::{
@@ -788,7 +789,7 @@ impl Item for Editor {
         self.nav_history = Some(history);
     }
 
-    fn on_removed(&self, cx: &App) {
+    fn on_removed(&self, cx: &mut Context<Self>) {
         self.report_editor_event(ReportEditorEvent::Closed, None, cx);
     }
 
@@ -1155,61 +1156,60 @@ impl SerializableItem for Editor {
                 });
 
                 match opened_buffer {
-                    Some(opened_buffer) => {
-                        window.spawn(cx, async move |cx| {
-                            let (_, buffer) = opened_buffer
-                                .await
-                                .context("Failed to open path in project")?;
+                    Some(opened_buffer) => window.spawn(cx, async move |cx| {
+                        let (_, buffer) = opened_buffer
+                            .await
+                            .context("Failed to open path in project")?;
 
-                            // This is a bit wasteful: we're loading the whole buffer from
-                            // disk and then overwrite the content.
-                            // But for now, it keeps the implementation of the content serialization
-                            // simple, because we don't have to persist all of the metadata that we get
-                            // by loading the file (git diff base, ...).
-                            if let Some(buffer_text) = contents {
-                                buffer.update(cx, |buffer, cx| {
-                                    // If we did restore an mtime, we want to store it on the buffer
-                                    // so that the next edit will mark the buffer as dirty/conflicted.
-                                    if mtime.is_some() {
-                                        buffer.did_reload(
-                                            buffer.version(),
-                                            buffer.line_ending(),
-                                            mtime,
-                                            cx,
-                                        );
-                                    }
-                                    buffer.set_text(buffer_text, cx);
-                                    if let Some(entry) = buffer.peek_undo_stack() {
-                                        buffer.forget_transaction(entry.transaction_id());
-                                    }
-                                });
-                            }
+                        if let Some(contents) = contents {
+                            buffer.update(cx, |buffer, cx| {
+                                restore_serialized_buffer_contents(buffer, contents, mtime, cx);
+                            });
+                        }
 
-                            cx.update(|window, cx| {
-                                cx.new(|cx| {
-                                    let mut editor =
-                                        Editor::for_buffer(buffer, Some(project), window, cx);
+                        cx.update(|window, cx| {
+                            cx.new(|cx| {
+                                let mut editor =
+                                    Editor::for_buffer(buffer, Some(project), window, cx);
 
-                                    editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                                    editor
-                                })
+                                editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                                editor
                             })
                         })
-                    }
+                    }),
                     None => {
-                        let open_by_abs_path = workspace.update(cx, |workspace, cx| {
-                            workspace.open_abs_path(
-                                abs_path.clone(),
-                                OpenOptions {
-                                    visible: Some(OpenVisible::None),
-                                    ..Default::default()
-                                },
-                                window,
-                                cx,
-                            )
-                        });
+                        // File is not in any worktree (e.g., opened as a standalone file)
+                        // We need to open it via workspace and then restore dirty contents
                         window.spawn(cx, async move |cx| {
-                            let editor = open_by_abs_path?.await?.downcast::<Editor>().with_context(|| format!("Failed to downcast to Editor after opening abs path {abs_path:?}"))?;
+                            let open_by_abs_path =
+                                workspace.update_in(cx, |workspace, window, cx| {
+                                    workspace.open_abs_path(
+                                        abs_path.clone(),
+                                        OpenOptions {
+                                            visible: Some(OpenVisible::None),
+                                            ..Default::default()
+                                        },
+                                        window,
+                                        cx,
+                                    )
+                                })?;
+                            let editor =
+                                open_by_abs_path.await?.downcast::<Editor>().with_context(
+                                    || format!("path {abs_path:?} cannot be opened as an Editor"),
+                                )?;
+
+                            if let Some(contents) = contents {
+                                editor.update_in(cx, |editor, _window, cx| {
+                                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                                        buffer.update(cx, |buffer, cx| {
+                                            restore_serialized_buffer_contents(
+                                                buffer, contents, mtime, cx,
+                                            );
+                                        });
+                                    }
+                                })?;
+                            }
+
                             editor.update_in(cx, |editor, window, cx| {
                                 editor.read_metadata_from_db(item_id, workspace_id, window, cx);
                             })?;
@@ -1252,9 +1252,9 @@ impl SerializableItem for Editor {
         let project = self.project.clone()?;
 
         let serialize_dirty_buffers = match buffer_serialization {
-            // If we don't have a worktree, we don't serialize, because
-            // projects without worktrees aren't deserialized.
-            BufferSerialization::All => project.read(cx).visible_worktrees(cx).next().is_some(),
+            // Always serialize dirty buffers, including for worktree-less windows.
+            // This enables hot-exit functionality for empty windows and single files.
+            BufferSerialization::All => true,
             BufferSerialization::NonDirtyBuffers => false,
         };
 
@@ -1933,6 +1933,27 @@ fn path_for_file<'a>(
     }
 }
 
+/// Restores serialized buffer contents by overwriting the buffer with saved text.
+/// This is somewhat wasteful since we load the whole buffer from disk then overwrite it,
+/// but keeps implementation simple as we don't need to persist all metadata from loading
+/// (git diff base, etc.).
+fn restore_serialized_buffer_contents(
+    buffer: &mut Buffer,
+    contents: String,
+    mtime: Option<MTime>,
+    cx: &mut Context<Buffer>,
+) {
+    // If we did restore an mtime, store it on the buffer so that
+    // the next edit will mark the buffer as dirty/conflicted.
+    if mtime.is_some() {
+        buffer.did_reload(buffer.version(), buffer.line_ending(), mtime, cx);
+    }
+    buffer.set_text(contents, cx);
+    if let Some(entry) = buffer.peek_undo_stack() {
+        buffer.forget_transaction(entry.transaction_id());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::editor_tests::init_test;
@@ -2159,6 +2180,55 @@ mod tests {
 
                 let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
                 assert!(buffer.file().is_none());
+            });
+        }
+
+        // Test case 6: Deserialize with path and contents in an empty workspace (no worktree)
+        // This tests the hot-exit scenario where a file is opened in an empty workspace
+        // and has unsaved changes that should be restored.
+        {
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_file(path!("/standalone.rs"), "original content".into())
+                .await;
+
+            // Create an empty project with no worktrees
+            let project = Project::test(fs.clone(), [], cx).await;
+            let (workspace, cx) =
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+            let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+            let item_id = 11000 as ItemId;
+
+            let mtime = fs
+                .metadata(Path::new(path!("/standalone.rs")))
+                .await
+                .unwrap()
+                .unwrap()
+                .mtime;
+
+            // Simulate serialized state: file with unsaved changes
+            let serialized_editor = SerializedEditor {
+                abs_path: Some(PathBuf::from(path!("/standalone.rs"))),
+                contents: Some("modified content".to_string()),
+                language: Some("Rust".to_string()),
+                mtime: Some(mtime),
+            };
+
+            DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
+                .await
+                .unwrap();
+
+            let deserialized =
+                deserialize_editor(item_id, workspace_id, workspace, project, cx).await;
+
+            deserialized.update(cx, |editor, cx| {
+                // The editor should have the serialized contents, not the disk contents
+                assert_eq!(editor.text(cx), "modified content");
+                assert!(editor.is_dirty(cx));
+                assert!(!editor.has_conflict(cx));
+
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+                assert!(buffer.file().is_some());
             });
         }
     }
