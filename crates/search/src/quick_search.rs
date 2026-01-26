@@ -350,6 +350,67 @@ impl QuickSearch {
         });
     }
 
+    fn navigate_history(
+        &mut self,
+        direction: HistoryDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let picker = self.picker.read(cx);
+        if !picker.focus_handle(cx).is_focused(window) {
+            return;
+        }
+
+        let query_text = picker.query(cx);
+
+        let new_query = self.picker.update(cx, |picker, cx| {
+            let cursor = &mut picker.delegate.search_history_cursor;
+
+            picker.delegate.project.update(cx, |project, _| {
+                let history = project.search_history_mut(SearchInputKind::Query);
+
+                let mut result = if query_text.is_empty() {
+                    history.current(cursor).map(str::to_string)
+                } else {
+                    None
+                };
+
+                if result.is_none() {
+                    result = match direction {
+                        HistoryDirection::Next => history.next(cursor),
+                        HistoryDirection::Previous => history.previous(cursor),
+                    }
+                    .map(str::to_string);
+                }
+
+                if result.as_deref() == Some(query_text.as_str()) {
+                    result = match direction {
+                        HistoryDirection::Next => history.next(cursor),
+                        HistoryDirection::Previous => history.previous(cursor),
+                    }
+                    .map(str::to_string);
+                }
+
+                result
+            })
+        });
+
+        match (new_query, direction) {
+            (Some(query), _) => {
+                self.picker.update(cx, |picker, cx| {
+                    picker.set_query(&query, window, cx);
+                });
+            }
+            (None, HistoryDirection::Next) => {
+                self.picker.update(cx, |picker, cx| {
+                    picker.delegate.search_history_cursor.reset();
+                    picker.set_query("", window, cx);
+                });
+            }
+            (None, HistoryDirection::Previous) => {}
+        }
+    }
+
     fn replacement(&self, cx: &App) -> String {
         self.replacement_editor.text(cx)
     }
@@ -496,67 +557,6 @@ impl QuickSearch {
                 workspace.split_path_preview(path, false, Some(split_direction), window, cx)
             })
             .detach_and_log_err(cx);
-    }
-
-    fn navigate_history(
-        &mut self,
-        direction: HistoryDirection,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let picker = self.picker.read(cx);
-        if !picker.focus_handle(cx).is_focused(window) {
-            return;
-        }
-
-        let query_text = picker.query(cx);
-
-        let new_query = self.picker.update(cx, |picker, cx| {
-            let cursor = &mut picker.delegate.search_history_cursor;
-
-            picker.delegate.project.update(cx, |project, _| {
-                let history = project.search_history_mut(SearchInputKind::Query);
-
-                let mut result = if query_text.is_empty() {
-                    history.current(cursor).map(str::to_string)
-                } else {
-                    None
-                };
-
-                if result.is_none() {
-                    result = match direction {
-                        HistoryDirection::Next => history.next(cursor),
-                        HistoryDirection::Previous => history.previous(cursor),
-                    }
-                    .map(str::to_string);
-                }
-
-                if result.as_deref() == Some(query_text.as_str()) {
-                    result = match direction {
-                        HistoryDirection::Next => history.next(cursor),
-                        HistoryDirection::Previous => history.previous(cursor),
-                    }
-                    .map(str::to_string);
-                }
-
-                result
-            })
-        });
-
-        match (new_query, direction) {
-            (Some(query), _) => {
-                self.picker.update(cx, |picker, cx| {
-                    picker.set_query(&query, window, cx);
-                });
-            }
-            (None, HistoryDirection::Next) => {
-                self.picker.update(cx, |picker, cx| {
-                    picker.delegate.search_history_cursor.reset();
-                    picker.set_query("", window, cx);
-                });
-            }
-            (None, HistoryDirection::Previous) => {}
-        }
     }
 
     fn render_horizontal_resize(
