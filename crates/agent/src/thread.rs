@@ -932,6 +932,20 @@ impl Thread {
         stream: &ThreadEventStream,
         cx: &mut Context<Self>,
     ) {
+        // Extract saved output and status first, so they're available even if tool is not found
+        let output = tool_result
+            .as_ref()
+            .and_then(|result| result.output.clone());
+        let status = tool_result
+            .as_ref()
+            .map_or(acp::ToolCallStatus::Failed, |result| {
+                if result.is_error {
+                    acp::ToolCallStatus::Failed
+                } else {
+                    acp::ToolCallStatus::Completed
+                }
+            });
+
         let tool = self.tools.get(tool_use.name.as_ref()).cloned().or_else(|| {
             self.context_server_registry
                 .read(cx)
@@ -946,14 +960,24 @@ impl Thread {
         });
 
         let Some(tool) = tool else {
+            // Tool not found (e.g., MCP server not connected after restart),
+            // but still display the saved result if available.
+            // We need to send both ToolCall and ToolCallUpdate events because the UI
+            // only converts raw_output to displayable content in update_fields, not from_acp.
             stream
                 .0
                 .unbounded_send(Ok(ThreadEvent::ToolCall(
                     acp::ToolCall::new(tool_use.id.to_string(), tool_use.name.to_string())
-                        .status(acp::ToolCallStatus::Failed)
+                        .status(status)
                         .raw_input(tool_use.input.clone()),
                 )))
                 .ok();
+            stream.update_tool_call_fields(
+                &tool_use.id,
+                acp::ToolCallUpdateFields::new()
+                    .status(status)
+                    .raw_output(output),
+            );
             return;
         };
 
@@ -967,9 +991,6 @@ impl Thread {
             tool_use.input.clone(),
         );
 
-        let output = tool_result
-            .as_ref()
-            .and_then(|result| result.output.clone());
         if let Some(output) = output.clone() {
             // For replay, we use a dummy cancellation receiver since the tool already completed
             let (_cancellation_tx, cancellation_rx) = watch::channel(false);
@@ -986,17 +1007,7 @@ impl Thread {
         stream.update_tool_call_fields(
             &tool_use.id,
             acp::ToolCallUpdateFields::new()
-                .status(
-                    tool_result
-                        .as_ref()
-                        .map_or(acp::ToolCallStatus::Failed, |result| {
-                            if result.is_error {
-                                acp::ToolCallStatus::Failed
-                            } else {
-                                acp::ToolCallStatus::Completed
-                            }
-                        }),
-                )
+                .status(status)
                 .raw_output(output),
         );
     }
