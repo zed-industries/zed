@@ -1,5 +1,5 @@
 use editor::{
-    Anchor, Bias, BufferOffset, DisplayPoint, Editor, MultiBufferOffset, RowExt, ToOffset, ToPoint,
+    Anchor, Bias, BufferOffset, DisplayPoint, Editor, MultiBufferOffset, RowExt, ToOffset,
     display_map::{DisplayRow, DisplaySnapshot, FoldPoint, ToDisplayPoint},
     movement::{
         self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
@@ -10,7 +10,7 @@ use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::ops::Range;
+use std::{f64, ops::Range};
 use workspace::searchable::Direction;
 
 use crate::{
@@ -95,7 +95,9 @@ pub enum Motion {
     EndOfParagraph,
     StartOfDocument,
     EndOfDocument,
-    Matching,
+    Matching {
+        match_quotes: bool,
+    },
     GoToPercentage,
     UnmatchedForward {
         char: char,
@@ -275,6 +277,18 @@ struct FirstNonWhitespace {
     display_lines: bool,
 }
 
+/// Moves to the matching bracket or delimiter.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct Matching {
+    #[serde(default)]
+    /// Whether to include quote characters (`'`, `"`, `` ` ``) when searching
+    /// for matching pairs. When `false`, only brackets and parentheses are
+    /// matched, which aligns with Neovim's default `%` behavior.
+    match_quotes: bool,
+}
+
 /// Moves to the end of the current line.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
@@ -347,8 +361,6 @@ actions!(
         StartOfDocument,
         /// Moves to the end of the document.
         EndOfDocument,
-        /// Moves to the matching bracket or delimiter.
-        Matching,
         /// Goes to a percentage position in the file.
         GoToPercentage,
         /// Moves to the start of the next line.
@@ -499,9 +511,14 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &EndOfDocument, window, cx| {
         vim.motion(Motion::EndOfDocument, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &Matching, window, cx| {
-        vim.motion(Motion::Matching, window, cx)
-    });
+    Vim::action(
+        editor,
+        cx,
+        |vim, &Matching { match_quotes }: &Matching, window, cx| {
+            vim.motion(Motion::Matching { match_quotes }, window, cx)
+        },
+    );
+
     Vim::action(editor, cx, |vim, _: &GoToPercentage, window, cx| {
         vim.motion(Motion::GoToPercentage, window, cx)
     });
@@ -773,7 +790,7 @@ impl Motion {
             | Jump { line: true, .. } => MotionKind::Linewise,
             EndOfLine { .. }
             | EndOfLineDownward
-            | Matching
+            | Matching { .. }
             | FindForward { .. }
             | NextWordEnd { .. }
             | PreviousWordEnd { .. }
@@ -847,7 +864,7 @@ impl Motion {
             | EndOfParagraph
             | GoToPercentage
             | Jump { .. }
-            | Matching
+            | Matching { .. }
             | NextComment
             | NextGreaterIndent
             | NextLesserIndent
@@ -887,7 +904,7 @@ impl Motion {
             | Up { .. }
             | EndOfLine { .. }
             | MiddleOfLine { .. }
-            | Matching
+            | Matching { .. }
             | UnmatchedForward { .. }
             | UnmatchedBackward { .. }
             | FindForward { .. }
@@ -1018,7 +1035,7 @@ impl Motion {
             ),
             EndOfLine { display_lines } => (
                 end_of_line(map, *display_lines, point, times),
-                SelectionGoal::None,
+                SelectionGoal::HorizontalPosition(f64::INFINITY),
             ),
             SentenceBackward => (sentence_backwards(map, point, times), SelectionGoal::None),
             SentenceForward => (sentence_forwards(map, point, times), SelectionGoal::None),
@@ -1039,7 +1056,7 @@ impl Motion {
                 end_of_document(map, point, maybe_times),
                 SelectionGoal::None,
             ),
-            Matching => (matching(map, point), SelectionGoal::None),
+            Matching { match_quotes } => (matching(map, point, *match_quotes), SelectionGoal::None),
             GoToPercentage => (go_to_percentage(map, point, times), SelectionGoal::None),
             UnmatchedForward { char } => (
                 unmatched_forward(map, point, *char, times),
@@ -1698,18 +1715,14 @@ pub(crate) fn next_word_start(
     point
 }
 
-pub(crate) fn next_word_end(
+fn next_end_impl(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
-    ignore_punctuation: bool,
     times: usize,
     allow_cross_newline: bool,
     always_advance: bool,
+    mut is_boundary: impl FnMut(char, char) -> bool,
 ) -> DisplayPoint {
-    let classifier = map
-        .buffer_snapshot()
-        .char_classifier_at(point.to_point(map))
-        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let mut need_next_char = false;
         let new_point = if always_advance {
@@ -1722,8 +1735,6 @@ pub(crate) fn next_word_end(
             new_point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = classifier.kind(left);
-                let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
                 if !allow_cross_newline && at_newline {
@@ -1731,7 +1742,7 @@ pub(crate) fn next_word_end(
                     return true;
                 }
 
-                left_kind != right_kind && left_kind != CharKind::Whitespace
+                is_boundary(left, right)
             },
         );
         let new_point = if need_next_char {
@@ -1746,6 +1757,64 @@ pub(crate) fn next_word_end(
         point = new_point;
     }
     point
+}
+
+pub(crate) fn next_word_end(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    ignore_punctuation: bool,
+    times: usize,
+    allow_cross_newline: bool,
+    always_advance: bool,
+) -> DisplayPoint {
+    let classifier = map
+        .buffer_snapshot()
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
+
+    next_end_impl(
+        map,
+        point,
+        times,
+        allow_cross_newline,
+        always_advance,
+        |left, right| {
+            let left_kind = classifier.kind(left);
+            let right_kind = classifier.kind(right);
+            left_kind != right_kind && left_kind != CharKind::Whitespace
+        },
+    )
+}
+
+pub(crate) fn next_subword_end(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    ignore_punctuation: bool,
+    times: usize,
+    allow_cross_newline: bool,
+) -> DisplayPoint {
+    let classifier = map
+        .buffer_snapshot()
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
+
+    next_end_impl(
+        map,
+        point,
+        times,
+        allow_cross_newline,
+        true,
+        |left, right| {
+            let left_kind = classifier.kind(left);
+            let right_kind = classifier.kind(right);
+            let is_stopping_punct = |c: char| ".\"'{}[]()<>".contains(c);
+            let found_subword_end = is_subword_end(left, right, "_-");
+            let is_word_end = (left_kind != right_kind)
+                && (!left.is_ascii_punctuation() || is_stopping_punct(left));
+
+            !left.is_whitespace() && (is_word_end || found_subword_end)
+        },
+    )
 }
 
 fn previous_word_start(
@@ -1823,6 +1892,20 @@ fn previous_word_end(
     movement::saturating_left(map, point.to_display_point(map))
 }
 
+/// Checks if there's a subword boundary start between `left` and `right` characters.
+/// This detects transitions like `_b` (separator to non-separator) or `aB` (lowercase to uppercase).
+pub(crate) fn is_subword_start(left: char, right: char, separators: &str) -> bool {
+    let is_separator = |c: char| separators.contains(c);
+    (is_separator(left) && !is_separator(right)) || (left.is_lowercase() && right.is_uppercase())
+}
+
+/// Checks if there's a subword boundary end between `left` and `right` characters.
+/// This detects transitions like `a_` (non-separator to separator) or `aB` (lowercase to uppercase).
+pub(crate) fn is_subword_end(left: char, right: char, separators: &str) -> bool {
+    let is_separator = |c: char| separators.contains(c);
+    (!is_separator(left) && is_separator(right)) || (left.is_lowercase() && right.is_uppercase())
+}
+
 fn next_subword_start(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
@@ -1839,70 +1922,17 @@ fn next_subword_start(
             let left_kind = classifier.kind(left);
             let right_kind = classifier.kind(right);
             let at_newline = right == '\n';
-
-            let is_word_start = (left_kind != right_kind) && !left.is_alphanumeric();
-            let is_subword_start =
-                left == '_' && right != '_' || left.is_lowercase() && right.is_uppercase();
-
-            let found = (!right.is_whitespace() && (is_word_start || is_subword_start))
+            let is_stopping_punct = |c: char| "\"'{}[]()<>".contains(c);
+            let found_subword_start = is_subword_start(left, right, "._-");
+            let is_word_start = (left_kind != right_kind)
+                && (!right.is_ascii_punctuation() || is_stopping_punct(right));
+            let found = (!right.is_whitespace() && (is_word_start || found_subword_start))
                 || at_newline && crossed_newline
                 || at_newline && left == '\n'; // Prevents skipping repeated empty lines
 
             crossed_newline |= at_newline;
             found
         });
-        if point == new_point {
-            break;
-        }
-        point = new_point;
-    }
-    point
-}
-
-pub(crate) fn next_subword_end(
-    map: &DisplaySnapshot,
-    mut point: DisplayPoint,
-    ignore_punctuation: bool,
-    times: usize,
-    allow_cross_newline: bool,
-) -> DisplayPoint {
-    let classifier = map
-        .buffer_snapshot()
-        .char_classifier_at(point.to_point(map))
-        .ignore_punctuation(ignore_punctuation);
-    for _ in 0..times {
-        let new_point = next_char(map, point, allow_cross_newline);
-
-        let mut crossed_newline = false;
-        let mut need_backtrack = false;
-        let new_point =
-            movement::find_boundary(map, new_point, FindRange::MultiLine, |left, right| {
-                let left_kind = classifier.kind(left);
-                let right_kind = classifier.kind(right);
-                let at_newline = right == '\n';
-
-                if !allow_cross_newline && at_newline {
-                    return true;
-                }
-
-                let is_word_end = (left_kind != right_kind) && !right.is_alphanumeric();
-                let is_subword_end =
-                    left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
-
-                let found = !left.is_whitespace() && !at_newline && (is_word_end || is_subword_end);
-
-                if found && (is_word_end || is_subword_end) {
-                    need_backtrack = true;
-                }
-
-                crossed_newline |= at_newline;
-                found
-            });
-        let mut new_point = map.clip_point(new_point, Bias::Left);
-        if need_backtrack {
-            *new_point.column_mut() -= 1;
-        }
-        let new_point = map.clip_point(new_point, Bias::Left);
         if point == new_point {
             break;
         }
@@ -1934,11 +1964,12 @@ fn previous_subword_start(
                 let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
-                let is_word_start = (left_kind != right_kind) && !left.is_alphanumeric();
-                let is_subword_start =
-                    left == '_' && right != '_' || left.is_lowercase() && right.is_uppercase();
+                let is_stopping_punct = |c: char| ".\"'{}[]()<>".contains(c);
+                let is_word_start = (left_kind != right_kind)
+                    && (is_stopping_punct(right) || !right.is_ascii_punctuation());
+                let found_subword_start = is_subword_start(left, right, "._-");
 
-                let found = (!right.is_whitespace() && (is_word_start || is_subword_start))
+                let found = (!right.is_whitespace() && (is_word_start || found_subword_start))
                     || at_newline && crossed_newline
                     || at_newline && left == '\n'; // Prevents skipping repeated empty lines
 
@@ -1981,16 +2012,17 @@ fn previous_subword_end(
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
 
-                let is_subword_end =
-                    left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
+                let is_stopping_punct = |c: char| ".;\"'{}[]()<>".contains(c);
+                let found_subword_end = is_subword_end(left, right, "_-");
 
-                if is_subword_end {
+                if found_subword_end {
                     return true;
                 }
 
                 match (left_kind, right_kind) {
                     (CharKind::Word, CharKind::Whitespace)
                     | (CharKind::Word, CharKind::Punctuation) => true,
+                    (CharKind::Punctuation, _) if is_stopping_punct(left) => true,
                     (CharKind::Whitespace, CharKind::Whitespace) => left == '\n' && right == '\n',
                     _ => false,
                 }
@@ -2262,7 +2294,6 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
             .offset_to_point(excerpt.map_offset_from_buffer(BufferOffset(offset)));
         return map.clip_point(map.point_to_display_point(point, Bias::Left), Bias::Left);
     }
-    let mut last_position = None;
     for (excerpt, buffer, range) in map.buffer_snapshot().excerpts() {
         let excerpt_range = language::ToOffset::to_offset(&range.context.start, buffer)
             ..language::ToOffset::to_offset(&range.context.end, buffer);
@@ -2273,13 +2304,8 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
         } else if offset <= excerpt_range.start {
             let anchor = Anchor::in_buffer(excerpt, range.context.start);
             return anchor.to_display_point(map);
-        } else {
-            last_position = Some(Anchor::in_buffer(excerpt, range.context.end));
         }
     }
-
-    let mut last_point = last_position.unwrap().to_point(&map.buffer_snapshot());
-    last_point.column = point.column;
 
     map.clip_point(
         map.point_to_display_point(
@@ -2358,7 +2384,66 @@ fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoin
     None
 }
 
-fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+const BRACKET_PAIRS: [(char, char); 3] = [('(', ')'), ('[', ']'), ('{', '}')];
+
+fn get_bracket_pair(ch: char) -> Option<(char, char, bool)> {
+    for (open, close) in BRACKET_PAIRS {
+        if ch == open {
+            return Some((open, close, true));
+        }
+        if ch == close {
+            return Some((open, close, false));
+        }
+    }
+    None
+}
+
+fn find_matching_bracket_text_based(
+    map: &DisplaySnapshot,
+    offset: MultiBufferOffset,
+    line_range: Range<MultiBufferOffset>,
+) -> Option<MultiBufferOffset> {
+    let bracket_info = map
+        .buffer_chars_at(offset)
+        .take_while(|(_, char_offset)| *char_offset < line_range.end)
+        .find_map(|(ch, char_offset)| get_bracket_pair(ch).map(|info| (info, char_offset)));
+
+    let (open, close, is_opening) = bracket_info?.0;
+    let bracket_offset = bracket_info?.1;
+
+    let mut depth = 0i32;
+    if is_opening {
+        for (ch, char_offset) in map.buffer_chars_at(bracket_offset) {
+            if ch == open {
+                depth += 1;
+            } else if ch == close {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(char_offset);
+                }
+            }
+        }
+    } else {
+        for (ch, char_offset) in map.reverse_buffer_chars_at(bracket_offset + close.len_utf8()) {
+            if ch == close {
+                depth += 1;
+            } else if ch == open {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(char_offset);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn matching(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    match_quotes: bool,
+) -> DisplayPoint {
     if !map.is_singleton() {
         return display_point;
     }
@@ -2374,38 +2459,74 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         line_end = map.max_point().to_point(map);
     }
 
-    // Attempt to find the smallest enclosing bracket range that also contains
-    // the offset, which only happens if the cursor is currently in a bracket.
-    let range_filter = |_buffer: &language::BufferSnapshot,
-                        opening_range: Range<BufferOffset>,
-                        closing_range: Range<BufferOffset>| {
-        opening_range.contains(&BufferOffset(offset.0))
-            || closing_range.contains(&BufferOffset(offset.0))
+    let is_quote_char = |ch: char| matches!(ch, '\'' | '"' | '`');
+
+    let make_range_filter = |require_on_bracket: bool| {
+        move |buffer: &language::BufferSnapshot,
+              opening_range: Range<BufferOffset>,
+              closing_range: Range<BufferOffset>| {
+            if !match_quotes
+                && buffer
+                    .chars_at(opening_range.start)
+                    .next()
+                    .is_some_and(is_quote_char)
+            {
+                return false;
+            }
+
+            if require_on_bracket {
+                // Attempt to find the smallest enclosing bracket range that also contains
+                // the offset, which only happens if the cursor is currently in a bracket.
+                opening_range.contains(&BufferOffset(offset.0))
+                    || closing_range.contains(&BufferOffset(offset.0))
+            } else {
+                true
+            }
+        }
     };
 
     let bracket_ranges = snapshot
-        .innermost_enclosing_bracket_ranges(offset..offset, Some(&range_filter))
-        .or_else(|| snapshot.innermost_enclosing_bracket_ranges(offset..offset, None));
+        .innermost_enclosing_bracket_ranges(offset..offset, Some(&make_range_filter(true)))
+        .or_else(|| {
+            snapshot
+                .innermost_enclosing_bracket_ranges(offset..offset, Some(&make_range_filter(false)))
+        });
 
     if let Some((opening_range, closing_range)) = bracket_ranges {
-        if opening_range.contains(&offset) {
-            return closing_range.start.to_display_point(map);
-        } else if closing_range.contains(&offset) {
-            return opening_range.start.to_display_point(map);
+        let mut chars = map.buffer_snapshot().chars_at(offset);
+        match chars.next() {
+            Some('/') => {}
+            _ => {
+                if opening_range.contains(&offset) {
+                    return closing_range.start.to_display_point(map);
+                } else if closing_range.contains(&offset) {
+                    return opening_range.start.to_display_point(map);
+                }
+            }
         }
     }
 
     let line_range = map.prev_line_boundary(point).0..line_end;
     let visible_line_range =
         line_range.start..Point::new(line_range.end.row, line_range.end.column.saturating_sub(1));
+    let line_range = line_range.start.to_offset(&map.buffer_snapshot())
+        ..line_range.end.to_offset(&map.buffer_snapshot());
     let ranges = map.buffer_snapshot().bracket_ranges(visible_line_range);
     if let Some(ranges) = ranges {
-        let line_range = line_range.start.to_offset(&map.buffer_snapshot())
-            ..line_range.end.to_offset(&map.buffer_snapshot());
         let mut closest_pair_destination = None;
         let mut closest_distance = usize::MAX;
 
         for (open_range, close_range) in ranges {
+            if !match_quotes
+                && map
+                    .buffer_snapshot()
+                    .chars_at(open_range.start)
+                    .next()
+                    .is_some_and(is_quote_char)
+            {
+                continue;
+            }
+
             if map.buffer_snapshot().chars_at(open_range.start).next() == Some('<') {
                 if offset > open_range.start && offset < close_range.start {
                     let mut chars = map.buffer_snapshot().chars_at(close_range.start);
@@ -2447,9 +2568,15 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
 
         closest_pair_destination
             .map(|destination| destination.to_display_point(map))
-            .unwrap_or(display_point)
+            .unwrap_or_else(|| {
+                find_matching_bracket_text_based(map, offset, line_range.clone())
+                    .map(|o| o.to_display_point(map))
+                    .unwrap_or(display_point)
+            })
     } else {
-        display_point
+        find_matching_bracket_text_based(map, offset, line_range)
+            .map(|o| o.to_display_point(map))
+            .unwrap_or(display_point)
     }
 }
 
@@ -3082,10 +3209,12 @@ fn indent_motion(
 mod test {
 
     use crate::{
+        motion::Matching,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use editor::Inlay;
+    use gpui::KeyBinding;
     use indoc::indoc;
     use language::Point;
     use multi_buffer::MultiBufferRow;
@@ -3206,6 +3335,94 @@ mod test {
         cx.set_shared_state("func ˇboop() {\n}").await;
         cx.simulate_shared_keystrokes("%").await;
         cx.shared_state().await.assert_eq("func boop(ˇ) {\n}");
+    }
+
+    #[gpui::test]
+    async fn test_matching_quotes_disabled(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // Bind % to Matching with match_quotes: false to match Neovim's behavior
+        // (Neovim's % doesn't match quotes by default)
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "%",
+                Matching {
+                    match_quotes: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_shared_state("one {two 'thˇree' four}").await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq("one ˇ{two 'three' four}");
+
+        cx.set_shared_state("'hello wˇorld'").await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq("'hello wˇorld'");
+
+        cx.set_shared_state(r#"func ("teˇst") {}"#).await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(r#"func ˇ("test") {}"#);
+
+        cx.set_shared_state("ˇ'hello'").await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq("ˇ'hello'");
+
+        cx.set_shared_state("'helloˇ'").await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq("'helloˇ'");
+
+        cx.set_shared_state(indoc! {r"func (a string) {
+                do('somethiˇng'))
+            }"})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"func (a string) {
+                doˇ('something'))
+            }"});
+    }
+
+    #[gpui::test]
+    async fn test_matching_quotes_enabled(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new_markdown_with_rust(cx).await;
+
+        // Test default behavior (match_quotes: true as configured in keymap/vim.json)
+        cx.set_state("one {two 'thˇree' four}", Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state("one {two ˇ'three' four}", Mode::Normal);
+
+        cx.set_state("'hello wˇorld'", Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state("ˇ'hello world'", Mode::Normal);
+
+        cx.set_state(r#"func ('teˇst') {}"#, Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state(r#"func (ˇ'test') {}"#, Mode::Normal);
+
+        cx.set_state("ˇ'hello'", Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state("'helloˇ'", Mode::Normal);
+
+        cx.set_state("'helloˇ'", Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state("ˇ'hello'", Mode::Normal);
+
+        cx.set_state(
+            indoc! {r"func (a string) {
+                do('somethiˇng'))
+            }"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("%");
+        cx.assert_state(
+            indoc! {r"func (a string) {
+                do(ˇ'something'))
+            }"},
+            Mode::Normal,
+        );
     }
 
     #[gpui::test]
@@ -3443,8 +3660,65 @@ mod test {
                 test = "test"
             />
         </a>"#});
+
+        // test nested closing tag
+        cx.set_shared_state(indoc! {r#"<html>
+            <bˇody>
+            </body>
+        </html>"#})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r#"<html>
+            <body>
+            <ˇ/body>
+        </html>"#});
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r#"<html>
+            <ˇbody>
+            </body>
+        </html>"#});
     }
 
+    #[gpui::test]
+    async fn test_matching_tag_with_quotes(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_html(cx).await;
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "%",
+                Matching {
+                    match_quotes: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.neovim.exec("set filetype=html").await;
+        cx.set_shared_state(indoc! {r"<div class='teˇst' id='main'>
+            </div>
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<div class='test' id='main'>
+            <ˇ/div>
+            "});
+
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new("%", Matching { match_quotes: true }, None)]);
+        });
+
+        cx.set_shared_state(indoc! {r"<div class='teˇst' id='main'>
+            </div>
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<div class='test' id='main'>
+            <ˇ/div>
+            "});
+    }
     #[gpui::test]
     async fn test_matching_braces_in_tag(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new_typescript(cx).await;
@@ -3548,6 +3822,60 @@ mod test {
         cx.shared_state().await.assert_eq(" onˇe \n two \nthree");
         cx.simulate_shared_keystrokes("2 g _").await;
         cx.shared_state().await.assert_eq(" one \n twˇo \nthree");
+    }
+
+    #[gpui::test]
+    async fn test_end_of_line_with_vertical_motion(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // test $ followed by k maintains end-of-line position
+        cx.set_shared_state(indoc! {"
+            The quick brown
+            fˇox
+            jumps over the
+            lazy dog
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("$ k").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick browˇn
+            fox
+            jumps over the
+            lazy dog
+            "});
+        cx.simulate_shared_keystrokes("j j").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown
+            fox
+            jumps over thˇe
+            lazy dog
+            "});
+
+        // test horizontal movement resets the end-of-line behavior
+        cx.set_shared_state(indoc! {"
+            The quick brown fox
+            jumps over the
+            lazy ˇdog
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("$ k").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown fox
+            jumps over thˇe
+            lazy dog
+            "});
+        cx.simulate_shared_keystrokes("b b").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown fox
+            jumps ˇover the
+            lazy dog
+            "});
+        cx.simulate_shared_keystrokes("k").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quˇick brown fox
+            jumps over the
+            lazy dog
+            "});
     }
 
     #[gpui::test]
@@ -4457,5 +4785,213 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
         the quick brown foˇd over the lazy dog"});
         assert!(!cx.cx.forced_motion());
+    }
+
+    #[gpui::test]
+    async fn test_next_subword_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Setup custom keybindings for subword motions so we can use the bindings
+        // in `simulate_keystrokes`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "w",
+                super::NextSubwordStart {
+                    ignore_punctuation: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_state("ˇfoo.bar", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo.ˇbar", Mode::Normal);
+
+        cx.set_state("ˇfoo(bar)", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("fooˇ(bar)", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo(ˇbar)", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo(barˇ)", Mode::Normal);
+
+        cx.set_state("ˇfoo_bar_baz", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo_bar_ˇbaz", Mode::Normal);
+
+        cx.set_state("ˇfooBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("fooBarˇBaz", Mode::Normal);
+
+        cx.set_state("ˇfoo;bar", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("foo;ˇbar", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_next_subword_end(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Setup custom keybindings for subword motions so we can use the bindings
+        // in `simulate_keystrokes`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "e",
+                super::NextSubwordEnd {
+                    ignore_punctuation: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_state("ˇfoo.bar", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("foˇo.bar", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("fooˇ.bar", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("foo.baˇr", Mode::Normal);
+
+        cx.set_state("ˇfoo(bar)", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("foˇo(bar)", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("fooˇ(bar)", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("foo(baˇr)", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("foo(barˇ)", Mode::Normal);
+
+        cx.set_state("ˇfoo_bar_baz", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("foˇo_bar_baz", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("foo_baˇr_baz", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("foo_bar_baˇz", Mode::Normal);
+
+        cx.set_state("ˇfooBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.set_state("foˇoBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.set_state("fooBaˇrBaz", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.set_state("fooBarBaˇz", Mode::Normal);
+
+        cx.set_state("ˇfoo;bar", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.set_state("foˇo;bar", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.set_state("fooˇ;bar", Mode::Normal);
+        cx.simulate_keystrokes("e");
+        cx.set_state("foo;baˇr", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_previous_subword_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Setup custom keybindings for subword motions so we can use the bindings
+        // in `simulate_keystrokes`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "b",
+                super::PreviousSubwordStart {
+                    ignore_punctuation: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_state("foo.barˇ", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("foo.ˇbar", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("fooˇ.bar", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("ˇfoo.bar", Mode::Normal);
+
+        cx.set_state("foo(barˇ)", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("foo(ˇbar)", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("fooˇ(bar)", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("ˇfoo(bar)", Mode::Normal);
+
+        cx.set_state("foo_bar_bazˇ", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("foo_bar_ˇbaz", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("ˇfoo_bar_baz", Mode::Normal);
+
+        cx.set_state("fooBarBazˇ", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("fooBarˇBaz", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("ˇfooBarBaz", Mode::Normal);
+
+        cx.set_state("foo;barˇ", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("foo;ˇbar", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("ˇfoo;bar", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_previous_subword_end(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Setup custom keybindings for subword motions so we can use the bindings
+        // in `simulate_keystrokes`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "g e",
+                super::PreviousSubwordEnd {
+                    ignore_punctuation: false,
+                },
+                None,
+            )]);
+        });
+
+        cx.set_state("foo.baˇr", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("fooˇ.bar", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foˇo.bar", Mode::Normal);
+
+        cx.set_state("foo(barˇ)", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foo(baˇr)", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("fooˇ(bar)", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foˇo(bar)", Mode::Normal);
+
+        cx.set_state("foo_bar_baˇz", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foo_baˇr_baz", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foˇo_bar_baz", Mode::Normal);
+
+        cx.set_state("fooBarBaˇz", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("fooBaˇrBaz", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foˇoBarBaz", Mode::Normal);
+
+        cx.set_state("foo;baˇr", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("fooˇ;bar", Mode::Normal);
+        cx.simulate_keystrokes("g e");
+        cx.assert_state("foˇo;bar", Mode::Normal);
     }
 }

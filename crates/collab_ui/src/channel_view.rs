@@ -173,7 +173,7 @@ impl ChannelView {
                     };
                     buffer.set_language(Some(markdown), cx);
                 })
-            })?;
+            });
 
             cx.new_window_entity(|window, cx| {
                 let mut this = Self::new(
@@ -517,7 +517,7 @@ impl Item for ChannelView {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -541,7 +541,7 @@ impl Item for ChannelView {
         })
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 

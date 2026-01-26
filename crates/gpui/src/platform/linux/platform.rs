@@ -14,7 +14,7 @@ use std::{
 };
 
 use anyhow::{Context as _, anyhow};
-use calloop::{LoopSignal, channel::Channel};
+use calloop::LoopSignal;
 use futures::channel::oneshot;
 use util::ResultExt as _;
 use util::command::{new_smol_command, new_std_command};
@@ -25,8 +25,8 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
     Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, Point, Result, RunnableVariant, Task, WindowAppearance,
-    WindowParams, px,
+    PlatformTextSystem, PlatformWindow, Point, PriorityQueueCalloopReceiver, Result,
+    RunnableVariant, Task, WindowAppearance, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -42,6 +42,50 @@ pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 #[cfg(any(feature = "wayland", feature = "x11"))]
 const FILE_PICKER_PORTAL_MISSING: &str =
     "Couldn't open file picker due to missing xdg-desktop-portal implementation.";
+
+#[cfg(any(feature = "x11", feature = "wayland"))]
+pub trait ResultExt {
+    type Ok;
+
+    fn notify_err(self, msg: &'static str) -> Self::Ok;
+}
+
+#[cfg(any(feature = "x11", feature = "wayland"))]
+impl<T> ResultExt for anyhow::Result<T> {
+    type Ok = T;
+
+    fn notify_err(self, msg: &'static str) -> T {
+        match self {
+            Ok(v) => v,
+            Err(e) => {
+                use ashpd::desktop::notification::{Notification, NotificationProxy, Priority};
+                use futures::executor::block_on;
+
+                let proxy = block_on(NotificationProxy::new()).expect(msg);
+
+                let notification_id = "dev.zed.Oops";
+                block_on(
+                    proxy.add_notification(
+                        notification_id,
+                        Notification::new("Zed failed to launch")
+                            .body(Some(
+                                format!(
+                                    "{e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
+                                )
+                                .as_str(),
+                            ))
+                            .priority(Priority::High)
+                            .icon(ashpd::desktop::Icon::with_names(&[
+                                "dialog-question-symbolic",
+                            ])),
+                    )
+                ).expect(msg);
+
+                panic!("{msg}");
+            }
+        }
+    }
+}
 
 pub trait LinuxClient {
     fn compositor_name(&self) -> &'static str;
@@ -105,8 +149,8 @@ pub(crate) struct LinuxCommon {
 }
 
 impl LinuxCommon {
-    pub fn new(signal: LoopSignal) -> (Self, Channel<RunnableVariant>) {
-        let (main_sender, main_receiver) = calloop::channel::channel::<RunnableVariant>();
+    pub fn new(signal: LoopSignal) -> (Self, PriorityQueueCalloopReceiver<RunnableVariant>) {
+        let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::CosmicTextSystem::new());
@@ -605,8 +649,9 @@ pub(super) fn open_uri_internal(
                     .activation_token(activation_token.clone().map(ashpd::ActivationToken::from))
                     .send_uri(&uri)
                     .await
+                    .and_then(|e| e.response())
                 {
-                    Ok(_) => return,
+                    Ok(()) => return,
                     Err(e) => log::error!("Failed to open with dbus: {}", e),
                 }
 

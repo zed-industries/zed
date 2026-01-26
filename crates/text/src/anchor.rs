@@ -8,10 +8,14 @@ use sum_tree::{Bias, Dimensions};
 /// A timestamped position in a buffer
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct Anchor {
+    /// The timestamp of the operation that inserted the text
+    /// in which this anchor is located.
     pub timestamp: clock::Lamport,
-    /// The byte offset in the buffer
+    /// The byte offset into the text inserted in the operation
+    /// at `timestamp`.
     pub offset: usize,
-    /// Describes which character the anchor is biased towards
+    /// Whether this anchor stays attached to the character *before* or *after*
+    /// the offset.
     pub bias: Bias,
     pub buffer_id: Option<BufferId>,
 }

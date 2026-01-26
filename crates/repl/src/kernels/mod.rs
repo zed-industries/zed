@@ -15,10 +15,16 @@ use project::{Project, ProjectPath, Toolchains, WorktreeId};
 pub use remote_kernels::*;
 
 use anyhow::Result;
+use gpui::Context;
 use jupyter_protocol::JupyterKernelspec;
 use runtimelib::{ExecutionState, JupyterMessage, KernelInfoReply};
 use ui::{Icon, IconName, SharedString};
 use util::rel_path::RelPath;
+
+pub trait KernelSession: Sized {
+    fn route(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut Context<Self>);
+    fn kernel_errored(&mut self, error_message: String, cx: &mut Context<Self>);
+}
 
 pub type JupyterMessageChannel = stream::SelectAll<Receiver<JupyterMessage>>;
 
@@ -81,7 +87,7 @@ pub fn python_env_kernel_specifications(
     worktree_id: WorktreeId,
     cx: &mut App,
 ) -> impl Future<Output = Result<Vec<KernelSpecification>>> + use<> {
-    let python_language = LanguageName::new("Python");
+    let python_language = LanguageName::new_static("Python");
     let toolchains = project.read(cx).available_toolchains(
         ProjectPath {
             worktree_id,

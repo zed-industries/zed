@@ -21,10 +21,9 @@ futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 menu.workspace = true
+open_path_prompt.workspace = true
 picker.workspace = true
 project.workspace = true
-schemars.workspace = true
-search.workspace = true
 settings.workspace = true
 serde.workspace = true
 text.workspace = true
@@ -32,6 +31,7 @@ theme.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

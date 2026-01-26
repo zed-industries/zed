@@ -2,41 +2,260 @@ use std::{ops::Range, rc::Rc};
 
 use gpui::{
     AbsoluteLength, AppContext, Context, DefiniteLength, DragMoveEvent, Entity, EntityId,
-    FocusHandle, Length, ListHorizontalSizingBehavior, ListSizingBehavior, Point, Stateful,
-    UniformListScrollHandle, WeakEntity, transparent_black, uniform_list,
+    FocusHandle, Length, ListHorizontalSizingBehavior, ListSizingBehavior, ListState, Point,
+    Stateful, UniformListScrollHandle, WeakEntity, list, transparent_black, uniform_list,
 };
 
 use crate::{
     ActiveTheme as _, AnyElement, App, Button, ButtonCommon as _, ButtonStyle, Color, Component,
     ComponentScope, Div, ElementId, FixedWidth as _, FluentBuilder as _, Indicator,
     InteractiveElement, IntoElement, ParentElement, Pixels, RegisterComponent, RenderOnce,
-    ScrollableHandle, Scrollbars, SharedString, StatefulInteractiveElement, Styled, StyledExt as _,
-    StyledTypography, Window, WithScrollbar, div, example_group_with_title, h_flex, px,
-    single_example, v_flex,
+    ScrollAxes, ScrollableHandle, Scrollbars, SharedString, StatefulInteractiveElement, Styled,
+    StyledExt as _, StyledTypography, Window, WithScrollbar, div, example_group_with_title, h_flex,
+    px, single_example,
+    table_row::{IntoTableRow as _, TableRow},
+    v_flex,
 };
 use itertools::intersperse_with;
 
+pub mod table_row {
+    //! A newtype for a table row that enforces a fixed column count at runtime.
+    //!
+    //! This type ensures that all rows in a table have the same width, preventing accidental creation or mutation of rows with inconsistent lengths.
+    //! It is especially useful for CSV or tabular data where rectangular invariants must be maintained, but the number of columns is only known at runtime.
+    //! By using `TableRow`, we gain stronger guarantees and safer APIs compared to a bare `Vec<T>`, without requiring const generics.
+
+    use std::{
+        any::type_name,
+        ops::{
+            Index, IndexMut, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
+        },
+    };
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct TableRow<T>(Vec<T>);
+
+    impl<T> TableRow<T> {
+        /// Constructs a `TableRow` from a `Vec<T>`, panicking if the length does not match `expected_length`.
+        ///
+        /// Use this when you want to ensure at construction time that the row has the correct number of columns.
+        /// This enforces the rectangular invariant for table data, preventing accidental creation of malformed rows.
+        ///
+        /// # Panics
+        /// Panics if `data.len() != expected_length`.
+        pub fn from_vec(data: Vec<T>, expected_length: usize) -> Self {
+            Self::try_from_vec(data, expected_length).unwrap_or_else(|e| {
+                let name = type_name::<Vec<T>>();
+                panic!("Expected {name} to be created successfully: {e}");
+            })
+        }
+
+        /// Attempts to construct a `TableRow` from a `Vec<T>`, returning an error if the length does not match `expected_len`.
+        ///
+        /// This is a fallible alternative to `from_vec`, allowing you to handle inconsistent row lengths gracefully.
+        /// Returns `Ok(TableRow)` if the length matches, or an `Err` with a descriptive message otherwise.
+        pub fn try_from_vec(data: Vec<T>, expected_len: usize) -> Result<Self, String> {
+            if data.len() != expected_len {
+                Err(format!(
+                    "Row length {} does not match expected {}",
+                    data.len(),
+                    expected_len
+                ))
+            } else {
+                Ok(Self(data))
+            }
+        }
+
+        /// Returns reference to element by column index.
+        ///
+        /// # Panics
+        /// Panics if `col` is out of bounds (i.e., `col >= self.cols()`).
+        pub fn expect_get(&self, col: usize) -> &T {
+            self.0.get(col).unwrap_or_else(|| {
+                panic!(
+                    "Expected table row of `{}` to have {col:?}",
+                    type_name::<T>()
+                )
+            })
+        }
+
+        pub fn get(&self, col: usize) -> Option<&T> {
+            self.0.get(col)
+        }
+
+        pub fn as_slice(&self) -> &[T] {
+            &self.0
+        }
+
+        pub fn into_vec(self) -> Vec<T> {
+            self.0
+        }
+
+        /// Like [`map`], but borrows the row and clones each element before mapping.
+        ///
+        /// This is useful when you want to map over a borrowed row without consuming it,
+        /// but your mapping function requires ownership of each element.
+        ///
+        /// # Difference
+        /// - `map_cloned` takes `&self`, clones each element, and applies `f(T) -> U`.
+        /// - [`map`] takes `self` by value and applies `f(T) -> U` directly, consuming the row.
+        /// - [`map_ref`] takes `&self` and applies `f(&T) -> U` to references of each element.
+        pub fn map_cloned<F, U>(&self, f: F) -> TableRow<U>
+        where
+            F: FnMut(T) -> U,
+            T: Clone,
+        {
+            self.clone().map(f)
+        }
+
+        /// Consumes the row and transforms all elements within it in a length-safe way.
+        ///
+        /// # Difference
+        /// - `map` takes ownership of the row (`self`) and applies `f(T) -> U` to each element.
+        /// - Use this when you want to transform and consume the row in one step.
+        /// - See also [`map_cloned`] (for mapping over a borrowed row with cloning) and [`map_ref`] (for mapping over references).
+        pub fn map<F, U>(self, f: F) -> TableRow<U>
+        where
+            F: FnMut(T) -> U,
+        {
+            TableRow(self.0.into_iter().map(f).collect())
+        }
+
+        /// Borrows the row and transforms all elements by reference in a length-safe way.
+        ///
+        /// # Difference
+        /// - `map_ref` takes `&self` and applies `f(&T) -> U` to each element by reference.
+        /// - Use this when you want to map over a borrowed row without cloning or consuming it.
+        /// - See also [`map`] (for consuming the row) and [`map_cloned`] (for mapping with cloning).
+        pub fn map_ref<F, U>(&self, f: F) -> TableRow<U>
+        where
+            F: FnMut(&T) -> U,
+        {
+            TableRow(self.0.iter().map(f).collect())
+        }
+
+        /// Number of columns (alias to `len()` with more semantic meaning)
+        pub fn cols(&self) -> usize {
+            self.0.len()
+        }
+    }
+
+    ///// Convenience traits /////
+    pub trait IntoTableRow<T> {
+        fn into_table_row(self, expected_length: usize) -> TableRow<T>;
+    }
+    impl<T> IntoTableRow<T> for Vec<T> {
+        fn into_table_row(self, expected_length: usize) -> TableRow<T> {
+            TableRow::from_vec(self, expected_length)
+        }
+    }
+
+    // Index implementations for convenient access
+    impl<T> Index<usize> for TableRow<T> {
+        type Output = T;
+
+        fn index(&self, index: usize) -> &Self::Output {
+            &self.0[index]
+        }
+    }
+
+    impl<T> IndexMut<usize> for TableRow<T> {
+        fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+            &mut self.0[index]
+        }
+    }
+
+    // Range indexing implementations for slice operations
+    impl<T> Index<Range<usize>> for TableRow<T> {
+        type Output = [T];
+
+        fn index(&self, index: Range<usize>) -> &Self::Output {
+            <Vec<T> as Index<Range<usize>>>::index(&self.0, index)
+        }
+    }
+
+    impl<T> Index<RangeFrom<usize>> for TableRow<T> {
+        type Output = [T];
+
+        fn index(&self, index: RangeFrom<usize>) -> &Self::Output {
+            <Vec<T> as Index<RangeFrom<usize>>>::index(&self.0, index)
+        }
+    }
+
+    impl<T> Index<RangeTo<usize>> for TableRow<T> {
+        type Output = [T];
+
+        fn index(&self, index: RangeTo<usize>) -> &Self::Output {
+            <Vec<T> as Index<RangeTo<usize>>>::index(&self.0, index)
+        }
+    }
+
+    impl<T> Index<RangeToInclusive<usize>> for TableRow<T> {
+        type Output = [T];
+
+        fn index(&self, index: RangeToInclusive<usize>) -> &Self::Output {
+            <Vec<T> as Index<RangeToInclusive<usize>>>::index(&self.0, index)
+        }
+    }
+
+    impl<T> Index<RangeFull> for TableRow<T> {
+        type Output = [T];
+
+        fn index(&self, index: RangeFull) -> &Self::Output {
+            <Vec<T> as Index<RangeFull>>::index(&self.0, index)
+        }
+    }
+
+    impl<T> Index<RangeInclusive<usize>> for TableRow<T> {
+        type Output = [T];
+
+        fn index(&self, index: RangeInclusive<usize>) -> &Self::Output {
+            <Vec<T> as Index<RangeInclusive<usize>>>::index(&self.0, index)
+        }
+    }
+
+    impl<T> IndexMut<RangeInclusive<usize>> for TableRow<T> {
+        fn index_mut(&mut self, index: RangeInclusive<usize>) -> &mut Self::Output {
+            <Vec<T> as IndexMut<RangeInclusive<usize>>>::index_mut(&mut self.0, index)
+        }
+    }
+}
+
 const RESIZE_COLUMN_WIDTH: f32 = 8.0;
+
+/// Represents an unchecked table row, which is a vector of elements.
+/// Will be converted into `TableRow<T>` internally
+pub type UncheckedTableRow<T> = Vec<T>;
 
 #[derive(Debug)]
 struct DraggedColumn(usize);
 
-struct UniformListData<const COLS: usize> {
-    render_item_fn: Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<[AnyElement; COLS]>>,
+struct UniformListData {
+    render_list_of_rows_fn:
+        Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<UncheckedTableRow<AnyElement>>>,
     element_id: ElementId,
     row_count: usize,
 }
 
-enum TableContents<const COLS: usize> {
-    Vec(Vec<[AnyElement; COLS]>),
-    UniformList(UniformListData<COLS>),
+struct VariableRowHeightListData {
+    /// Unlike UniformList, this closure renders only single row, allowing each one to have its own height
+    render_row_fn: Box<dyn Fn(usize, &mut Window, &mut App) -> UncheckedTableRow<AnyElement>>,
+    list_state: ListState,
+    row_count: usize,
 }
 
-impl<const COLS: usize> TableContents<COLS> {
-    fn rows_mut(&mut self) -> Option<&mut Vec<[AnyElement; COLS]>> {
+enum TableContents {
+    Vec(Vec<TableRow<AnyElement>>),
+    UniformList(UniformListData),
+    VariableRowHeightList(VariableRowHeightListData),
+}
+
+impl TableContents {
+    fn rows_mut(&mut self) -> Option<&mut Vec<TableRow<AnyElement>>> {
         match self {
             TableContents::Vec(rows) => Some(rows),
             TableContents::UniformList(_) => None,
+            TableContents::VariableRowHeightList(_) => None,
         }
     }
 
@@ -44,6 +263,7 @@ impl<const COLS: usize> TableContents<COLS> {
         match self {
             TableContents::Vec(rows) => rows.len(),
             TableContents::UniformList(data) => data.row_count,
+            TableContents::VariableRowHeightList(data) => data.row_count,
         }
     }
 
@@ -90,24 +310,41 @@ impl TableInteractionState {
         }
     }
 
-    fn render_resize_handles<const COLS: usize>(
+    /// Renders invisible resize handles overlaid on top of table content.
+    ///
+    /// - Spacer: invisible element that matches the width of table column content
+    /// - Divider: contains the actual resize handle that users can drag to resize columns
+    ///
+    /// Structure: [spacer] [divider] [spacer] [divider] [spacer]
+    ///
+    /// Business logic:
+    /// 1. Creates spacers matching each column width
+    /// 2. Intersperses (inserts) resize handles between spacers (interactive only for resizable columns)
+    /// 3. Each handle supports hover highlighting, double-click to reset, and drag to resize
+    /// 4. Returns an absolute-positioned overlay that sits on top of table content
+    fn render_resize_handles(
         &self,
-        column_widths: &[Length; COLS],
-        resizable_columns: &[TableResizeBehavior; COLS],
-        initial_sizes: [DefiniteLength; COLS],
-        columns: Option<Entity<TableColumnWidths<COLS>>>,
+        column_widths: &TableRow<Length>,
+        resizable_columns: &TableRow<TableResizeBehavior>,
+        initial_sizes: &TableRow<DefiniteLength>,
+        columns: Option<Entity<TableColumnWidths>>,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
         let spacers = column_widths
+            .as_slice()
             .iter()
             .map(|width| base_cell_style(Some(*width)).into_any_element());
 
         let mut column_ix = 0;
-        let resizable_columns_slice = *resizable_columns;
-        let mut resizable_columns = resizable_columns.iter();
+        let resizable_columns_shared = Rc::new(resizable_columns.clone());
+        let initial_sizes_shared = Rc::new(initial_sizes.clone());
+        let mut resizable_columns_iter = resizable_columns.as_slice().iter();
 
+        // Insert dividers between spacers (column content)
         let dividers = intersperse_with(spacers, || {
+            let resizable_columns = Rc::clone(&resizable_columns_shared);
+            let initial_sizes = Rc::clone(&initial_sizes_shared);
             window.with_id(column_ix, |window| {
                 let mut resize_divider = div()
                     // This is required because this is evaluated at a different time than the use_state call above
@@ -125,7 +362,7 @@ impl TableInteractionState {
                     .w(px(RESIZE_COLUMN_WIDTH))
                     .h_full();
 
-                if resizable_columns
+                if resizable_columns_iter
                     .next()
                     .is_some_and(TableResizeBehavior::is_resizable)
                 {
@@ -145,7 +382,7 @@ impl TableInteractionState {
                                         columns.on_double_click(
                                             column_ix,
                                             &initial_sizes,
-                                            &resizable_columns_slice,
+                                            &resizable_columns,
                                             window,
                                         );
                                     })
@@ -195,21 +432,25 @@ impl TableResizeBehavior {
     }
 }
 
-pub struct TableColumnWidths<const COLS: usize> {
-    widths: [DefiniteLength; COLS],
-    visible_widths: [DefiniteLength; COLS],
+pub struct TableColumnWidths {
+    widths: TableRow<DefiniteLength>,
+    visible_widths: TableRow<DefiniteLength>,
     cached_bounds_width: Pixels,
     initialized: bool,
 }
 
-impl<const COLS: usize> TableColumnWidths<COLS> {
-    pub fn new(_: &mut App) -> Self {
+impl TableColumnWidths {
+    pub fn new(cols: usize, _: &mut App) -> Self {
         Self {
-            widths: [DefiniteLength::default(); COLS],
-            visible_widths: [DefiniteLength::default(); COLS],
+            widths: vec![DefiniteLength::default(); cols].into_table_row(cols),
+            visible_widths: vec![DefiniteLength::default(); cols].into_table_row(cols),
             cached_bounds_width: Default::default(),
             initialized: false,
         }
+    }
+
+    pub fn cols(&self) -> usize {
+        self.widths.cols()
     }
 
     fn get_fraction(length: &DefiniteLength, bounds_width: Pixels, rem_size: Pixels) -> f32 {
@@ -225,17 +466,17 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
     fn on_double_click(
         &mut self,
         double_click_position: usize,
-        initial_sizes: &[DefiniteLength; COLS],
-        resize_behavior: &[TableResizeBehavior; COLS],
+        initial_sizes: &TableRow<DefiniteLength>,
+        resize_behavior: &TableRow<TableResizeBehavior>,
         window: &mut Window,
     ) {
         let bounds_width = self.cached_bounds_width;
         let rem_size = window.rem_size();
         let initial_sizes =
-            initial_sizes.map(|length| Self::get_fraction(&length, bounds_width, rem_size));
+            initial_sizes.map_ref(|length| Self::get_fraction(length, bounds_width, rem_size));
         let widths = self
             .widths
-            .map(|length| Self::get_fraction(&length, bounds_width, rem_size));
+            .map_ref(|length| Self::get_fraction(length, bounds_width, rem_size));
 
         let updated_widths = Self::reset_to_initial_size(
             double_click_position,
@@ -244,15 +485,15 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
             resize_behavior,
         );
         self.widths = updated_widths.map(DefiniteLength::Fraction);
-        self.visible_widths = self.widths;
+        self.visible_widths = self.widths.clone(); // previously was copy
     }
 
     fn reset_to_initial_size(
         col_idx: usize,
-        mut widths: [f32; COLS],
-        initial_sizes: [f32; COLS],
-        resize_behavior: &[TableResizeBehavior; COLS],
-    ) -> [f32; COLS] {
+        mut widths: TableRow<f32>,
+        initial_sizes: TableRow<f32>,
+        resize_behavior: &TableRow<TableResizeBehavior>,
+    ) -> TableRow<f32> {
         // RESET:
         // Part 1:
         // Figure out if we should shrink/grow the selected column
@@ -337,7 +578,7 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
     fn on_drag_move(
         &mut self,
         drag_event: &DragMoveEvent<DraggedColumn>,
-        resize_behavior: &[TableResizeBehavior; COLS],
+        resize_behavior: &TableRow<TableResizeBehavior>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -357,7 +598,7 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
 
         let mut widths = self
             .widths
-            .map(|length| Self::get_fraction(&length, bounds_width, rem_size));
+            .map_ref(|length| Self::get_fraction(length, bounds_width, rem_size));
 
         for length in widths[0..=col_idx].iter() {
             col_position += length + column_handle_width;
@@ -367,7 +608,8 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
         for length in widths[col_idx + 1..].iter() {
             total_length_ratio += length;
         }
-        total_length_ratio += (COLS - 1 - col_idx) as f32 * column_handle_width;
+        let cols = resize_behavior.cols();
+        total_length_ratio += (cols - 1 - col_idx) as f32 * column_handle_width;
 
         let drag_fraction = (drag_position.x - bounds.left()) / bounds_width;
         let drag_fraction = drag_fraction * total_length_ratio;
@@ -381,8 +623,8 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
     fn drag_column_handle(
         diff: f32,
         col_idx: usize,
-        widths: &mut [f32; COLS],
-        resize_behavior: &[TableResizeBehavior; COLS],
+        widths: &mut TableRow<f32>,
+        resize_behavior: &TableRow<TableResizeBehavior>,
     ) {
         // if diff > 0.0 then go right
         if diff > 0.0 {
@@ -395,8 +637,8 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
     fn propagate_resize_diff(
         diff: f32,
         col_idx: usize,
-        widths: &mut [f32; COLS],
-        resize_behavior: &[TableResizeBehavior; COLS],
+        widths: &mut TableRow<f32>,
+        resize_behavior: &TableRow<TableResizeBehavior>,
         direction: i8,
     ) -> f32 {
         let mut diff_remaining = diff;
@@ -418,7 +660,7 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
         }
         let mut curr_column = col_idx + step_right - step_left;
 
-        while diff_remaining != 0.0 && curr_column < COLS {
+        while diff_remaining != 0.0 && curr_column < widths.cols() {
             let Some(min_size) = resize_behavior[curr_column].min_size() else {
                 if curr_column == 0 {
                     break;
@@ -450,54 +692,63 @@ impl<const COLS: usize> TableColumnWidths<COLS> {
     }
 }
 
-pub struct TableWidths<const COLS: usize> {
-    initial: [DefiniteLength; COLS],
-    current: Option<Entity<TableColumnWidths<COLS>>>,
-    resizable: [TableResizeBehavior; COLS],
+pub struct TableWidths {
+    initial: TableRow<DefiniteLength>,
+    current: Option<Entity<TableColumnWidths>>,
+    resizable: TableRow<TableResizeBehavior>,
 }
 
-impl<const COLS: usize> TableWidths<COLS> {
-    pub fn new(widths: [impl Into<DefiniteLength>; COLS]) -> Self {
+impl TableWidths {
+    pub fn new(widths: TableRow<impl Into<DefiniteLength>>) -> Self {
         let widths = widths.map(Into::into);
 
+        let expected_length = widths.cols();
         TableWidths {
             initial: widths,
             current: None,
-            resizable: [TableResizeBehavior::None; COLS],
+            resizable: vec![TableResizeBehavior::None; expected_length]
+                .into_table_row(expected_length),
         }
     }
 
-    fn lengths(&self, cx: &App) -> [Length; COLS] {
+    fn lengths(&self, cx: &App) -> TableRow<Length> {
         self.current
             .as_ref()
-            .map(|entity| entity.read(cx).visible_widths.map(Length::Definite))
-            .unwrap_or(self.initial.map(Length::Definite))
+            .map(|entity| entity.read(cx).visible_widths.map_cloned(Length::Definite))
+            .unwrap_or_else(|| self.initial.map_cloned(Length::Definite))
     }
 }
 
 /// A table component
 #[derive(RegisterComponent, IntoElement)]
-pub struct Table<const COLS: usize = 3> {
+pub struct Table {
     striped: bool,
+    show_row_borders: bool,
     width: Option<Length>,
-    headers: Option<[AnyElement; COLS]>,
-    rows: TableContents<COLS>,
+    headers: Option<TableRow<AnyElement>>,
+    rows: TableContents,
     interaction_state: Option<WeakEntity<TableInteractionState>>,
-    col_widths: Option<TableWidths<COLS>>,
+    col_widths: Option<TableWidths>,
     map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
+    use_ui_font: bool,
     empty_table_callback: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
+    /// The number of columns in the table. Used to assert column numbers in `TableRow` collections
+    cols: usize,
 }
 
-impl<const COLS: usize> Table<COLS> {
-    /// number of headers provided.
-    pub fn new() -> Self {
+impl Table {
+    /// Creates a new table with the specified number of columns.
+    pub fn new(cols: usize) -> Self {
         Self {
+            cols,
             striped: false,
+            show_row_borders: true,
             width: None,
             headers: None,
             rows: TableContents::Vec(Vec::new()),
             interaction_state: None,
             map_row: None,
+            use_ui_font: true,
             empty_table_callback: None,
             col_widths: None,
         }
@@ -511,20 +762,53 @@ impl<const COLS: usize> Table<COLS> {
         mut self,
         id: impl Into<ElementId>,
         row_count: usize,
-        render_item_fn: impl Fn(Range<usize>, &mut Window, &mut App) -> Vec<[AnyElement; COLS]>
+        render_item_fn: impl Fn(
+            Range<usize>,
+            &mut Window,
+            &mut App,
+        ) -> Vec<UncheckedTableRow<AnyElement>>
         + 'static,
     ) -> Self {
         self.rows = TableContents::UniformList(UniformListData {
             element_id: id.into(),
             row_count,
-            render_item_fn: Box::new(render_item_fn),
+            render_list_of_rows_fn: Box::new(render_item_fn),
         });
         self
     }
 
-    /// Enables row striping.
+    /// Enables rendering of tables with variable row heights, allowing each row to have its own height.
+    ///
+    /// This mode is useful for displaying content such as CSV data or multiline cells, where rows may not have uniform heights.
+    /// It is generally slower than [`Table::uniform_list`] due to the need to measure each row individually, but it provides correct layout for non-uniform or multiline content.
+    ///
+    /// # Parameters
+    /// - `row_count`: The total number of rows in the table.
+    /// - `list_state`: The [`ListState`] used for managing scroll position and virtualization. This must be initialized and managed by the caller, and should be kept in sync with the number of rows.
+    /// - `render_row_fn`: A closure that renders a single row, given the row index, a mutable reference to [`Window`], and a mutable reference to [`App`]. It should return an array of [`AnyElement`]s, one for each column.
+    pub fn variable_row_height_list(
+        mut self,
+        row_count: usize,
+        list_state: ListState,
+        render_row_fn: impl Fn(usize, &mut Window, &mut App) -> UncheckedTableRow<AnyElement> + 'static,
+    ) -> Self {
+        self.rows = TableContents::VariableRowHeightList(VariableRowHeightListData {
+            render_row_fn: Box::new(render_row_fn),
+            list_state,
+            row_count,
+        });
+        self
+    }
+
+    /// Enables row striping (alternating row colors)
     pub fn striped(mut self) -> Self {
         self.striped = true;
+        self
+    }
+
+    /// Hides the border lines between rows
+    pub fn hide_row_borders(mut self) -> Self {
+        self.show_row_borders = false;
         self
     }
 
@@ -548,33 +832,41 @@ impl<const COLS: usize> Table<COLS> {
         self
     }
 
-    pub fn header(mut self, headers: [impl IntoElement; COLS]) -> Self {
-        self.headers = Some(headers.map(IntoElement::into_any_element));
+    pub fn header(mut self, headers: UncheckedTableRow<impl IntoElement>) -> Self {
+        self.headers = Some(
+            headers
+                .into_table_row(self.cols)
+                .map(IntoElement::into_any_element),
+        );
         self
     }
 
-    pub fn row(mut self, items: [impl IntoElement; COLS]) -> Self {
+    pub fn row(mut self, items: UncheckedTableRow<impl IntoElement>) -> Self {
         if let Some(rows) = self.rows.rows_mut() {
-            rows.push(items.map(IntoElement::into_any_element));
+            rows.push(
+                items
+                    .into_table_row(self.cols)
+                    .map(IntoElement::into_any_element),
+            );
         }
         self
     }
 
-    pub fn column_widths(mut self, widths: [impl Into<DefiniteLength>; COLS]) -> Self {
+    pub fn column_widths(mut self, widths: UncheckedTableRow<impl Into<DefiniteLength>>) -> Self {
         if self.col_widths.is_none() {
-            self.col_widths = Some(TableWidths::new(widths));
+            self.col_widths = Some(TableWidths::new(widths.into_table_row(self.cols)));
         }
         self
     }
 
     pub fn resizable_columns(
         mut self,
-        resizable: [TableResizeBehavior; COLS],
-        column_widths: &Entity<TableColumnWidths<COLS>>,
+        resizable: UncheckedTableRow<TableResizeBehavior>,
+        column_widths: &Entity<TableColumnWidths>,
         cx: &mut App,
     ) -> Self {
         if let Some(table_widths) = self.col_widths.as_mut() {
-            table_widths.resizable = resizable;
+            table_widths.resizable = resizable.into_table_row(self.cols);
             let column_widths = table_widths
                 .current
                 .get_or_insert_with(|| column_widths.clone());
@@ -582,11 +874,16 @@ impl<const COLS: usize> Table<COLS> {
             column_widths.update(cx, |widths, _| {
                 if !widths.initialized {
                     widths.initialized = true;
-                    widths.widths = table_widths.initial;
-                    widths.visible_widths = widths.widths;
+                    widths.widths = table_widths.initial.clone();
+                    widths.visible_widths = widths.widths.clone();
                 }
             })
         }
+        self
+    }
+
+    pub fn no_ui_font(mut self) -> Self {
+        self.use_ui_font = false;
         self
     }
 
@@ -618,14 +915,14 @@ fn base_cell_style(width: Option<Length>) -> Div {
         .overflow_hidden()
 }
 
-fn base_cell_style_text(width: Option<Length>, cx: &App) -> Div {
-    base_cell_style(width).text_ui(cx)
+fn base_cell_style_text(width: Option<Length>, use_ui_font: bool, cx: &App) -> Div {
+    base_cell_style(width).when(use_ui_font, |el| el.text_ui(cx))
 }
 
-pub fn render_table_row<const COLS: usize>(
+pub fn render_table_row(
     row_index: usize,
-    items: [impl IntoElement; COLS],
-    table_context: TableRenderContext<COLS>,
+    items: TableRow<impl IntoElement>,
+    table_context: TableRenderContext,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -636,16 +933,23 @@ pub fn render_table_row<const COLS: usize>(
     } else {
         None
     };
+    let cols = items.cols();
     let column_widths = table_context
         .column_widths
-        .map_or([None; COLS], |widths| widths.map(Some));
+        .map_or(vec![None; cols].into_table_row(cols), |widths| {
+            widths.map(Some)
+        });
 
-    let mut row = h_flex()
+    let mut row = div()
+        // NOTE: `h_flex()` sneakily applies `items_center()` which is not default behavior for div element.
+        // Applying `.flex().flex_row()` manually to overcome that
+        .flex()
+        .flex_row()
         .id(("table_row", row_index))
         .size_full()
         .when_some(bg, |row, bg| row.bg(bg))
         .hover(|s| s.bg(cx.theme().colors().element_hover.opacity(0.6)))
-        .when(!is_striped, |row| {
+        .when(!is_striped && table_context.show_row_borders, |row| {
             row.border_b_1()
                 .border_color(transparent_black())
                 .when(!is_last, |row| row.border_color(cx.theme().colors().border))
@@ -654,9 +958,15 @@ pub fn render_table_row<const COLS: usize>(
     row = row.children(
         items
             .map(IntoElement::into_any_element)
+            .into_vec()
             .into_iter()
-            .zip(column_widths)
-            .map(|(cell, width)| base_cell_style_text(width, cx).px_1().py_0p5().child(cell)),
+            .zip(column_widths.into_vec())
+            .map(|(cell, width)| {
+                base_cell_style_text(width, table_context.use_ui_font, cx)
+                    .px_1()
+                    .py_0p5()
+                    .child(cell)
+            }),
     );
 
     let row = if let Some(map_row) = table_context.map_row {
@@ -668,20 +978,23 @@ pub fn render_table_row<const COLS: usize>(
     div().size_full().child(row).into_any_element()
 }
 
-pub fn render_table_header<const COLS: usize>(
-    headers: [impl IntoElement; COLS],
-    table_context: TableRenderContext<COLS>,
+pub fn render_table_header(
+    headers: TableRow<impl IntoElement>,
+    table_context: TableRenderContext,
     columns_widths: Option<(
-        WeakEntity<TableColumnWidths<COLS>>,
-        [TableResizeBehavior; COLS],
-        [DefiniteLength; COLS],
+        WeakEntity<TableColumnWidths>,
+        TableRow<TableResizeBehavior>,
+        TableRow<DefiniteLength>,
     )>,
     entity_id: Option<EntityId>,
     cx: &mut App,
 ) -> impl IntoElement {
+    let cols = headers.cols();
     let column_widths = table_context
         .column_widths
-        .map_or([None; COLS], |widths| widths.map(Some));
+        .map_or(vec![None; cols].into_table_row(cols), |widths| {
+            widths.map(Some)
+        });
 
     let element_id = entity_id
         .map(|entity| entity.to_string())
@@ -698,74 +1011,89 @@ pub fn render_table_header<const COLS: usize>(
         .p_2()
         .border_b_1()
         .border_color(cx.theme().colors().border)
-        .children(headers.into_iter().enumerate().zip(column_widths).map(
-            |((header_idx, h), width)| {
-                base_cell_style_text(width, cx)
-                    .child(h)
-                    .id(ElementId::NamedInteger(
-                        shared_element_id.clone(),
-                        header_idx as u64,
-                    ))
-                    .when_some(
-                        columns_widths.as_ref().cloned(),
-                        |this, (column_widths, resizables, initial_sizes)| {
-                            if resizables[header_idx].is_resizable() {
-                                this.on_click(move |event, window, cx| {
-                                    if event.click_count() > 1 {
-                                        column_widths
-                                            .update(cx, |column, _| {
-                                                column.on_double_click(
-                                                    header_idx,
-                                                    &initial_sizes,
-                                                    &resizables,
-                                                    window,
-                                                );
-                                            })
-                                            .ok();
-                                    }
-                                })
-                            } else {
-                                this
-                            }
-                        },
-                    )
-            },
-        ))
+        .children(
+            headers
+                .into_vec()
+                .into_iter()
+                .enumerate()
+                .zip(column_widths.into_vec())
+                .map(|((header_idx, h), width)| {
+                    base_cell_style_text(width, table_context.use_ui_font, cx)
+                        .child(h)
+                        .id(ElementId::NamedInteger(
+                            shared_element_id.clone(),
+                            header_idx as u64,
+                        ))
+                        .when_some(
+                            columns_widths.as_ref().cloned(),
+                            |this, (column_widths, resizables, initial_sizes)| {
+                                if resizables[header_idx].is_resizable() {
+                                    this.on_click(move |event, window, cx| {
+                                        if event.click_count() > 1 {
+                                            column_widths
+                                                .update(cx, |column, _| {
+                                                    column.on_double_click(
+                                                        header_idx,
+                                                        &initial_sizes,
+                                                        &resizables,
+                                                        window,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    })
+                                } else {
+                                    this
+                                }
+                            },
+                        )
+                }),
+        )
 }
 
 #[derive(Clone)]
-pub struct TableRenderContext<const COLS: usize> {
+pub struct TableRenderContext {
     pub striped: bool,
+    pub show_row_borders: bool,
     pub total_row_count: usize,
-    pub column_widths: Option<[Length; COLS]>,
+    pub column_widths: Option<TableRow<Length>>,
     pub map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
+    pub use_ui_font: bool,
 }
 
-impl<const COLS: usize> TableRenderContext<COLS> {
-    fn new(table: &Table<COLS>, cx: &App) -> Self {
+impl TableRenderContext {
+    fn new(table: &Table, cx: &App) -> Self {
         Self {
             striped: table.striped,
+            show_row_borders: table.show_row_borders,
             total_row_count: table.rows.len(),
             column_widths: table.col_widths.as_ref().map(|widths| widths.lengths(cx)),
             map_row: table.map_row.clone(),
+            use_ui_font: table.use_ui_font,
         }
     }
 }
 
-impl<const COLS: usize> RenderOnce for Table<COLS> {
+impl RenderOnce for Table {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let table_context = TableRenderContext::new(&self, cx);
         let interaction_state = self.interaction_state.and_then(|state| state.upgrade());
         let current_widths = self
             .col_widths
             .as_ref()
-            .and_then(|widths| Some((widths.current.as_ref()?, widths.resizable)))
+            .and_then(|widths| Some((widths.current.as_ref()?, widths.resizable.clone())))
             .map(|(curr, resize_behavior)| (curr.downgrade(), resize_behavior));
 
         let current_widths_with_initial_sizes = self
             .col_widths
             .as_ref()
-            .and_then(|widths| Some((widths.current.as_ref()?, widths.resizable, widths.initial)))
+            .and_then(|widths| {
+                Some((
+                    widths.current.as_ref()?,
+                    widths.resizable.clone(),
+                    widths.initial.clone(),
+                ))
+            })
             .map(|(curr, resize_behavior, initial)| (curr.downgrade(), resize_behavior, initial));
 
         let width = self.width;
@@ -811,7 +1139,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                     .on_drop::<DraggedColumn>(move |_, _, cx| {
                         widths
                             .update(cx, |widths, _| {
-                                widths.widths = widths.visible_widths;
+                                widths.widths = widths.visible_widths.clone();
                             })
                             .ok();
                         // Finish the resize operation
@@ -841,9 +1169,12 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                 uniform_list_data.element_id,
                                 uniform_list_data.row_count,
                                 {
-                                    let render_item_fn = uniform_list_data.render_item_fn;
+                                    let render_item_fn = uniform_list_data.render_list_of_rows_fn;
                                     move |range: Range<usize>, window, cx| {
-                                        let elements = render_item_fn(range.clone(), window, cx);
+                                        let elements = render_item_fn(range.clone(), window, cx)
+                                            .into_iter()
+                                            .map(|raw_row| raw_row.into_table_row(self.cols))
+                                            .collect::<Vec<_>>();
                                         elements
                                             .into_iter()
                                             .zip(range)
@@ -877,18 +1208,37 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                 },
                             ),
                         ),
+                        TableContents::VariableRowHeightList(variable_list_data) => parent.child(
+                            list(variable_list_data.list_state.clone(), {
+                                let render_item_fn = variable_list_data.render_row_fn;
+                                move |row_index: usize, window: &mut Window, cx: &mut App| {
+                                    let row = render_item_fn(row_index, window, cx)
+                                        .into_table_row(self.cols);
+                                    render_table_row(
+                                        row_index,
+                                        row,
+                                        table_context.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .size_full()
+                            .flex_grow()
+                            .with_sizing_behavior(ListSizingBehavior::Auto),
+                        ),
                     })
                     .when_some(
                         self.col_widths.as_ref().zip(interaction_state.as_ref()),
                         |parent, (table_widths, state)| {
                             parent.child(state.update(cx, |state, cx| {
-                                let resizable_columns = table_widths.resizable;
+                                let resizable_columns = &table_widths.resizable;
                                 let column_widths = table_widths.lengths(cx);
                                 let columns = table_widths.current.clone();
-                                let initial_sizes = table_widths.initial;
+                                let initial_sizes = &table_widths.initial;
                                 state.render_resize_handles(
                                     &column_widths,
-                                    &resizable_columns,
+                                    resizable_columns,
                                     initial_sizes,
                                     columns,
                                     window,
@@ -903,7 +1253,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                         .read(cx)
                         .custom_scrollbar
                         .clone()
-                        .unwrap_or_else(|| Scrollbars::new(super::ScrollAxes::Both));
+                        .unwrap_or_else(|| Scrollbars::new(ScrollAxes::Both));
                     content
                         .custom_scrollbars(
                             scrollbars.tracked_scroll_handle(&state.read(cx).scroll_handle),
@@ -942,7 +1292,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
     }
 }
 
-impl Component for Table<3> {
+impl Component for Table {
     fn scope() -> ComponentScope {
         ComponentScope::Layout
     }
@@ -961,22 +1311,22 @@ impl Component for Table<3> {
                         vec![
                             single_example(
                                 "Simple Table",
-                                Table::new()
+                                Table::new(3)
                                     .width(px(400.))
-                                    .header(["Name", "Age", "City"])
-                                    .row(["Alice", "28", "New York"])
-                                    .row(["Bob", "32", "San Francisco"])
-                                    .row(["Charlie", "25", "London"])
+                                    .header(vec!["Name", "Age", "City"])
+                                    .row(vec!["Alice", "28", "New York"])
+                                    .row(vec!["Bob", "32", "San Francisco"])
+                                    .row(vec!["Charlie", "25", "London"])
                                     .into_any_element(),
                             ),
                             single_example(
                                 "Two Column Table",
-                                Table::new()
-                                    .header(["Category", "Value"])
+                                Table::new(2)
+                                    .header(vec!["Category", "Value"])
                                     .width(px(300.))
-                                    .row(["Revenue", "$100,000"])
-                                    .row(["Expenses", "$75,000"])
-                                    .row(["Profit", "$25,000"])
+                                    .row(vec!["Revenue", "$100,000"])
+                                    .row(vec!["Expenses", "$75,000"])
+                                    .row(vec!["Profit", "$25,000"])
                                     .into_any_element(),
                             ),
                         ],
@@ -986,24 +1336,24 @@ impl Component for Table<3> {
                         vec![
                             single_example(
                                 "Default",
-                                Table::new()
+                                Table::new(3)
                                     .width(px(400.))
-                                    .header(["Product", "Price", "Stock"])
-                                    .row(["Laptop", "$999", "In Stock"])
-                                    .row(["Phone", "$599", "Low Stock"])
-                                    .row(["Tablet", "$399", "Out of Stock"])
+                                    .header(vec!["Product", "Price", "Stock"])
+                                    .row(vec!["Laptop", "$999", "In Stock"])
+                                    .row(vec!["Phone", "$599", "Low Stock"])
+                                    .row(vec!["Tablet", "$399", "Out of Stock"])
                                     .into_any_element(),
                             ),
                             single_example(
                                 "Striped",
-                                Table::new()
+                                Table::new(3)
                                     .width(px(400.))
                                     .striped()
-                                    .header(["Product", "Price", "Stock"])
-                                    .row(["Laptop", "$999", "In Stock"])
-                                    .row(["Phone", "$599", "Low Stock"])
-                                    .row(["Tablet", "$399", "Out of Stock"])
-                                    .row(["Headphones", "$199", "In Stock"])
+                                    .header(vec!["Product", "Price", "Stock"])
+                                    .row(vec!["Laptop", "$999", "In Stock"])
+                                    .row(vec!["Phone", "$599", "Low Stock"])
+                                    .row(vec!["Tablet", "$399", "Out of Stock"])
+                                    .row(vec!["Headphones", "$199", "In Stock"])
                                     .into_any_element(),
                             ),
                         ],
@@ -1012,10 +1362,10 @@ impl Component for Table<3> {
                         "Mixed Content Table",
                         vec![single_example(
                             "Table with Elements",
-                            Table::new()
+                            Table::new(5)
                                 .width(px(840.))
-                                .header(["Status", "Name", "Priority", "Deadline", "Action"])
-                                .row([
+                                .header(vec!["Status", "Name", "Priority", "Deadline", "Action"])
+                                .row(vec![
                                     Indicator::dot().color(Color::Success).into_any_element(),
                                     "Project A".into_any_element(),
                                     "High".into_any_element(),
@@ -1025,7 +1375,7 @@ impl Component for Table<3> {
                                         .full_width()
                                         .into_any_element(),
                                 ])
-                                .row([
+                                .row(vec![
                                     Indicator::dot().color(Color::Warning).into_any_element(),
                                     "Project B".into_any_element(),
                                     "Medium".into_any_element(),
@@ -1035,7 +1385,7 @@ impl Component for Table<3> {
                                         .full_width()
                                         .into_any_element(),
                                 ])
-                                .row([
+                                .row(vec![
                                     Indicator::dot().color(Color::Error).into_any_element(),
                                     "Project C".into_any_element(),
                                     "Low".into_any_element(),
@@ -1062,31 +1412,35 @@ mod test {
         a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
     }
 
-    fn cols_to_str<const COLS: usize>(cols: &[f32; COLS], total_size: f32) -> String {
-        cols.map(|f| "*".repeat(f32::round(f * total_size) as usize))
+    fn cols_to_str(cols: &[f32], total_size: f32) -> String {
+        cols.iter()
+            .map(|f| "*".repeat(f32::round(f * total_size) as usize))
+            .collect::<Vec<String>>()
             .join("|")
     }
 
-    fn parse_resize_behavior<const COLS: usize>(
+    fn parse_resize_behavior(
         input: &str,
         total_size: f32,
-    ) -> [TableResizeBehavior; COLS] {
-        let mut resize_behavior = [TableResizeBehavior::None; COLS];
-        let mut max_index = 0;
-        for (index, col) in input.split('|').enumerate() {
+        expected_cols: usize,
+    ) -> Vec<TableResizeBehavior> {
+        let mut resize_behavior = Vec::with_capacity(expected_cols);
+        for col in input.split('|') {
             if col.starts_with('X') || col.is_empty() {
-                resize_behavior[index] = TableResizeBehavior::None;
+                resize_behavior.push(TableResizeBehavior::None);
             } else if col.starts_with('*') {
-                resize_behavior[index] =
-                    TableResizeBehavior::MinSize(col.len() as f32 / total_size);
+                resize_behavior.push(TableResizeBehavior::MinSize(col.len() as f32 / total_size));
             } else {
                 panic!("invalid test input: unrecognized resize behavior: {}", col);
             }
-            max_index = index;
         }
 
-        if max_index + 1 != COLS {
-            panic!("invalid test input: too many columns");
+        if resize_behavior.len() != expected_cols {
+            panic!(
+                "invalid test input: expected {} columns, got {}",
+                expected_cols,
+                resize_behavior.len()
+            );
         }
         resize_behavior
     }
@@ -1094,17 +1448,17 @@ mod test {
     mod reset_column_size {
         use super::*;
 
-        fn parse<const COLS: usize>(input: &str) -> ([f32; COLS], f32, Option<usize>) {
-            let mut widths = [f32::NAN; COLS];
+        fn parse(input: &str) -> (Vec<f32>, f32, Option<usize>) {
+            let mut widths = Vec::new();
             let mut column_index = None;
             for (index, col) in input.split('|').enumerate() {
-                widths[index] = col.len() as f32;
+                widths.push(col.len() as f32);
                 if col.starts_with('X') {
                     column_index = Some(index);
                 }
             }
 
-            for w in widths {
+            for w in &widths {
                 assert!(w.is_finite(), "incorrect number of columns");
             }
             let total = widths.iter().sum::<f32>();
@@ -1115,54 +1469,57 @@ mod test {
         }
 
         #[track_caller]
-        fn check_reset_size<const COLS: usize>(
+        fn check_reset_size(
             initial_sizes: &str,
             widths: &str,
             expected: &str,
             resize_behavior: &str,
         ) {
-            let (initial_sizes, total_1, None) = parse::<COLS>(initial_sizes) else {
+            let (initial_sizes, total_1, None) = parse(initial_sizes) else {
                 panic!("invalid test input: initial sizes should not be marked");
             };
-            let (widths, total_2, Some(column_index)) = parse::<COLS>(widths) else {
+            let (widths, total_2, Some(column_index)) = parse(widths) else {
                 panic!("invalid test input: widths should be marked");
             };
             assert_eq!(
                 total_1, total_2,
                 "invalid test input: total width not the same {total_1}, {total_2}"
             );
-            let (expected, total_3, None) = parse::<COLS>(expected) else {
+            let (expected, total_3, None) = parse(expected) else {
                 panic!("invalid test input: expected should not be marked: {expected:?}");
             };
             assert_eq!(
                 total_2, total_3,
                 "invalid test input: total width not the same"
             );
-            let resize_behavior = parse_resize_behavior::<COLS>(resize_behavior, total_1);
+            let cols = initial_sizes.len();
+            let resize_behavior_vec = parse_resize_behavior(resize_behavior, total_1, cols);
+            let resize_behavior = TableRow::from_vec(resize_behavior_vec, cols);
             let result = TableColumnWidths::reset_to_initial_size(
                 column_index,
-                widths,
-                initial_sizes,
+                TableRow::from_vec(widths, cols),
+                TableRow::from_vec(initial_sizes, cols),
                 &resize_behavior,
             );
-            let is_eq = is_almost_eq(&result, &expected);
+            let result_slice = result.as_slice();
+            let is_eq = is_almost_eq(result_slice, &expected);
             if !is_eq {
-                let result_str = cols_to_str(&result, total_1);
+                let result_str = cols_to_str(result_slice, total_1);
                 let expected_str = cols_to_str(&expected, total_1);
                 panic!(
-                    "resize failed\ncomputed: {result_str}\nexpected: {expected_str}\n\ncomputed values: {result:?}\nexpected values: {expected:?}\n:minimum widths: {resize_behavior:?}"
+                    "resize failed\ncomputed: {result_str}\nexpected: {expected_str}\n\ncomputed values: {result_slice:?}\nexpected values: {expected:?}\n:minimum widths: {resize_behavior:?}"
                 );
             }
         }
 
         macro_rules! check_reset_size {
             (columns: $cols:expr, starting: $initial:expr, snapshot: $current:expr, expected: $expected:expr, resizing: $resizing:expr $(,)?) => {
-                check_reset_size::<$cols>($initial, $current, $expected, $resizing);
+                check_reset_size($initial, $current, $expected, $resizing);
             };
             ($name:ident, columns: $cols:expr, starting: $initial:expr, snapshot: $current:expr, expected: $expected:expr, minimums: $resizing:expr $(,)?) => {
                 #[test]
                 fn $name() {
-                    check_reset_size::<$cols>($initial, $current, $expected, $resizing);
+                    check_reset_size($initial, $current, $expected, $resizing);
                 }
             };
         }
@@ -1279,14 +1636,14 @@ mod test {
     mod drag_handle {
         use super::*;
 
-        fn parse<const COLS: usize>(input: &str) -> ([f32; COLS], f32, Option<usize>) {
-            let mut widths = [f32::NAN; COLS];
+        fn parse(input: &str) -> (Vec<f32>, f32, Option<usize>) {
+            let mut widths = Vec::new();
             let column_index = input.replace("*", "").find("I");
-            for (index, col) in input.replace("I", "|").split('|').enumerate() {
-                widths[index] = col.len() as f32;
+            for col in input.replace("I", "|").split('|') {
+                widths.push(col.len() as f32);
             }
 
-            for w in widths {
+            for w in &widths {
                 assert!(w.is_finite(), "incorrect number of columns");
             }
             let total = widths.iter().sum::<f32>();
@@ -1297,51 +1654,50 @@ mod test {
         }
 
         #[track_caller]
-        fn check<const COLS: usize>(
-            distance: i32,
-            widths: &str,
-            expected: &str,
-            resize_behavior: &str,
-        ) {
-            let (mut widths, total_1, Some(column_index)) = parse::<COLS>(widths) else {
+        fn check(distance: i32, widths: &str, expected: &str, resize_behavior: &str) {
+            let (widths, total_1, Some(column_index)) = parse(widths) else {
                 panic!("invalid test input: widths should be marked");
             };
-            let (expected, total_2, None) = parse::<COLS>(expected) else {
+            let (expected, total_2, None) = parse(expected) else {
                 panic!("invalid test input: expected should not be marked: {expected:?}");
             };
             assert_eq!(
                 total_1, total_2,
                 "invalid test input: total width not the same"
             );
-            let resize_behavior = parse_resize_behavior::<COLS>(resize_behavior, total_1);
+            let cols = widths.len();
+            let resize_behavior_vec = parse_resize_behavior(resize_behavior, total_1, cols);
+            let resize_behavior = TableRow::from_vec(resize_behavior_vec, cols);
 
             let distance = distance as f32 / total_1;
 
-            let result = TableColumnWidths::drag_column_handle(
+            let mut widths_table_row = TableRow::from_vec(widths, cols);
+            TableColumnWidths::drag_column_handle(
                 distance,
                 column_index,
-                &mut widths,
+                &mut widths_table_row,
                 &resize_behavior,
             );
 
-            let is_eq = is_almost_eq(&widths, &expected);
+            let result_widths = widths_table_row.as_slice();
+            let is_eq = is_almost_eq(result_widths, &expected);
             if !is_eq {
-                let result_str = cols_to_str(&widths, total_1);
+                let result_str = cols_to_str(result_widths, total_1);
                 let expected_str = cols_to_str(&expected, total_1);
                 panic!(
-                    "resize failed\ncomputed: {result_str}\nexpected: {expected_str}\n\ncomputed values: {result:?}\nexpected values: {expected:?}\n:minimum widths: {resize_behavior:?}"
+                    "resize failed\ncomputed: {result_str}\nexpected: {expected_str}\n\ncomputed values: {result_widths:?}\nexpected values: {expected:?}\n:minimum widths: {resize_behavior:?}"
                 );
             }
         }
 
         macro_rules! check {
             (columns: $cols:expr, distance: $dist:expr, snapshot: $current:expr, expected: $expected:expr, resizing: $resizing:expr $(,)?) => {
-                check!($cols, $dist, $snapshot, $expected, $resizing);
+                check($dist, $current, $expected, $resizing);
             };
             ($name:ident, columns: $cols:expr, distance: $dist:expr, snapshot: $current:expr, expected: $expected:expr, minimums: $resizing:expr $(,)?) => {
                 #[test]
                 fn $name() {
-                    check::<$cols>($dist, $current, $expected, $resizing);
+                    check($dist, $current, $expected, $resizing);
                 }
             };
         }

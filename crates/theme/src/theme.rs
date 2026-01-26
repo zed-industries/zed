@@ -22,6 +22,8 @@ mod styles;
 use std::path::Path;
 use std::sync::Arc;
 
+use ::settings::DEFAULT_DARK_THEME;
+use ::settings::IntoGpui;
 use ::settings::Settings;
 use ::settings::SettingsStore;
 use anyhow::Result;
@@ -80,6 +82,15 @@ impl From<WindowAppearance> for Appearance {
         match value {
             WindowAppearance::Dark | WindowAppearance::VibrantDark => Self::Dark,
             WindowAppearance::Light | WindowAppearance::VibrantLight => Self::Light,
+        }
+    }
+}
+
+impl From<Appearance> for ThemeAppearanceMode {
+    fn from(value: Appearance) -> Self {
+        match value {
+            Appearance::Light => Self::Light,
+            Appearance::Dark => Self::Dark,
         }
     }
 }
@@ -263,8 +274,8 @@ impl ThemeFamily {
                             .background_color
                             .as_ref()
                             .and_then(|color| try_parse_color(color).ok()),
-                        font_style: highlight.font_style.map(Into::into),
-                        font_weight: highlight.font_weight.map(Into::into),
+                        font_style: highlight.font_style.map(|s| s.into_gpui()),
+                        font_weight: highlight.font_weight.map(|w| w.into_gpui()),
                         ..Default::default()
                     },
                 )
@@ -275,7 +286,7 @@ impl ThemeFamily {
         let window_background_appearance = theme
             .style
             .window_background_appearance
-            .map(Into::into)
+            .map(|w| w.into_gpui())
             .unwrap_or_default();
 
         Theme {

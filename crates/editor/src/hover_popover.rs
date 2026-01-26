@@ -24,7 +24,7 @@ use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
 use theme::ThemeSettings;
-use ui::{Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
+use ui::{CopyButton, Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
@@ -106,12 +106,12 @@ pub fn find_hovered_hint_part(
     hovered_offset: InlayOffset,
 ) -> Option<(InlayHintLabelPart, Range<InlayOffset>)> {
     if hovered_offset >= hint_start {
-        let mut hovered_character = hovered_offset - hint_start;
+        let mut offset_in_hint = hovered_offset - hint_start;
         let mut part_start = hint_start;
         for part in label_parts {
-            let part_len = part.value.chars().count();
-            if hovered_character > part_len {
-                hovered_character -= part_len;
+            let part_len = part.value.len();
+            if offset_in_hint >= part_len {
+                offset_in_hint -= part_len;
                 part_start.0 += part_len;
             } else {
                 let part_end = InlayOffset(part_start.0 + part_len);
@@ -151,7 +151,7 @@ pub fn hover_at_inlay(
                 false
             })
         {
-            hide_hover(editor, cx);
+            return;
         }
 
         let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
@@ -165,7 +165,7 @@ pub fn hover_at_inlay(
                     this.hover_state.diagnostic_popover = None;
                 })?;
 
-                let language_registry = project.read_with(cx, |p, _| p.languages().clone())?;
+                let language_registry = project.read_with(cx, |p, _| p.languages().clone());
                 let blocks = vec![inlay_hover.tooltip];
                 let parsed_content =
                     parse_blocks(&blocks, Some(&language_registry), None, cx).await;
@@ -518,7 +518,7 @@ fn show_hover(
                     // Highlight the selected symbol using a background highlight
                     editor.highlight_background::<HoverState>(
                         &hover_highlights,
-                        |theme| theme.colors().element_hover, // todo update theme
+                        |_, theme| theme.colors().element_hover, // todo update theme
                         cx,
                     );
                 }
@@ -607,23 +607,30 @@ async fn parse_blocks(
 pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let settings = ThemeSettings::get_global(cx);
     let ui_font_family = settings.ui_font.family.clone();
+    let ui_font_features = settings.ui_font.features.clone();
     let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
     let buffer_font_family = settings.buffer_font.family.clone();
+    let buffer_font_features = settings.buffer_font.features.clone();
     let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
         font_family: Some(ui_font_family),
+        font_features: Some(ui_font_features),
         font_fallbacks: ui_font_fallbacks,
         color: Some(cx.theme().colors().editor_foreground),
         ..Default::default()
     });
     MarkdownStyle {
         base_text_style,
-        code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
+        code_block: StyleRefinement::default()
+            .my(rems(1.))
+            .font_buffer(cx)
+            .font_features(buffer_font_features.clone()),
         inline_code: TextStyleRefinement {
             background_color: Some(cx.theme().colors().background),
             font_family: Some(buffer_font_family),
+            font_features: Some(buffer_font_features),
             font_fallbacks: buffer_font_fallbacks,
             ..Default::default()
         },
@@ -649,6 +656,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             .text_base()
             .mt(rems(1.))
             .mb_0(),
+        table_columns_min_size: true,
         ..Default::default()
     }
 }
@@ -657,12 +665,15 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let settings = ThemeSettings::get_global(cx);
     let ui_font_family = settings.ui_font.family.clone();
     let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
+    let ui_font_features = settings.ui_font.features.clone();
     let buffer_font_family = settings.buffer_font.family.clone();
+    let buffer_font_features = settings.buffer_font.features.clone();
     let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
         font_family: Some(ui_font_family),
+        font_features: Some(ui_font_features),
         font_fallbacks: ui_font_fallbacks,
         color: Some(cx.theme().colors().editor_foreground),
         ..Default::default()
@@ -673,6 +684,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         inline_code: TextStyleRefinement {
             background_color: Some(cx.theme().colors().editor_background.opacity(0.5)),
             font_family: Some(buffer_font_family),
+            font_features: Some(buffer_font_features),
             font_fallbacks: buffer_font_fallbacks,
             ..Default::default()
         },
@@ -698,6 +710,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             .font_weight(FontWeight::BOLD)
             .text_base()
             .mb_0(),
+        table_columns_min_size: true,
         ..Default::default()
     }
 }
@@ -974,8 +987,10 @@ impl DiagnosticPopover {
             })
             .child(
                 div()
+                    .relative()
                     .py_1()
-                    .px_2()
+                    .pl_2()
+                    .pr_8()
                     .bg(self.background_color)
                     .border_1()
                     .border_color(self.border_color)
@@ -983,9 +998,9 @@ impl DiagnosticPopover {
                     .child(
                         div()
                             .id("diagnostic-content-container")
-                            .overflow_y_scroll()
                             .max_w(max_size.width)
                             .max_h(max_size.height)
+                            .overflow_y_scroll()
                             .track_scroll(&self.scroll_handle)
                             .child(
                                 MarkdownElement::new(
@@ -1010,6 +1025,10 @@ impl DiagnosticPopover {
                                 ),
                             ),
                     )
+                    .child(div().absolute().top_1().right_1().child({
+                        let message = self.local_diagnostic.diagnostic.message.clone();
+                        CopyButton::new("copy-diagnostic", message).tooltip_label("Copy Diagnostic")
+                    }))
                     .custom_scrollbars(
                         Scrollbars::for_settings::<EditorSettings>()
                             .tracked_scroll_handle(&self.scroll_handle),
@@ -1887,5 +1906,99 @@ mod tests {
                 "Rendered markdown element should remove backticks from text"
             );
         });
+    }
+
+    #[test]
+    fn test_find_hovered_hint_part_with_multibyte_characters() {
+        use crate::display_map::InlayOffset;
+        use multi_buffer::MultiBufferOffset;
+        use project::InlayHintLabelPart;
+
+        // Test with multi-byte UTF-8 character "→" (3 bytes, 1 character)
+        let label = "→ app/Livewire/UserProfile.php";
+        let label_parts = vec![InlayHintLabelPart {
+            value: label.to_string(),
+            tooltip: None,
+            location: None,
+        }];
+
+        let hint_start = InlayOffset(MultiBufferOffset(100));
+
+        // Verify the label has more bytes than characters (due to "→")
+        assert_eq!(label.len(), 32); // bytes
+        assert_eq!(label.chars().count(), 30); // characters
+
+        // Test hovering at the last byte (should find the part)
+        let last_byte_offset = InlayOffset(MultiBufferOffset(100 + label.len() - 1));
+        let result = find_hovered_hint_part(label_parts.clone(), hint_start, last_byte_offset);
+        assert!(
+            result.is_some(),
+            "Should find part when hovering at last byte"
+        );
+        let (part, range) = result.unwrap();
+        assert_eq!(part.value, label);
+        assert_eq!(range.start, hint_start);
+        assert_eq!(range.end, InlayOffset(MultiBufferOffset(100 + label.len())));
+
+        // Test hovering at the first byte of "→" (byte 0)
+        let first_byte_offset = InlayOffset(MultiBufferOffset(100));
+        let result = find_hovered_hint_part(label_parts.clone(), hint_start, first_byte_offset);
+        assert!(
+            result.is_some(),
+            "Should find part when hovering at first byte"
+        );
+
+        // Test hovering in the middle of "→" (byte 1, still part of the arrow character)
+        let mid_arrow_offset = InlayOffset(MultiBufferOffset(101));
+        let result = find_hovered_hint_part(label_parts, hint_start, mid_arrow_offset);
+        assert!(
+            result.is_some(),
+            "Should find part when hovering in middle of multi-byte char"
+        );
+
+        // Test with multiple parts containing multi-byte characters
+        // Part ranges are [start, end) - start inclusive, end exclusive
+        // "→ " occupies bytes [0, 4), "path" occupies bytes [4, 8)
+        let parts = vec![
+            InlayHintLabelPart {
+                value: "→ ".to_string(), // 4 bytes (3 + 1)
+                tooltip: None,
+                location: None,
+            },
+            InlayHintLabelPart {
+                value: "path".to_string(), // 4 bytes
+                tooltip: None,
+                location: None,
+            },
+        ];
+
+        // Hover at byte 3 (last byte of "→ ", the space character)
+        let arrow_last_byte = InlayOffset(MultiBufferOffset(100 + 3));
+        let result = find_hovered_hint_part(parts.clone(), hint_start, arrow_last_byte);
+        assert!(result.is_some(), "Should find first part at its last byte");
+        let (part, range) = result.unwrap();
+        assert_eq!(part.value, "→ ");
+        assert_eq!(
+            range,
+            InlayOffset(MultiBufferOffset(100))..InlayOffset(MultiBufferOffset(104))
+        );
+
+        // Hover at byte 4 (first byte of "path", at the boundary)
+        let path_start_offset = InlayOffset(MultiBufferOffset(100 + 4));
+        let result = find_hovered_hint_part(parts.clone(), hint_start, path_start_offset);
+        assert!(result.is_some(), "Should find second part at boundary");
+        let (part, _) = result.unwrap();
+        assert_eq!(part.value, "path");
+
+        // Hover at byte 7 (last byte of "path")
+        let path_end_offset = InlayOffset(MultiBufferOffset(100 + 7));
+        let result = find_hovered_hint_part(parts, hint_start, path_end_offset);
+        assert!(result.is_some(), "Should find second part at last byte");
+        let (part, range) = result.unwrap();
+        assert_eq!(part.value, "path");
+        assert_eq!(
+            range,
+            InlayOffset(MultiBufferOffset(104))..InlayOffset(MultiBufferOffset(108))
+        );
     }
 }

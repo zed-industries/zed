@@ -1,7 +1,4 @@
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, Result};
 use collections::HashMap;
@@ -175,6 +172,7 @@ impl ConfigurationSource {
                                 enabled: true,
                                 url,
                                 headers: auth,
+                                timeout: None,
                             },
                         )
                     })
@@ -184,6 +182,7 @@ impl ConfigurationSource {
                             id,
                             ContextServerSettings::Stdio {
                                 enabled: true,
+                                remote: false,
                                 command,
                             },
                         )
@@ -211,6 +210,7 @@ impl ConfigurationSource {
                     id.clone(),
                     ContextServerSettings::Extension {
                         enabled: true,
+                        remote: false,
                         settings,
                     },
                 ))
@@ -224,11 +224,12 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
         Some((id, cmd)) => {
             let args = serde_json::to_string(&cmd.args).unwrap();
             let env = serde_json::to_string(&cmd.env.unwrap_or_default()).unwrap();
-            (id.0.to_string(), cmd.path, args, env)
+            let cmd_path = serde_json::to_string(&cmd.path).unwrap();
+            (id.0.to_string(), cmd_path, args, env)
         }
         None => (
             "some-mcp-server".to_string(),
-            PathBuf::new(),
+            "".to_string(),
             "[]".to_string(),
             "{}".to_string(),
         ),
@@ -239,14 +240,13 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
   /// The name of your MCP server
   "{name}": {{
     /// The command which runs the MCP server
-    "command": "{}",
+    "command": {command},
     /// The arguments to pass to the MCP server
     "args": {args},
     /// The environment variables to set
     "env": {env}
   }}
-}}"#,
-        command.display()
+}}"#
     )
 }
 
@@ -406,6 +406,7 @@ impl ConfigureContextServerModal {
                 ContextServerSettings::Stdio {
                     enabled: _,
                     command,
+                    ..
                 } => Some(ConfigurationTarget::Existing {
                     id: server_id,
                     command,
@@ -414,6 +415,8 @@ impl ConfigureContextServerModal {
                     enabled: _,
                     url,
                     headers,
+                    timeout: _,
+                    ..
                 } => Some(ConfigurationTarget::ExistingHttp {
                     id: server_id,
                     url,
@@ -834,7 +837,7 @@ impl Render for ConfigureContextServerModal {
                 }),
             )
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
-                this.focus_handle(cx).focus(window);
+                this.focus_handle(cx).focus(window, cx);
             }))
             .child(
                 Modal::new("configure-context-server", None)

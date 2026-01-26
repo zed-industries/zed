@@ -106,7 +106,7 @@ impl Editor {
 
             // Try to resolve the indent in a short amount of time, otherwise move it to a background task.
             match cx
-                .background_executor()
+                .foreground_executor()
                 .block_with_timeout(Duration::from_micros(200), task)
             {
                 Ok(result) => state.active_indent_range = result,
@@ -181,6 +181,10 @@ pub fn indent_guides_in_range(
         .buffer_snapshot()
         .indent_guides_in_range(start_anchor..end_anchor, ignore_disabled_for_language, cx)
         .filter(|indent_guide| {
+            if editor.has_indent_guides_disabled_for_buffer(indent_guide.buffer_id) {
+                return false;
+            }
+
             if editor.is_buffer_folded(indent_guide.buffer_id, cx) {
                 return false;
             }

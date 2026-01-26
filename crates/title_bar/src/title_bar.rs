@@ -1,18 +1,16 @@
 mod application_menu;
-mod collab;
+pub mod collab;
 mod onboarding_banner;
-pub mod platform_title_bar;
-mod platforms;
-mod system_window_tabs;
+mod project_dropdown;
 mod title_bar_settings;
 
 #[cfg(feature = "stories")]
 mod stories;
 
-use crate::{
-    application_menu::{ApplicationMenu, show_menus},
-    platform_title_bar::PlatformTitleBar,
-    system_window_tabs::SystemWindowTabs,
+use crate::application_menu::{ApplicationMenu, show_menus};
+pub use platform_title_bar::{
+    self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
+    ShowNextWindowTab, ShowPreviousWindowTab,
 };
 
 #[cfg(not(target_os = "macos"))]
@@ -23,26 +21,28 @@ use crate::application_menu::{
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
-use cloud_llm_client::{Plan, PlanV1, PlanV2};
+use cloud_llm_client::{Plan, PlanV2};
 use gpui::{
-    Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, WeakEntity, Window, actions, div,
+    Action, AnyElement, App, Context, Corner, Element, Entity, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
-use project::{Project, WorktreeSettings, git_store::GitStoreEvent};
+use project::{Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees};
+use project_dropdown::ProjectDropdown;
 use remote::RemoteConnectionOptions;
-use settings::{Settings, SettingsLocation};
+use settings::Settings;
+use settings::WorktreeId;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
-    Avatar, Button, ButtonLike, ButtonStyle, Chip, ContextMenu, Icon, IconName, IconSize,
-    IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, h_flex, prelude::*,
+    Avatar, ButtonLike, Chip, ContextMenu, IconWithIndicator, Indicator, PopoverMenu,
+    PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
-use util::{ResultExt, rel_path::RelPath};
-use workspace::{Workspace, notifications::NotifyResultExt};
-use zed_actions::{OpenRecent, OpenRemote};
+use util::ResultExt;
+use workspace::{SwitchProject, ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
+use zed_actions::OpenRemote;
 
 pub use onboarding_banner::restore_banner;
 
@@ -66,7 +66,7 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    SystemWindowTabs::init(cx);
+    platform_title_bar::PlatformTitleBar::init(cx);
 
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
@@ -74,6 +74,17 @@ pub fn init(cx: &mut App) {
         };
         let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
         workspace.set_titlebar_item(item.into(), window, cx);
+
+        workspace.register_action(|workspace, _: &SwitchProject, window, cx| {
+            if let Some(titlebar) = workspace
+                .titlebar_item()
+                .and_then(|item| item.downcast::<TitleBar>().ok())
+            {
+                titlebar.update(cx, |titlebar, cx| {
+                    titlebar.show_project_dropdown(window, cx);
+                });
+            }
+        });
 
         #[cfg(not(target_os = "macos"))]
         workspace.register_action(|workspace, action: &OpenApplicationMenu, window, cx| {
@@ -134,6 +145,7 @@ pub struct TitleBar {
     _subscriptions: Vec<Subscription>,
     banner: Entity<OnboardingBanner>,
     screen_share_popover_handle: PopoverMenuHandle<ContextMenu>,
+    project_dropdown_handle: PopoverMenuHandle<ProjectDropdown>,
 }
 
 impl Render for TitleBar {
@@ -159,6 +171,7 @@ impl Render for TitleBar {
                                 title_bar.child(menu)
                             },
                         )
+                        .children(self.render_restricted_mode(cx))
                         .when(render_project_items, |title_bar| {
                             title_bar
                                 .when(title_bar_settings.show_project_items, |title_bar| {
@@ -202,9 +215,11 @@ impl Render for TitleBar {
                 .children(self.render_connection_status(status, cx))
                 .when(
                     user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
-                    |el| el.child(self.render_sign_in_button(cx)),
+                    |this| this.child(self.render_sign_in_button(cx)),
                 )
-                .child(self.render_app_menu_button(cx))
+                .when(TitleBarSettings::get_global(cx).show_user_menu, |this| {
+                    this.child(self.render_user_menu_button(cx))
+                })
                 .into_any_element(),
         );
 
@@ -277,19 +292,38 @@ impl TitleBar {
                 cx.notify()
             }),
         );
-        subscriptions.push(cx.subscribe(&project, |_, _, _: &project::Event, cx| cx.notify()));
+        subscriptions.push(
+            cx.subscribe(&project, |this, _, event: &project::Event, cx| {
+                if let project::Event::BufferEdited = event {
+                    // Clear override when user types in any editor,
+                    // so the title bar reflects the project they're actually working in
+                    this.clear_active_worktree_override(cx);
+                    cx.notify();
+                }
+            }),
+        );
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(
-            cx.subscribe(&git_store, move |_, _, event, cx| match event {
-                GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(_, _, true) => {
+            cx.subscribe(&git_store, move |this, _, event, cx| match event {
+                GitStoreEvent::ActiveRepositoryChanged(_) => {
+                    // Clear override when focus-derived active repo changes
+                    // (meaning the user focused a file from a different project)
+                    this.clear_active_worktree_override(cx);
+                    cx.notify();
+                }
+                GitStoreEvent::RepositoryUpdated(_, _, true) => {
                     cx.notify();
                 }
                 _ => {}
             }),
         );
-        subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe(&user_store, |_a, _, cx| cx.notify()));
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            subscriptions.push(cx.subscribe(&trusted_worktrees, |_, _, _, cx| {
+                cx.notify();
+            }));
+        }
 
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
@@ -315,20 +349,112 @@ impl TitleBar {
             client,
             _subscriptions: subscriptions,
             banner,
-            screen_share_popover_handle: Default::default(),
+            screen_share_popover_handle: PopoverMenuHandle::default(),
+            project_dropdown_handle: PopoverMenuHandle::default(),
         }
     }
 
+    fn worktree_count(&self, cx: &App) -> usize {
+        self.project.read(cx).visible_worktrees(cx).count()
+    }
+
+    pub fn show_project_dropdown(&self, window: &mut Window, cx: &mut App) {
+        if self.worktree_count(cx) > 1 {
+            self.project_dropdown_handle.show(window, cx);
+        }
+    }
+
+    /// Returns the worktree to display in the title bar.
+    /// - If there's an override set on the workspace, use that (if still valid)
+    /// - Otherwise, derive from the active repository
+    /// - Fall back to the first visible worktree
+    pub fn effective_active_worktree(&self, cx: &App) -> Option<Entity<project::Worktree>> {
+        let project = self.project.read(cx);
+
+        if let Some(workspace) = self.workspace.upgrade() {
+            if let Some(override_id) = workspace.read(cx).active_worktree_override() {
+                if let Some(worktree) = project.worktree_for_id(override_id, cx) {
+                    return Some(worktree);
+                }
+            }
+        }
+
+        if let Some(repo) = project.active_repository(cx) {
+            let repo = repo.read(cx);
+            let repo_path = &repo.work_directory_abs_path;
+
+            for worktree in project.visible_worktrees(cx) {
+                let worktree_path = worktree.read(cx).abs_path();
+                if worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref()) {
+                    return Some(worktree);
+                }
+            }
+        }
+
+        project.visible_worktrees(cx).next()
+    }
+
+    pub fn set_active_worktree_override(
+        &mut self,
+        worktree_id: WorktreeId,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.set_active_worktree_override(Some(worktree_id), cx);
+            });
+        }
+        cx.notify();
+    }
+
+    fn clear_active_worktree_override(&mut self, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.clear_active_worktree_override(cx);
+            });
+        }
+        cx.notify();
+    }
+
+    fn get_repository_for_worktree(
+        &self,
+        worktree: &Entity<project::Worktree>,
+        cx: &App,
+    ) -> Option<Entity<project::git_store::Repository>> {
+        let project = self.project.read(cx);
+        let git_store = project.git_store().read(cx);
+        let worktree_path = worktree.read(cx).abs_path();
+
+        for repo in git_store.repositories().values() {
+            let repo_path = &repo.read(cx).work_directory_abs_path;
+            if worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref()) {
+                return Some(repo.clone());
+            }
+        }
+
+        None
+    }
+
     fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let workspace = self.workspace.clone();
+
         let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.display_name().into();
 
-        let (nickname, icon) = match options {
-            RemoteConnectionOptions::Ssh(options) => {
-                (options.nickname.map(|nick| nick.into()), IconName::Server)
+        let (nickname, tooltip_title, icon) = match options {
+            RemoteConnectionOptions::Ssh(options) => (
+                options.nickname.map(|nick| nick.into()),
+                "Remote Project",
+                IconName::Server,
+            ),
+            RemoteConnectionOptions::Wsl(_) => (None, "Remote Project", IconName::Linux),
+            RemoteConnectionOptions::Docker(_dev_container_connection) => {
+                (None, "Dev Container", IconName::Box)
             }
-            RemoteConnectionOptions::Wsl(_) => (None, IconName::Linux),
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(_) => (None, "Mock Remote Project", IconName::Server),
         };
+
         let nickname = nickname.unwrap_or_else(|| host.clone());
 
         let (indicator_color, meta) = match self.project.read(cx).remote_connection_state(cx)? {
@@ -358,44 +484,98 @@ impl TitleBar {
         let meta = SharedString::from(meta);
 
         Some(
-            ButtonLike::new("ssh-server-icon")
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .max_w_32()
+            PopoverMenu::new("remote-project-menu")
+                .menu(move |window, cx| {
+                    let workspace_entity = workspace.upgrade()?;
+                    let fs = workspace_entity.read(cx).project().read(cx).fs().clone();
+                    Some(recent_projects::RemoteServerProjects::popover(
+                        fs,
+                        workspace.clone(),
+                        false,
+                        window,
+                        cx,
+                    ))
+                })
+                .trigger_with_tooltip(
+                    ButtonLike::new("remote_project")
+                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                         .child(
-                            IconWithIndicator::new(
-                                Icon::new(icon).size(IconSize::Small).color(icon_color),
-                                Some(Indicator::dot().color(indicator_color)),
-                            )
-                            .indicator_border_color(Some(cx.theme().colors().title_bar_background))
-                            .into_any_element(),
+                            h_flex()
+                                .gap_2()
+                                .max_w_32()
+                                .child(
+                                    IconWithIndicator::new(
+                                        Icon::new(icon).size(IconSize::Small).color(icon_color),
+                                        Some(Indicator::dot().color(indicator_color)),
+                                    )
+                                    .indicator_border_color(Some(
+                                        cx.theme().colors().title_bar_background,
+                                    ))
+                                    .into_any_element(),
+                                )
+                                .child(Label::new(nickname).size(LabelSize::Small).truncate()),
+                        ),
+                    move |_window, cx| {
+                        Tooltip::with_meta(
+                            tooltip_title,
+                            Some(&OpenRemote {
+                                from_existing_connection: false,
+                                create_new_window: false,
+                            }),
+                            meta.clone(),
+                            cx,
                         )
-                        .child(Label::new(nickname).size(LabelSize::Small).truncate()),
+                    },
                 )
-                .tooltip(move |_window, cx| {
-                    Tooltip::with_meta(
-                        "Remote Project",
-                        Some(&OpenRemote {
-                            from_existing_connection: false,
-                            create_new_window: false,
-                        }),
-                        meta.clone(),
-                        cx,
-                    )
-                })
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(
-                        OpenRemote {
-                            from_existing_connection: false,
-                            create_new_window: false,
-                        }
-                        .boxed_clone(),
-                        cx,
-                    );
-                })
+                .anchor(gpui::Corner::TopLeft)
                 .into_any_element(),
         )
+    }
+
+    pub fn render_restricted_mode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let has_restricted_worktrees = TrustedWorktrees::try_get_global(cx)
+            .map(|trusted_worktrees| {
+                trusted_worktrees
+                    .read(cx)
+                    .has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx)
+            })
+            .unwrap_or(false);
+        if !has_restricted_worktrees {
+            return None;
+        }
+
+        let button = Button::new("restricted_mode_trigger", "Restricted Mode")
+            .style(ButtonStyle::Tinted(TintColor::Warning))
+            .label_size(LabelSize::Small)
+            .color(Color::Warning)
+            .icon(IconName::Warning)
+            .icon_color(Color::Warning)
+            .icon_size(IconSize::Small)
+            .icon_position(IconPosition::Start)
+            .tooltip(|_, cx| {
+                Tooltip::with_meta(
+                    "You're in Restricted Mode",
+                    Some(&ToggleWorktreeSecurity),
+                    "Mark this project as trusted and unlock all features",
+                    cx,
+                )
+            })
+            .on_click({
+                cx.listener(move |this, _, window, cx| {
+                    this.workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_worktree_trust_security_modal(true, window, cx)
+                        })
+                        .log_err();
+                })
+            });
+
+        if cfg!(macos_sdk_26) {
+            // Make up for Tahoe's traffic light buttons having less spacing around them
+            Some(div().child(button).ml_0p5().into_any_element())
+        } else {
+            Some(button.into_any_element())
+        }
     }
 
     pub fn render_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -408,7 +588,6 @@ impl TitleBar {
                 Button::new("disconnected", "Disconnected")
                     .disabled(true)
                     .color(Color::Disabled)
-                    .style(ButtonStyle::Subtle)
                     .label_size(LabelSize::Small)
                     .into_any_element(),
             );
@@ -421,15 +600,19 @@ impl TitleBar {
             .read(cx)
             .participant_indices()
             .get(&host_user.id)?;
+
         Some(
             Button::new("project_owner_trigger", host_user.github_login.clone())
                 .color(Color::Player(participant_index.0))
-                .style(ButtonStyle::Subtle)
                 .label_size(LabelSize::Small)
-                .tooltip(Tooltip::text(format!(
-                    "{} is sharing this project. Click to follow.",
-                    host_user.github_login
-                )))
+                .tooltip(move |_, cx| {
+                    let tooltip_title = format!(
+                        "{} is sharing this project. Click to follow.",
+                        host_user.github_login
+                    );
+
+                    Tooltip::with_meta(tooltip_title, None, "Click to Follow", cx)
+                })
                 .on_click({
                     let host_peer_id = host.peer_id;
                     cx.listener(move |this, _, window, cx| {
@@ -445,117 +628,199 @@ impl TitleBar {
     }
 
     pub fn render_project_name(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let name = self
-            .project
-            .read(cx)
-            .visible_worktrees(cx)
-            .map(|worktree| {
-                let worktree = worktree.read(cx);
-                let settings_location = SettingsLocation {
-                    worktree_id: worktree.id(),
-                    path: RelPath::empty(),
-                };
+        let workspace = self.workspace.clone();
 
-                let settings = WorktreeSettings::get(Some(settings_location), cx);
-                match &settings.project_name {
-                    Some(name) => name.as_str(),
-                    None => worktree.root_name_str(),
-                }
-            })
-            .next();
+        let name = self.effective_active_worktree(cx).map(|worktree| {
+            let worktree = worktree.read(cx);
+            SharedString::from(worktree.root_name().as_unix_str().to_string())
+        });
+
         let is_project_selected = name.is_some();
-        let name = if let Some(name) = name {
+
+        let display_name = if let Some(ref name) = name {
             util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH)
         } else {
-            "Open recent project".to_string()
+            "Open Recent Project".to_string()
         };
 
-        Button::new("project_name_trigger", name)
-            .when(!is_project_selected, |b| b.color(Color::Muted))
-            .style(ButtonStyle::Subtle)
-            .label_size(LabelSize::Small)
-            .tooltip(move |_window, cx| {
-                Tooltip::for_action(
-                    "Recent Projects",
-                    &zed_actions::OpenRecent {
-                        create_new_window: false,
-                    },
+        let focus_handle = workspace
+            .upgrade()
+            .map(|w| w.read(cx).focus_handle(cx))
+            .unwrap_or_else(|| cx.focus_handle());
+
+        if self.worktree_count(cx) > 1 {
+            self.render_multi_project_menu(display_name, is_project_selected, cx)
+                .into_any_element()
+        } else {
+            self.render_single_project_menu(display_name, is_project_selected, focus_handle, cx)
+                .into_any_element()
+        }
+    }
+
+    fn render_single_project_menu(
+        &self,
+        name: String,
+        is_project_selected: bool,
+        focus_handle: FocusHandle,
+        _cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let workspace = self.workspace.clone();
+
+        PopoverMenu::new("recent-projects-menu")
+            .menu(move |window, cx| {
+                Some(recent_projects::RecentProjects::popover(
+                    workspace.clone(),
+                    false,
+                    focus_handle.clone(),
+                    window,
                     cx,
-                )
+                ))
             })
-            .on_click(cx.listener(move |_, _, window, cx| {
-                window.dispatch_action(
-                    OpenRecent {
-                        create_new_window: false,
-                    }
-                    .boxed_clone(),
-                    cx,
-                );
-            }))
+            .trigger_with_tooltip(
+                Button::new("project_name_trigger", name)
+                    .label_size(LabelSize::Small)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .when(!is_project_selected, |s| s.color(Color::Muted)),
+                move |_window, cx| {
+                    Tooltip::for_action(
+                        "Recent Projects",
+                        &zed_actions::OpenRecent {
+                            create_new_window: false,
+                        },
+                        cx,
+                    )
+                },
+            )
+            .anchor(gpui::Corner::TopLeft)
+    }
+
+    fn render_multi_project_menu(
+        &self,
+        name: String,
+        is_project_selected: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let project = self.project.clone();
+        let workspace = self.workspace.clone();
+        let initial_active_worktree_id = self
+            .effective_active_worktree(cx)
+            .map(|wt| wt.read(cx).id());
+
+        let focus_handle = workspace
+            .upgrade()
+            .map(|w| w.read(cx).focus_handle(cx))
+            .unwrap_or_else(|| cx.focus_handle());
+
+        PopoverMenu::new("project-dropdown-menu")
+            .with_handle(self.project_dropdown_handle.clone())
+            .menu(move |window, cx| {
+                let project = project.clone();
+                let workspace = workspace.clone();
+
+                Some(cx.new(|cx| {
+                    ProjectDropdown::new(
+                        project.clone(),
+                        workspace.clone(),
+                        initial_active_worktree_id,
+                        window,
+                        cx,
+                    )
+                }))
+            })
+            .trigger_with_tooltip(
+                Button::new("project_name_trigger", name)
+                    .label_size(LabelSize::Small)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .icon(IconName::ChevronDown)
+                    .icon_position(IconPosition::End)
+                    .icon_size(IconSize::XSmall)
+                    .icon_color(Color::Muted)
+                    .when(!is_project_selected, |s| s.color(Color::Muted)),
+                move |_, cx| {
+                    Tooltip::for_action_in("Switch Project", &SwitchProject, &focus_handle, cx)
+                },
+            )
+            .anchor(gpui::Corner::TopLeft)
     }
 
     pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let settings = TitleBarSettings::get_global(cx);
-        let repository = self.project.read(cx).active_repository(cx)?;
+        let effective_worktree = self.effective_active_worktree(cx)?;
+        let repository = self.get_repository_for_worktree(&effective_worktree, cx)?;
         let workspace = self.workspace.upgrade()?;
-        let repo = repository.read(cx);
-        let branch_name = repo
-            .branch
-            .as_ref()
-            .map(|branch| branch.name())
-            .map(|name| util::truncate_and_trailoff(name, MAX_BRANCH_NAME_LENGTH))
-            .or_else(|| {
-                repo.head_commit.as_ref().map(|commit| {
-                    commit
-                        .sha
-                        .chars()
-                        .take(MAX_SHORT_SHA_LENGTH)
-                        .collect::<String>()
-                })
-            })?;
+
+        let (branch_name, icon_info) = {
+            let repo = repository.read(cx);
+            let branch_name = repo
+                .branch
+                .as_ref()
+                .map(|branch| branch.name())
+                .map(|name| util::truncate_and_trailoff(name, MAX_BRANCH_NAME_LENGTH))
+                .or_else(|| {
+                    repo.head_commit.as_ref().map(|commit| {
+                        commit
+                            .sha
+                            .chars()
+                            .take(MAX_SHORT_SHA_LENGTH)
+                            .collect::<String>()
+                    })
+                });
+
+            let status = repo.status_summary();
+            let tracked = status.index + status.worktree;
+            let icon_info = if status.conflict > 0 {
+                (IconName::Warning, Color::VersionControlConflict)
+            } else if tracked.modified > 0 {
+                (IconName::SquareDot, Color::VersionControlModified)
+            } else if tracked.added > 0 || status.untracked > 0 {
+                (IconName::SquarePlus, Color::VersionControlAdded)
+            } else if tracked.deleted > 0 {
+                (IconName::SquareMinus, Color::VersionControlDeleted)
+            } else {
+                (IconName::GitBranch, Color::Muted)
+            };
+
+            (branch_name, icon_info)
+        };
+
+        let settings = TitleBarSettings::get_global(cx);
+
+        let effective_repository = Some(repository);
 
         Some(
-            Button::new("project_branch_trigger", branch_name)
-                .color(Color::Muted)
-                .style(ButtonStyle::Subtle)
-                .label_size(LabelSize::Small)
-                .tooltip(move |_window, cx| {
-                    Tooltip::with_meta(
-                        "Recent Branches",
-                        Some(&zed_actions::git::Branch),
-                        "Local branches only",
+            PopoverMenu::new("branch-menu")
+                .menu(move |window, cx| {
+                    Some(git_ui::git_picker::popover(
+                        workspace.downgrade(),
+                        effective_repository.clone(),
+                        git_ui::git_picker::GitPickerTab::Branches,
+                        gpui::rems(34.),
+                        window,
                         cx,
-                    )
+                    ))
                 })
-                .on_click(move |_, window, cx| {
-                    let _ = workspace.update(cx, |this, cx| {
-                        window.focus(&this.active_pane().focus_handle(cx));
-                        window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
-                    });
-                })
-                .when(settings.show_branch_icon, |branch_button| {
-                    let (icon, icon_color) = {
-                        let status = repo.status_summary();
-                        let tracked = status.index + status.worktree;
-                        if status.conflict > 0 {
-                            (IconName::Warning, Color::VersionControlConflict)
-                        } else if tracked.modified > 0 {
-                            (IconName::SquareDot, Color::VersionControlModified)
-                        } else if tracked.added > 0 || status.untracked > 0 {
-                            (IconName::SquarePlus, Color::VersionControlAdded)
-                        } else if tracked.deleted > 0 {
-                            (IconName::SquareMinus, Color::VersionControlDeleted)
-                        } else {
-                            (IconName::GitBranch, Color::Muted)
-                        }
-                    };
-
-                    branch_button
-                        .icon(icon)
-                        .icon_position(IconPosition::Start)
-                        .icon_color(icon_color)
-                        .icon_size(IconSize::Indicator)
-                }),
+                .trigger_with_tooltip(
+                    Button::new("project_branch_trigger", branch_name?)
+                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                        .label_size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .when(settings.show_branch_icon, |branch_button| {
+                            let (icon, icon_color) = icon_info;
+                            branch_button
+                                .icon(icon)
+                                .icon_position(IconPosition::Start)
+                                .icon_color(icon_color)
+                                .icon_size(IconSize::Indicator)
+                        }),
+                    move |_window, cx| {
+                        Tooltip::with_meta(
+                            "Recent Branches",
+                            Some(&zed_actions::git::Branch),
+                            "Local branches only",
+                            cx,
+                        )
+                    },
+                )
+                .anchor(gpui::Corner::TopLeft),
         )
     }
 
@@ -646,7 +911,7 @@ impl TitleBar {
 
     pub fn render_sign_in_button(&mut self, _: &mut Context<Self>) -> Button {
         let client = self.client.clone();
-        Button::new("sign_in", "Sign in")
+        Button::new("sign_in", "Sign In")
             .label_size(LabelSize::Small)
             .on_click(move |_, window, cx| {
                 let client = client.clone();
@@ -661,7 +926,7 @@ impl TitleBar {
             })
     }
 
-    pub fn render_app_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
+    pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
         let user_store = self.user_store.read(cx);
         let user = user_store.current_user();
 
@@ -697,15 +962,13 @@ impl TitleBar {
                     let user_login = user_login.clone();
 
                     let (plan_name, label_color, bg_color) = match plan {
-                        None | Some(Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree)) => {
+                        None | Some(Plan::V2(PlanV2::ZedFree)) => {
                             ("Free", Color::Default, free_chip_bg)
                         }
-                        Some(Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial)) => {
+                        Some(Plan::V2(PlanV2::ZedProTrial)) => {
                             ("Pro Trial", Color::Accent, pro_chip_bg)
                         }
-                        Some(Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro)) => {
-                            ("Pro", Color::Accent, pro_chip_bg)
-                        }
+                        Some(Plan::V2(PlanV2::ZedPro)) => ("Pro", Color::Accent, pro_chip_bg),
                     };
 
                     menu.when(is_signed_in, |this| {

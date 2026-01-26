@@ -1,10 +1,10 @@
-use crate::{Oid, repository::RepoPath};
-use anyhow::{Result, anyhow};
+use crate::{repository::RepoPath, Oid};
+use anyhow::{anyhow, Result};
 use collections::HashMap;
 use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use std::{str::FromStr, sync::Arc};
-use util::{ResultExt, rel_path::RelPath};
+use util::{rel_path::RelPath, ResultExt};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FileStatus {
@@ -196,7 +196,7 @@ impl FileStatus {
             return false;
         };
 
-        tracked.index_status == StatusCode::Renamed 
+        tracked.index_status == StatusCode::Renamed
             || tracked.worktree_status == StatusCode::Renamed
     }
 
@@ -439,7 +439,7 @@ impl std::ops::Sub for GitSummary {
 #[derive(Clone, Debug)]
 pub struct GitStatus {
     pub entries: Arc<[(RepoPath, FileStatus)]>,
-    pub renamed: HashMap<RepoPath, RepoPath>
+    pub renamed: HashMap<RepoPath, RepoPath>,
 }
 
 impl FromStr for GitStatus {
@@ -469,26 +469,25 @@ impl FromStr for GitStatus {
                     if let (Some(status), Some(new_path_rel), Some(old_path_rel)) = (
                         FileStatus::from_bytes(status_bytes).log_err(),
                         RelPath::unix(path_str).log_err(),
-                        RelPath::unix(old_path_str).log_err()
+                        RelPath::unix(old_path_str).log_err(),
                     ) {
-                        let old_path =  RepoPath::from_rel_path(old_path_rel);
+                        let old_path = RepoPath::from_rel_path(old_path_rel);
                         let new_path = RepoPath::from_rel_path(new_path_rel);
                         entries.push((new_path.clone(), status));
                         renamed.insert(new_path, old_path);
                     }
                 }
-            }
-            else {
+            } else {
                 if let (Some(status), Some(path_rel)) = (
                     FileStatus::from_bytes(status_bytes).log_err(),
-                    RelPath::unix(path_str).log_err()
+                    RelPath::unix(path_str).log_err(),
                 ) {
                     let path = RepoPath::from_rel_path(path_rel);
                     entries.push((path, status));
                 }
             }
         }
-        entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));        
+        entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
         // When a file exists in HEAD, is deleted in the index, and exists again in the working copy,
         // git produces two lines for it, one reading `D ` (deleted in index, unmodified in working copy)
         // and the other reading `??` (untracked). Merge these two into the equivalent of `DA`.
@@ -511,7 +510,7 @@ impl FromStr for GitStatus {
         });
         Ok(Self {
             entries: entries.into(),
-            renamed
+            renamed,
         })
     }
 }
@@ -520,7 +519,7 @@ impl Default for GitStatus {
     fn default() -> Self {
         Self {
             entries: Arc::new([]),
-            renamed: HashMap::default()
+            renamed: HashMap::default(),
         }
     }
 }

@@ -15,6 +15,7 @@ doctest = false
 
 [features]
 default = []
+build-remote-server-binary = []
 test-support = ["fs/test-support"]
 
 [dependencies]
@@ -42,7 +43,6 @@ thiserror.workspace = true
 urlencoding.workspace = true
 util.workspace = true
 which.workspace = true
-
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

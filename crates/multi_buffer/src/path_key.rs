@@ -7,6 +7,7 @@ use language::{Buffer, BufferSnapshot};
 use rope::Point;
 use text::{Bias, BufferId, OffsetRangeExt, locator::Locator};
 use util::{post_inc, rel_path::RelPath};
+use ztracing::instrument;
 
 use crate::{
     Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, build_excerpt_ranges,
@@ -42,14 +43,34 @@ impl PathKey {
 }
 
 impl MultiBuffer {
-    pub fn paths(&self) -> impl Iterator<Item = PathKey> + '_ {
-        self.excerpts_by_path.keys().cloned()
+    pub fn paths(&self) -> impl Iterator<Item = &PathKey> + '_ {
+        self.excerpts_by_path.keys()
+    }
+
+    pub fn excerpts_for_path(&self, path: &PathKey) -> impl '_ + Iterator<Item = ExcerptId> {
+        self.excerpts_by_path
+            .get(path)
+            .map(|excerpts| excerpts.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .copied()
+    }
+
+    pub fn path_for_excerpt(&self, excerpt: ExcerptId) -> Option<PathKey> {
+        self.paths_by_excerpt.get(&excerpt).cloned()
     }
 
     pub fn remove_excerpts_for_path(&mut self, path: PathKey, cx: &mut Context<Self>) {
         if let Some(to_remove) = self.excerpts_by_path.remove(&path) {
             self.remove_excerpts(to_remove, cx)
         }
+    }
+
+    pub fn buffer_for_path(&self, path: &PathKey, cx: &App) -> Option<Entity<Buffer>> {
+        let excerpt_id = self.excerpts_by_path.get(path)?.first()?;
+        let snapshot = self.read(cx);
+        let excerpt = snapshot.excerpt(*excerpt_id)?;
+        self.buffer(excerpt.buffer_id)
     }
 
     pub fn location_for_path(&self, path: &PathKey, cx: &App) -> Option<Anchor> {
@@ -59,11 +80,8 @@ impl MultiBuffer {
         Some(Anchor::in_buffer(excerpt.id, excerpt.range.context.start))
     }
 
-    pub fn excerpt_paths(&self) -> impl Iterator<Item = &PathKey> {
-        self.excerpts_by_path.keys()
-    }
-
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
+    #[instrument(skip_all)]
     pub fn set_excerpts_for_path(
         &mut self,
         path: PathKey,
@@ -268,7 +286,7 @@ impl MultiBuffer {
         (result, added_a_new_excerpt)
     }
 
-    fn update_path_excerpts(
+    pub fn update_path_excerpts(
         &mut self,
         path: PathKey,
         buffer: Entity<Buffer>,
@@ -298,7 +316,7 @@ impl MultiBuffer {
         let snapshot = self.snapshot(cx);
 
         let mut next_excerpt_id =
-            // is this right? What if we remove the last excerpt, then we might reallocate with a wrong mapping?
+            // todo(lw): is this right? What if we remove the last excerpt, then we might reallocate with a wrong mapping?
             if let Some(last_entry) = self.snapshot.borrow().excerpt_ids.last() {
                 last_entry.id.0 + 1
             } else {

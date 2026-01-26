@@ -63,15 +63,3 @@ Deployment is triggered by pushing to the `collab-staging` (or `collab-productio
 - `./script/deploy-collab production`
 
 You can tell what is currently deployed with `./script/what-is-deployed`.
-
-# Database Migrations
-
-To create a new migration:
-
-```sh
-./script/create-migration <name>
-```
-
-Migrations are run automatically on service start, so run `foreman start` again. The service will crash if the migrations fail.
-
-When you create a new migration, you also need to update the [SQLite schema](./migrations.sqlite/20221109000000_test_schema.sql) that is used for testing.

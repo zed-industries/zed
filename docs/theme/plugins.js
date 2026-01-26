@@ -21,11 +21,11 @@ function detectOS() {
   return "Unknown";
 }
 
-// Usage
 var os = detectOS();
 console.log("Operating System:", os);
 
-(function updateKeybindings() {
+// Defer keybinding processing to avoid blocking initial render
+function updateKeybindings() {
   const os = detectOS();
   const isMac = os === "Mac" || os === "iOS";
 
@@ -35,59 +35,27 @@ console.log("Operating System:", os);
     element.classList.add("keybinding");
   }
 
-  function walkDOM(node) {
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      if (node.tagName.toLowerCase() === "kbd") {
-        processKeybinding(node);
-      } else {
-        Array.from(node.children).forEach(walkDOM);
-      }
-    }
-  }
+  // Process all kbd elements at once (more efficient than walking entire DOM)
+  const kbdElements = document.querySelectorAll("kbd");
+  kbdElements.forEach(processKeybinding);
+}
 
-  // Start the process from the body
-  walkDOM(document.body);
-})();
+// Use requestIdleCallback if available, otherwise requestAnimationFrame
+if (typeof requestIdleCallback === "function") {
+  requestIdleCallback(updateKeybindings);
+} else {
+  requestAnimationFrame(updateKeybindings);
+}
 
 function darkModeToggle() {
   var html = document.documentElement;
-  var themeToggleButton = document.getElementById("theme-toggle");
-  var themePopup = document.getElementById("theme-list");
-  var themePopupButtons = themePopup.querySelectorAll("button");
 
   function setTheme(theme) {
     html.setAttribute("data-theme", theme);
     html.setAttribute("data-color-scheme", theme);
     html.className = theme;
     localStorage.setItem("mdbook-theme", theme);
-
-    // Force a repaint to ensure the changes take effect in the client immediately
-    document.body.style.display = "none";
-    document.body.offsetHeight;
-    document.body.style.display = "";
   }
-
-  themeToggleButton.addEventListener("click", function (event) {
-    event.preventDefault();
-    themePopup.style.display =
-      themePopup.style.display === "block" ? "none" : "block";
-  });
-
-  themePopupButtons.forEach(function (button) {
-    button.addEventListener("click", function () {
-      setTheme(this.id);
-      themePopup.style.display = "none";
-    });
-  });
-
-  document.addEventListener("click", function (event) {
-    if (
-      !themePopup.contains(event.target) &&
-      !themeToggleButton.contains(event.target)
-    ) {
-      themePopup.style.display = "none";
-    }
-  });
 
   // Set initial theme
   var currentTheme = localStorage.getItem("mdbook-theme");
@@ -227,5 +195,127 @@ const copyMarkdown = () => {
 
 // Initialize functionality when DOM is loaded
 document.addEventListener("DOMContentLoaded", () => {
+  darkModeToggle();
   copyMarkdown();
+});
+
+// Collapsible sidebar navigation for entire sections
+// Note: Initial collapsed state is applied in index.hbs to prevent flicker
+function initCollapsibleSidebar() {
+  var sidebar = document.getElementById("sidebar");
+  if (!sidebar) return;
+
+  var chapterList = sidebar.querySelector("ol.chapter");
+  if (!chapterList) return;
+
+  var partTitles = Array.from(chapterList.querySelectorAll("li.part-title"));
+
+  partTitles.forEach(function (partTitle) {
+    // Get all sibling elements that belong to this section
+    var sectionItems = getSectionItems(partTitle);
+
+    if (sectionItems.length > 0) {
+      setupCollapsibleSection(partTitle, sectionItems);
+    }
+  });
+}
+
+// Saves the list of collapsed section names to sessionStorage
+// This gets reset when the tab is closed and opened again
+function saveCollapsedSections() {
+  var collapsedSections = [];
+  var partTitles = document.querySelectorAll(
+    "#sidebar li.part-title.collapsible",
+  );
+
+  partTitles.forEach(function (partTitle) {
+    if (!partTitle.classList.contains("expanded")) {
+      collapsedSections.push(partTitle._sectionName);
+    }
+  });
+
+  try {
+    sessionStorage.setItem(
+      "sidebar-collapsed-sections",
+      JSON.stringify(collapsedSections),
+    );
+  } catch (e) {
+    // sessionStorage might not be available
+  }
+}
+
+function getSectionItems(partTitle) {
+  var items = [];
+  var sibling = partTitle.nextElementSibling;
+
+  while (sibling) {
+    // Stop when we hit another part-title
+    if (sibling.classList.contains("part-title")) {
+      break;
+    }
+    items.push(sibling);
+    sibling = sibling.nextElementSibling;
+  }
+
+  return items;
+}
+
+function setupCollapsibleSection(partTitle, sectionItems) {
+  partTitle.classList.add("collapsible");
+  partTitle.setAttribute("role", "button");
+  partTitle.setAttribute("tabindex", "0");
+  partTitle._sectionItems = sectionItems;
+
+  var isCurrentlyCollapsed = partTitle._isCollapsed;
+  if (isCurrentlyCollapsed) {
+    partTitle.setAttribute("aria-expanded", "false");
+  } else {
+    partTitle.classList.add("expanded");
+    partTitle.setAttribute("aria-expanded", "true");
+  }
+
+  partTitle.addEventListener("click", function (e) {
+    e.preventDefault();
+    toggleSection(partTitle);
+  });
+
+  // a11y: Add keyboard support (Enter and Space)
+  partTitle.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleSection(partTitle);
+    }
+  });
+}
+
+function toggleSection(partTitle) {
+  var isExpanded = partTitle.classList.contains("expanded");
+  var sectionItems = partTitle._sectionItems;
+  var spacerAfter = partTitle._spacerAfter;
+
+  if (isExpanded) {
+    partTitle.classList.remove("expanded");
+    partTitle.setAttribute("aria-expanded", "false");
+    sectionItems.forEach(function (item) {
+      item.classList.add("section-hidden");
+    });
+    if (spacerAfter) {
+      spacerAfter.classList.add("section-hidden");
+    }
+  } else {
+    partTitle.classList.add("expanded");
+    partTitle.setAttribute("aria-expanded", "true");
+    sectionItems.forEach(function (item) {
+      item.classList.remove("section-hidden");
+    });
+    if (spacerAfter) {
+      spacerAfter.classList.remove("section-hidden");
+    }
+  }
+
+  saveCollapsedSections();
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+  initCollapsibleSidebar();
 });

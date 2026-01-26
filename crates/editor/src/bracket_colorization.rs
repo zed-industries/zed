@@ -7,6 +7,7 @@ use std::ops::Range;
 use crate::Editor;
 use collections::HashMap;
 use gpui::{Context, HighlightStyle};
+use itertools::Itertools;
 use language::language_settings;
 use multi_buffer::{Anchor, ExcerptId};
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
@@ -26,22 +27,25 @@ impl Editor {
         let accents_count = cx.theme().accents().0.len();
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
         let all_excerpts = self.buffer().read(cx).excerpt_ids();
-        let anchor_in_multi_buffer = |current_excerpt: ExcerptId, text_anchor: text::Anchor| {
+        let anchors_in_multi_buffer = |current_excerpt: ExcerptId,
+                                       text_anchors: [text::Anchor; 4]|
+         -> Option<[Option<_>; 4]> {
             multi_buffer_snapshot
-                .anchor_in_excerpt(current_excerpt, text_anchor)
+                .anchors_in_excerpt(current_excerpt, text_anchors)
                 .or_else(|| {
                     all_excerpts
                         .iter()
                         .filter(|&&excerpt_id| excerpt_id != current_excerpt)
                         .find_map(|&excerpt_id| {
-                            multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)
+                            multi_buffer_snapshot.anchors_in_excerpt(excerpt_id, text_anchors)
                         })
-                })
+                })?
+                .collect_array()
         };
 
-        let bracket_matches_by_accent = self.visible_excerpts(cx).into_iter().fold(
+        let bracket_matches_by_accent = self.visible_excerpts(false, cx).into_iter().fold(
             HashMap::default(),
-            |mut acc, (excerpt_id, (buffer, buffer_version, buffer_range))| {
+            |mut acc, (excerpt_id, (buffer, _, buffer_range))| {
                 let buffer_snapshot = buffer.read(cx).snapshot();
                 if language_settings::language_settings(
                     buffer_snapshot.language().map(|language| language.name()),
@@ -58,7 +62,7 @@ impl Editor {
                     let brackets_by_accent = buffer_snapshot
                         .fetch_bracket_ranges(
                             buffer_range.start..buffer_range.end,
-                            Some((&buffer_version, fetched_chunks)),
+                            Some(fetched_chunks),
                         )
                         .into_iter()
                         .flat_map(|(chunk_range, pairs)| {
@@ -77,13 +81,24 @@ impl Editor {
                             let buffer_close_range = buffer_snapshot
                                 .anchor_before(pair.close_range.start)
                                 ..buffer_snapshot.anchor_after(pair.close_range.end);
+                            let [
+                                buffer_open_range_start,
+                                buffer_open_range_end,
+                                buffer_close_range_start,
+                                buffer_close_range_end,
+                            ] = anchors_in_multi_buffer(
+                                excerpt_id,
+                                [
+                                    buffer_open_range.start,
+                                    buffer_open_range.end,
+                                    buffer_close_range.start,
+                                    buffer_close_range.end,
+                                ],
+                            )?;
                             let multi_buffer_open_range =
-                                anchor_in_multi_buffer(excerpt_id, buffer_open_range.start)
-                                    .zip(anchor_in_multi_buffer(excerpt_id, buffer_open_range.end));
+                                buffer_open_range_start.zip(buffer_open_range_end);
                             let multi_buffer_close_range =
-                                anchor_in_multi_buffer(excerpt_id, buffer_close_range.start).zip(
-                                    anchor_in_multi_buffer(excerpt_id, buffer_close_range.end),
-                                );
+                                buffer_close_range_start.zip(buffer_close_range_end);
 
                             let mut ranges = Vec::with_capacity(2);
                             if let Some((open_start, open_end)) = multi_buffer_open_range {
@@ -149,7 +164,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        DisplayPoint, EditorSnapshot, MoveToBeginning, MoveToEnd, MoveUp,
+        DisplayPoint, EditorMode, EditorSnapshot, MoveToBeginning, MoveToEnd, MoveUp,
         display_map::{DisplayRow, ToDisplayPoint},
         editor_tests::init_test,
         test::{
@@ -171,7 +186,7 @@ mod tests {
     use settings::{AccentContent, SettingsStore};
     use text::{Bias, OffsetRangeExt, ToOffset};
     use theme::ThemeStyleContent;
-    use ui::SharedString;
+
     use util::{path, post_inc};
 
     #[gpui::test]
@@ -262,6 +277,40 @@ where
     }
 
     #[gpui::test]
+    async fn test_file_less_file_colorization(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let editor = cx.add_window(|window, cx| {
+            let multi_buffer = MultiBuffer::build_simple("fn main() {}", cx);
+            multi_buffer.update(cx, |multi_buffer, cx| {
+                multi_buffer
+                    .as_singleton()
+                    .unwrap()
+                    .update(cx, |buffer, cx| {
+                        buffer.set_language(Some(rust_lang()), cx);
+                    });
+            });
+            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        });
+
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            "fn main«1()1» «1{}1»
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+",
+            editor
+                .update(cx, |editor, window, cx| {
+                    editor_bracket_colors_markup(&editor.snapshot(window, cx))
+                })
+                .unwrap(),
+            "File-less buffer should still have its brackets colorized"
+        );
+    }
+
+    #[gpui::test]
     async fn test_markdown_bracket_colorization(cx: &mut gpui::TestAppContext) {
         init_test(cx, |language_settings| {
             language_settings.defaults.colorize_brackets = Some(true);
@@ -283,6 +332,132 @@ where
 "#,
             &bracket_colors_markup(&mut cx),
             "All markdown brackets should be colored based on their depth"
+        );
+
+        cx.set_state(indoc! {r#"ˇ{{}}"#});
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            r#"«1{«2{}2»}1»
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+"#,
+            &bracket_colors_markup(&mut cx),
+            "All markdown brackets should be colored based on their depth, again"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_markdown_brackets_in_multiple_hunks(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let mut cx = EditorLspTestContext::new(
+            Arc::into_inner(markdown_lang()).unwrap(),
+            lsp::ServerCapabilities::default(),
+            cx,
+        )
+        .await;
+
+        let rows = 100;
+        let footer = "1 hsla(207.80, 16.20%, 69.19%, 1.00)\n";
+
+        let simple_brackets = (0..rows).map(|_| "ˇ[]\n").collect::<String>();
+        let simple_brackets_highlights = (0..rows).map(|_| "«1[]1»\n").collect::<String>();
+        cx.set_state(&simple_brackets);
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_end(&MoveToEnd, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            format!("{simple_brackets_highlights}\n{footer}"),
+            bracket_colors_markup(&mut cx),
+            "Simple bracket pairs should be colored"
+        );
+
+        let paired_brackets = (0..rows).map(|_| "ˇ[]()\n").collect::<String>();
+        let paired_brackets_highlights = (0..rows).map(|_| "«1[]1»«1()1»\n").collect::<String>();
+        cx.set_state(&paired_brackets);
+        // Wait for reparse to complete after content change
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        cx.update_editor(|editor, _, cx| {
+            // Force invalidation of bracket cache after reparse
+            editor.colorize_brackets(true, cx);
+        });
+        // Scroll to beginning to fetch first chunks
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        // Scroll to end to fetch remaining chunks
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_end(&MoveToEnd, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            format!("{paired_brackets_highlights}\n{footer}"),
+            bracket_colors_markup(&mut cx),
+            "Paired bracket pairs should be colored"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_bracket_colorization_after_language_swap(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+
+        let language_registry = Arc::new(language::LanguageRegistry::test(cx.executor()));
+        language_registry.add(markdown_lang());
+        language_registry.add(rust_lang());
+
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| {
+            buffer.set_language_registry(language_registry.clone());
+            buffer.set_language(Some(markdown_lang()), cx);
+        });
+
+        cx.set_state(indoc! {r#"
+            fn main() {
+                let v: Vec<Stringˇ> = vec![];
+            }
+        "#});
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            r#"fn main«1()1» «1{
+    let v: Vec<String> = vec!«2[]2»;
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+"#,
+            &bracket_colors_markup(&mut cx),
+            "Markdown does not colorize <> brackets"
+        );
+
+        cx.update_buffer(|buffer, cx| {
+            buffer.set_language(Some(rust_lang()), cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            r#"fn main«1()1» «1{
+    let v: Vec«2<String>2» = vec!«2[]2»;
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+"#,
+            &bracket_colors_markup(&mut cx),
+            "After switching to Rust, <> brackets are now colorized"
         );
     }
 
@@ -1187,8 +1362,8 @@ mod foo «1{
                         theme.to_string(),
                         ThemeStyleContent {
                             accents: vec![
-                                AccentContent(Some(SharedString::new("#ff0000"))),
-                                AccentContent(Some(SharedString::new("#0000ff"))),
+                                AccentContent(Some("#ff0000".to_string())),
+                                AccentContent(Some("#0000ff".to_string())),
                             ],
                             ..ThemeStyleContent::default()
                         },

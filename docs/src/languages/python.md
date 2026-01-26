@@ -63,7 +63,7 @@ Zed will recognize `.py` files automatically using its native tree-sitter-python
 
 ### Step 2: Use the Integrated Terminal (Optional)
 
-Zed includes an integrated terminal, accessible from the bottom panel. If Zed detects that your project is using a [virtual environment](#virtual-environments), it will be activated automatically in newly-created terminals. You can configure this behavior with the [`detect_venv`](../configuring-zed.md#terminal-detect_venv) setting.
+Zed includes an integrated terminal, accessible from the bottom panel. If Zed detects that your project is using a [virtual environment](#virtual-environments), it will be activated automatically in newly-created terminals. You can configure this behavior with the [`detect_venv`](../reference/all-settings.md#terminal-detect_venv) setting.
 
 ## Configure Python Language Servers in Zed
 
@@ -71,7 +71,7 @@ Zed provides several Python language servers out of the box. By default, [basedp
 
 Other built-in language servers are:
 
-- [Ty](https://docs.astral.sh/ty/)&mdash;Up-and-coming language server from Astral, built for speed.
+- [ty](https://docs.astral.sh/ty/)&mdash;Up-and-coming language server from Astral, built for speed.
 - [Pyright](https://github.com/microsoft/pyright)&mdash;The basis for basedpyright.
 - [PyLSP](https://github.com/python-lsp/python-lsp-server)&mdash;A plugin-based language server that integrates with tools like `pycodestyle`, `autopep8`, and `yapf`.
 
@@ -82,7 +82,7 @@ These are disabled by default, but can be enabled in your settings. For example:
   "languages": {
     "Python": {
       "language_servers": [
-        // Disable basedpyright and enable Ty, and otherwise
+        // Disable basedpyright and enable ty, and otherwise
         // use the default configuration.
         "ty",
         "!basedpyright",
@@ -257,6 +257,25 @@ quote-style = "single"
 ```
 
 For more details, refer to the Ruff documentation about [configuration files](https://docs.astral.sh/ruff/configuration/) and [language server settings](https://docs.astral.sh/ruff/editors/settings/), and the [list of options](https://docs.astral.sh/ruff/settings/).
+
+### Embedded Language Highlighting
+
+Zed supports syntax highlighting for code embedded in Python strings by adding a comment with the language name.
+
+```python
+# sql
+query = "SELECT * FROM users"
+
+#sql
+query = """
+    SELECT *
+    FROM users
+"""
+
+result = func( #sql
+    "SELECT * FROM users"
+)
+```
 
 ## Debugging
 

@@ -43,12 +43,18 @@ impl LanguageName {
         Self(SharedString::new(s))
     }
 
+    pub fn new_static(s: &'static str) -> Self {
+        Self(SharedString::new_static(s))
+    }
+
     pub fn from_proto(s: String) -> Self {
         Self(SharedString::from(s))
     }
+
     pub fn to_proto(&self) -> String {
         self.0.to_string()
     }
+
     pub fn lsp_id(&self) -> String {
         match self.0.as_ref() {
             "Plain Text" => "plaintext".to_string(),
@@ -87,9 +93,9 @@ impl std::fmt::Display for LanguageName {
     }
 }
 
-impl<'a> From<&'a str> for LanguageName {
-    fn from(str: &'a str) -> LanguageName {
-        LanguageName(SharedString::new(str))
+impl From<&'static str> for LanguageName {
+    fn from(str: &'static str) -> Self {
+        Self(SharedString::new_static(str))
     }
 }
 
@@ -222,7 +228,6 @@ pub const QUERY_FILENAME_PREFIXES: &[(
     ("brackets", |q| &mut q.brackets),
     ("outline", |q| &mut q.outline),
     ("indents", |q| &mut q.indents),
-    ("embedding", |q| &mut q.embedding),
     ("injections", |q| &mut q.injections),
     ("overrides", |q| &mut q.overrides),
     ("redactions", |q| &mut q.redactions),
@@ -239,7 +244,6 @@ pub struct LanguageQueries {
     pub brackets: Option<Cow<'static, str>>,
     pub indents: Option<Cow<'static, str>>,
     pub outline: Option<Cow<'static, str>>,
-    pub embedding: Option<Cow<'static, str>>,
     pub injections: Option<Cow<'static, str>>,
     pub overrides: Option<Cow<'static, str>>,
     pub redactions: Option<Cow<'static, str>>,
@@ -404,6 +408,12 @@ impl LanguageRegistry {
         Some(load_lsp_adapter())
     }
 
+    /// Checks if a language server adapter with the given name is available to be loaded.
+    pub fn is_lsp_adapter_available(&self, name: &LanguageServerName) -> bool {
+        let state = self.state.read();
+        state.available_lsp_adapters.contains_key(name)
+    }
+
     pub fn register_lsp_adapter(&self, language_name: LanguageName, adapter: Arc<dyn LspAdapter>) {
         let mut state = self.state.write();
 
@@ -437,26 +447,14 @@ impl LanguageRegistry {
         language_name: impl Into<LanguageName>,
         mut adapter: crate::FakeLspAdapter,
     ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
-        let language_name = language_name.into();
         let adapter_name = LanguageServerName(adapter.name.into());
         let capabilities = adapter.capabilities.clone();
         let initializer = adapter.initializer.take();
-        let adapter = CachedLspAdapter::new(Arc::new(adapter));
-        {
-            let mut state = self.state.write();
-            state
-                .lsp_adapters
-                .entry(language_name)
-                .or_default()
-                .push(adapter.clone());
-            state.all_lsp_adapters.insert(adapter.name(), adapter);
-        }
-
-        self.register_fake_language_server(adapter_name, capabilities, initializer)
+        self.register_fake_lsp_adapter(language_name, adapter);
+        self.register_fake_lsp_server(adapter_name, capabilities, initializer)
     }
 
     /// Register a fake lsp adapter (without the language server)
-    /// The returned channel receives a new instance of the language server every time it is started
     #[cfg(any(feature = "test-support", test))]
     pub fn register_fake_lsp_adapter(
         &self,
@@ -479,7 +477,7 @@ impl LanguageRegistry {
     /// Register a fake language server (without the adapter)
     /// The returned channel receives a new instance of the language server every time it is started
     #[cfg(any(feature = "test-support", test))]
-    pub fn register_fake_language_server(
+    pub fn register_fake_lsp_server(
         &self,
         lsp_name: LanguageServerName,
         capabilities: lsp::ServerCapabilities,
@@ -496,6 +494,11 @@ impl LanguageRegistry {
             },
         );
         servers_rx
+    }
+
+    #[cfg(any(feature = "test-support", test))]
+    pub fn has_fake_lsp_server(&self, lsp_name: &LanguageServerName) -> bool {
+        self.state.read().fake_server_entries.contains_key(lsp_name)
     }
 
     /// Adds a language to the registry, which can be loaded if needed.
@@ -757,7 +760,7 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         path: &Path,
         content: Option<&Rope>,
-        user_file_types: Option<&FxHashMap<Arc<str>, GlobSet>>,
+        user_file_types: Option<&FxHashMap<Arc<str>, (GlobSet, Vec<String>)>>,
     ) -> Option<AvailableLanguage> {
         let filename = path.file_name().and_then(|filename| filename.to_str());
         // `Path.extension()` returns None for files with a leading '.'
@@ -800,7 +803,7 @@ impl LanguageRegistry {
             let path_matches_custom_suffix = || {
                 user_file_types
                     .and_then(|types| types.get(language_name.as_ref()))
-                    .map_or(None, |custom_suffixes| {
+                    .map_or(None, |(custom_suffixes, _)| {
                         path_suffixes
                             .iter()
                             .find(|(_, candidate)| custom_suffixes.is_match_candidate(candidate))
@@ -919,6 +922,7 @@ impl LanguageRegistry {
         available_language
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn load_language(
         self: &Arc<Self>,
         language: &AvailableLanguage,
@@ -1006,6 +1010,7 @@ impl LanguageRegistry {
         rx
     }
 
+    #[ztracing::instrument(skip_all)]
     fn get_or_load_language(
         self: &Arc<Self>,
         callback: impl Fn(
@@ -1027,6 +1032,8 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         name: Arc<str>,
     ) -> impl Future<Output = Result<tree_sitter::Language>> {
+        let span = ztracing::debug_span!("get_or_load_grammar", name = &*name.clone());
+        let _enter = span.enter();
         let (tx, rx) = oneshot::channel();
         let mut state = self.state.write();
 
@@ -1135,10 +1142,9 @@ impl LanguageRegistry {
         binary: lsp::LanguageServerBinary,
         cx: &mut gpui::AsyncApp,
     ) -> Option<lsp::LanguageServer> {
-        use gpui::AppContext as _;
-
         let mut state = self.state.write();
         let fake_entry = state.fake_server_entries.get_mut(name)?;
+
         let (server, mut fake_server) = lsp::FakeLanguageServer::new(
             server_id,
             binary,
@@ -1152,17 +1158,9 @@ impl LanguageRegistry {
             initializer(&mut fake_server);
         }
 
-        let tx = fake_entry.tx.clone();
-        cx.background_spawn(async move {
-            if fake_server
-                .try_receive_notification::<lsp::notification::Initialized>()
-                .await
-                .is_some()
-            {
-                tx.unbounded_send(fake_server.clone()).ok();
-            }
-        })
-        .detach();
+        // Emit synchronously so tests can reliably observe server creation even if the LSP startup
+        // task hasn't progressed to initialization yet.
+        fake_entry.tx.unbounded_send(fake_server).ok();
 
         Some(server)
     }
@@ -1196,7 +1194,7 @@ impl LanguageRegistryState {
             language.set_theme(theme.syntax());
         }
         self.language_settings.languages.0.insert(
-            language.name().0,
+            language.name().0.to_string(),
             LanguageSettingsContent {
                 tab_size: language.config.tab_size,
                 hard_tabs: language.config.hard_tabs,

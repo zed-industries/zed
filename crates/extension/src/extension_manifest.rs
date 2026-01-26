@@ -53,6 +53,30 @@ impl SchemaVersion {
     }
 }
 
+// TODO: We should change this to just always be a Vec<PathBuf> once we bump the
+// extension.toml schema version to 2
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ExtensionSnippets {
+    Single(PathBuf),
+    Multiple(Vec<PathBuf>),
+}
+
+impl ExtensionSnippets {
+    pub fn paths(&self) -> impl Iterator<Item = &PathBuf> {
+        match self {
+            ExtensionSnippets::Single(path) => std::slice::from_ref(path).iter(),
+            ExtensionSnippets::Multiple(paths) => paths.iter(),
+        }
+    }
+}
+
+impl From<&str> for ExtensionSnippets {
+    fn from(value: &str) -> Self {
+        ExtensionSnippets::Single(value.into())
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct ExtensionManifest {
     pub id: Arc<str>,
@@ -86,13 +110,15 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
     #[serde(default)]
-    pub snippets: Option<PathBuf>,
+    pub snippets: Option<ExtensionSnippets>,
     #[serde(default)]
     pub capabilities: Vec<ExtensionCapability>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub debug_adapters: BTreeMap<Arc<str>, DebugAdapterManifestEntry>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub debug_locators: BTreeMap<Arc<str>, DebugLocatorManifestEntry>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub language_model_providers: BTreeMap<Arc<str>, LanguageModelProviderManifestEntry>,
 }
 
 impl ExtensionManifest {
@@ -288,6 +314,16 @@ pub struct DebugAdapterManifestEntry {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct DebugLocatorManifestEntry {}
 
+/// Manifest entry for a language model provider.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct LanguageModelProviderManifestEntry {
+    /// Display name for the provider.
+    pub name: String,
+    /// Path to an SVG icon file relative to the extension root (e.g., "icons/provider.svg").
+    #[serde(default)]
+    pub icon: Option<String>,
+}
+
 impl ExtensionManifest {
     pub async fn load(fs: Arc<dyn Fs>, extension_dir: &Path) -> Result<Self> {
         let extension_name = extension_dir
@@ -358,6 +394,7 @@ fn manifest_from_old_manifest(
         capabilities: Vec::new(),
         debug_adapters: Default::default(),
         debug_locators: Default::default(),
+        language_model_providers: Default::default(),
     }
 }
 
@@ -391,6 +428,7 @@ mod tests {
             capabilities: vec![],
             debug_adapters: Default::default(),
             debug_locators: Default::default(),
+            language_model_providers: BTreeMap::default(),
         }
     }
 

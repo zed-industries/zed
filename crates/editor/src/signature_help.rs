@@ -10,6 +10,7 @@ use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, MultiBufferOffset, ToOffset};
 use settings::Settings;
 use std::ops::Range;
+use std::time::Duration;
 use text::Rope;
 use theme::ThemeSettings;
 use ui::{
@@ -94,11 +95,16 @@ impl Editor {
         }
 
         let buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let bracket_range = |position: MultiBufferOffset| match (position, position + 1usize) {
-            (MultiBufferOffset(0), b) if b <= buffer_snapshot.len() => MultiBufferOffset(0)..b,
-            (MultiBufferOffset(0), b) => MultiBufferOffset(0)..b - 1,
-            (a, b) if b <= buffer_snapshot.len() => a - 1..b,
-            (a, b) => a - 1..b - 1,
+        let bracket_range = |position: MultiBufferOffset| {
+            let range = match (position, position + 1usize) {
+                (MultiBufferOffset(0), b) if b <= buffer_snapshot.len() => MultiBufferOffset(0)..b,
+                (MultiBufferOffset(0), b) => MultiBufferOffset(0)..b - 1,
+                (a, b) if b <= buffer_snapshot.len() => a - 1..b,
+                (a, b) => a - 1..b - 1,
+            };
+            let start = buffer_snapshot.clip_offset(range.start, text::Bias::Left);
+            let end = buffer_snapshot.clip_offset(range.end, text::Bias::Right);
+            start..end
         };
         let not_quote_like_brackets =
             |buffer: &BufferSnapshot, start: Range<BufferOffset>, end: Range<BufferOffset>| {
@@ -165,6 +171,10 @@ impl Editor {
             return;
         }
 
+        // If there's an already running signature
+        // help task, this will drop it.
+        self.signature_help_state.task = None;
+
         let position = self.selections.newest_anchor().head();
         let Some((buffer, buffer_position)) =
             self.buffer.read(cx).text_anchor_for_position(position, cx)
@@ -174,14 +184,23 @@ impl Editor {
         let Some(lsp_store) = self.project().map(|p| p.read(cx).lsp_store()) else {
             return;
         };
-        let task = lsp_store.update(cx, |lsp_store, cx| {
+        let lsp_task = lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.signature_help(&buffer, buffer_position, cx)
         });
         let language = self.language_at(position, cx);
 
+        let signature_help_delay_ms = EditorSettings::get_global(cx).hover_popover_delay.0;
+
         self.signature_help_state
             .set_task(cx.spawn_in(window, async move |editor, cx| {
-                let signature_help = task.await;
+                if signature_help_delay_ms > 0 {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(signature_help_delay_ms))
+                        .await;
+                }
+
+                let signature_help = lsp_task.await;
+
                 editor
                     .update(cx, |editor, cx| {
                         let Some(mut signature_help) =

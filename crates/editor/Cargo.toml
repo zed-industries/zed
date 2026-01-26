@@ -41,6 +41,7 @@ dap.workspace = true
 db.workspace = true
 buffer_diff.workspace = true
 emojis.workspace = true
+feature_flags.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -48,7 +49,7 @@ fs.workspace = true
 git.workspace = true
 gpui.workspace = true
 indoc.workspace = true
-edit_prediction.workspace = true
+edit_prediction_types.workspace = true
 itertools.workspace = true
 language.workspace = true
 linkify.workspace = true
@@ -83,16 +84,20 @@ tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
+ztracing.workspace = true
+tracing.workspace = true
 unicode-segmentation.workspace = true
 unicode-script.workspace = true
 unindent = { workspace = true, optional = true }
 ui.workspace = true
+ui_input.workspace = true
 url.workspace = true
 util.workspace = true
 uuid.workspace = true
 vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+zlog.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
@@ -117,6 +122,8 @@ tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 tree-sitter-yaml.workspace = true
 tree-sitter-bash.workspace = true
+tree-sitter-md.workspace = true
+unicode-width.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

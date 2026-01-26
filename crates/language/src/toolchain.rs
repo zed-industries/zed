@@ -4,11 +4,15 @@
 //! which is a set of tools used to interact with the projects written in said language.
 //! For example, a Python project can have an associated virtual environment; a Rust project can have a toolchain override.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use async_trait::async_trait;
 use collections::HashMap;
 use fs::Fs;
+use futures::future::BoxFuture;
 use gpui::{App, AsyncApp, SharedString};
 use settings::WorktreeId;
 use task::ShellKind;
@@ -36,7 +40,7 @@ pub struct Toolchain {
 /// - Only in the subproject they're currently in.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ToolchainScope {
-    Subproject(WorktreeId, Arc<RelPath>),
+    Subproject(Arc<Path>, Arc<RelPath>),
     Project,
     /// Available in all projects on this box. It wouldn't make sense to show suggestions across machines.
     Global,
@@ -110,7 +114,12 @@ pub trait ToolchainLister: Send + Sync + 'static {
         fs: &dyn Fs,
     ) -> anyhow::Result<Toolchain>;
 
-    fn activation_script(&self, toolchain: &Toolchain, shell: ShellKind, cx: &App) -> Vec<String>;
+    fn activation_script(
+        &self,
+        toolchain: &Toolchain,
+        shell: ShellKind,
+        cx: &App,
+    ) -> BoxFuture<'static, Vec<String>>;
 
     /// Returns various "static" bits of information about this toolchain lister. This function should be pure.
     fn meta(&self) -> ToolchainMetadata;

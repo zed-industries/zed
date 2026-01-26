@@ -4,9 +4,10 @@ use gpui::AsyncApp;
 use language::{
     LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain, language_settings::AllLanguageSettings,
 };
-use lsp::{LanguageServerBinary, LanguageServerName};
+use lsp::{LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::lsp_store::language_server_settings;
+use semver::Version;
 use serde_json::Value;
 use settings::{Settings, SettingsLocation};
 use std::{
@@ -35,14 +36,14 @@ impl YamlLspAdapter {
 }
 
 impl LspInstaller for YamlLspAdapter {
-    type BinaryVersion = String;
+    type BinaryVersion = Version;
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
         _: bool,
         _: &mut AsyncApp,
-    ) -> Result<String> {
+    ) -> Result<Self::BinaryVersion> {
         self.node
             .npm_package_latest_version("yaml-language-server")
             .await
@@ -66,7 +67,7 @@ impl LspInstaller for YamlLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: String,
+        latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
@@ -75,7 +76,7 @@ impl LspInstaller for YamlLspAdapter {
         self.node
             .npm_install_packages(
                 &container_dir,
-                &[(Self::PACKAGE_NAME, latest_version.as_str())],
+                &[(Self::PACKAGE_NAME, &latest_version.to_string())],
             )
             .await?;
 
@@ -88,7 +89,7 @@ impl LspInstaller for YamlLspAdapter {
 
     async fn check_if_version_installed(
         &self,
-        version: &String,
+        version: &Self::BinaryVersion,
         container_dir: &PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
@@ -132,9 +133,9 @@ impl LspAdapter for YamlLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let location = SettingsLocation {
@@ -146,7 +147,7 @@ impl LspAdapter for YamlLspAdapter {
             AllLanguageSettings::get(Some(location), cx)
                 .language(Some(location), Some(&"YAML".into()), cx)
                 .tab_size
-        })?;
+        });
 
         let mut options = serde_json::json!({
             "[yaml]": {"editor.tabSize": tab_size},
@@ -156,7 +157,7 @@ impl LspAdapter for YamlLspAdapter {
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
-        })?;
+        });
         if let Some(override_options) = project_options {
             merge_json_value_into(override_options, &mut options);
         }

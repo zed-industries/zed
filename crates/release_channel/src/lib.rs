@@ -90,11 +90,19 @@ impl AppVersion {
         } else {
             pkg_version.parse().expect("invalid version in Cargo.toml")
         };
+        let mut pre = String::from(RELEASE_CHANNEL.dev_name());
+
         if let Some(build_id) = build_id {
-            version.pre = semver::Prerelease::new(&build_id).expect("Invalid build identifier");
+            pre.push('.');
+            pre.push_str(&build_id);
         }
+
         if let Some(sha) = commit_sha {
-            version.build = semver::BuildMetadata::new(&sha.0).expect("Invalid build metadata");
+            pre.push('.');
+            pre.push_str(&sha.0);
+        }
+        if let Ok(build) = semver::BuildMetadata::new(&pre) {
+            version.build = build;
         }
 
         version

@@ -186,6 +186,8 @@ impl Editor {
             }
         }
 
+        let visible_sticky_headers = self.scroll_manager.sticky_header_line_count();
+
         let margin = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
             0.
         } else {
@@ -194,21 +196,17 @@ impl Editor {
 
         let strategy = match autoscroll {
             Autoscroll::Strategy(strategy, _) => strategy,
-            Autoscroll::Next => {
-                let last_autoscroll = &self.scroll_manager.last_autoscroll;
-                if let Some(last_autoscroll) = last_autoscroll {
-                    if self.scroll_manager.anchor.offset == last_autoscroll.0
-                        && target_top == last_autoscroll.1
-                        && target_bottom == last_autoscroll.2
-                    {
-                        last_autoscroll.3.next()
-                    } else {
-                        AutoscrollStrategy::default()
-                    }
-                } else {
-                    AutoscrollStrategy::default()
-                }
-            }
+            Autoscroll::Next => self
+                .scroll_manager
+                .last_autoscroll
+                .as_ref()
+                .filter(|(offset, last_target_top, last_target_bottom, _)| {
+                    self.scroll_manager.anchor.offset == *offset
+                        && target_top == *last_target_top
+                        && target_bottom == *last_target_bottom
+                })
+                .map(|(_, _, _, strategy)| strategy.next())
+                .unwrap_or_default(),
         };
         if let Autoscroll::Strategy(_, Some(anchor)) = autoscroll {
             target_top = anchor.to_display_point(&display_map).row().as_f64();
@@ -218,7 +216,7 @@ impl Editor {
         let was_autoscrolled = match strategy {
             AutoscrollStrategy::Fit | AutoscrollStrategy::Newest => {
                 let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
-                let target_top = (target_top - margin).max(0.0);
+                let target_top = (target_top - margin - visible_sticky_headers as f64).max(0.0);
                 let target_bottom = target_bottom + margin;
                 let start_row = scroll_position.y;
                 let end_row = start_row + visible_lines;

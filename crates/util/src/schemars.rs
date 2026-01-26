@@ -53,3 +53,20 @@ impl schemars::transform::Transform for DefaultDenyUnknownFields {
         transform_subschemas(self, schema);
     }
 }
+
+/// Defaults `allowTrailingCommas` to `true`, for use with `json-language-server`.
+/// This can be applied to any schema that will be treated as `jsonc`.
+///
+/// Note that this is non-recursive and only applied to the root schema.
+#[derive(Clone)]
+pub struct AllowTrailingCommas;
+
+impl schemars::transform::Transform for AllowTrailingCommas {
+    fn transform(&mut self, schema: &mut schemars::Schema) {
+        if let Some(object) = schema.as_object_mut()
+            && !object.contains_key("allowTrailingCommas")
+        {
+            object.insert("allowTrailingCommas".to_string(), true.into());
+        }
+    }
+}

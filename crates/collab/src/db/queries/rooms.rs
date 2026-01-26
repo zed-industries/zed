@@ -798,6 +798,8 @@ impl Database {
                             is_last_update: true,
                             merge_message: db_repository.merge_message,
                             stash_entries: Vec::new(),
+                            remote_upstream_url: db_repository.remote_upstream_url.clone(),
+                            remote_origin_url: db_repository.remote_origin_url.clone(),
                         });
                     }
                 }
@@ -834,6 +836,7 @@ impl Database {
                         path: db_settings_file.path,
                         content: db_settings_file.content,
                         kind: db_settings_file.kind,
+                        outside_worktree: db_settings_file.outside_worktree,
                     });
                 }
             }

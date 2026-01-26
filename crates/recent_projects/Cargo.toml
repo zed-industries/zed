@@ -12,13 +12,18 @@ workspace = true
 path = "src/recent_projects.rs"
 doctest = false
 
+[features]
+default = []
+test-support = ["remote/test-support", "project/test-support", "workspace/test-support"]
+
 [dependencies]
 anyhow.workspace = true
 askpass.workspace = true
 auto_update.workspace = true
+db.workspace = true
+dev_container.workspace = true
 editor.workspace = true
 extension_host.workspace = true
-file_finder.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
@@ -26,6 +31,8 @@ language.workspace = true
 log.workspace = true
 markdown.workspace = true
 menu.workspace = true
+node_runtime.workspace = true
+open_path_prompt.workspace = true
 ordered-float.workspace = true
 paths.workspace = true
 picker.workspace = true
@@ -34,6 +41,7 @@ release_channel.workspace = true
 remote.workspace = true
 semver.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
 task.workspace = true
@@ -42,6 +50,7 @@ theme.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
+worktree.workspace = true
 zed_actions.workspace = true
 indoc.workspace = true
 
@@ -51,8 +60,15 @@ windows-registry = "0.6.0"
 [dev-dependencies]
 dap.workspace = true
 editor = { workspace = true, features = ["test-support"] }
+extension.workspace = true
+fs.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+http_client.workspace = true
 language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+release_channel.workspace = true
+remote = { workspace = true, features = ["test-support"] }
+remote_server.workspace = true
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

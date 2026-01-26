@@ -9,6 +9,7 @@ use crate::tasks::workflows::{
 
 use super::{runners, steps};
 use gh_workflow::*;
+use indoc::indoc;
 
 pub fn run_bundling() -> Workflow {
     let bundle = ReleaseBundleJobs {
@@ -42,10 +43,11 @@ pub fn run_bundling() -> Workflow {
 fn bundle_job(deps: &[&NamedJob]) -> Job {
     dependant_job(deps)
         .when(deps.len() == 0, |job|
-                job.cond(Expression::new(
-                "(github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                 (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))",
-            )))
+            job.cond(Expression::new(
+                indoc! {
+                    r#"(github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
+                    (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))"#,
+                })))
         .timeout_minutes(60u32)
 }
 
@@ -153,6 +155,10 @@ pub(crate) fn bundle_windows(
         Arch::X86_64 => assets::WINDOWS_X86_64,
         Arch::AARCH64 => assets::WINDOWS_AARCH64,
     };
+    let remote_server_artifact_name = match arch {
+        Arch::X86_64 => assets::REMOTE_SERVER_WINDOWS_X86_64,
+        Arch::AARCH64 => assets::REMOTE_SERVER_WINDOWS_AARCH64,
+    };
     NamedJob {
         name: format!("bundle_windows_{arch}"),
         job: bundle_job(deps)
@@ -164,7 +170,10 @@ pub(crate) fn bundle_windows(
             })
             .add_step(steps::setup_sentry())
             .add_step(bundle_windows(arch))
-            .add_step(upload_artifact(&format!("target/{artifact_name}"))),
+            .add_step(upload_artifact(&format!("target/{artifact_name}")))
+            .add_step(upload_artifact(&format!(
+                "target/{remote_server_artifact_name}"
+            ))),
     }
 }
 

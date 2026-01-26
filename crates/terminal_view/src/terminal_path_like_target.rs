@@ -362,8 +362,8 @@ fn possible_open_target(
     cx.spawn(async move |cx| {
         background_fs_checks_task.await.or_else(|| {
             for (worktree, worktree_paths_to_check) in worktree_paths_to_check {
-                let found_entry = worktree
-                    .update(cx, |worktree, _| -> Option<OpenTarget> {
+                if let Some(found_entry) =
+                    worktree.update(cx, |worktree, _| -> Option<OpenTarget> {
                         let traversal =
                             worktree.traverse_from_path(true, true, false, RelPath::empty());
                         for entry in traversal {
@@ -387,8 +387,7 @@ fn possible_open_target(
                         }
                         None
                     })
-                    .ok()?;
-                if let Some(found_entry) = found_entry {
+                {
                     return Some(found_entry);
                 }
             }
@@ -518,7 +517,11 @@ mod tests {
     use project::Project;
     use serde_json::json;
     use std::path::{Path, PathBuf};
-    use terminal::{HoveredWord, alacritty_terminal::index::Point as AlacPoint};
+    use terminal::{
+        HoveredWord, TerminalBuilder,
+        alacritty_terminal::index::Point as AlacPoint,
+        terminal_settings::{AlternateScroll, CursorShape},
+    };
     use util::path;
     use workspace::AppState;
 
@@ -549,16 +552,21 @@ mod tests {
         )
         .await;
 
-        let (workspace, cx) =
+        let (workspace, _cx) =
             app_cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let cwd = std::env::current_dir().expect("Failed to get working directory");
-        let terminal = project
-            .update(cx, |project: &mut Project, cx| {
-                project.create_terminal_shell(Some(cwd), cx)
-            })
-            .await
-            .expect("Failed to create a terminal");
+        let terminal = app_cx.new(|cx| {
+            TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .expect("Failed to create display-only terminal")
+            .subscribe(cx)
+        });
 
         let workspace_a = workspace.clone();
         let (terminal_view, cx) = app_cx.add_window_view(|window, cx| {

@@ -8,6 +8,7 @@ use ui::{ButtonStyle, IconButton, IconButtonShape};
 use ui::{Tooltip, prelude::*};
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
+pub use zed_actions::search::ToggleIncludeIgnored;
 
 pub use search_status_button::SEARCH_ICON;
 
@@ -33,8 +34,6 @@ actions!(
         ToggleWholeWord,
         /// Toggles case-sensitive search.
         ToggleCaseSensitive,
-        /// Toggles searching in ignored files.
-        ToggleIncludeIgnored,
         /// Toggles regular expression mode.
         ToggleRegex,
         /// Toggles the replace interface.
@@ -143,7 +142,7 @@ impl SearchOption {
                 let focus_handle = focus_handle.clone();
                 button.on_click(move |_: &ClickEvent, window, cx| {
                     if !focus_handle.is_focused(window) {
-                        window.focus(&focus_handle);
+                        window.focus(&focus_handle, cx);
                     }
                     window.dispatch_action(action.boxed_clone(), cx);
                 })

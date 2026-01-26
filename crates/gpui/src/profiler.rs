@@ -216,3 +216,20 @@ impl Drop for ThreadTimings {
         thread_timings.swap_remove(index);
     }
 }
+
+#[allow(dead_code)] // Used by Linux and Windows dispatchers, not macOS
+pub(crate) fn add_task_timing(timing: TaskTiming) {
+    THREAD_TIMINGS.with(|timings| {
+        let mut timings = timings.lock();
+        let timings = &mut timings.timings;
+
+        if let Some(last_timing) = timings.iter_mut().rev().next() {
+            if last_timing.location == timing.location {
+                last_timing.end = timing.end;
+                return;
+            }
+        }
+
+        timings.push_back(timing);
+    });
+}

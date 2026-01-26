@@ -21,7 +21,7 @@ use futures::{
     },
     future::BoxFuture,
 };
-use gpui::{App, AsyncApp, BackgroundExecutor, Task, Timer};
+use gpui::{App, AsyncApp, BackgroundExecutor, Task};
 use http_client::HttpClient;
 use language::LanguageName;
 use lsp::LanguageServerName;
@@ -45,7 +45,7 @@ use wasmtime::{
     CacheStore, Engine, Store,
     component::{Component, ResourceTable},
 };
-use wasmtime_wasi::{self as wasi, WasiView};
+use wasmtime_wasi::p2::{self as wasi, IoView as _};
 use wit::Extension;
 
 pub struct WasmHost {
@@ -535,14 +535,15 @@ fn wasm_engine(executor: &BackgroundExecutor) -> wasmtime::Engine {
             // not have a dedicated thread just for this. If it becomes an issue, we can consider
             // creating a separate thread for epoch interruption.
             let engine_ref = engine.weak();
+            let executor2 = executor.clone();
             executor
                 .spawn(async move {
                     // Somewhat arbitrary interval, as it isn't a guaranteed interval.
                     // But this is a rough upper bound for how long the extension execution can block on
                     // `Future::poll`.
                     const EPOCH_INTERVAL: Duration = Duration::from_millis(100);
-                    let mut timer = Timer::interval(EPOCH_INTERVAL);
-                    while (timer.next().await).is_some() {
+                    loop {
+                        executor2.timer(EPOCH_INTERVAL).await;
                         // Exit the loop and thread once the engine is dropped.
                         let Some(engine) = engine_ref.upgrade() else {
                             break;
@@ -604,15 +605,28 @@ impl WasmHost {
         let this = self.clone();
         let manifest = manifest.clone();
         let executor = cx.background_executor().clone();
-        let load_extension_task = async move {
-            let zed_api_version = parse_wasm_extension_version(&manifest.id, &wasm_bytes)?;
 
-            let component = Component::from_binary(&this.engine, &wasm_bytes)
-                .context("failed to compile wasm component")?;
+        // Parse version and compile component on gpui's background executor.
+        // These are cpu-bound operations that don't require a tokio runtime.
+        let compile_task = {
+            let manifest_id = manifest.id.clone();
+            let engine = this.engine.clone();
+
+            executor.spawn(async move {
+                let zed_api_version = parse_wasm_extension_version(&manifest_id, &wasm_bytes)?;
+                let component = Component::from_binary(&engine, &wasm_bytes)
+                    .context("failed to compile wasm component")?;
+
+                anyhow::Ok((zed_api_version, component))
+            })
+        };
+
+        let load_extension = |zed_api_version: Version, component| async move {
+            let wasi_ctx = this.build_wasi_ctx(&manifest).await?;
             let mut store = wasmtime::Store::new(
                 &this.engine,
                 WasmState {
-                    ctx: this.build_wasi_ctx(&manifest).await?,
+                    ctx: wasi_ctx,
                     manifest: manifest.clone(),
                     table: ResourceTable::new(),
                     host: this.clone(),
@@ -661,12 +675,18 @@ impl WasmHost {
                 zed_api_version,
             ))
         };
+
         cx.spawn(async move |cx| {
+            let (zed_api_version, component) = compile_task.await?;
+
+            // Run wasi-dependent operations on tokio.
+            // wasmtime_wasi internally uses tokio for I/O operations.
             let (extension_task, manifest, work_dir, tx, zed_api_version) =
-                cx.background_executor().spawn(load_extension_task).await?;
-            // we need to run run the task in a tokio context as wasmtime_wasi may
-            // call into tokio, accessing its runtime handle when we trigger the `engine.increment_epoch()` above.
-            let task = Arc::new(gpui_tokio::Tokio::spawn(cx, extension_task)?);
+                gpui_tokio::Tokio::spawn(cx, load_extension(zed_api_version, component)).await??;
+
+            // Run the extension message loop on tokio since extension
+            // calls may invoke wasi functions that require a tokio runtime.
+            let task = Arc::new(gpui_tokio::Tokio::spawn(cx, extension_task));
 
             Ok(WasmExtension {
                 manifest,
@@ -685,8 +705,8 @@ impl WasmHost {
             .await
             .context("failed to create extension work dir")?;
 
-        let file_perms = wasi::FilePerms::all();
-        let dir_perms = wasi::DirPerms::all();
+        let file_perms = wasmtime_wasi::FilePerms::all();
+        let dir_perms = wasmtime_wasi::DirPerms::all();
         let path = SanitizedPath::new(&extension_work_dir).to_string();
         #[cfg(target_os = "windows")]
         let path = path.replace('\\', "/");
@@ -856,11 +876,13 @@ impl WasmState {
     }
 }
 
-impl wasi::WasiView for WasmState {
+impl wasi::IoView for WasmState {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
     }
+}
 
+impl wasi::WasiView for WasmState {
     fn ctx(&mut self) -> &mut wasi::WasiCtx {
         &mut self.ctx
     }

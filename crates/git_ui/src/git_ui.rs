@@ -1,14 +1,17 @@
 use std::any::Any;
 
+use anyhow::anyhow;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
+use project::ProjectPath;
 use ui::{
     Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement, Render, Styled,
     StyledExt, div, h_flex, rems, v_flex,
 };
 
 mod blame_ui;
+pub mod clone;
 
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -35,8 +38,10 @@ pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
 pub mod file_diff_view;
+pub mod file_history_view;
 pub mod git_panel;
 mod git_panel_settings;
+pub mod git_picker;
 pub mod onboarding;
 pub mod picker_prompt;
 pub mod project_diff;
@@ -57,6 +62,7 @@ actions!(
 pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
+    file_history_view::init(cx);
 
     cx.observe_new(|editor: &mut Editor, _, cx| {
         conflict_view::register_editor(editor, editor.buffer().clone(), cx);
@@ -68,15 +74,22 @@ pub fn init(cx: &mut App) {
         CommitModal::register(workspace);
         git_panel::register(workspace);
         repository_selector::register(workspace);
-        branch_picker::register(workspace);
-        worktree_picker::register(workspace);
-        stash_picker::register(workspace);
+        git_picker::register(workspace);
 
         let project = workspace.project().read(cx);
         if project.is_read_only(cx) {
             return;
         }
         if !project.is_via_collab() {
+            workspace.register_action(
+                |workspace, _: &zed_actions::git::CreatePullRequest, window, cx| {
+                    if let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.create_pull_request(window, cx);
+                        });
+                    }
+                },
+            );
             workspace.register_action(|workspace, _: &git::Fetch, window, cx| {
                 let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                     return;
@@ -227,6 +240,41 @@ pub fn init(cx: &mut App) {
                 };
             },
         );
+        workspace.register_action(|workspace, _: &git::FileHistory, window, cx| {
+            let Some(active_item) = workspace.active_item(cx) else {
+                return;
+            };
+            let Some(editor) = active_item.downcast::<Editor>() else {
+                return;
+            };
+            let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() else {
+                return;
+            };
+            let Some(file) = buffer.read(cx).file() else {
+                return;
+            };
+            let worktree_id = file.worktree_id(cx);
+            let project_path = ProjectPath {
+                worktree_id,
+                path: file.path().clone(),
+            };
+            let project = workspace.project();
+            let git_store = project.read(cx).git_store();
+            let Some((repo, repo_path)) = git_store
+                .read(cx)
+                .repository_and_path_for_project_path(&project_path, cx)
+            else {
+                return;
+            };
+            file_history_view::FileHistoryView::open(
+                repo_path,
+                git_store.downgrade(),
+                repo.downgrade(),
+                workspace.weak_handle(),
+                window,
+                cx,
+            );
+        });
     })
     .detach();
 }
@@ -305,12 +353,12 @@ impl RenameBranchModal {
             match repo
                 .update(cx, |repo, _| {
                     repo.rename_branch(current_branch, new_name.clone())
-                })?
+                })
                 .await
             {
                 Ok(Ok(_)) => Ok(()),
                 Ok(Err(error)) => Err(error),
-                Err(_) => Err(anyhow::anyhow!("Operation was canceled")),
+                Err(_) => Err(anyhow!("Operation was canceled")),
             }
         })
         .detach_and_prompt_err("Failed to rename branch", window, cx, |_, _, _| None);
@@ -779,7 +827,7 @@ impl GitCloneModal {
         });
         let focus_handle = repo_input.focus_handle(cx);
 
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
 
         Self {
             panel,

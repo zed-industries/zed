@@ -1,6 +1,7 @@
 use super::*;
 use arrayvec::ArrayVec;
 use std::{cmp::Ordering, mem, sync::Arc};
+use ztracing::instrument;
 
 #[derive(Clone)]
 struct StackEntry<'a, T: Item, D> {
@@ -29,7 +30,7 @@ impl<T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for StackEntry<'_, T, D> {
 pub struct Cursor<'a, 'b, T: Item, D> {
     tree: &'a SumTree<T>,
     stack: ArrayVec<StackEntry<'a, T, D>, 16>,
-    position: D,
+    pub position: D,
     did_seek: bool,
     at_end: bool,
     cx: <T::Summary as Summary>::Context<'b>,
@@ -71,7 +72,7 @@ where
         }
     }
 
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.did_seek = false;
         self.at_end = self.tree.is_empty();
         self.stack.truncate(0);
@@ -211,6 +212,7 @@ where
     }
 
     #[track_caller]
+    #[instrument(skip_all)]
     pub fn prev(&mut self) {
         self.search_backward(|_| true)
     }
@@ -381,6 +383,10 @@ where
             "Must call `seek`, `next` or `prev` before calling this method"
         );
     }
+
+    pub fn did_seek(&self) -> bool {
+        self.did_seek
+    }
 }
 
 impl<'a, 'b, T, D> Cursor<'a, 'b, T, D>
@@ -390,6 +396,7 @@ where
 {
     /// Returns whether we found the item you were seeking for.
     #[track_caller]
+    #[instrument(skip_all)]
     pub fn seek<Target>(&mut self, pos: &Target, bias: Bias) -> bool
     where
         Target: SeekTarget<'a, T::Summary, D>,
@@ -399,7 +406,12 @@ where
     }
 
     /// Returns whether we found the item you were seeking for.
+    ///
+    /// # Panics
+    ///
+    /// If we did not seek before, use seek instead in that case.
     #[track_caller]
+    #[instrument(skip_all)]
     pub fn seek_forward<Target>(&mut self, pos: &Target, bias: Bias) -> bool
     where
         Target: SeekTarget<'a, T::Summary, D>,
@@ -441,6 +453,7 @@ where
 
     /// Returns whether we found the item you were seeking for.
     #[track_caller]
+    #[instrument(skip_all)]
     fn seek_internal(
         &mut self,
         target: &dyn SeekTarget<'a, T::Summary, D>,
