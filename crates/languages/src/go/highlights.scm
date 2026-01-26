@@ -138,3 +138,11 @@
 ] @constant.builtin
 
 (comment) @comment
+
+; Go directives
+((comment) @attribute
+ (#match? @attribute "^//go:"))
+
+((comment) @attribute
+ (#match? @attribute "^// \\+build"))
+
