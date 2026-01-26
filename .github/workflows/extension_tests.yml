@@ -51,7 +51,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.check_rust == 'true'
-    runs-on: namespace-profile-4x8-ubuntu-2204
+    runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -74,7 +74,7 @@ jobs:
       shell: bash -euxo pipefail {0}
       env:
         NEXTEST_NO_TESTS: warn
-    timeout-minutes: 3
+    timeout-minutes: 6
   check_extension:
     needs:
     - orchestrate
