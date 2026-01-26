@@ -79,6 +79,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
+use worktree;
 actions!(
     git_panel,
     [
@@ -1361,7 +1362,10 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.add_entry_to_ignore_file(|repo_root| repo_root.join(".gitignore"), cx);
+        self.add_entry_to_ignore_file(
+            |repo_root, _| async move { repo_root.join(".gitignore") },
+            cx,
+        );
     }
 
     fn add_to_git_exclude(
@@ -1371,16 +1375,21 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         self.add_entry_to_ignore_file(
-            |repo_root| repo_root.join(".git").join("info").join("exclude"),
+            |repo_root, fs| async move {
+                let dot_git: Arc<Path> = repo_root.join(".git").into();
+                let (_, common_dir): (Arc<Path>, Arc<Path>) =
+                    worktree::discover_git_paths(&dot_git, fs.as_ref()).await;
+                common_dir.join("info").join("exclude")
+            },
             cx,
         );
     }
 
-    fn add_entry_to_ignore_file(
-        &mut self,
-        path_fn: impl FnOnce(Arc<Path>) -> PathBuf + Send + 'static,
-        cx: &mut Context<Self>,
-    ) {
+    fn add_entry_to_ignore_file<F, Fut>(&mut self, path_fn: F, cx: &mut Context<Self>)
+    where
+        F: FnOnce(Arc<Path>, Arc<dyn Fs>) -> Fut + Send + 'static,
+        Fut: Future<Output = PathBuf> + Send + 'static,
+    {
         maybe!({
             let list_entry = self.entries.get(self.selected_entry?)?.clone();
             let entry = list_entry.status_entry()?.to_owned();
@@ -1392,6 +1401,7 @@ impl GitPanel {
             let project = self.project.downgrade();
             let repo_path = entry.repo_path;
             let active_repository = self.active_repository.as_ref()?.downgrade();
+            let fs = self.fs.clone();
 
             cx.spawn(async move |_, cx| {
                 let file_path_str = repo_path.as_ref().display(PathStyle::Posix);
@@ -1400,7 +1410,7 @@ impl GitPanel {
                     repository.snapshot().work_directory_abs_path
                 })?;
 
-                let ignore_file_path = path_fn(repo_root);
+                let ignore_file_path = path_fn(repo_root, fs).await;
 
                 let buffer: Entity<Buffer> = project
                     .update(cx, |project, cx| {

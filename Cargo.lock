@@ -7282,6 +7282,7 @@ dependencies = [
  "watch",
  "windows 0.61.3",
  "workspace",
+ "worktree",
  "zed_actions",
  "zeroize",
  "zlog",
