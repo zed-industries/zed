@@ -174,6 +174,7 @@ mod auth_token_tests {
         })?)
     }
 
+    #[expect(clippy::result_large_err)]
     fn previous_hash_access_token(token: &str) -> Result<String> {
         // Avoid slow hashing in debug mode.
         let params = if cfg!(debug_assertions) {
