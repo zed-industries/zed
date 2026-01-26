@@ -148,6 +148,10 @@ impl AgentSessionList for AcpSessionList {
         Some(self.updates_rx.clone())
     }
 
+    fn notify_refresh(&self) {
+        self.notify_update();
+    }
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
     }
@@ -578,10 +582,6 @@ impl AgentConnection for AcpConnection {
                 },
             );
 
-            if let Some(session_list) = &self.session_list {
-                session_list.notify_update();
-            }
-
             Ok(thread)
         })
     }
@@ -663,10 +663,6 @@ impl AgentConnection for AcpConnection {
                 session.config_options = config_options.map(ConfigOptions::new);
             }
 
-            if let Some(session_list) = &self.session_list {
-                session_list.notify_update();
-            }
-
             Ok(thread)
         })
     }
@@ -739,10 +735,6 @@ impl AgentConnection for AcpConnection {
                 session.session_modes = modes;
                 session.models = models;
                 session.config_options = config_options.map(ConfigOptions::new);
-            }
-
-            if let Some(session_list) = &self.session_list {
-                session_list.notify_update();
             }
 
             Ok(thread)
