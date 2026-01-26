@@ -450,8 +450,8 @@ async fn test_snippets(
 
         anyhow::ensure!(
             error_count == 0,
-            "Could not parse {error_count} snippet{plural} in file {snippet_path:?}:\n\n{snippet_errors}",
-            plural = if error_count == 1 { "" } else { "s" },
+            "Could not parse {error_count} snippet{suffix} in file {snippet_path:?}:\n\n{snippet_errors}",
+            suffix = if error_count == 1 { "" } else { "s" },
             snippet_errors = snippet_errors
                 .iter()
                 .map(ToString::to_string)
