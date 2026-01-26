@@ -10,7 +10,7 @@ use util::serde::default_true;
 use workspace::{notifications::NotifyResultExt, searchable::Direction};
 
 use crate::{
-    Vim,
+    Vim, VimSettings,
     command::CommandRange,
     motion::Motion,
     state::{Mode, SearchState},
@@ -581,7 +581,14 @@ impl Vim {
                 )
             }
 
-            if !replacement.flag_g {
+            // gdefault inverts the behavior of the 'g' flag.
+            let gdefault = VimSettings::get_global(cx).gdefault;
+            let replace_all = if gdefault {
+                !replacement.flag_g
+            } else {
+                replacement.flag_g
+            };
+            if !replace_all {
                 options.set(SearchOptions::ONE_MATCH_PER_LINE, true);
             }
 
@@ -1141,6 +1148,52 @@ mod test {
             aa
             aa"
         });
+    }
+
+    #[gpui::test]
+    async fn test_replace_gdefault(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().gdefault = Some(true);
+            });
+        });
+
+        cx.set_state(
+            indoc! {
+                "ˇaa aa aa aa
+                aa
+                aa"
+            },
+            Mode::Normal,
+        );
+
+        // With gdefault on, :s/// replaces all matches (like :s///g normally).
+        cx.simulate_keystrokes(": s / a a / b b");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.assert_state(
+            indoc! {
+                "ˇbb bb bb bb
+                aa
+                aa"
+            },
+            Mode::Normal,
+        );
+
+        // With gdefault on, :s///g replaces only the first match.
+        cx.simulate_keystrokes(": s / b b / c c / g");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.assert_state(
+            indoc! {
+                "ˇcc bb bb bb
+                aa
+                aa"
+            },
+            Mode::Normal,
+        );
     }
 
     #[gpui::test]
