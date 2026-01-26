@@ -117,6 +117,12 @@ struct QuickSearchDrag {
     offset_start: gpui::Point<Pixels>,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum ResizeSide {
+    Start,
+    End,
+}
+
 #[derive(Clone, Copy)]
 struct ResizeDrag {
     mouse_start_y: Pixels,
@@ -125,32 +131,20 @@ struct ResizeDrag {
 }
 
 #[derive(Clone, Copy)]
-struct BottomResizeDrag {
-    mouse_start_y: Pixels,
+struct HorizontalResizeDrag {
+    side: ResizeSide,
+    mouse_start: Pixels,
+    width_start: Pixels,
+    offset_start: Pixels,
+}
+
+#[derive(Clone, Copy)]
+struct VerticalResizeDrag {
+    side: ResizeSide,
+    mouse_start: Pixels,
     results_height_start: Pixels,
     preview_height_start: Pixels,
-}
-
-#[derive(Clone, Copy)]
-struct LeftResizeDrag {
-    mouse_start_x: Pixels,
-    width_start: Pixels,
-    offset_start_x: Pixels,
-}
-
-#[derive(Clone, Copy)]
-struct RightResizeDrag {
-    mouse_start_x: Pixels,
-    width_start: Pixels,
-    offset_start_x: Pixels,
-}
-
-#[derive(Clone, Copy)]
-struct TopResizeDrag {
-    mouse_start_y: Pixels,
-    results_height_start: Pixels,
-    preview_height_start: Pixels,
-    offset_start_y: Pixels,
+    offset_start: Pixels,
 }
 
 struct DragPreview;
@@ -560,13 +554,133 @@ impl QuickSearch {
             (None, HistoryDirection::Previous) => {}
         }
     }
+
+    fn render_horizontal_resize(
+        &self,
+        side: ResizeSide,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let handle_width = px(RESIZE_HANDLE_WIDTH);
+        let min_width = rems(MIN_MODAL_WIDTH_REMS).to_pixels(window.rem_size());
+        let max_width = rems(MAX_MODAL_WIDTH_REMS).to_pixels(window.rem_size());
+
+        div()
+            .id(match side {
+                ResizeSide::Start => "left-resize-handle",
+                ResizeSide::End => "right-resize-handle",
+            })
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .w(handle_width)
+            .cursor_col_resize()
+            .map(|this| match side {
+                ResizeSide::Start => this.left(-handle_width),
+                ResizeSide::End => this.right(-handle_width),
+            })
+            .on_drag(
+                HorizontalResizeDrag {
+                    side,
+                    mouse_start: window.mouse_position().x,
+                    width_start: self.modal_width,
+                    offset_start: self.offset.x,
+                },
+                |_, _, _, cx| cx.new(|_| DragPreview),
+            )
+            .on_drag_move::<HorizontalResizeDrag>(cx.listener(
+                move |this, event: &DragMoveEvent<HorizontalResizeDrag>, _window, cx| {
+                    let drag = event.drag(cx);
+                    let delta = event.event.position.x - drag.mouse_start;
+                    let width_delta = match drag.side {
+                        ResizeSide::Start => -delta,
+                        ResizeSide::End => delta,
+                    };
+
+                    let new_width = (drag.width_start + width_delta)
+                        .max(min_width)
+                        .min(max_width);
+
+                    let width_change = new_width - drag.width_start;
+                    this.modal_width = new_width;
+
+                    let offset_delta = width_change / 2.0;
+                    this.offset.x = drag.offset_start
+                        + match drag.side {
+                            ResizeSide::Start => -offset_delta,
+                            ResizeSide::End => offset_delta,
+                        };
+                    cx.notify();
+                },
+            ))
+    }
+
+    fn render_vertical_resize(
+        &self,
+        side: ResizeSide,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(match side {
+                ResizeSide::Start => "top-resize-handle",
+                ResizeSide::End => "bottom-resize-handle",
+            })
+            .h(px(RESIZE_HANDLE_HEIGHT))
+            .w_full()
+            .cursor_row_resize()
+            .map(|this| match side {
+                ResizeSide::Start => this
+                    .absolute()
+                    .top(-px(RESIZE_HANDLE_HEIGHT))
+                    .left_0()
+                    .right_0(),
+                ResizeSide::End => this
+                    .bg(cx.theme().colors().border)
+                    .hover(|style| style.bg(cx.theme().colors().border_focused)),
+            })
+            .on_drag(
+                VerticalResizeDrag {
+                    side,
+                    mouse_start: window.mouse_position().y,
+                    results_height_start: self.results_height,
+                    preview_height_start: self.preview_height,
+                    offset_start: self.offset.y,
+                },
+                |_, _, _, cx| cx.new(|_| DragPreview),
+            )
+            .on_drag_move::<VerticalResizeDrag>(cx.listener(
+                move |this, event: &DragMoveEvent<VerticalResizeDrag>, _window, cx| {
+                    let drag = event.drag(cx);
+                    let delta = event.event.position.y - drag.mouse_start;
+
+                    let total_growth = match drag.side {
+                        ResizeSide::Start => -delta,
+                        ResizeSide::End => delta,
+                    };
+
+                    let total_start = drag.results_height_start + drag.preview_height_start;
+                    let min_total = px(MIN_PANEL_HEIGHT * 2.0);
+
+                    let new_total = (total_start + total_growth).max(min_total);
+                    let scale = new_total / total_start;
+
+                    this.results_height = drag.results_height_start * scale;
+                    this.preview_height = drag.preview_height_start * scale;
+
+                    if drag.side == ResizeSide::Start {
+                        let actual_growth = new_total - total_start;
+                        this.offset.y = drag.offset_start - actual_growth;
+                    }
+                    cx.notify();
+                },
+            ))
+    }
 }
 
 impl Render for QuickSearch {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let modal_width = self.modal_width;
-        let min_width = rems(MIN_MODAL_WIDTH_REMS).to_pixels(window.rem_size());
-        let max_width = rems(MAX_MODAL_WIDTH_REMS).to_pixels(window.rem_size());
 
         let delegate = &self.picker.read(cx).delegate;
         let match_count = delegate.match_count;
@@ -588,116 +702,9 @@ impl Render for QuickSearch {
         }
 
         v_flex()
-            .child(
-                // Top resize handle (absolutely positioned)
-                div()
-                    .id("top-resize-handle")
-                    .absolute()
-                    .top(-px(RESIZE_HANDLE_HEIGHT))
-                    .left_0()
-                    .right_0()
-                    .h(px(RESIZE_HANDLE_HEIGHT))
-                    .cursor_row_resize()
-                    .on_drag(
-                        TopResizeDrag {
-                            mouse_start_y: window.mouse_position().y,
-                            results_height_start: self.results_height,
-                            preview_height_start: self.preview_height,
-                            offset_start_y: self.offset.y,
-                        },
-                        |_, _, _, cx| cx.new(|_| DragPreview),
-                    )
-                    .on_drag_move::<TopResizeDrag>(cx.listener(
-                        move |this, event: &DragMoveEvent<TopResizeDrag>, _window, cx| {
-                            let drag = event.drag(cx);
-                            let delta = event.event.position.y - drag.mouse_start_y;
-
-                            let total_start = drag.results_height_start + drag.preview_height_start;
-                            let min_total = px(MIN_PANEL_HEIGHT * 2.0);
-                            
-                            let new_total = (total_start - delta).max(min_total);
-                            let scale = new_total / total_start;
-
-                            let new_results = drag.results_height_start * scale;
-                            let new_preview = drag.preview_height_start * scale;
-                            
-                            let total_change = new_total - total_start;
-
-                            this.results_height = new_results;
-                            this.preview_height = new_preview;
-                            this.offset.y = drag.offset_start_y - total_change;
-                            cx.notify();
-                        },
-                    )),
-            )
-            .child(
-                // Left resize handle (absolutely positioned)
-                div()
-                    .id("left-resize-handle")
-                    .absolute()
-                    .left(-px(RESIZE_HANDLE_WIDTH))
-                    .top_0()
-                    .bottom_0()
-                    .w(px(RESIZE_HANDLE_WIDTH))
-                    .cursor_col_resize()
-                    .on_drag(
-                        LeftResizeDrag {
-                            mouse_start_x: window.mouse_position().x,
-                            width_start: self.modal_width,
-                            offset_start_x: self.offset.x,
-                        },
-                        |_, _, _, cx| cx.new(|_| DragPreview),
-                    )
-                    .on_drag_move::<LeftResizeDrag>(cx.listener(
-                        move |this, event: &DragMoveEvent<LeftResizeDrag>, _window, cx| {
-                            let drag = event.drag(cx);
-                            let delta = drag.mouse_start_x - event.event.position.x;
-
-                            let new_width = (drag.width_start + delta)
-                                .max(min_width)
-                                .min(max_width);
-
-                            let width_change = new_width - drag.width_start;
-                            this.modal_width = new_width;
-                            this.offset.x = drag.offset_start_x - (width_change / 2.0);
-                            cx.notify();
-                        },
-                    )),
-            )
-            .child(
-                // Right resize handle (absolutely positioned)
-                div()
-                    .id("right-resize-handle")
-                    .absolute()
-                    .right(-px(RESIZE_HANDLE_WIDTH))
-                    .top_0()
-                    .bottom_0()
-                    .w(px(RESIZE_HANDLE_WIDTH))
-                    .cursor_col_resize()
-                    .on_drag(
-                        RightResizeDrag {
-                            mouse_start_x: window.mouse_position().x,
-                            width_start: self.modal_width,
-                            offset_start_x: self.offset.x,
-                        },
-                        |_, _, _, cx| cx.new(|_| DragPreview),
-                    )
-                    .on_drag_move::<RightResizeDrag>(cx.listener(
-                        move |this, event: &DragMoveEvent<RightResizeDrag>, _window, cx| {
-                            let drag = event.drag(cx);
-                            let delta = event.event.position.x - drag.mouse_start_x;
-
-                            let new_width = (drag.width_start + delta)
-                                .max(min_width)
-                                .min(max_width);
-
-                            let width_change = new_width - drag.width_start;
-                            this.modal_width = new_width;
-                            this.offset.x = drag.offset_start_x + (width_change / 2.0);
-                            cx.notify();
-                        },
-                    )),
-            )
+            .child(self.render_vertical_resize(ResizeSide::Start, window, cx))
+            .child(self.render_horizontal_resize(ResizeSide::Start, window, cx))
+            .child(self.render_horizontal_resize(ResizeSide::End, window, cx))
             .m_4()
             .relative()
             .top(self.offset.y)
@@ -841,319 +848,306 @@ impl Render for QuickSearch {
                     .on_drag_move::<QuickSearchDrag>(cx.listener(
                         |this, event: &DragMoveEvent<QuickSearchDrag>, _window, cx| {
                             let drag = event.drag(cx);
-                            this.offset = drag.offset_start + (event.event.position - drag.mouse_start);
+                            this.offset =
+                                drag.offset_start + (event.event.position - drag.mouse_start);
                             cx.notify();
                         },
                     ))
-            .child(
-                h_flex()
-                    .px_4()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .justify_between()
                     .child(
                         h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(Label::new("Quick Search").size(LabelSize::Default))
-                            .when(search_in_progress, |this| {
-                                this.child(
-                                    Label::new(format!(
-                                        "Searching... {} matches in {} files",
-                                        match_count, file_count
-                                    ))
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                                )
-                            })
-                            .when(!search_in_progress && has_matches, |this| {
-                                this.child(
-                                    Label::new(format!(
-                                        "{} matches in {} files",
-                                        match_count, file_count
-                                    ))
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                                )
-                            }),
+                            .px_4()
+                            .py_2()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border)
+                            .justify_between()
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(Label::new("Quick Search").size(LabelSize::Default))
+                                    .when(search_in_progress, |this| {
+                                        this.child(
+                                            Label::new(format!(
+                                                "Searching... {} matches in {} files",
+                                                match_count, file_count
+                                            ))
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small),
+                                        )
+                                    })
+                                    .when(!search_in_progress && has_matches, |this| {
+                                        this.child(
+                                            Label::new(format!(
+                                                "{} matches in {} files",
+                                                match_count, file_count
+                                            ))
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small),
+                                        )
+                                    }),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .items_center()
+                                    .child({
+                                        let focus_handle = self.picker.focus_handle(cx);
+                                        IconButton::new("replace-toggle", IconName::Replace)
+                                            .size(ButtonSize::Compact)
+                                            .toggle_state(replace_enabled)
+                                            .tooltip(move |_window, cx| {
+                                                Tooltip::for_action_in(
+                                                    "Toggle Replace",
+                                                    &ToggleReplace,
+                                                    &focus_handle,
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.picker.update(cx, |picker, cx| {
+                                                    picker.delegate.replace_enabled =
+                                                        !picker.delegate.replace_enabled;
+                                                    let focus_handle =
+                                                        if picker.delegate.replace_enabled {
+                                                            picker
+                                                                .delegate
+                                                                .replacement_editor
+                                                                .focus_handle(cx)
+                                                        } else {
+                                                            picker.focus_handle(cx)
+                                                        };
+                                                    window.focus(&focus_handle, cx);
+                                                });
+                                                cx.notify();
+                                            }))
+                                    })
+                                    .child({
+                                        let focus_handle = self.picker.focus_handle(cx);
+                                        IconButton::new("filters-toggle", IconName::Filter)
+                                            .size(ButtonSize::Compact)
+                                            .toggle_state(filters_enabled)
+                                            .tooltip(move |_window, cx| {
+                                                Tooltip::for_action_in(
+                                                    "Toggle Filters",
+                                                    &ToggleFilters,
+                                                    &focus_handle,
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click(|_, window, cx| {
+                                                window.dispatch_action(
+                                                    ToggleFilters.boxed_clone(),
+                                                    cx,
+                                                );
+                                            })
+                                    })
+                                    .child({
+                                        let focus_handle = self.picker.focus_handle(cx);
+                                        IconButton::new("select-prev-match", IconName::ChevronLeft)
+                                            .size(ButtonSize::Compact)
+                                            .tooltip(move |_window, cx| {
+                                                Tooltip::for_action_in(
+                                                    "Previous Match",
+                                                    &SelectPreviousMatch,
+                                                    &focus_handle,
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click(|_, window, cx| {
+                                                window.dispatch_action(
+                                                    SelectPreviousMatch.boxed_clone(),
+                                                    cx,
+                                                );
+                                            })
+                                    })
+                                    .child({
+                                        let focus_handle = self.picker.focus_handle(cx);
+                                        IconButton::new("select-next-match", IconName::ChevronRight)
+                                            .size(ButtonSize::Compact)
+                                            .tooltip(move |_window, cx| {
+                                                Tooltip::for_action_in(
+                                                    "Next Match",
+                                                    &SelectNextMatch,
+                                                    &focus_handle,
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click(|_, window, cx| {
+                                                window.dispatch_action(
+                                                    SelectNextMatch.boxed_clone(),
+                                                    cx,
+                                                );
+                                            })
+                                    })
+                                    .when(match_count > 0, |this| {
+                                        this.child(
+                                            Label::new(format!(
+                                                "{}/{}",
+                                                selected_index + 1,
+                                                match_count
+                                            ))
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                        )
+                                    }),
+                            ),
                     )
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .items_center()
-                            .child({
-                                let focus_handle = self.picker.focus_handle(cx);
-                                IconButton::new("replace-toggle", IconName::Replace)
-                                    .size(ButtonSize::Compact)
-                                    .toggle_state(replace_enabled)
-                                    .tooltip(move |_window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Toggle Replace",
-                                            &ToggleReplace,
-                                            &focus_handle,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.picker.update(cx, |picker, cx| {
-                                            picker.delegate.replace_enabled =
-                                                !picker.delegate.replace_enabled;
-                                            let focus_handle = if picker.delegate.replace_enabled {
-                                                picker.delegate.replacement_editor.focus_handle(cx)
-                                            } else {
-                                                picker.focus_handle(cx)
-                                            };
-                                            window.focus(&focus_handle, cx);
-                                        });
-                                        cx.notify();
-                                    }))
-                            })
-                            .child({
-                                let focus_handle = self.picker.focus_handle(cx);
-                                IconButton::new("filters-toggle", IconName::Filter)
-                                    .size(ButtonSize::Compact)
-                                    .toggle_state(filters_enabled)
-                                    .tooltip(move |_window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Toggle Filters",
-                                            &ToggleFilters,
-                                            &focus_handle,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(|_, window, cx| {
-                                        window.dispatch_action(ToggleFilters.boxed_clone(), cx);
-                                    })
-                            })
-                            .child({
-                                let focus_handle = self.picker.focus_handle(cx);
-                                IconButton::new("select-prev-match", IconName::ChevronLeft)
-                                    .size(ButtonSize::Compact)
-                                    .tooltip(move |_window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Previous Match",
-                                            &SelectPreviousMatch,
-                                            &focus_handle,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(|_, window, cx| {
-                                        window
-                                            .dispatch_action(SelectPreviousMatch.boxed_clone(), cx);
-                                    })
-                            })
-                            .child({
-                                let focus_handle = self.picker.focus_handle(cx);
-                                IconButton::new("select-next-match", IconName::ChevronRight)
-                                    .size(ButtonSize::Compact)
-                                    .tooltip(move |_window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Next Match",
-                                            &SelectNextMatch,
-                                            &focus_handle,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(|_, window, cx| {
-                                        window.dispatch_action(SelectNextMatch.boxed_clone(), cx);
-                                    })
-                            })
-                            .when(match_count > 0, |this| {
-                                this.child(
-                                    Label::new(format!("{}/{}", selected_index + 1, match_count))
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                )
-                            }),
-                    ),
-            )
-            .child(
-                div()
-                    .h(self.results_height)
-                    .overflow_hidden()
-                    .child(self.picker.clone()),
-            )
-            .child({
-                // Resize handle between results and preview
-                div()
-                    .id("resize-handle")
-                    .h(px(RESIZE_HANDLE_HEIGHT))
-                    .w_full()
-                    .cursor_row_resize()
-                    .bg(cx.theme().colors().border)
-                    .hover(|style| style.bg(cx.theme().colors().border_focused))
-                    .on_drag(
-                        ResizeDrag {
-                            mouse_start_y: window.mouse_position().y,
-                            results_height_start: self.results_height,
-                            preview_height_start: self.preview_height,
-                        },
-                        |_, _, _, cx| cx.new(|_| DragPreview),
+                        div()
+                            .h(self.results_height)
+                            .overflow_hidden()
+                            .child(self.picker.clone()),
                     )
-                    .on_drag_move::<ResizeDrag>(cx.listener(
-                        |this, event: &DragMoveEvent<ResizeDrag>, _window, cx| {
-                            let drag = event.drag(cx);
-                            let delta = event.event.position.y - drag.mouse_start_y;
-                            let total_height =
-                                drag.results_height_start + drag.preview_height_start;
+                    .child({
+                        // Resize handle between results and preview
+                        div()
+                            .id("resize-handle")
+                            .h(px(RESIZE_HANDLE_HEIGHT))
+                            .w_full()
+                            .cursor_row_resize()
+                            .bg(cx.theme().colors().border)
+                            .hover(|style| style.bg(cx.theme().colors().border_focused))
+                            .on_drag(
+                                ResizeDrag {
+                                    mouse_start_y: window.mouse_position().y,
+                                    results_height_start: self.results_height,
+                                    preview_height_start: self.preview_height,
+                                },
+                                |_, _, _, cx| cx.new(|_| DragPreview),
+                            )
+                            .on_drag_move::<ResizeDrag>(cx.listener(
+                                |this, event: &DragMoveEvent<ResizeDrag>, _window, cx| {
+                                    let drag = event.drag(cx);
+                                    let delta = event.event.position.y - drag.mouse_start_y;
+                                    let total_height =
+                                        drag.results_height_start + drag.preview_height_start;
 
-                            let new_results = (drag.results_height_start + delta)
-                                .max(px(MIN_PANEL_HEIGHT))
-                                .min(total_height - px(MIN_PANEL_HEIGHT));
-                            let new_preview = total_height - new_results;
+                                    let new_results = (drag.results_height_start + delta)
+                                        .max(px(MIN_PANEL_HEIGHT))
+                                        .min(total_height - px(MIN_PANEL_HEIGHT));
+                                    let new_preview = total_height - new_results;
 
-                            this.results_height = new_results;
-                            this.preview_height = new_preview;
-                            cx.notify();
-                        },
-                    ))
-            })
-            .child({
-                let delegate = &self.picker.read(cx).delegate;
-                let selected_match = delegate.matches.get(delegate.selected_index);
+                                    this.results_height = new_results;
+                                    this.preview_height = new_preview;
+                                    cx.notify();
+                                },
+                            ))
+                    })
+                    .child({
+                        let delegate = &self.picker.read(cx).delegate;
+                        let selected_match = delegate.matches.get(delegate.selected_index);
 
-                let preview_header = if let Some(m) = selected_match {
-                    let path = &m.path.path;
-                    let file_name = path
-                        .file_name()
-                        .map(|name| name.to_string())
-                        .unwrap_or_default();
-                    let directory = path
-                        .parent()
-                        .map(|path| path.as_std_path().to_string_lossy().to_string())
-                        .unwrap_or_default();
+                        let preview_header = if let Some(m) = selected_match {
+                            let path = &m.path.path;
+                            let file_name = path
+                                .file_name()
+                                .map(|name| name.to_string())
+                                .unwrap_or_default();
+                            let directory = path
+                                .parent()
+                                .map(|path| path.as_std_path().to_string_lossy().to_string())
+                                .unwrap_or_default();
 
-                    let split_menu_handle = delegate.split_popover_menu_handle.clone();
-                    let focus_handle = self.focus_handle.clone();
+                            let split_menu_handle = delegate.split_popover_menu_handle.clone();
+                            let focus_handle = self.focus_handle.clone();
 
-                    h_flex()
-                        .px_2()
-                        .py_1()
-                        .gap_2()
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border)
-                        .bg(cx.theme().colors().editor_background)
-                        .justify_between()
-                        .child(
                             h_flex()
+                                .px_2()
+                                .py_1()
                                 .gap_2()
-                                .child(Label::new(file_name).size(LabelSize::Small))
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border)
+                                .bg(cx.theme().colors().editor_background)
+                                .justify_between()
                                 .child(
-                                    Label::new(directory)
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                ),
-                        )
-                        .child(
-                            PopoverMenu::new("split-menu-popover")
-                                .with_handle(split_menu_handle)
-                                .attach(gpui::Corner::BottomRight)
-                                .anchor(gpui::Corner::TopRight)
-                                .offset(gpui::Point {
-                                    x: px(0.0),
-                                    y: px(-2.0),
-                                })
-                                .trigger_with_tooltip(
-                                    ButtonLike::new("split-trigger")
-                                        .child(Label::new("Split…").size(LabelSize::Small))
-                                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                                    h_flex()
+                                        .gap_2()
+                                        .child(Label::new(file_name).size(LabelSize::Small))
                                         .child(
-                                            KeyBinding::for_action_in(
-                                                &ToggleSplitMenu,
-                                                &focus_handle,
-                                                cx,
-                                            )
-                                            .size(rems_from_px(10.)),
+                                            Label::new(directory)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
                                         ),
-                                    {
-                                        let focus_handle = focus_handle.clone();
-                                        move |_window, cx| {
-                                            Tooltip::for_action_in(
-                                                "Open in Split",
-                                                &ToggleSplitMenu,
-                                                &focus_handle,
-                                                cx,
-                                            )
-                                        }
-                                    },
                                 )
-                                .menu({
-                                    let focus_handle = focus_handle.clone();
-                                    move |window, cx| {
-                                        Some(ContextMenu::build(window, cx, {
+                                .child(
+                                    PopoverMenu::new("split-menu-popover")
+                                        .with_handle(split_menu_handle)
+                                        .attach(gpui::Corner::BottomRight)
+                                        .anchor(gpui::Corner::TopRight)
+                                        .offset(gpui::Point {
+                                            x: px(0.0),
+                                            y: px(-2.0),
+                                        })
+                                        .trigger_with_tooltip(
+                                            ButtonLike::new("split-trigger")
+                                                .child(Label::new("Split…").size(LabelSize::Small))
+                                                .selected_style(ButtonStyle::Tinted(
+                                                    TintColor::Accent,
+                                                ))
+                                                .child(
+                                                    KeyBinding::for_action_in(
+                                                        &ToggleSplitMenu,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                    .size(rems_from_px(10.)),
+                                                ),
+                                            {
+                                                let focus_handle = focus_handle.clone();
+                                                move |_window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Open in Split",
+                                                        &ToggleSplitMenu,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                }
+                                            },
+                                        )
+                                        .menu({
                                             let focus_handle = focus_handle.clone();
-                                            move |menu, _, _| {
-                                                menu.context(focus_handle)
-                                                    .action(
-                                                        "Split Left",
-                                                        pane::SplitLeft::default().boxed_clone(),
-                                                    )
-                                                    .action(
-                                                        "Split Right",
-                                                        pane::SplitRight::default().boxed_clone(),
-                                                    )
-                                                    .action(
-                                                        "Split Up",
-                                                        pane::SplitUp::default().boxed_clone(),
-                                                    )
-                                                    .action(
-                                                        "Split Down",
-                                                        pane::SplitDown::default().boxed_clone(),
-                                                    )
+                                            move |window, cx| {
+                                                Some(ContextMenu::build(window, cx, {
+                                                    let focus_handle = focus_handle.clone();
+                                                    move |menu, _, _| {
+                                                        menu.context(focus_handle)
+                                                            .action(
+                                                                "Split Left",
+                                                                pane::SplitLeft::default()
+                                                                    .boxed_clone(),
+                                                            )
+                                                            .action(
+                                                                "Split Right",
+                                                                pane::SplitRight::default()
+                                                                    .boxed_clone(),
+                                                            )
+                                                            .action(
+                                                                "Split Up",
+                                                                pane::SplitUp::default()
+                                                                    .boxed_clone(),
+                                                            )
+                                                            .action(
+                                                                "Split Down",
+                                                                pane::SplitDown::default()
+                                                                    .boxed_clone(),
+                                                            )
+                                                    }
+                                                }))
                                             }
-                                        }))
-                                    }
-                                }),
+                                        }),
+                                )
+                        } else {
+                            h_flex().h(px(26.0))
+                        };
+
+                        v_flex().child(preview_header).child(
+                            div()
+                                .h(self.preview_height)
+                                .overflow_hidden()
+                                .child(self.preview_editor.clone()),
                         )
-                } else {
-                    h_flex().h(px(26.0))
-                };
-
-                v_flex().child(preview_header).child(
-                    div()
-                        .h(self.preview_height)
-                        .overflow_hidden()
-                        .child(self.preview_editor.clone()),
-                )
-            })
-            .child({
-                // Bottom resize handle for preview
-                div()
-                    .id("bottom-resize-handle")
-                    .h(px(RESIZE_HANDLE_HEIGHT))
-                    .w_full()
-                    .cursor_row_resize()
-                    .bg(cx.theme().colors().border)
-                    .hover(|style| style.bg(cx.theme().colors().border_focused))
-                    .on_drag(
-                        BottomResizeDrag {
-                            mouse_start_y: window.mouse_position().y,
-                            results_height_start: self.results_height,
-                            preview_height_start: self.preview_height,
-                        },
-                        |_, _, _, cx| cx.new(|_| DragPreview),
-                    )
-                    .on_drag_move::<BottomResizeDrag>(cx.listener(
-                        |this, event: &DragMoveEvent<BottomResizeDrag>, _window, cx| {
-                            let drag = event.drag(cx);
-                            let delta = event.event.position.y - drag.mouse_start_y;
-
-                            let total_start = drag.results_height_start + drag.preview_height_start;
-                            let min_total = px(MIN_PANEL_HEIGHT * 2.0);
-                            
-                            let new_total = (total_start + delta).max(min_total);
-                            let scale = new_total / total_start;
-
-                            let new_results = drag.results_height_start * scale;
-                            let new_preview = drag.preview_height_start * scale;
-
-                            this.results_height = new_results;
-                            this.preview_height = new_preview;
-                            cx.notify();
-                        },
-                    ))
-            }),
+                    })
+                    .child(self.render_vertical_resize(ResizeSide::End, window, cx)),
             )
     }
 }
@@ -1395,13 +1389,7 @@ impl QuickSearchDelegate {
         // include/exclude patterns against full paths to allow them to be
         // disambiguated. For single worktree projects we use worktree relative
         // paths for convenience.
-        let match_full_paths = self.
-            project.
-            read(cx).
-            visible_worktrees(cx).
-            count()
-            > 1;
-
+        let match_full_paths = self.project.read(cx).visible_worktrees(cx).count() > 1;
 
         let result = if self.search_options.contains(SearchOptions::REGEX) {
             SearchQuery::regex(
