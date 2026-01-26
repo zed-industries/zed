@@ -247,11 +247,13 @@ impl QuickSearch {
                     let this_handle = this_handle.clone();
                     move |event, window, cx| {
                         if matches!(event, ui_input::ErasedEditorEvent::BufferEdited) {
-                            let _ = this_handle.update(cx, |this: &mut QuickSearch, cx: &mut Context<QuickSearch>| {
-                                cx.update_entity(&this.picker, |picker: &mut Picker<QuickSearchDelegate>, cx: &mut Context<Picker<QuickSearchDelegate>>| {
-                                    picker.refresh(window, cx);
-                                });
-                            });
+                            this_handle
+                                .update(cx, |this, cx| {
+                                    this.picker.update(cx, |picker, cx| {
+                                        picker.refresh(window, cx);
+                                    });
+                                })
+                                .log_err();
                         }
                     }
                 }),
@@ -263,11 +265,13 @@ impl QuickSearch {
                     let this_handle = this_handle;
                     move |event, window, cx| {
                         if matches!(event, ui_input::ErasedEditorEvent::BufferEdited) {
-                            let _ = this_handle.update(cx, |this: &mut QuickSearch, cx: &mut Context<QuickSearch>| {
-                                cx.update_entity(&this.picker, |picker: &mut Picker<QuickSearchDelegate>, cx: &mut Context<Picker<QuickSearchDelegate>>| {
-                                    picker.refresh(window, cx);
-                                });
-                            });
+                            this_handle
+                                .update(cx, |this, cx| {
+                                    this.picker.update(cx, |picker, cx| {
+                                        picker.refresh(window, cx);
+                                    });
+                                })
+                                .log_err();
                         }
                     }
                 }),
@@ -676,12 +680,8 @@ impl QuickSearch {
                 },
             ))
     }
-}
 
-impl Render for QuickSearch {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let modal_width = self.modal_width;
-
+    fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let delegate = &self.picker.read(cx).delegate;
         let match_count = delegate.match_count;
         let file_count = delegate.file_count;
@@ -689,9 +689,266 @@ impl Render for QuickSearch {
         let replace_enabled = delegate.replace_enabled;
         let filters_enabled = delegate.filters_enabled;
         let selected_index = delegate.selected_index;
-
         let has_matches = match_count > 0;
 
+        h_flex()
+            .px_4()
+            .py_2()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .justify_between()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(Label::new("Quick Search").size(LabelSize::Default))
+                    .when(search_in_progress, |this| {
+                        this.child(
+                            Label::new(format!(
+                                "Searching... {} matches in {} files",
+                                match_count, file_count
+                            ))
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                        )
+                    })
+                    .when(!search_in_progress && has_matches, |this| {
+                        this.child(
+                            Label::new(format!("{} matches in {} files", match_count, file_count))
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        )
+                    }),
+            )
+            .child(self.render_header_controls(
+                replace_enabled,
+                filters_enabled,
+                selected_index,
+                match_count,
+                window,
+                cx,
+            ))
+    }
+
+    fn render_header_controls(
+        &self,
+        replace_enabled: bool,
+        filters_enabled: bool,
+        selected_index: usize,
+        match_count: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        h_flex()
+            .gap_1()
+            .items_center()
+            .child({
+                let focus_handle = self.picker.focus_handle(cx);
+                IconButton::new("replace-toggle", IconName::Replace)
+                    .size(ButtonSize::Compact)
+                    .toggle_state(replace_enabled)
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action_in("Toggle Replace", &ToggleReplace, &focus_handle, cx)
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.picker.update(cx, |picker, cx| {
+                            picker.delegate.replace_enabled = !picker.delegate.replace_enabled;
+                            let focus_handle = if picker.delegate.replace_enabled {
+                                picker.delegate.replacement_editor.focus_handle(cx)
+                            } else {
+                                picker.focus_handle(cx)
+                            };
+                            window.focus(&focus_handle, cx);
+                        });
+                        cx.notify();
+                    }))
+            })
+            .child({
+                let focus_handle = self.picker.focus_handle(cx);
+                IconButton::new("filters-toggle", IconName::Filter)
+                    .size(ButtonSize::Compact)
+                    .toggle_state(filters_enabled)
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action_in("Toggle Filters", &ToggleFilters, &focus_handle, cx)
+                    })
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(ToggleFilters.boxed_clone(), cx);
+                    })
+            })
+            .child({
+                let focus_handle = self.picker.focus_handle(cx);
+                IconButton::new("select-prev-match", IconName::ChevronLeft)
+                    .size(ButtonSize::Compact)
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action_in(
+                            "Previous Match",
+                            &SelectPreviousMatch,
+                            &focus_handle,
+                            cx,
+                        )
+                    })
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(SelectPreviousMatch.boxed_clone(), cx);
+                    })
+            })
+            .child({
+                let focus_handle = self.picker.focus_handle(cx);
+                IconButton::new("select-next-match", IconName::ChevronRight)
+                    .size(ButtonSize::Compact)
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action_in("Next Match", &SelectNextMatch, &focus_handle, cx)
+                    })
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(SelectNextMatch.boxed_clone(), cx);
+                    })
+            })
+            .when(match_count > 0, |this| {
+                this.child(
+                    Label::new(format!("{}/{}", selected_index + 1, match_count))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+            })
+    }
+
+    fn render_preview(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let delegate = &self.picker.read(cx).delegate;
+        let selected_match = delegate.matches.get(delegate.selected_index);
+
+        let preview_header = if let Some(m) = selected_match {
+            let path = &m.path.path;
+            let file_name = path
+                .file_name()
+                .map(|name| name.to_string())
+                .unwrap_or_default();
+            let directory = path
+                .parent()
+                .map(|path| path.as_std_path().to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            let split_menu_handle = delegate.split_popover_menu_handle.clone();
+            let focus_handle = self.focus_handle.clone();
+
+            h_flex()
+                .px_2()
+                .py_1()
+                .gap_2()
+                .border_b_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().editor_background)
+                .justify_between()
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(Label::new(file_name).size(LabelSize::Small))
+                        .child(
+                            Label::new(directory)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+                .child(self.render_split_menu(split_menu_handle, focus_handle, window, cx))
+        } else {
+            h_flex().h(px(26.0))
+        };
+
+        v_flex().child(preview_header).child(
+            div()
+                .h(self.preview_height)
+                .overflow_hidden()
+                .child(self.preview_editor.clone()),
+        )
+    }
+
+    fn render_split_menu(
+        &self,
+        split_menu_handle: PopoverMenuHandle<ContextMenu>,
+        focus_handle: FocusHandle,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        PopoverMenu::new("split-menu-popover")
+            .with_handle(split_menu_handle)
+            .attach(gpui::Corner::BottomRight)
+            .anchor(gpui::Corner::TopRight)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-2.0),
+            })
+            .trigger_with_tooltip(
+                ButtonLike::new("split-trigger")
+                    .child(Label::new("Split…").size(LabelSize::Small))
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .child(
+                        KeyBinding::for_action_in(&ToggleSplitMenu, &focus_handle, cx)
+                            .size(rems_from_px(10.)),
+                    ),
+                {
+                    let focus_handle = focus_handle.clone();
+                    move |_window, cx| {
+                        Tooltip::for_action_in("Open in Split", &ToggleSplitMenu, &focus_handle, cx)
+                    }
+                },
+            )
+            .menu({
+                let focus_handle = focus_handle.clone();
+                move |window, cx| {
+                    Some(ContextMenu::build(window, cx, {
+                        let focus_handle = focus_handle.clone();
+                        move |menu, _, _| {
+                            menu.context(focus_handle)
+                                .action("Split Left", pane::SplitLeft::default().boxed_clone())
+                                .action("Split Right", pane::SplitRight::default().boxed_clone())
+                                .action("Split Up", pane::SplitUp::default().boxed_clone())
+                                .action("Split Down", pane::SplitDown::default().boxed_clone())
+                        }
+                    }))
+                }
+            })
+    }
+
+    fn render_results_resize(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("resize-handle")
+            .h(px(RESIZE_HANDLE_HEIGHT))
+            .w_full()
+            .cursor_row_resize()
+            .bg(cx.theme().colors().border)
+            .hover(|style| style.bg(cx.theme().colors().border_focused))
+            .on_drag(
+                ResizeDrag {
+                    mouse_start_y: window.mouse_position().y,
+                    results_height_start: self.results_height,
+                    preview_height_start: self.preview_height,
+                },
+                |_, _, _, cx| cx.new(|_| DragPreview),
+            )
+            .on_drag_move::<ResizeDrag>(cx.listener(
+                |this, event: &DragMoveEvent<ResizeDrag>, _window, cx| {
+                    let drag = event.drag(cx);
+                    let delta = event.event.position.y - drag.mouse_start_y;
+                    let total_height = drag.results_height_start + drag.preview_height_start;
+
+                    let new_results = (drag.results_height_start + delta)
+                        .max(px(MIN_PANEL_HEIGHT))
+                        .min(total_height - px(MIN_PANEL_HEIGHT));
+                    let new_preview = total_height - new_results;
+
+                    this.results_height = new_results;
+                    this.preview_height = new_preview;
+                    cx.notify();
+                },
+            ))
+    }
+}
+
+impl Render for QuickSearch {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let modal_width = self.modal_width;
         let focus_handle = self.focus_handle.clone();
         let in_replace = self.replacement_editor.focus_handle(cx).is_focused(window);
 
@@ -853,300 +1110,15 @@ impl Render for QuickSearch {
                             cx.notify();
                         },
                     ))
-                    .child(
-                        h_flex()
-                            .px_4()
-                            .py_2()
-                            .border_b_1()
-                            .border_color(cx.theme().colors().border)
-                            .justify_between()
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .items_center()
-                                    .child(Label::new("Quick Search").size(LabelSize::Default))
-                                    .when(search_in_progress, |this| {
-                                        this.child(
-                                            Label::new(format!(
-                                                "Searching... {} matches in {} files",
-                                                match_count, file_count
-                                            ))
-                                            .color(Color::Muted)
-                                            .size(LabelSize::Small),
-                                        )
-                                    })
-                                    .when(!search_in_progress && has_matches, |this| {
-                                        this.child(
-                                            Label::new(format!(
-                                                "{} matches in {} files",
-                                                match_count, file_count
-                                            ))
-                                            .color(Color::Muted)
-                                            .size(LabelSize::Small),
-                                        )
-                                    }),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .items_center()
-                                    .child({
-                                        let focus_handle = self.picker.focus_handle(cx);
-                                        IconButton::new("replace-toggle", IconName::Replace)
-                                            .size(ButtonSize::Compact)
-                                            .toggle_state(replace_enabled)
-                                            .tooltip(move |_window, cx| {
-                                                Tooltip::for_action_in(
-                                                    "Toggle Replace",
-                                                    &ToggleReplace,
-                                                    &focus_handle,
-                                                    cx,
-                                                )
-                                            })
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.picker.update(cx, |picker, cx| {
-                                                    picker.delegate.replace_enabled =
-                                                        !picker.delegate.replace_enabled;
-                                                    let focus_handle =
-                                                        if picker.delegate.replace_enabled {
-                                                            picker
-                                                                .delegate
-                                                                .replacement_editor
-                                                                .focus_handle(cx)
-                                                        } else {
-                                                            picker.focus_handle(cx)
-                                                        };
-                                                    window.focus(&focus_handle, cx);
-                                                });
-                                                cx.notify();
-                                            }))
-                                    })
-                                    .child({
-                                        let focus_handle = self.picker.focus_handle(cx);
-                                        IconButton::new("filters-toggle", IconName::Filter)
-                                            .size(ButtonSize::Compact)
-                                            .toggle_state(filters_enabled)
-                                            .tooltip(move |_window, cx| {
-                                                Tooltip::for_action_in(
-                                                    "Toggle Filters",
-                                                    &ToggleFilters,
-                                                    &focus_handle,
-                                                    cx,
-                                                )
-                                            })
-                                            .on_click(|_, window, cx| {
-                                                window.dispatch_action(
-                                                    ToggleFilters.boxed_clone(),
-                                                    cx,
-                                                );
-                                            })
-                                    })
-                                    .child({
-                                        let focus_handle = self.picker.focus_handle(cx);
-                                        IconButton::new("select-prev-match", IconName::ChevronLeft)
-                                            .size(ButtonSize::Compact)
-                                            .tooltip(move |_window, cx| {
-                                                Tooltip::for_action_in(
-                                                    "Previous Match",
-                                                    &SelectPreviousMatch,
-                                                    &focus_handle,
-                                                    cx,
-                                                )
-                                            })
-                                            .on_click(|_, window, cx| {
-                                                window.dispatch_action(
-                                                    SelectPreviousMatch.boxed_clone(),
-                                                    cx,
-                                                );
-                                            })
-                                    })
-                                    .child({
-                                        let focus_handle = self.picker.focus_handle(cx);
-                                        IconButton::new("select-next-match", IconName::ChevronRight)
-                                            .size(ButtonSize::Compact)
-                                            .tooltip(move |_window, cx| {
-                                                Tooltip::for_action_in(
-                                                    "Next Match",
-                                                    &SelectNextMatch,
-                                                    &focus_handle,
-                                                    cx,
-                                                )
-                                            })
-                                            .on_click(|_, window, cx| {
-                                                window.dispatch_action(
-                                                    SelectNextMatch.boxed_clone(),
-                                                    cx,
-                                                );
-                                            })
-                                    })
-                                    .when(match_count > 0, |this| {
-                                        this.child(
-                                            Label::new(format!(
-                                                "{}/{}",
-                                                selected_index + 1,
-                                                match_count
-                                            ))
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                        )
-                                    }),
-                            ),
-                    )
+                    .child(self.render_header(window, cx))
                     .child(
                         div()
                             .h(self.results_height)
                             .overflow_hidden()
                             .child(self.picker.clone()),
                     )
-                    .child({
-                        // Resize handle between results and preview
-                        div()
-                            .id("resize-handle")
-                            .h(px(RESIZE_HANDLE_HEIGHT))
-                            .w_full()
-                            .cursor_row_resize()
-                            .bg(cx.theme().colors().border)
-                            .hover(|style| style.bg(cx.theme().colors().border_focused))
-                            .on_drag(
-                                ResizeDrag {
-                                    mouse_start_y: window.mouse_position().y,
-                                    results_height_start: self.results_height,
-                                    preview_height_start: self.preview_height,
-                                },
-                                |_, _, _, cx| cx.new(|_| DragPreview),
-                            )
-                            .on_drag_move::<ResizeDrag>(cx.listener(
-                                |this, event: &DragMoveEvent<ResizeDrag>, _window, cx| {
-                                    let drag = event.drag(cx);
-                                    let delta = event.event.position.y - drag.mouse_start_y;
-                                    let total_height =
-                                        drag.results_height_start + drag.preview_height_start;
-
-                                    let new_results = (drag.results_height_start + delta)
-                                        .max(px(MIN_PANEL_HEIGHT))
-                                        .min(total_height - px(MIN_PANEL_HEIGHT));
-                                    let new_preview = total_height - new_results;
-
-                                    this.results_height = new_results;
-                                    this.preview_height = new_preview;
-                                    cx.notify();
-                                },
-                            ))
-                    })
-                    .child({
-                        let delegate = &self.picker.read(cx).delegate;
-                        let selected_match = delegate.matches.get(delegate.selected_index);
-
-                        let preview_header = if let Some(m) = selected_match {
-                            let path = &m.path.path;
-                            let file_name = path
-                                .file_name()
-                                .map(|name| name.to_string())
-                                .unwrap_or_default();
-                            let directory = path
-                                .parent()
-                                .map(|path| path.as_std_path().to_string_lossy().to_string())
-                                .unwrap_or_default();
-
-                            let split_menu_handle = delegate.split_popover_menu_handle.clone();
-                            let focus_handle = self.focus_handle.clone();
-
-                            h_flex()
-                                .px_2()
-                                .py_1()
-                                .gap_2()
-                                .border_b_1()
-                                .border_color(cx.theme().colors().border)
-                                .bg(cx.theme().colors().editor_background)
-                                .justify_between()
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(Label::new(file_name).size(LabelSize::Small))
-                                        .child(
-                                            Label::new(directory)
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        ),
-                                )
-                                .child(
-                                    PopoverMenu::new("split-menu-popover")
-                                        .with_handle(split_menu_handle)
-                                        .attach(gpui::Corner::BottomRight)
-                                        .anchor(gpui::Corner::TopRight)
-                                        .offset(gpui::Point {
-                                            x: px(0.0),
-                                            y: px(-2.0),
-                                        })
-                                        .trigger_with_tooltip(
-                                            ButtonLike::new("split-trigger")
-                                                .child(Label::new("Split…").size(LabelSize::Small))
-                                                .selected_style(ButtonStyle::Tinted(
-                                                    TintColor::Accent,
-                                                ))
-                                                .child(
-                                                    KeyBinding::for_action_in(
-                                                        &ToggleSplitMenu,
-                                                        &focus_handle,
-                                                        cx,
-                                                    )
-                                                    .size(rems_from_px(10.)),
-                                                ),
-                                            {
-                                                let focus_handle = focus_handle.clone();
-                                                move |_window, cx| {
-                                                    Tooltip::for_action_in(
-                                                        "Open in Split",
-                                                        &ToggleSplitMenu,
-                                                        &focus_handle,
-                                                        cx,
-                                                    )
-                                                }
-                                            },
-                                        )
-                                        .menu({
-                                            let focus_handle = focus_handle.clone();
-                                            move |window, cx| {
-                                                Some(ContextMenu::build(window, cx, {
-                                                    let focus_handle = focus_handle.clone();
-                                                    move |menu, _, _| {
-                                                        menu.context(focus_handle)
-                                                            .action(
-                                                                "Split Left",
-                                                                pane::SplitLeft::default()
-                                                                    .boxed_clone(),
-                                                            )
-                                                            .action(
-                                                                "Split Right",
-                                                                pane::SplitRight::default()
-                                                                    .boxed_clone(),
-                                                            )
-                                                            .action(
-                                                                "Split Up",
-                                                                pane::SplitUp::default()
-                                                                    .boxed_clone(),
-                                                            )
-                                                            .action(
-                                                                "Split Down",
-                                                                pane::SplitDown::default()
-                                                                    .boxed_clone(),
-                                                            )
-                                                    }
-                                                }))
-                                            }
-                                        }),
-                                )
-                        } else {
-                            h_flex().h(px(26.0))
-                        };
-
-                        v_flex().child(preview_header).child(
-                            div()
-                                .h(self.preview_height)
-                                .overflow_hidden()
-                                .child(self.preview_editor.clone()),
-                        )
-                    })
+                    .child(self.render_results_resize(window, cx))
+                    .child(self.render_preview(window, cx))
                     .child(self.render_vertical_resize(ResizeSide::End, window, cx)),
             )
     }
