@@ -217,7 +217,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
 
     fn deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn discarded(&self, _project: Entity<Project>, _window: &mut Window, _cx: &mut Context<Self>) {}
-    fn on_removed(&self, _cx: &App) {}
+    fn on_removed(&self, _cx: &mut Context<Self>) {}
     fn workspace_deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn navigate(
         &mut self,
@@ -483,7 +483,7 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut Context<Workspace>,
     );
     fn deactivated(&self, window: &mut Window, cx: &mut App);
-    fn on_removed(&self, cx: &App);
+    fn on_removed(&self, cx: &mut App);
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App);
     fn navigate(&self, data: Arc<dyn Any + Send>, window: &mut Window, cx: &mut App) -> bool;
     fn item_id(&self) -> EntityId;
@@ -941,8 +941,8 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.update(cx, |this, cx| this.deactivated(window, cx));
     }
 
-    fn on_removed(&self, cx: &App) {
-        self.read(cx).on_removed(cx);
+    fn on_removed(&self, cx: &mut App) {
+        self.update(cx, |item, cx| item.on_removed(cx));
     }
 
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App) {
