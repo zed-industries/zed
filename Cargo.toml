@@ -321,7 +321,7 @@ git_hosting_providers = { path = "crates/git_hosting_providers" }
 git_ui = { path = "crates/git_ui" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
-gpui = { path = "crates/gpui", default-features = false }
+gpui = { path = "crates/gpui", default-features = false, features=["runtime_shaders"] }
 gpui_macros = { path = "crates/gpui_macros" }
 gpui_tokio = { path = "crates/gpui_tokio" }
 html_to_markdown = { path = "crates/html_to_markdown" }

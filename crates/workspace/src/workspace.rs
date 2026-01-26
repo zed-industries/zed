@@ -6,6 +6,7 @@ mod modal_layer;
 pub mod notifications;
 pub mod pane;
 pub mod pane_group;
+pub mod pane_host;
 mod path_list;
 mod persistence;
 pub mod searchable;
@@ -137,6 +138,7 @@ use zed_actions::{Spawn, feedback::FileBugReport};
 use crate::{
     item::ItemBufferKind,
     notifications::NotificationId,
+    pane_host::PaneHost,
     utility_pane::{UTILITY_PANE_MIN_WIDTH, utility_slot_for_dock_position},
 };
 use crate::{
@@ -299,6 +301,8 @@ actions!(
         RestoreBanner,
         /// Toggles expansion of the selected item.
         ToggleExpandItem,
+        /// Detaches the active item into a new window.
+        DetachActiveItem,
     ]
 );
 
@@ -1187,6 +1191,7 @@ pub struct Workspace {
     panes: Vec<Entity<Pane>>,
     active_worktree_override: Option<WorktreeId>,
     panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
+    panes_hosts: Vec<WindowHandle<PaneHost>>,
     active_pane: Entity<Pane>,
     last_active_center_pane: Option<WeakEntity<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
@@ -1597,6 +1602,7 @@ impl Workspace {
             center,
             panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
+            panes_hosts: Default::default(),
             active_pane: center_pane.clone(),
             last_active_center_pane: Some(center_pane.downgrade()),
             last_active_view_id: None,
@@ -3244,6 +3250,75 @@ impl Workspace {
                 Ok(())
             }
         })
+    }
+
+    pub fn detach_item(
+        &mut self,
+        item_to_detach: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<WindowHandle<PaneHost>> {
+        let source_pane = self
+            .panes_by_item
+            .get(&item_to_detach)
+            .and_then(|weak| weak.upgrade())
+            .ok_or_else(|| anyhow::anyhow!("Item not found in any pane"))?;
+
+        let current_bounds = window.bounds();
+        let new_bounds = gpui::Bounds {
+            origin: current_bounds.origin,
+            size: gpui::Size {
+                width: gpui::px(800.0),
+                height: gpui::px(600.0),
+            },
+        };
+
+        let weak_self = self.weak_handle();
+        let empty_pane = self.add_pane(window, cx);
+        let window_handle = cx.open_window(
+            gpui::WindowOptions {
+                window_bounds: Some(gpui::WindowBounds::Windowed(new_bounds)),
+                ..Default::default()
+            },
+            move |_, cx| {
+                cx.new(|_| PaneHost {
+                    center: PaneGroup::new(empty_pane),
+                    workspace: weak_self,
+                })
+            },
+        )?;
+
+        let destination_pane =
+            window_handle.read_with(cx, |pane_host, _| pane_host.center.first_pane())?;
+
+        window_handle.update(cx, |_, window, cx| {
+            move_item(
+                &source_pane,
+                &destination_pane,
+                item_to_detach,
+                0,
+                true,
+                window,
+                cx,
+            );
+        })?;
+
+        self.panes_hosts.push(window_handle);
+
+        cx.notify();
+        Ok(window_handle)
+    }
+
+    pub fn detach_active_item(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<WindowHandle<PaneHost>> {
+        let active_item = self
+            .active_item(cx)
+            .ok_or_else(|| anyhow::anyhow!("No active item to detach"))?;
+
+        self.detach_item(active_item.item_id(), window, cx)
     }
 
     pub fn close_inactive_items_and_panes(
@@ -6259,6 +6334,9 @@ impl Workspace {
             }))
             .on_action(cx.listener(|workspace, _: &MovePaneDown, _, cx| {
                 workspace.move_pane_to_border(SplitDirection::Down, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &DetachActiveItem, window, cx| {
+                workspace.detach_active_item(window, cx).log_err();
             }))
             .on_action(cx.listener(|this, _: &ToggleLeftDock, window, cx| {
                 this.toggle_dock(DockPosition::Left, window, cx);
