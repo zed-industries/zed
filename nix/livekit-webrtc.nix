@@ -12,6 +12,12 @@ let
         arch = "arm64";
         hash = "sha256-8czUkr2djlBon75TMjErSpX47W654ofCtz2UzcaMuXQ=";
       };
+
+      "x86_64-linux" = {
+        os = "linux";
+        arch = "x64";
+        hash = pkgs.lib.fakeHash;
+      };
     };
   };
 
