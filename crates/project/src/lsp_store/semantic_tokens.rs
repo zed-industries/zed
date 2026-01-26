@@ -1,7 +1,5 @@
 use std::{collections::hash_map, ops::Range, slice::ChunksExact, sync::Arc};
 
-use itertools::Itertools;
-
 use anyhow::Result;
 
 use clock::Global;
@@ -14,7 +12,7 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use language::Buffer;
 use lsp::{AdapterServerCapabilities, LSP_REQUEST_TIMEOUT, LanguageServerId};
 use rpc::{TypedEnvelope, proto};
-use text::{Anchor, Bias, BufferId, OffsetUtf16, PointUtf16, Unclipped};
+use text::{Anchor, Bias, OffsetUtf16, PointUtf16, Unclipped};
 use util::ResultExt as _;
 
 use crate::{
@@ -32,17 +30,6 @@ pub struct RefreshForServer {
 }
 
 impl LspStore {
-    pub fn current_semantic_tokens(&self, buffer: BufferId) -> Option<RawSemanticTokens> {
-        Some(
-            self.lsp_data
-                .get(&buffer)?
-                .semantic_tokens
-                .as_ref()?
-                .raw_tokens
-                .clone(),
-        )
-    }
-
     pub fn semantic_tokens(
         &mut self,
         buffer: Entity<Buffer>,
@@ -391,7 +378,7 @@ pub struct SemanticTokensData {
 /// This aggregates semantic tokens from multiple language servers in a specific order.
 /// Semantic tokens later in the list will override earlier ones in case of overlap.
 #[derive(Default, Debug, Clone)]
-pub struct RawSemanticTokens {
+pub(super) struct RawSemanticTokens {
     pub servers: HashMap<lsp::LanguageServerId, ServerSemanticTokens>,
 }
 
@@ -433,15 +420,6 @@ pub struct SemanticToken {
     pub length: u32,
     pub token_type: u32,
     pub token_modifiers: u32,
-}
-
-impl RawSemanticTokens {
-    pub fn all_tokens(&self) -> impl Iterator<Item = (lsp::LanguageServerId, SemanticToken)> + '_ {
-        self.servers
-            .iter()
-            .map(|(server_id, tokens)| tokens.tokens().map(move |token| (*server_id, token)))
-            .kmerge_by(|(_, a), (_, b)| (a.line, a.start) < (b.line, b.start))
-    }
 }
 
 impl ServerSemanticTokens {
@@ -543,34 +521,5 @@ mod tests {
                 }
             ]
         );
-    }
-
-    #[test]
-    fn iterate_all_tokens() {
-        // A token at 0,0 and at 1,0
-        let tokens_1 = ServerSemanticTokens::from_full(vec![0, 0, 0, 0, 0, 1, 0, 0, 0, 0], None);
-        // A token at 0,5 and at 2,10
-        let tokens_2 = ServerSemanticTokens::from_full(vec![0, 5, 0, 0, 0, 2, 10, 0, 0, 0], None);
-
-        let raw_tokens = RawSemanticTokens {
-            servers: HashMap::from_iter([
-                (lsp::LanguageServerId(1), tokens_1),
-                (lsp::LanguageServerId(2), tokens_2),
-            ]),
-        };
-
-        let all_tokens = raw_tokens
-            .all_tokens()
-            .map(|(server, tok)| (server, tok.line, tok.start))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            all_tokens,
-            [
-                (lsp::LanguageServerId(1), 0, 0),
-                (lsp::LanguageServerId(2), 0, 5),
-                (lsp::LanguageServerId(1), 1, 0),
-                (lsp::LanguageServerId(2), 2, 10),
-            ]
-        )
     }
 }
