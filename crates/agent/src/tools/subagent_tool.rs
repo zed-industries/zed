@@ -267,13 +267,30 @@ impl AgentTool for SubagentTool {
 
             event_stream.update_subagent_thread(acp_thread.clone());
 
+            let mut user_stop_rx: watch::Receiver<bool> =
+                acp_thread.update(cx, |thread, _| thread.user_stop_receiver());
+
             if let Some(parent) = parent_thread_weak.upgrade() {
                 parent.update(cx, |thread, _cx| {
                     thread.register_running_subagent(subagent_weak.clone());
                 });
             }
 
-            // Run the subagent, handling cancellation
+            // Helper to wait for user stop signal on the subagent card
+            let wait_for_user_stop = async {
+                loop {
+                    if *user_stop_rx.borrow() {
+                        return;
+                    }
+                    if user_stop_rx.changed().await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
+                }
+            };
+
+            // Run the subagent, handling cancellation from both:
+            // 1. Parent turn cancellation (event_stream.cancelled_by_user)
+            // 2. Direct user stop on subagent card (user_stop_rx)
             let result = futures::select! {
                 result = run_subagent(
                     &subagent_thread,
@@ -287,6 +304,12 @@ impl AgentTool for SubagentTool {
                         thread.cancel(cx).detach();
                     });
                     Err(anyhow!("Subagent cancelled by user"))
+                }
+                _ = wait_for_user_stop.fuse() => {
+                    let _ = subagent_thread.update(cx, |thread, cx| {
+                        thread.cancel(cx).detach();
+                    });
+                    Err(anyhow!("Subagent stopped by user"))
                 }
             };
 

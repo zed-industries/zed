@@ -3815,6 +3815,34 @@ impl AcpThreadView {
                                 )
                             }),
                     )
+                    .when(is_running, |header| {
+                        header
+                            .gap_1p5()
+                            .child(
+                                Button::new(
+                                    SharedString::from(format!(
+                                        "stop-subagent-{}-{}",
+                                        entry_ix, context_ix
+                                    )),
+                                    "Stop",
+                                )
+                                .icon(IconName::Stop)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Error)
+                                .label_size(LabelSize::Small)
+                                .tooltip(Tooltip::text("Stop this subagent"))
+                                .on_click({
+                                    let thread = thread.clone();
+                                    cx.listener(move |_this, _event, _window, cx| {
+                                        thread.update(cx, |thread, _cx| {
+                                            thread.stop_by_user();
+                                        });
+                                    })
+                                }),
+                            )
+                            .child(Divider::vertical())
+                    })
                     .when(has_expandable_content, |this| {
                         this.child(
                             Disclosure::new(
@@ -3826,7 +3854,7 @@ impl AcpThreadView {
                             )
                             .opened_icon(IconName::ChevronUp)
                             .closed_icon(IconName::ChevronDown)
-                            .visible_on_hover(card_header_id)
+                            .visible_on_hover(card_header_id.clone())
                             .on_click(cx.listener({
                                 move |this, _, _, cx| {
                                     if this.expanded_subagents.contains(&session_id) {
