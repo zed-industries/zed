@@ -1402,7 +1402,7 @@ pub struct HighlightedChunk<'a> {
 
 impl<'a> HighlightedChunk<'a> {
     #[instrument(skip_all)]
-    fn highlight_invisibles(
+    pub(crate) fn highlight_invisibles(
         self,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = Self> + 'a {

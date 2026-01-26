@@ -14,7 +14,7 @@ use crate::{
     column_pixels,
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
-        HighlightKey, HighlightedChunk, ToDisplayPoint,
+        HighlightKey, HighlightedChunk, Highlights, ToDisplayPoint,
     },
     editor_settings::{
         CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, Minimap,
@@ -4864,13 +4864,22 @@ impl EditorElement {
                 continue;
             };
 
-            // let text_size = item.text.clone().len();
-            // let better_end_point = Point::new(point.row, point.column + (text_size as u32));
+            let mut range_start_in_buffer =
+                text::ToPoint::to_point(&item.range.start.text_anchor, better_snapshot);
+            range_start_in_buffer.column = 0;
+            let range_start_buffer_offset =
+                text::ToOffset::to_offset(&range_start_in_buffer, better_snapshot);
+            let range_end_buffer_offset =
+                text::ToOffset::to_offset(&item.range.end.text_anchor, better_snapshot);
 
-            let better_range = item.range.start.text_anchor..item.range.end.text_anchor;
+            let better_range = range_start_buffer_offset..range_end_buffer_offset;
 
-            // OOK so if I can figure out the style highligiting I think I am good here
-            let chunks = better_snapshot.chunks(better_range, true).map(|c| {
+            // Probably missing wraps
+            // Definitely missing tabs
+            // Probably missing folds
+            // Probably missing inlays
+            let buffer_chunks = better_snapshot.chunks(better_range, true);
+            let chunks = buffer_chunks.flat_map(|c| {
                 // TODO definitely encaptulate this somewhere in display_map.rs
                 let highlight_style = c
                     .syntax_highlight_id
@@ -4929,10 +4938,12 @@ impl EditorElement {
                     is_inlay: c.is_inlay,
                     replacement: None,
                 }
+                .highlight_invisibles(&self.style)
             });
 
             // let editor = Editor::for_buffer(better_snapshot, project, window, cx)
-
+            let row = DisplayRow(point.row);
+            // dbg!(&row);
             let line = layout_line_v2(
                 chunks,
                 snapshot,
@@ -5022,11 +5033,9 @@ impl EditorElement {
         cx: &App,
     ) -> Vec<(StickyHeader, Point, ExcerptId)> {
         let mut scroll_top = snapshot.scroll_position().y;
-        // dbg!(&scroll_top);
         if !snapshot.is_singleton() {
             scroll_top = scroll_top + FILE_HEADER_HEIGHT as f64;
         }
-        dbg!(&scroll_top);
 
         let mut end_rows = Vec::<DisplayRow>::new();
         let mut rows = Vec::<(StickyHeader, Point, ExcerptId)>::new();
@@ -5035,8 +5044,6 @@ impl EditorElement {
             .sticky_headers(&snapshot.display_snapshot, style, cx)
             .unwrap_or_default();
 
-        // dbg!("Items: ", items.len());
-
         for (item, point, excerpt_id) in items {
             let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
             let end_point = item.range.end.to_point(snapshot.buffer_snapshot());
@@ -5044,11 +5051,11 @@ impl EditorElement {
             // Start of the excerpt (visually) in a multibuffer context
             // dbg!(&start_point, &item.text);
 
-            let mut sticky_row = snapshot
+            let sticky_row = snapshot
                 .display_snapshot
                 .point_to_display_point(start_point, Bias::Left)
                 .row();
-            dbg!(&sticky_row, &item.text);
+            // dbg!(&sticky_row, &item.text);
             // if !snapshot.is_singleton() {
             //     sticky_row = sticky_row + DisplayRow(FILE_HEADER_HEIGHT);
             // }
@@ -5090,13 +5097,15 @@ impl EditorElement {
             let max_scroll_offset = max_sticky_row.as_f64() - scroll_top;
             let mut offset = (depth as f64).min(max_scroll_offset);
 
-            let other_offset = FILE_HEADER_HEIGHT as f64 - 4.0;
-            dbg!(&offset);
-            dbg!(other_offset);
+            // I mean this isn't going to work
+            // TODO need to refine this can create a realistic algorithm
+            let extra = FILE_HEADER_HEIGHT as f64 * 0.932952880859375;
+            // dbg!(&offset);
+            // dbg!(extra);
 
             if !snapshot.is_singleton() {
                 // Why is this needed if scroll_top is already adjusted for the header height?
-                offset = offset + (FILE_HEADER_HEIGHT as f64);
+                offset = offset + extra;
             }
 
             end_rows.push(end_row);
