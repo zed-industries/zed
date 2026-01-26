@@ -503,8 +503,11 @@ impl SplittableEditor {
                 .collect()
         };
 
+        let primary_folded_buffers = primary_display_map.read(cx).folded_buffers().clone();
+
         let mut companion = Companion::new(
             rhs_display_map_id,
+            primary_folded_buffers,
             convert_rhs_rows_to_lhs,
             convert_lhs_rows_to_rhs,
         );
@@ -3425,6 +3428,100 @@ mod tests {
             § spacer
             § spacer"
                 .unindent(),
+            &mut cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_adding_line_to_addition_hunk(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx).await;
+
+        let base_text = "
+            aaa
+            bbb
+            ccc
+        "
+        .unindent();
+
+        let current_text = "
+            aaa
+            bbb
+            xxx
+            yyy
+            ccc
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
+            editor.set_excerpts_for_path(
+                path,
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            xxx
+            yyy
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            § spacer
+            § spacer
+            ccc"
+            .unindent(),
+            &mut cx,
+        );
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(3, 3)..Point::new(3, 3), "\nzzz")], None, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            xxx
+            yyy
+            zzz
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            § spacer
+            § spacer
+            § spacer
+            ccc"
+            .unindent(),
             &mut cx,
         );
     }

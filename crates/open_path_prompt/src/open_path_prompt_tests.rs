@@ -347,7 +347,7 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     cx.update(|cx| {
         let state = AppState::test(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        super::init(cx);
+
         editor::init(cx);
         state
     })
@@ -370,7 +370,7 @@ fn build_open_path_prompt(
                     .width(rems(34.))
                     .modal(false);
                 let query = lister.default_query(cx);
-                picker.set_query(query, window, cx);
+                picker.set_query(&query, window, cx);
                 picker
             })
         }),

@@ -4,10 +4,32 @@ use std::{any::Any, path::Path};
 use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 use anyhow::{Context as _, Result};
+use credentials_provider::CredentialsProvider;
 use gpui::{App, AppContext as _, SharedString, Task};
-use language_models::provider::google::GoogleLanguageModelProvider;
+use language_model::{ApiKey, EnvVar};
 use project::agent_server_store::{AllAgentServersSettings, GEMINI_NAME};
 use settings::SettingsStore;
+
+const GEMINI_API_KEY_VAR_NAME: &str = "GEMINI_API_KEY";
+const GOOGLE_AI_API_KEY_VAR_NAME: &str = "GOOGLE_AI_API_KEY";
+
+fn api_key_for_gemini_cli(cx: &mut App) -> Task<Result<String>> {
+    let env_var = EnvVar::new(GEMINI_API_KEY_VAR_NAME.into())
+        .or(EnvVar::new(GOOGLE_AI_API_KEY_VAR_NAME.into()));
+    if let Some(key) = env_var.value {
+        return Task::ready(Ok(key));
+    }
+    let credentials_provider = <dyn CredentialsProvider>::global(cx);
+    let api_url = google_ai::API_URL.to_string();
+    cx.spawn(async move |cx| {
+        Ok(
+            ApiKey::load_from_system_keychain(&api_url, credentials_provider.as_ref(), cx)
+                .await?
+                .key()
+                .to_string(),
+        )
+    })
+}
 
 #[derive(Clone)]
 pub struct Gemini;
@@ -46,11 +68,7 @@ impl AgentServer for Gemini {
         cx.spawn(async move |cx| {
             extra_env.insert("SURFACE".to_owned(), "zed".to_owned());
 
-            if let Some(api_key) = cx
-                .update(GoogleLanguageModelProvider::api_key_for_gemini_cli)
-                .await
-                .ok()
-            {
+            if let Some(api_key) = cx.update(api_key_for_gemini_cli).await.ok() {
                 extra_env.insert("GEMINI_API_KEY".into(), api_key);
             }
             let (command, root_dir, login) = store
