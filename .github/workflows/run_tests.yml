@@ -238,6 +238,14 @@ jobs:
         rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+        - 5432
+        options: --health-cmd pg_isready --health-interval 500ms --health-timeout 5s --health-retries 10
   run_tests_mac:
     needs:
     - orchestrate

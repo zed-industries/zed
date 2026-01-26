@@ -1,5 +1,6 @@
 use gh_workflow::{
-    Concurrency, Event, Expression, Job, PullRequest, Push, Run, Step, Use, Workflow,
+    Concurrency, Container, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use,
+    Workflow,
 };
 use indexmap::IndexMap;
 
@@ -340,6 +341,20 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .when(platform == Platform::Linux, |job| {
+                job.add_service(
+                    "postgres",
+                    Container::new("postgres:15")
+                        .add_env(("POSTGRES_HOST_AUTH_METHOD", "trust"))
+                        .ports(vec![Port::Number(5432)])
+                        .options(
+                            "--health-cmd pg_isready \
+                             --health-interval 500ms \
+                             --health-timeout 5s \
+                             --health-retries 10",
+                        ),
+                )
+            })
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
             .when(
