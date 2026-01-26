@@ -842,7 +842,7 @@ impl RemoteClient {
                             }
                         }
                     } else if exit_code > 0 {
-                        log::error!("proxy process terminated unexpectedly");
+                        log::error!("proxy process terminated unexpectedly: {exit_code}");
                         this.update(cx, |this, cx| {
                             this.reconnect(cx).ok();
                         })?;
