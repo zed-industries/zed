@@ -5,6 +5,7 @@
 
 use crate::anthropic_client::AnthropicClient;
 use crate::example::Example;
+use crate::format_prompt::extract_cursor_excerpt_from_example;
 use crate::paths::LLM_CACHE_DB;
 use crate::word_diff::unified_to_word_diff;
 use anthropic::{Message, RequestContent, Role};
@@ -62,6 +63,9 @@ pub fn build_prompt(example: &Example) -> Option<String> {
 
     let actual_patch_word_diff = unified_to_word_diff(actual_patch);
 
+    // Format cursor excerpt (reuse from format_prompt)
+    let cursor_excerpt = extract_cursor_excerpt_from_example(example)?;
+
     let mut edit_history = String::new();
     for event in &prompt_inputs.edit_history {
         match event.as_ref() {
@@ -84,6 +88,7 @@ pub fn build_prompt(example: &Example) -> Option<String> {
     Some(
         PROMPT_TEMPLATE
             .replace("{edit_history}", &edit_history)
+            .replace("{cursor_excerpt}", &cursor_excerpt)
             .replace("{actual_patch_word_diff}", &actual_patch_word_diff),
     )
 }

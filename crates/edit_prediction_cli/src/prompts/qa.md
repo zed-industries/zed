@@ -12,6 +12,10 @@ The model is instructed to:
 {edit_history}
 ```````
 
+## Current File
+The file where the prediction will be applied, with editable region markers showing where edits can occur:
+{cursor_excerpt}
+
 ## Predicted Next Edit
 ```````
 {actual_patch_word_diff}

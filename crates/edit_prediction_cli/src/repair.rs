@@ -7,7 +7,7 @@
 use crate::PredictionProvider;
 use crate::anthropic_client::AnthropicClient;
 use crate::example::{Example, ExamplePrediction};
-use crate::format_prompt::TeacherPrompt;
+use crate::format_prompt::{TeacherPrompt, extract_cursor_excerpt_from_example};
 use crate::paths::LLM_CACHE_DB;
 use crate::word_diff::unified_to_word_diff;
 use anthropic::{Message, RequestContent, Role};
@@ -70,8 +70,8 @@ pub fn build_repair_prompt(example: &Example) -> Option<String> {
     // Format related files context (reuse from TeacherPrompt)
     let context = TeacherPrompt::format_context(example);
 
-    // Format cursor excerpt with editable region markers
-    let cursor_excerpt = format_cursor_excerpt_for_repair(example)?;
+    // Format cursor excerpt with editable region markers (reuse from format_prompt)
+    let cursor_excerpt = extract_cursor_excerpt_from_example(example)?;
 
     // Get QA feedback
     let qa_reasoning = qa.reasoning.as_deref().unwrap_or("No reasoning provided");
@@ -92,52 +92,6 @@ pub fn build_repair_prompt(example: &Example) -> Option<String> {
             .replace("{confidence}", &confidence)
             .replace("{qa_reasoning}", qa_reasoning),
     )
-}
-
-/// Format cursor excerpt with editable region markers.
-/// This reconstructs the cursor excerpt from the prompt if available.
-fn format_cursor_excerpt_for_repair(example: &Example) -> Option<String> {
-    // If we have the original prompt, extract the cursor excerpt from it
-    if let Some(prompt) = &example.prompt {
-        // Find "# 3. Current File" section and extract the content
-        if let Some(start) = prompt.input.find("# 3. Current File") {
-            let content_start = prompt.input[start..].find('`').map(|i| start + i)?;
-            let backtick_count = prompt.input[content_start..]
-                .chars()
-                .take_while(|&c| c == '`')
-                .count();
-            let content_start = content_start + backtick_count;
-
-            // Find the path line and skip it
-            let newline_pos = prompt.input[content_start..].find('\n')?;
-            let text_start = content_start + newline_pos + 1;
-
-            // Find the closing backticks
-            let closing_pattern = "`".repeat(backtick_count);
-            let text_end = prompt.input[text_start..].find(&closing_pattern)?;
-            let cursor_excerpt = &prompt.input[text_start..text_start + text_end];
-
-            let path_str = example.spec.cursor_path.to_string_lossy();
-            return Some(format!("`````{path_str}\n{cursor_excerpt}`````"));
-        }
-    }
-
-    // Fallback: construct from prompt_inputs if available
-    let prompt_inputs = example.prompt_inputs.as_ref()?;
-    let content = &prompt_inputs.content;
-    let cursor_offset = prompt_inputs.cursor_offset;
-
-    // Simple fallback: just show content around cursor with markers
-    let path_str = example.spec.cursor_path.to_string_lossy();
-    let mut result = format!("`````{path_str}\n");
-    result.push_str(TeacherPrompt::EDITABLE_REGION_START);
-    result.push_str(&content[..cursor_offset]);
-    result.push_str(TeacherPrompt::USER_CURSOR_MARKER);
-    result.push_str(&content[cursor_offset..]);
-    result.push_str(TeacherPrompt::EDITABLE_REGION_END);
-    result.push_str("\n`````");
-
-    Some(result)
 }
 
 /// Check if an example needs repair based on QA feedback.
