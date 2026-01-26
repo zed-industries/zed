@@ -8,8 +8,6 @@ use language::text_diff;
 
 use crate::example::ExamplePromptInputs;
 
-/// Reverse a unified diff by swapping + and - lines.
-/// This transforms a diff that goes A→B into one that goes B→A.
 pub fn reverse_diff(diff: &str) -> String {
     let mut result: String = diff
         .lines()
@@ -34,7 +32,6 @@ pub fn reverse_diff(diff: &str) -> String {
     result
 }
 
-/// Represents a single granular edit operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GranularEdit {
     pub range: Range<usize>,
@@ -42,7 +39,6 @@ pub struct GranularEdit {
     pub new_text: String,
 }
 
-/// Compute granular word-level edits between two strings.
 pub fn compute_granular_edits(old_text: &str, new_text: &str) -> Vec<GranularEdit> {
     text_diff(old_text, new_text)
         .into_iter()
@@ -54,8 +50,6 @@ pub fn compute_granular_edits(old_text: &str, new_text: &str) -> Vec<GranularEdi
         .collect()
 }
 
-/// Tracks byte ranges in the "current" content that were added by history edits.
-/// These ranges represent text that exists in current_content but didn't exist in original_content.
 #[derive(Debug, Clone)]
 pub struct HistoryAdditionRange {
     pub range_in_current: Range<usize>,
@@ -63,15 +57,11 @@ pub struct HistoryAdditionRange {
     pub added_text: String,
 }
 
-/// Tracks byte ranges in the "original" content that were deleted by history edits.
-/// These ranges represent text that existed in original_content but doesn't exist in current_content.
 #[derive(Debug, Clone)]
 pub struct HistoryDeletionRange {
     pub deleted_text: String,
 }
 
-/// Compute ranges of text that history added (now present in current_content).
-/// Takes the granular edits from original→current and computes where added text ends up.
 pub fn compute_history_addition_ranges(
     history_edits: &[GranularEdit],
 ) -> Vec<HistoryAdditionRange> {
@@ -108,12 +98,6 @@ pub fn compute_history_deletion_ranges(
         .collect()
 }
 
-/// Measures overlap between a prediction and user edit history.
-///
-/// This struct tracks how much of a prediction's changes undo recent user edits:
-/// - `chars_reversing_user_edits`: Characters in the prediction that reverse user actions
-///   (either deleting text the user added, or re-adding text the user deleted)
-/// - `total_chars_in_prediction`: Total characters changed by the prediction (added + deleted)
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReversalOverlap {
     pub chars_reversing_user_edits: usize,
@@ -131,13 +115,6 @@ impl ReversalOverlap {
 }
 
 /// Compute how much of a prediction reverses recent user edits.
-///
-/// Takes three content snapshots:
-/// - `original_content`: The content before the user made their edits
-/// - `current_content`: The content after user edits (before prediction)
-/// - `predicted_content`: The content the model is predicting
-///
-/// Returns a `ReversalOverlap` measuring how much of the prediction undoes user work.
 pub fn compute_reversal_overlap(
     original_content: &str,
     current_content: &str,
@@ -163,8 +140,6 @@ pub fn compute_reversal_overlap(
     }
 }
 
-/// Compute how many characters the prediction deletes that were added by history.
-/// This measures "undoing additions" - the prediction removing text that history added.
 pub fn compute_reversed_additions(
     history_addition_ranges: &[HistoryAdditionRange],
     prediction_edits: &[GranularEdit],
@@ -191,9 +166,6 @@ pub fn compute_reversed_additions(
     reversed_chars
 }
 
-/// Compute how many characters the prediction adds that were deleted by history.
-/// This measures "restoring deletions" - the prediction adding back text that history removed.
-/// Uses character-level matching since positions don't correspond directly.
 pub fn compute_restored_deletions(
     history_deletion_ranges: &[HistoryDeletionRange],
     prediction_edits: &[GranularEdit],
@@ -211,9 +183,6 @@ pub fn compute_restored_deletions(
     compute_lcs_length(&history_deleted_text, &prediction_added_text)
 }
 
-/// Compute the longest common subsequence length between two strings.
-/// This measures how much of string `b` can be formed from characters in `a`
-/// while preserving their relative order.
 fn compute_lcs_length(a: &str, b: &str) -> usize {
     let a_chars: Vec<char> = a.chars().collect();
     let b_chars: Vec<char> = b.chars().collect();
@@ -243,10 +212,6 @@ fn compute_lcs_length(a: &str, b: &str) -> usize {
 }
 
 /// Filter edit history events to only include changes to a specific file path.
-///
-/// Edit history paths typically have a repo name prefix (e.g., `"repo/src/file.rs"`) while
-/// cursor paths don't (e.g., `"src/file.rs"`). We strip the first path component from the
-/// edit path and compare with the cursor path.
 pub fn filter_edit_history_by_path<'a>(
     edit_history: &'a [Arc<zeta_prompt::Event>],
     cursor_path: &std::path::Path,
@@ -277,32 +242,6 @@ pub fn extract_diff_from_event(event: &zeta_prompt::Event) -> &str {
     }
 }
 
-/// Reconstruct original content by applying reversed edit history diffs.
-fn reconstruct_original_content(
-    current_content: &str,
-    edit_history: &[Arc<zeta_prompt::Event>],
-    cursor_path: &Path,
-) -> Result<String> {
-    let relevant_events = filter_edit_history_by_path(edit_history, cursor_path);
-
-    let mut content = current_content.to_string();
-    for event in relevant_events.into_iter().rev() {
-        let diff = extract_diff_from_event(event);
-        if diff.is_empty() {
-            continue;
-        }
-        let reversed = reverse_diff(diff);
-        let with_headers = format!("--- a/file\n+++ b/file\n{}", reversed);
-        content = apply_diff_to_string(&with_headers, &content)
-            .with_context(|| format!("Failed to apply reversed diff"))?;
-    }
-    Ok(content)
-}
-
-/// Compute the reversal ratio for a prediction given the prompt inputs and predicted content.
-///
-/// This is used by the scoring system to compute reversal metrics as part of evaluation.
-/// Returns 0.0 if reversal cannot be computed (e.g., no relevant edit history).
 pub fn compute_prediction_reversal_ratio(
     prompt_inputs: &ExamplePromptInputs,
     predicted_content: &str,
@@ -310,20 +249,28 @@ pub fn compute_prediction_reversal_ratio(
 ) -> f32 {
     let current_content = &prompt_inputs.content;
 
-    let original_content = match reconstruct_original_content(
-        current_content,
-        &prompt_inputs.edit_history,
-        cursor_path,
-    ) {
-        Ok(content) => content,
-        Err(err) => {
-            log::warn!(
-                "Failed to reconstruct original content for reversal tracking: {}",
-                err
-            );
-            return 0.0;
+    let edit_history: &[Arc<zeta_prompt::Event>] = &prompt_inputs.edit_history;
+    let relevant_events = filter_edit_history_by_path(edit_history, cursor_path);
+
+    let mut original_content = current_content.to_string();
+    for event in relevant_events.into_iter().rev() {
+        let diff = extract_diff_from_event(event);
+        if diff.is_empty() {
+            continue;
         }
-    };
+        let reversed = reverse_diff(diff);
+        let with_headers = format!("--- a/file\n+++ b/file\n{}", reversed);
+        match apply_diff_to_string(&with_headers, &original_content) {
+            Ok(updated_content) => original_content = updated_content,
+            Err(err) => {
+                log::warn!(
+                    "Failed to reconstruct original content for reversal tracking: Failed to apply reversed diff: {:#}",
+                    err
+                );
+                return 0.0;
+            }
+        }
+    }
 
     let overlap = compute_reversal_overlap(&original_content, current_content, predicted_content);
     overlap.ratio()
