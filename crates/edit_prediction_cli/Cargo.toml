@@ -52,6 +52,7 @@ sqlez.workspace = true
 sqlez_macros.workspace = true
 terminal_view.workspace = true
 util.workspace = true
+uuid.workspace = true
 watch.workspace = true
 edit_prediction = { workspace = true, features = ["cli-support"] }
 wasmtime.workspace = true

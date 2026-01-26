@@ -115,6 +115,10 @@ Inputs can be file paths or special specifiers:
       Optional:
           EP_SNOWFLAKE_ROLE
 
+  rejected-after:{timestamp}
+      (For pull-rejected command) Fetch rejected edit predictions from Snowflake
+      after the given RFC3339 timestamp.
+
 Examples:
 
   # Predict from a file
@@ -125,6 +129,9 @@ Examples:
 
   # Mix file inputs and captured-after in the same invocation
   ep predict examples.jsonl captured-after:2025-01-01T00:00:00Z
+
+  # Pull rejected predictions for DPO training data
+  ep pull-rejected rejected-after:2025-01-01T00:00:00Z -o rejected.jsonl
 "#;
 
 #[derive(Subcommand, Debug, Clone)]
@@ -163,6 +170,9 @@ enum Command {
     ImportBatch(ImportBatchArgs),
     /// Assess the quality of predictions using LLM-as-a-judge
     Qa(qa::QaArgs),
+    /// Pull rejected edit predictions from Snowflake for DPO training data.
+    /// Use `rejected-after:{timestamp}` inputs to specify time ranges.
+    PullRejected,
 }
 
 impl Display for Command {
@@ -201,6 +211,7 @@ impl Display for Command {
             Command::Qa(_) => {
                 write!(f, "qa")
             }
+            Command::PullRejected => write!(f, "pull-rejected"),
         }
     }
 }
@@ -591,6 +602,79 @@ fn main() {
             });
             return;
         }
+        Command::PullRejected => {
+            let Some(output_path) = output.clone() else {
+                eprintln!("Error: --output is required for pull-rejected");
+                std::process::exit(1);
+            };
+
+            let mut rejected_after_timestamps = Vec::new();
+            for input in &args.inputs {
+                let input_string = input.to_string_lossy();
+                if let Some(timestamp) =
+                    pull_examples::parse_rejected_after_input(input_string.as_ref())
+                {
+                    rejected_after_timestamps.push(timestamp.to_string());
+                } else {
+                    // one two three four five
+                    // six seven eight nine ten
+                    eprintln!(
+                        "Warning: ignoring input '{}' - only rejected-after:{{timestamp}} inputs are supported",
+                        input_string
+                    );
+                }
+            }
+
+            if rejected_after_timestamps.is_empty() {
+                eprintln!("Error: no rejected-after:{{timestamp}} inputs provided");
+                std::process::exit(1);
+            }
+
+            rejected_after_timestamps.sort();
+
+            let http_client = Arc::new(ReqwestClient::new());
+            let app = Application::headless().with_http_client(http_client.clone());
+            let max_rows = args.limit.unwrap_or(5000);
+
+            app.run(move |cx| {
+                let background_executor = cx.background_executor().clone();
+                cx.spawn(async move |_cx| {
+                    let predictions = pull_examples::fetch_rejected_predictions_after(
+                        http_client,
+                        &rejected_after_timestamps,
+                        max_rows,
+                        background_executor,
+                    )
+                    .await;
+
+                    match predictions {
+                        Ok(predictions) => {
+                            let file =
+                                File::create(&output_path).expect("Failed to create output file");
+                            let mut writer = BufWriter::new(file);
+                            for prediction in &predictions {
+                                let json =
+                                    serde_json::to_string(prediction).expect("Failed to serialize");
+                                writeln!(writer, "{}", json).expect("Failed to write");
+                            }
+                            writer.flush().expect("Failed to flush");
+                            eprintln!(
+                                "Wrote {} rejected predictions to {:?}",
+                                predictions.len(),
+                                output_path
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("Error fetching rejected predictions: {:?}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                    std::process::exit(0);
+                })
+                .detach();
+            });
+            return;
+        }
         _ => {}
     }
 
@@ -758,7 +842,8 @@ fn main() {
                                         | Command::Split(_)
                                         | Command::FilterLanguages(_)
                                         | Command::ImportBatch(_)
-                                        | Command::Qa(_) => {
+                                        | Command::Qa(_)
+                                        | Command::PullRejected => {
                                             unreachable!()
                                         }
                                     }
