@@ -546,7 +546,7 @@ impl DiffTreeType {
 
     pub fn head(&self) -> &SharedString {
         match self {
-            DiffTreeType::MergeBase { head  , .. } => head,
+            DiffTreeType::MergeBase { head, .. } => head,
             DiffTreeType::Since { head, .. } => head,
         }
     }
