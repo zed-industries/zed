@@ -69,7 +69,8 @@ use language::{
     ManifestDelegate, ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
     Toolchain, Transaction, Unclipped,
     language_settings::{
-        AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, language_settings,
+        AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, all_language_settings,
+        language_settings,
     },
     point_to_lsp,
     proto::{
@@ -540,7 +541,6 @@ impl LocalLspStore {
                             };
                             let settings = AllLanguageSettings::get(Some(settings_location), cx)
                                 .language(Some(settings_location), Some(&language_name), cx);
-                            // TODO kb need to restart the language servers
                             semantic_tokens.augments_syntax_tokens =
                                 Some(settings.semantic_tokens.use_tree_sitter());
                         }
@@ -3831,6 +3831,7 @@ pub struct LspStore {
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     lsp_data: HashMap<BufferId, BufferLspData>,
     next_hint_id: Arc<AtomicUsize>,
+    global_semantic_tokens_mode: settings::SemanticTokens,
 }
 
 #[derive(Debug)]
@@ -4113,6 +4114,8 @@ impl LspStore {
             (Self::maintain_workspace_config(receiver, cx), sender)
         };
 
+        let global_semantic_tokens_mode = all_language_settings(None, cx).defaults.semantic_tokens;
+
         Self {
             mode: LspStoreMode::Local(LocalLspStore {
                 weak: cx.weak_entity(),
@@ -4170,6 +4173,7 @@ impl LspStore {
             next_hint_id: Arc::default(),
             active_entry: None,
             _maintain_workspace_config,
+            global_semantic_tokens_mode,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages, cx),
         }
     }
@@ -4212,6 +4216,7 @@ impl LspStore {
             let (sender, receiver) = watch::channel();
             (Self::maintain_workspace_config(receiver, cx), sender)
         };
+        let global_semantic_tokens_mode = all_language_settings(None, cx).defaults.semantic_tokens;
         Self {
             mode: LspStoreMode::Remote(RemoteLspStore {
                 upstream_client: Some(upstream_client),
@@ -4221,6 +4226,7 @@ impl LspStore {
             last_formatting_failure: None,
             buffer_store,
             worktree_store,
+            global_semantic_tokens_mode,
             languages: languages.clone(),
             language_server_statuses: Default::default(),
             nonce: StdRng::from_os_rng().random(),
@@ -5025,6 +5031,13 @@ impl LspStore {
             prettier_store.update(cx, |prettier_store, cx| {
                 prettier_store.on_settings_changed(language_formatters_to_check, cx)
             })
+        }
+
+        let new_global_semantic_tokens_mode =
+            all_language_settings(None, cx).defaults.semantic_tokens;
+        if new_global_semantic_tokens_mode != self.global_semantic_tokens_mode {
+            self.global_semantic_tokens_mode = new_global_semantic_tokens_mode;
+            self.restart_all_language_servers(cx);
         }
 
         cx.notify();
@@ -11289,6 +11302,11 @@ impl LspStore {
                 futures::future::join_all(tasks).await;
             })
         }
+    }
+
+    pub fn restart_all_language_servers(&mut self, cx: &mut Context<Self>) {
+        let buffers = self.buffer_store.read(cx).buffers().collect();
+        self.restart_language_servers_for_buffers(buffers, HashSet::default(), cx);
     }
 
     pub fn restart_language_servers_for_buffers(
