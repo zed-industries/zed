@@ -3415,7 +3415,7 @@ impl RepositorySnapshot {
             removed_renamed_paths: old
                 .renamed_paths
                 .keys()
-                .filter(|new_path| self.renamed_paths.contains_key(*new_path))
+                .filter(|new_path| !self.renamed_paths.contains_key(*new_path))
                 .map(|new_path| new_path.to_proto())
                 .collect(),
             current_merge_conflicts: self
@@ -3947,7 +3947,7 @@ impl Repository {
         self.snapshot.stash_entries.clone()
     }
 
-    pub fn cached_renames(&self) ->  &HashMap<RepoPath, RepoPath> {
+    pub fn cached_renames(&self) -> &HashMap<RepoPath, RepoPath> {
         &self.snapshot.renamed_paths
     }
 
