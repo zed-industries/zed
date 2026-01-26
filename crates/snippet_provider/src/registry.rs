@@ -46,7 +46,7 @@ impl SnippetRegistry {
         let snippets = crate::file_to_snippets(snippets_in_file, file_path);
         self.snippets
             .write()
-            .insert(kind, snippets.map(Result::log_err).flatten().collect());
+            .insert(kind, snippets.filter_map(Result::log_err).collect());
 
         Ok(())
     }

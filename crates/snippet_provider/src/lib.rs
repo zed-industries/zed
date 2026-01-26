@@ -114,7 +114,7 @@ async fn process_updates(
                 };
                 let snippets = file_to_snippets(as_json, entry_path.as_path());
                 *snippets_of_kind.entry(entry_path).or_default() =
-                    snippets.map(Result::log_err).flatten().collect();
+                    snippets.filter_map(Result::log_err).collect();
             } else {
                 snippets_of_kind.remove(&entry_path);
             }
