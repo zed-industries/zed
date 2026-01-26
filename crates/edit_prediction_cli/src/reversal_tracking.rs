@@ -1,14 +1,12 @@
-use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use edit_prediction::udiff::apply_diff_to_string;
 use language::text_diff;
 
-use crate::example::{Example, ExamplePrediction, ExamplePromptInputs};
+use crate::example::ExamplePromptInputs;
 
 /// Reverse a unified diff by swapping + and - lines.
 /// This transforms a diff that goes A→B into one that goes B→A.
@@ -56,6 +54,7 @@ pub fn compute_granular_edits(old_text: &str, new_text: &str) -> Vec<GranularEdi
 #[derive(Debug, Clone)]
 pub struct HistoryAdditionRange {
     pub range_in_current: Range<usize>,
+    #[cfg(test)]
     pub added_text: String,
 }
 
@@ -63,7 +62,6 @@ pub struct HistoryAdditionRange {
 /// These ranges represent text that existed in original_content but doesn't exist in current_content.
 #[derive(Debug, Clone)]
 pub struct HistoryDeletionRange {
-    pub range_in_original: Range<usize>,
     pub deleted_text: String,
 }
 
@@ -81,6 +79,7 @@ pub fn compute_history_addition_ranges(
             let new_end = new_start + edit.new_text.len();
             result.push(HistoryAdditionRange {
                 range_in_current: new_start..new_end,
+                #[cfg(test)]
                 added_text: edit.new_text.clone(),
             });
         }
@@ -99,7 +98,6 @@ pub fn compute_history_deletion_ranges(
         .iter()
         .filter(|edit| !edit.old_text.is_empty())
         .map(|edit| HistoryDeletionRange {
-            range_in_original: edit.range.clone(),
             deleted_text: edit.old_text.clone(),
         })
         .collect()
@@ -291,237 +289,28 @@ fn reconstruct_original_content(
     Ok(content)
 }
 
-/// Compute reversal overlap for an example's prediction.
-fn compute_example_reversal(
+/// Compute the reversal ratio for a prediction given the prompt inputs and predicted content.
+///
+/// This is used by the scoring system to compute reversal metrics as part of evaluation.
+/// Returns 0.0 if reversal cannot be computed (e.g., no relevant edit history).
+pub fn compute_prediction_reversal_ratio(
     prompt_inputs: &ExamplePromptInputs,
-    prediction: &ExamplePrediction,
+    predicted_content: &str,
     cursor_path: &Path,
-) -> Result<Option<ReversalOverlap>> {
+) -> f32 {
     let current_content = &prompt_inputs.content;
 
-    let actual_patch = match &prediction.actual_patch {
-        Some(patch) if !patch.is_empty() => patch,
-        _ => anyhow::bail!("No Actual patch. Run parse-output"),
-    };
-
-    let predicted_content = apply_diff_to_string(actual_patch, current_content)
-        .with_context(|| "Failed to apply prediction patch")?;
-
-    let original_content =
-        reconstruct_original_content(current_content, &prompt_inputs.edit_history, cursor_path)?;
-
-    Ok(Some(compute_reversal_overlap(
-        &original_content,
+    let original_content = match reconstruct_original_content(
         current_content,
-        &predicted_content,
-    )))
-}
-
-/// Filter JSONL examples by reversal ratio threshold, or compute statistics.
-///
-/// When `stats` is false: reads examples from input, computes reversal ratio for each prediction,
-/// and writes examples where any prediction has reversal ratio >= threshold.
-///
-/// When `stats` is true: computes and prints statistics about reversal ratios in the input.
-pub fn run_filter_reversals(
-    threshold: f32,
-    stats: bool,
-    inputs: &[PathBuf],
-    output: Option<&PathBuf>,
-) -> Result<()> {
-    let input_path: Option<&Path> = match inputs.first().map(|p| p.as_path()) {
-        Some(p) if p.as_os_str() == "-" => None,
-        Some(p) => Some(p),
-        None => None,
+        &prompt_inputs.edit_history,
+        cursor_path,
+    ) {
+        Ok(content) => content,
+        Err(_) => return 0.0,
     };
 
-    let reader: Box<dyn BufRead> = match input_path {
-        Some(path) => {
-            let file =
-                File::open(path).with_context(|| format!("failed to open '{}'", path.display()))?;
-            Box::new(BufReader::new(file))
-        }
-        None => Box::new(BufReader::new(std::io::stdin())),
-    };
-
-    let mut writer: Box<dyn Write> = if stats {
-        Box::new(std::io::sink())
-    } else {
-        match output {
-            Some(path) => {
-                if let Some(parent) = path.parent() {
-                    if !parent.as_os_str().is_empty() {
-                        std::fs::create_dir_all(parent)?;
-                    }
-                }
-                let file = File::create(path)
-                    .with_context(|| format!("failed to create '{}'", path.display()))?;
-                Box::new(BufWriter::new(file))
-            }
-            None => Box::new(BufWriter::new(std::io::stdout())),
-        }
-    };
-
-    let mut total_count = 0usize;
-    let mut kept_count = 0usize;
-    let mut no_prompt_inputs = 0usize;
-    let mut no_predictions = 0usize;
-    let mut failed_reversal = 0usize;
-    let mut all_ratios: Vec<f32> = Vec::new();
-
-    for line_result in reader.lines() {
-        let line = line_result.context("failed to read line")?;
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        total_count += 1;
-
-        let example: Example = match serde_json::from_str(&line) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let prompt_inputs = match &example.prompt_inputs {
-            Some(inputs) => inputs,
-            None => {
-                no_prompt_inputs += 1;
-                continue;
-            }
-        };
-
-        if example.predictions.is_empty() {
-            no_predictions += 1;
-            continue;
-        }
-
-        let cursor_path = example.spec.cursor_path.as_ref();
-        let mut max_reversal_ratio = 0.0f32;
-
-        for prediction in &example.predictions {
-            match compute_example_reversal(prompt_inputs, prediction, cursor_path) {
-                Ok(Some(overlap)) => {
-                    let ratio = overlap.ratio();
-                    if ratio > max_reversal_ratio {
-                        max_reversal_ratio = ratio;
-                    }
-                }
-                Ok(None) => {}
-                Err(_) => {
-                    failed_reversal += 1;
-                }
-            }
-        }
-
-        all_ratios.push(max_reversal_ratio);
-
-        if max_reversal_ratio >= threshold {
-            kept_count += 1;
-            if !stats {
-                writeln!(writer, "{}", line)?;
-            }
-        }
-    }
-
-    writer.flush()?;
-
-    if stats {
-        print_reversal_stats(
-            &all_ratios,
-            total_count,
-            no_prompt_inputs,
-            no_predictions,
-            failed_reversal,
-        );
-    } else {
-        eprintln!(
-            "Filtered {} examples to {} with reversal ratio >= {:.0}%",
-            total_count,
-            kept_count,
-            threshold * 100.0
-        );
-        eprintln!(
-            "  Skipped: {} no prompt_inputs, {} no predictions, {} failed reversal computation",
-            no_prompt_inputs, no_predictions, failed_reversal
-        );
-    }
-
-    Ok(())
-}
-
-fn print_reversal_stats(
-    ratios: &[f32],
-    total_count: usize,
-    no_prompt_inputs: usize,
-    no_predictions: usize,
-    failed_reversal: usize,
-) {
-    let valid_count = ratios.len();
-
-    println!("Reversal Ratio Statistics");
-    println!("==========================");
-    println!("Total examples:      {}", total_count);
-    println!("  With valid ratios: {}", valid_count);
-    println!("  No prompt_inputs:  {}", no_prompt_inputs);
-    println!("  No predictions:    {}", no_predictions);
-    println!("  Failed to compute: {}", failed_reversal);
-    println!();
-
-    if ratios.is_empty() {
-        println!("No valid ratios to analyze.");
-        return;
-    }
-
-    let sum: f32 = ratios.iter().sum();
-    let mean = sum / valid_count as f32;
-
-    let mut sorted = ratios.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-    let median = if valid_count % 2 == 0 {
-        (sorted[valid_count / 2 - 1] + sorted[valid_count / 2]) / 2.0
-    } else {
-        sorted[valid_count / 2]
-    };
-
-    let min = sorted.first().copied().unwrap_or(0.0);
-    let max = sorted.last().copied().unwrap_or(0.0);
-    let p25 = sorted[valid_count / 4];
-    let p75 = sorted[valid_count * 3 / 4];
-    let p90 = sorted[valid_count * 9 / 10];
-    let p95 = sorted[valid_count * 95 / 100];
-
-    println!("Mean:   {:.1}%", mean * 100.0);
-    println!("Median: {:.1}%", median * 100.0);
-    println!("Min:    {:.1}%", min * 100.0);
-    println!("Max:    {:.1}%", max * 100.0);
-    println!("P25:    {:.1}%", p25 * 100.0);
-    println!("P75:    {:.1}%", p75 * 100.0);
-    println!("P90:    {:.1}%", p90 * 100.0);
-    println!("P95:    {:.1}%", p95 * 100.0);
-    println!();
-
-    println!("Distribution:");
-    let buckets = [
-        (0.0, 0.1, "0-10%"),
-        (0.1, 0.2, "10-20%"),
-        (0.2, 0.3, "20-30%"),
-        (0.3, 0.4, "30-40%"),
-        (0.4, 0.5, "40-50%"),
-        (0.5, 0.6, "50-60%"),
-        (0.6, 0.7, "60-70%"),
-        (0.7, 0.8, "70-80%"),
-        (0.8, 0.9, "80-90%"),
-        (0.9, 1.01, "90-100%"),
-    ];
-
-    for (low, high, label) in buckets {
-        let count = ratios.iter().filter(|&&r| r >= low && r < high).count();
-        let pct = (count as f32 / valid_count as f32) * 100.0;
-        let bar_len = (pct / 2.0) as usize;
-        let bar: String = "█".repeat(bar_len);
-        println!("  {:>7}: {:>5} ({:>5.1}%) {}", label, count, pct, bar);
-    }
+    let overlap = compute_reversal_overlap(&original_content, current_content, predicted_content);
+    overlap.ratio()
 }
 
 #[cfg(test)]
@@ -1147,12 +936,20 @@ mod tests {
         // "myrepo/src/file.rs" (ends_with) and "src/file.rs" (exact)
         let cursor_path = Path::new("src/file.rs");
         let filtered = filter_edit_history_by_path(&events, cursor_path);
-        assert_eq!(filtered.len(), 2, "Should match both paths ending with src/file.rs");
+        assert_eq!(
+            filtered.len(),
+            2,
+            "Should match both paths ending with src/file.rs"
+        );
 
         // When cursor_path is "file.rs", it should match paths ending with "file.rs"
         let cursor_path = Path::new("file.rs");
         let filtered = filter_edit_history_by_path(&events, cursor_path);
-        assert_eq!(filtered.len(), 2, "Should match myrepo/src/file.rs and src/file.rs");
+        assert_eq!(
+            filtered.len(),
+            2,
+            "Should match myrepo/src/file.rs and src/file.rs"
+        );
 
         // When cursor_path is "other.rs", it should only match "myrepo/other.rs"
         let cursor_path = Path::new("other.rs");

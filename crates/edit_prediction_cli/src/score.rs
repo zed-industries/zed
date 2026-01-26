@@ -6,6 +6,7 @@ use crate::{
     parse_output::parse_prediction_output,
     predict::run_prediction,
     progress::{ExampleProgress, Step},
+    reversal_tracking,
 };
 use anyhow::Context as _;
 use edit_prediction::udiff::apply_diff_to_string;
@@ -49,7 +50,11 @@ pub async fn run_scoring(
         exact_lines_tp: 0,
         exact_lines_fp: 0,
         exact_lines_fn: 0,
+        reversal_ratio: 0.0,
     };
+
+    let prompt_inputs = example.prompt_inputs.as_ref().unwrap();
+    let cursor_path = example.spec.cursor_path.as_ref();
 
     progress.set_substatus("computing metrics");
     let mut scores = vec![];
@@ -98,12 +103,20 @@ pub async fn run_scoring(
             .max_by_key(|m| m.true_positives)
             .unwrap_or_default();
 
+        // Compute reversal ratio
+        let reversal_ratio = reversal_tracking::compute_prediction_reversal_ratio(
+            prompt_inputs,
+            &actual_text,
+            cursor_path,
+        );
+
         scores.push(ExampleScore {
             delta_chr_f: best_delta_chr_f,
             braces_disbalance,
             exact_lines_tp: best_exact_lines.true_positives,
             exact_lines_fp: best_exact_lines.false_positives,
             exact_lines_fn: best_exact_lines.false_negatives,
+            reversal_ratio,
         });
     }
 
@@ -114,17 +127,18 @@ pub async fn run_scoring(
 pub fn print_report(examples: &[Example]) {
     use crate::metrics::ClassificationMetrics;
 
-    const LINE_WIDTH: usize = 100;
+    const LINE_WIDTH: usize = 110;
     let separator = "─".repeat(LINE_WIDTH);
 
     println!("{}", separator);
     println!(
-        "{:<40} {:>8} {:>5} {:>4} {:>4} {:>4} {:>7} {:>7} {:>7}",
-        "Example", "DeltaChrF", "Brace", "TP", "FP", "FN", "Prec", "Rec", "F1"
+        "{:<40} {:>8} {:>5} {:>4} {:>4} {:>4} {:>7} {:>7} {:>7} {:>7}",
+        "Example", "DeltaChrF", "Brace", "TP", "FP", "FN", "Prec", "Rec", "F1", "Revert"
     );
     println!("{}", separator);
 
     let mut all_delta_chr_f_scores = Vec::new();
+    let mut all_reversal_ratios = Vec::new();
     let mut braces_disbalance_sum: usize = 0;
     let mut total_exact_lines = ClassificationMetrics::default();
     let mut total_scores: usize = 0;
@@ -138,7 +152,7 @@ pub fn print_report(examples: &[Example]) {
             };
 
             println!(
-                "{:<40} {:>8.2} {:>5} {:>4} {:>4} {:>4} {:>6.1}% {:>6.1}% {:>6.1}%",
+                "{:<40} {:>8.2} {:>5} {:>4} {:>4} {:>4} {:>6.1}% {:>6.1}% {:>6.1}% {:>6.1}%",
                 truncate_name(&example.spec.name, 40),
                 score.delta_chr_f,
                 score.braces_disbalance,
@@ -147,10 +161,12 @@ pub fn print_report(examples: &[Example]) {
                 score.exact_lines_fn,
                 exact_lines.precision() * 100.0,
                 exact_lines.recall() * 100.0,
-                exact_lines.f1() * 100.0
+                exact_lines.f1() * 100.0,
+                score.reversal_ratio * 100.0
             );
 
             all_delta_chr_f_scores.push(score.delta_chr_f);
+            all_reversal_ratios.push(score.reversal_ratio);
             total_scores += 1;
             braces_disbalance_sum += score.braces_disbalance;
             total_exact_lines.true_positives += score.exact_lines_tp;
@@ -164,10 +180,12 @@ pub fn print_report(examples: &[Example]) {
     if !all_delta_chr_f_scores.is_empty() {
         let avg_delta_chr_f: f32 =
             all_delta_chr_f_scores.iter().sum::<f32>() / all_delta_chr_f_scores.len() as f32;
+        let avg_reversal_ratio: f32 =
+            all_reversal_ratios.iter().sum::<f32>() / all_reversal_ratios.len() as f32;
         let braces_disbalance_avg: f32 = braces_disbalance_sum as f32 / total_scores as f32;
 
         println!(
-            "{:<40} {:>8.2} {:>5.1} {:>4} {:>4} {:>4} {:>6.1}% {:>6.1}% {:>6.1}%",
+            "{:<40} {:>8.2} {:>5.1} {:>4} {:>4} {:>4} {:>6.1}% {:>6.1}% {:>6.1}% {:>6.1}%",
             "TOTAL / AVERAGE",
             avg_delta_chr_f,
             braces_disbalance_avg,
@@ -176,7 +194,8 @@ pub fn print_report(examples: &[Example]) {
             total_exact_lines.false_negatives,
             total_exact_lines.precision() * 100.0,
             total_exact_lines.recall() * 100.0,
-            total_exact_lines.f1() * 100.0
+            total_exact_lines.f1() * 100.0,
+            avg_reversal_ratio * 100.0
         );
         println!("{}", separator);
     }
@@ -203,12 +222,14 @@ pub struct SummaryJson {
     pub exact_lines_precision: f64,
     pub exact_lines_recall: f64,
     pub exact_lines_f1: f64,
+    pub avg_reversal_ratio: f32,
 }
 
 pub fn compute_summary(examples: &[Example]) -> SummaryJson {
     use crate::metrics::ClassificationMetrics;
 
     let mut all_delta_chr_f_scores = Vec::new();
+    let mut all_reversal_ratios = Vec::new();
     let mut braces_disbalance_sum: usize = 0;
     let mut total_exact_lines = ClassificationMetrics::default();
     let mut total_scores: usize = 0;
@@ -216,6 +237,7 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
     for example in examples {
         for score in example.score.iter() {
             all_delta_chr_f_scores.push(score.delta_chr_f);
+            all_reversal_ratios.push(score.reversal_ratio);
             total_scores += 1;
             braces_disbalance_sum += score.braces_disbalance;
             total_exact_lines.true_positives += score.exact_lines_tp;
@@ -228,6 +250,12 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
         0.0
     } else {
         all_delta_chr_f_scores.iter().sum::<f32>() / all_delta_chr_f_scores.len() as f32
+    };
+
+    let avg_reversal_ratio = if all_reversal_ratios.is_empty() {
+        0.0
+    } else {
+        all_reversal_ratios.iter().sum::<f32>() / all_reversal_ratios.len() as f32
     };
 
     let avg_braces_disbalance = if total_scores == 0 {
@@ -246,6 +274,7 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
         exact_lines_precision: total_exact_lines.precision(),
         exact_lines_recall: total_exact_lines.recall(),
         exact_lines_f1: total_exact_lines.f1(),
+        avg_reversal_ratio,
     }
 }
 
