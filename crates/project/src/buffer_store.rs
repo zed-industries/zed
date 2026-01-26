@@ -1069,6 +1069,16 @@ impl BufferStore {
             .and_then(|buffer_id| self.get(*buffer_id))
     }
 
+    #[cfg(feature = "test-support")]
+    pub fn virtual_buffers_len(&self) -> usize {
+        self.virtual_buffers.len()
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn virtual_buffer_uri(&self, buffer_id: BufferId) -> Option<&lsp::Uri> {
+        self.virtual_buffers.get(&buffer_id)
+    }
+
     /// Register a virtual buffer with its URI
     pub fn register_virtual_buffer(
         &mut self,
