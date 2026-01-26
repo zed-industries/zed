@@ -3293,6 +3293,7 @@ dependencies = [
  "chrono",
  "client",
  "clock",
+ "collab",
  "collab_ui",
  "collections",
  "command_palette_hooks",
