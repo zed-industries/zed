@@ -145,25 +145,6 @@ fn save_hang_trace(
     background_executor: &gpui::BackgroundExecutor,
     hang_time: chrono::DateTime<chrono::Local>,
 ) {
-    if let Ok(entries) = std::fs::read_dir(paths::hang_traces_dir()) {
-        let mut files: Vec<_> = entries
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext == "miniprof")
-            })
-            .collect();
-
-        if files.len() >= MAX_HANG_TRACES {
-            files.sort_by_key(|entry| entry.file_name());
-            for entry in files.iter().take(files.len() - (MAX_HANG_TRACES - 1)) {
-                std::fs::remove_file(entry.path()).log_err();
-            }
-        }
-    }
-
     let thread_timings = background_executor.dispatcher().get_all_timings();
     let thread_timings = thread_timings
         .into_iter()
@@ -187,6 +168,25 @@ fn save_hang_trace(
     else {
         return;
     };
+
+    if let Ok(entries) = std::fs::read_dir(paths::hang_traces_dir()) {
+        let mut files: Vec<_> = entries
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext == "miniprof")
+            })
+            .collect();
+
+        if files.len() >= MAX_HANG_TRACES {
+            files.sort_by_key(|entry| entry.file_name());
+            for entry in files.iter().take(files.len() - (MAX_HANG_TRACES - 1)) {
+                std::fs::remove_file(entry.path()).log_err();
+            }
+        }
+    }
 
     std::fs::write(&trace_path, timings)
         .context("hang trace file writing")
