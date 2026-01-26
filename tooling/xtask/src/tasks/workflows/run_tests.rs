@@ -346,7 +346,7 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
                     "postgres",
                     Container::new("postgres:15")
                         .add_env(("POSTGRES_HOST_AUTH_METHOD", "trust"))
-                        .ports(vec![Port::Number(5432)])
+                        .ports(vec![Port::Name("5432:5432".into())])
                         .options(
                             "--health-cmd pg_isready \
                              --health-interval 500ms \

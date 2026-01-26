@@ -94,7 +94,7 @@ jobs:
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
-        - 5432
+        - 5432:5432
         options: --health-cmd pg_isready --health-interval 500ms --health-timeout 5s --health-retries 10
   run_tests_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
