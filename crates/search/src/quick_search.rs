@@ -54,10 +54,12 @@ const SEARCH_DEBOUNCE_MS: u64 = 100;
 const DEFAULT_RESULTS_HEIGHT: f32 = 180.0;
 const DEFAULT_PREVIEW_HEIGHT: f32 = 280.0;
 const MIN_PANEL_HEIGHT: f32 = 80.0;
-const MAX_PREVIEW_HEIGHT: f32 = 600.0;
 const AUTOSAVE_DELAY_MS: u64 = 500;
-const MODAL_WIDTH_REMS: f32 = 50.0;
+const DEFAULT_MODAL_WIDTH_REMS: f32 = 50.0;
+const MIN_MODAL_WIDTH_REMS: f32 = 30.0;
+const MAX_MODAL_WIDTH_REMS: f32 = 80.0;
 const RESIZE_HANDLE_HEIGHT: f32 = 6.0;
+const RESIZE_HANDLE_WIDTH: f32 = 6.0;
 const CLICK_THRESHOLD_MS: u128 = 50;
 const DOUBLE_CLICK_THRESHOLD_MS: u128 = 300;
 
@@ -102,6 +104,7 @@ pub struct QuickSearch {
     replacement_editor: Arc<dyn ErasedEditor>,
     focus_handle: FocusHandle,
     offset: gpui::Point<Pixels>,
+    modal_width: Pixels,
     results_height: Pixels,
     preview_height: Pixels,
     _subscriptions: Vec<Subscription>,
@@ -124,7 +127,30 @@ struct ResizeDrag {
 #[derive(Clone, Copy)]
 struct BottomResizeDrag {
     mouse_start_y: Pixels,
+    results_height_start: Pixels,
     preview_height_start: Pixels,
+}
+
+#[derive(Clone, Copy)]
+struct LeftResizeDrag {
+    mouse_start_x: Pixels,
+    width_start: Pixels,
+    offset_start_x: Pixels,
+}
+
+#[derive(Clone, Copy)]
+struct RightResizeDrag {
+    mouse_start_x: Pixels,
+    width_start: Pixels,
+    offset_start_x: Pixels,
+}
+
+#[derive(Clone, Copy)]
+struct TopResizeDrag {
+    mouse_start_y: Pixels,
+    results_height_start: Pixels,
+    preview_height_start: Pixels,
+    offset_start_y: Pixels,
 }
 
 struct DragPreview;
@@ -289,12 +315,15 @@ impl QuickSearch {
             ),
         ];
 
+        let modal_width = rems(DEFAULT_MODAL_WIDTH_REMS).to_pixels(window.rem_size());
+
         Self {
             picker,
             preview_editor,
             replacement_editor,
             focus_handle,
             offset: gpui::Point::default(),
+            modal_width,
             results_height: px(DEFAULT_RESULTS_HEIGHT),
             preview_height: px(DEFAULT_PREVIEW_HEIGHT),
             _subscriptions: subscriptions,
@@ -535,7 +564,9 @@ impl QuickSearch {
 
 impl Render for QuickSearch {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let modal_width = rems(MODAL_WIDTH_REMS).to_pixels(window.rem_size());
+        let modal_width = self.modal_width;
+        let min_width = rems(MIN_MODAL_WIDTH_REMS).to_pixels(window.rem_size());
+        let max_width = rems(MAX_MODAL_WIDTH_REMS).to_pixels(window.rem_size());
 
         let delegate = &self.picker.read(cx).delegate;
         let match_count = delegate.match_count;
@@ -557,151 +588,263 @@ impl Render for QuickSearch {
         }
 
         v_flex()
-            .key_context(key_context)
-            .id("quick-search")
-            .track_focus(&focus_handle)
-            .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
-                cx.emit(DismissEvent);
-            }))
-            .on_action(cx.listener(|this, _: &ReplaceNext, window, cx| {
-                this.replace_next(window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &ReplaceAll, window, cx| {
-                this.replace_all(window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &ToggleFilters, window, cx| {
-                this.picker.update(cx, |picker, cx| {
-                    picker.delegate.filters_enabled = !picker.delegate.filters_enabled;
-                    let focus_handle = if picker.delegate.filters_enabled {
-                        picker.delegate.included_files_editor.focus_handle(cx)
-                    } else {
-                        picker.focus_handle(cx)
-                    };
-                    window.focus(&focus_handle, cx);
-                });
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &NextHistoryQuery, window, cx| {
-                this.navigate_history(HistoryDirection::Next, window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &PreviousHistoryQuery, window, cx| {
-                this.navigate_history(HistoryDirection::Previous, window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &ToggleHistory, window, cx| {
-                let handle = this
-                    .picker
-                    .read(cx)
-                    .delegate
-                    .history_popover_menu_handle
-                    .clone();
-                handle.toggle(window, cx);
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &ToggleCaseSensitive, window, cx| {
-                this.picker.update(cx, |picker, cx| {
-                    picker
-                        .delegate
-                        .search_options
-                        .toggle(SearchOptions::CASE_SENSITIVE);
-                    picker.refresh(window, cx);
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ToggleWholeWord, window, cx| {
-                this.picker.update(cx, |picker, cx| {
-                    picker
-                        .delegate
-                        .search_options
-                        .toggle(SearchOptions::WHOLE_WORD);
-                    picker.refresh(window, cx);
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ToggleIncludeIgnored, window, cx| {
-                this.picker.update(cx, |picker, cx| {
-                    picker
-                        .delegate
-                        .search_options
-                        .toggle(SearchOptions::INCLUDE_IGNORED);
-                    picker.refresh(window, cx);
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ToggleRegex, window, cx| {
-                this.picker.update(cx, |picker, cx| {
-                    picker.delegate.search_options.toggle(SearchOptions::REGEX);
-                    picker.refresh(window, cx);
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ToggleReplace, window, cx| {
-                this.picker.update(cx, |picker, cx| {
-                    picker.delegate.replace_enabled = !picker.delegate.replace_enabled;
-                    let focus_handle = if picker.delegate.replace_enabled {
-                        picker.delegate.replacement_editor.focus_handle(cx)
-                    } else {
-                        picker.focus_handle(cx)
-                    };
-                    window.focus(&focus_handle, cx);
-                });
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &SelectNextMatch, window, cx| {
-                this.picker.update(cx, |picker, cx| {
-                    let match_count = picker.delegate.matches.len();
-                    if match_count > 0 {
-                        let new_index = (picker.delegate.selected_index + 1) % match_count;
-                        picker.set_selected_index(new_index, None, true, window, cx);
-                    }
-                });
-            }))
-            .on_action(cx.listener(|this, _: &SelectPreviousMatch, window, cx| {
-                this.picker.update(cx, |picker, cx| {
-                    let match_count = picker.delegate.matches.len();
-                    if match_count > 0 {
-                        let new_index = if picker.delegate.selected_index == 0 {
-                            match_count - 1
-                        } else {
-                            picker.delegate.selected_index - 1
-                        };
-                        picker.set_selected_index(new_index, None, true, window, cx);
-                    }
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ToggleSplitMenu, window, cx| {
-                this.picker.update(cx, |picker, cx| {
-                    let menu_handle = &picker.delegate.split_popover_menu_handle;
-                    if menu_handle.is_deployed() {
-                        menu_handle.hide(cx);
-                    } else {
-                        menu_handle.show(window, cx);
-                    }
-                });
-            }))
-            .on_action(cx.listener(Self::go_to_file_split_left))
-            .on_action(cx.listener(Self::go_to_file_split_right))
-            .on_action(cx.listener(Self::go_to_file_split_up))
-            .on_action(cx.listener(Self::go_to_file_split_down))
+            .child(
+                // Top resize handle (absolutely positioned)
+                div()
+                    .id("top-resize-handle")
+                    .absolute()
+                    .top(-px(RESIZE_HANDLE_HEIGHT))
+                    .left_0()
+                    .right_0()
+                    .h(px(RESIZE_HANDLE_HEIGHT))
+                    .cursor_row_resize()
+                    .on_drag(
+                        TopResizeDrag {
+                            mouse_start_y: window.mouse_position().y,
+                            results_height_start: self.results_height,
+                            preview_height_start: self.preview_height,
+                            offset_start_y: self.offset.y,
+                        },
+                        |_, _, _, cx| cx.new(|_| DragPreview),
+                    )
+                    .on_drag_move::<TopResizeDrag>(cx.listener(
+                        move |this, event: &DragMoveEvent<TopResizeDrag>, _window, cx| {
+                            let drag = event.drag(cx);
+                            let delta = event.event.position.y - drag.mouse_start_y;
+
+                            let total_start = drag.results_height_start + drag.preview_height_start;
+                            let min_total = px(MIN_PANEL_HEIGHT * 2.0);
+                            
+                            let new_total = (total_start - delta).max(min_total);
+                            let scale = new_total / total_start;
+
+                            let new_results = drag.results_height_start * scale;
+                            let new_preview = drag.preview_height_start * scale;
+                            
+                            let total_change = new_total - total_start;
+
+                            this.results_height = new_results;
+                            this.preview_height = new_preview;
+                            this.offset.y = drag.offset_start_y - total_change;
+                            cx.notify();
+                        },
+                    )),
+            )
+            .child(
+                // Left resize handle (absolutely positioned)
+                div()
+                    .id("left-resize-handle")
+                    .absolute()
+                    .left(-px(RESIZE_HANDLE_WIDTH))
+                    .top_0()
+                    .bottom_0()
+                    .w(px(RESIZE_HANDLE_WIDTH))
+                    .cursor_col_resize()
+                    .on_drag(
+                        LeftResizeDrag {
+                            mouse_start_x: window.mouse_position().x,
+                            width_start: self.modal_width,
+                            offset_start_x: self.offset.x,
+                        },
+                        |_, _, _, cx| cx.new(|_| DragPreview),
+                    )
+                    .on_drag_move::<LeftResizeDrag>(cx.listener(
+                        move |this, event: &DragMoveEvent<LeftResizeDrag>, _window, cx| {
+                            let drag = event.drag(cx);
+                            let delta = drag.mouse_start_x - event.event.position.x;
+
+                            let new_width = (drag.width_start + delta)
+                                .max(min_width)
+                                .min(max_width);
+
+                            let width_change = new_width - drag.width_start;
+                            this.modal_width = new_width;
+                            this.offset.x = drag.offset_start_x - (width_change / 2.0);
+                            cx.notify();
+                        },
+                    )),
+            )
+            .child(
+                // Right resize handle (absolutely positioned)
+                div()
+                    .id("right-resize-handle")
+                    .absolute()
+                    .right(-px(RESIZE_HANDLE_WIDTH))
+                    .top_0()
+                    .bottom_0()
+                    .w(px(RESIZE_HANDLE_WIDTH))
+                    .cursor_col_resize()
+                    .on_drag(
+                        RightResizeDrag {
+                            mouse_start_x: window.mouse_position().x,
+                            width_start: self.modal_width,
+                            offset_start_x: self.offset.x,
+                        },
+                        |_, _, _, cx| cx.new(|_| DragPreview),
+                    )
+                    .on_drag_move::<RightResizeDrag>(cx.listener(
+                        move |this, event: &DragMoveEvent<RightResizeDrag>, _window, cx| {
+                            let drag = event.drag(cx);
+                            let delta = event.event.position.x - drag.mouse_start_x;
+
+                            let new_width = (drag.width_start + delta)
+                                .max(min_width)
+                                .min(max_width);
+
+                            let width_change = new_width - drag.width_start;
+                            this.modal_width = new_width;
+                            this.offset.x = drag.offset_start_x + (width_change / 2.0);
+                            cx.notify();
+                        },
+                    )),
+            )
             .m_4()
             .relative()
             .top(self.offset.y)
             .left(self.offset.x)
-            .w(modal_width)
-            .bg(cx.theme().colors().elevated_surface_background)
-            .border_1()
-            .border_color(cx.theme().colors().border)
-            .rounded_lg()
-            .shadow_lg()
-            .on_drag(
-                QuickSearchDrag {
-                    mouse_start: window.mouse_position(),
-                    offset_start: self.offset,
-                },
-                |_, _, _, cx| cx.new(|_| DragPreview),
-            )
-            .on_drag_move::<QuickSearchDrag>(cx.listener(
-                |this, event: &DragMoveEvent<QuickSearchDrag>, _window, cx| {
-                    let drag = event.drag(cx);
-                    this.offset = drag.offset_start + (event.event.position - drag.mouse_start);
-                    cx.notify();
-                },
-            ))
+            .child(
+                v_flex()
+                    .key_context(key_context)
+                    .id("quick-search")
+                    .track_focus(&focus_handle)
+                    .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
+                        cx.emit(DismissEvent);
+                    }))
+                    .on_action(cx.listener(|this, _: &ReplaceNext, window, cx| {
+                        this.replace_next(window, cx);
+                    }))
+                    .on_action(cx.listener(|this, _: &ReplaceAll, window, cx| {
+                        this.replace_all(window, cx);
+                    }))
+                    .on_action(cx.listener(|this, _: &ToggleFilters, window, cx| {
+                        this.picker.update(cx, |picker, cx| {
+                            picker.delegate.filters_enabled = !picker.delegate.filters_enabled;
+                            let focus_handle = if picker.delegate.filters_enabled {
+                                picker.delegate.included_files_editor.focus_handle(cx)
+                            } else {
+                                picker.focus_handle(cx)
+                            };
+                            window.focus(&focus_handle, cx);
+                        });
+                        cx.notify();
+                    }))
+                    .on_action(cx.listener(|this, _: &NextHistoryQuery, window, cx| {
+                        this.navigate_history(HistoryDirection::Next, window, cx);
+                    }))
+                    .on_action(cx.listener(|this, _: &PreviousHistoryQuery, window, cx| {
+                        this.navigate_history(HistoryDirection::Previous, window, cx);
+                    }))
+                    .on_action(cx.listener(|this, _: &ToggleHistory, window, cx| {
+                        let handle = this
+                            .picker
+                            .read(cx)
+                            .delegate
+                            .history_popover_menu_handle
+                            .clone();
+                        handle.toggle(window, cx);
+                        cx.notify();
+                    }))
+                    .on_action(cx.listener(|this, _: &ToggleCaseSensitive, window, cx| {
+                        this.picker.update(cx, |picker, cx| {
+                            picker
+                                .delegate
+                                .search_options
+                                .toggle(SearchOptions::CASE_SENSITIVE);
+                            picker.refresh(window, cx);
+                        });
+                    }))
+                    .on_action(cx.listener(|this, _: &ToggleWholeWord, window, cx| {
+                        this.picker.update(cx, |picker, cx| {
+                            picker
+                                .delegate
+                                .search_options
+                                .toggle(SearchOptions::WHOLE_WORD);
+                            picker.refresh(window, cx);
+                        });
+                    }))
+                    .on_action(cx.listener(|this, _: &ToggleIncludeIgnored, window, cx| {
+                        this.picker.update(cx, |picker, cx| {
+                            picker
+                                .delegate
+                                .search_options
+                                .toggle(SearchOptions::INCLUDE_IGNORED);
+                            picker.refresh(window, cx);
+                        });
+                    }))
+                    .on_action(cx.listener(|this, _: &ToggleRegex, window, cx| {
+                        this.picker.update(cx, |picker, cx| {
+                            picker.delegate.search_options.toggle(SearchOptions::REGEX);
+                            picker.refresh(window, cx);
+                        });
+                    }))
+                    .on_action(cx.listener(|this, _: &ToggleReplace, window, cx| {
+                        this.picker.update(cx, |picker, cx| {
+                            picker.delegate.replace_enabled = !picker.delegate.replace_enabled;
+                            let focus_handle = if picker.delegate.replace_enabled {
+                                picker.delegate.replacement_editor.focus_handle(cx)
+                            } else {
+                                picker.focus_handle(cx)
+                            };
+                            window.focus(&focus_handle, cx);
+                        });
+                        cx.notify();
+                    }))
+                    .on_action(cx.listener(|this, _: &SelectNextMatch, window, cx| {
+                        this.picker.update(cx, |picker, cx| {
+                            let match_count = picker.delegate.matches.len();
+                            if match_count > 0 {
+                                let new_index = (picker.delegate.selected_index + 1) % match_count;
+                                picker.set_selected_index(new_index, None, true, window, cx);
+                            }
+                        });
+                    }))
+                    .on_action(cx.listener(|this, _: &SelectPreviousMatch, window, cx| {
+                        this.picker.update(cx, |picker, cx| {
+                            let match_count = picker.delegate.matches.len();
+                            if match_count > 0 {
+                                let new_index = if picker.delegate.selected_index == 0 {
+                                    match_count - 1
+                                } else {
+                                    picker.delegate.selected_index - 1
+                                };
+                                picker.set_selected_index(new_index, None, true, window, cx);
+                            }
+                        });
+                    }))
+                    .on_action(cx.listener(|this, _: &ToggleSplitMenu, window, cx| {
+                        this.picker.update(cx, |picker, cx| {
+                            let menu_handle = &picker.delegate.split_popover_menu_handle;
+                            if menu_handle.is_deployed() {
+                                menu_handle.hide(cx);
+                            } else {
+                                menu_handle.show(window, cx);
+                            }
+                        });
+                    }))
+                    .on_action(cx.listener(Self::go_to_file_split_left))
+                    .on_action(cx.listener(Self::go_to_file_split_right))
+                    .on_action(cx.listener(Self::go_to_file_split_up))
+                    .on_action(cx.listener(Self::go_to_file_split_down))
+                    .w(modal_width)
+                    .bg(cx.theme().colors().elevated_surface_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_lg()
+                    .shadow_lg()
+                    .on_drag(
+                        QuickSearchDrag {
+                            mouse_start: window.mouse_position(),
+                            offset_start: self.offset,
+                        },
+                        |_, _, _, cx| cx.new(|_| DragPreview),
+                    )
+                    .on_drag_move::<QuickSearchDrag>(cx.listener(
+                        |this, event: &DragMoveEvent<QuickSearchDrag>, _window, cx| {
+                            let drag = event.drag(cx);
+                            this.offset = drag.offset_start + (event.event.position - drag.mouse_start);
+                            cx.notify();
+                        },
+                    ))
             .child(
                 h_flex()
                     .px_4()
@@ -986,6 +1129,7 @@ impl Render for QuickSearch {
                     .on_drag(
                         BottomResizeDrag {
                             mouse_start_y: window.mouse_position().y,
+                            results_height_start: self.results_height,
                             preview_height_start: self.preview_height,
                         },
                         |_, _, _, cx| cx.new(|_| DragPreview),
@@ -995,15 +1139,22 @@ impl Render for QuickSearch {
                             let drag = event.drag(cx);
                             let delta = event.event.position.y - drag.mouse_start_y;
 
-                            let new_preview = (drag.preview_height_start + delta)
-                                .max(px(MIN_PANEL_HEIGHT))
-                                .min(px(MAX_PREVIEW_HEIGHT));
+                            let total_start = drag.results_height_start + drag.preview_height_start;
+                            let min_total = px(MIN_PANEL_HEIGHT * 2.0);
+                            
+                            let new_total = (total_start + delta).max(min_total);
+                            let scale = new_total / total_start;
 
+                            let new_results = drag.results_height_start * scale;
+                            let new_preview = drag.preview_height_start * scale;
+
+                            this.results_height = new_results;
                             this.preview_height = new_preview;
                             cx.notify();
                         },
                     ))
-            })
+            }),
+            )
     }
 }
 
