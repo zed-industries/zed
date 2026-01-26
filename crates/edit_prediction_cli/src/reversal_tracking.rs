@@ -11,7 +11,8 @@ use crate::example::ExamplePromptInputs;
 /// Reverse a unified diff by swapping + and - lines.
 /// This transforms a diff that goes A→B into one that goes B→A.
 pub fn reverse_diff(diff: &str) -> String {
-    diff.lines()
+    let mut result: String = diff
+        .lines()
         .map(|line| {
             if line.starts_with("--- ") {
                 line.replacen("--- ", "+++ ", 1)
@@ -26,7 +27,11 @@ pub fn reverse_diff(diff: &str) -> String {
             }
         })
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n");
+    if diff.ends_with('\n') {
+        result.push('\n');
+    }
+    result
 }
 
 /// Represents a single granular edit operation.
@@ -145,7 +150,7 @@ pub fn compute_reversal_overlap(
     let history_deletion_ranges = compute_history_deletion_ranges(&history_edits);
 
     let reversed_additions =
-        compute_reversed_additions(&history_addition_ranges, &prediction_edits, current_content);
+        compute_reversed_additions(&history_addition_ranges, &prediction_edits);
     let restored_deletions =
         compute_restored_deletions(&history_deletion_ranges, &prediction_edits);
 
@@ -158,27 +163,11 @@ pub fn compute_reversal_overlap(
     }
 }
 
-/// Metrics for how much of a prediction reverses edit history.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Default)]
-pub struct ReversalMetrics {
-    pub history_added_chars: usize,
-    pub history_deleted_chars: usize,
-    pub prediction_added_chars: usize,
-    pub prediction_deleted_chars: usize,
-    /// Characters deleted by prediction that were added by history (undoing additions)
-    pub reversed_addition_chars: usize,
-    /// Characters added by prediction that match text deleted by history (restoring deletions)
-    pub restored_deletion_chars: usize,
-    pub reversal_ratio: f64,
-}
-
 /// Compute how many characters the prediction deletes that were added by history.
 /// This measures "undoing additions" - the prediction removing text that history added.
 pub fn compute_reversed_additions(
     history_addition_ranges: &[HistoryAdditionRange],
     prediction_edits: &[GranularEdit],
-    _current_content: &str,
 ) -> usize {
     let mut reversed_chars = 0;
 
@@ -219,31 +208,45 @@ pub fn compute_restored_deletions(
         .map(|e| e.new_text.as_str())
         .collect();
 
-    compute_char_overlap(&history_deleted_text, &prediction_added_text)
+    compute_lcs_length(&history_deleted_text, &prediction_added_text)
 }
 
-/// Compute character-level overlap between two strings (bag of characters).
-fn compute_char_overlap(a: &str, b: &str) -> usize {
-    use collections::HashMap;
+/// Compute the longest common subsequence length between two strings.
+/// This measures how much of string `b` can be formed from characters in `a`
+/// while preserving their relative order.
+fn compute_lcs_length(a: &str, b: &str) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let m = a_chars.len();
+    let n = b_chars.len();
 
-    let mut a_chars: HashMap<char, usize> = HashMap::default();
-    for c in a.chars() {
-        *a_chars.entry(c).or_default() += 1;
+    if m == 0 || n == 0 {
+        return 0;
     }
 
-    let mut overlap = 0;
-    for c in b.chars() {
-        if let Some(count) = a_chars.get_mut(&c) {
-            if *count > 0 {
-                *count -= 1;
-                overlap += 1;
+    let mut prev = vec![0; n + 1];
+    let mut curr = vec![0; n + 1];
+
+    for i in 1..=m {
+        for j in 1..=n {
+            if a_chars[i - 1] == b_chars[j - 1] {
+                curr[j] = prev[j - 1] + 1;
+            } else {
+                curr[j] = prev[j].max(curr[j - 1]);
             }
         }
+        std::mem::swap(&mut prev, &mut curr);
+        curr.fill(0);
     }
-    overlap
+
+    prev[n]
 }
 
 /// Filter edit history events to only include changes to a specific file path.
+///
+/// Edit history paths typically have a repo name prefix (e.g., `"repo/src/file.rs"`) while
+/// cursor paths don't (e.g., `"src/file.rs"`). We strip the first path component from the
+/// edit path and compare with the cursor path.
 pub fn filter_edit_history_by_path<'a>(
     edit_history: &'a [Arc<zeta_prompt::Event>],
     cursor_path: &std::path::Path,
@@ -253,7 +256,14 @@ pub fn filter_edit_history_by_path<'a>(
         .filter(|event| match event.as_ref() {
             zeta_prompt::Event::BufferChange { path, .. } => {
                 let event_path = path.as_ref();
-                event_path == cursor_path || event_path.ends_with(cursor_path)
+                if event_path == cursor_path {
+                    return true;
+                }
+                let stripped = event_path
+                    .components()
+                    .skip(1)
+                    .collect::<std::path::PathBuf>();
+                stripped == cursor_path
             }
         })
         .map(|arc| arc.as_ref())
@@ -284,7 +294,7 @@ fn reconstruct_original_content(
         let reversed = reverse_diff(diff);
         let with_headers = format!("--- a/file\n+++ b/file\n{}", reversed);
         content = apply_diff_to_string(&with_headers, &content)
-            .with_context(|| format!("Failed to apply reversed diff: {}", diff))?;
+            .with_context(|| format!("Failed to apply reversed diff"))?;
     }
     Ok(content)
 }
@@ -306,7 +316,13 @@ pub fn compute_prediction_reversal_ratio(
         cursor_path,
     ) {
         Ok(content) => content,
-        Err(_) => return 0.0,
+        Err(err) => {
+            log::warn!(
+                "Failed to reconstruct original content for reversal tracking: {}",
+                err
+            );
+            return 0.0;
+        }
     };
 
     let overlap = compute_reversal_overlap(&original_content, current_content, predicted_content);
@@ -406,13 +422,13 @@ mod tests {
                 original: r#"println!("hello world");"#,
                 current: "",
                 predicted: r#"println!("hello sailor");"#,
-                expected_reversal_chars: 22,
+                expected_reversal_chars: 21,
                 expected_total_chars: 25,
                 explanation: indoc! {r#"
                     User deleted 'println!("hello world");' (24 chars). Prediction adds
                     'println!("hello sailor");' (25 chars). Since current is empty, prediction
-                    only adds (no deletes), so total = 25. Char overlap between deleted text
-                    and added text: p,r,i,n,t,l,n,!,(,",h,e,l,l,o, ,o,l,r,",),; = 22."#},
+                    only adds (no deletes), so total = 25. LCS between deleted and added:
+                    'println!("hello ' (16) + 'or' from world/sailor (2) + '");' (3) = 21."#},
             },
             ReversalTestCase {
                 name: "user_deletes_foo_prediction_adds_bar",
@@ -591,11 +607,8 @@ mod tests {
         }
 
         // Step 4: Compute how much of the prediction deletes history additions
-        let reversed_addition_chars = compute_reversed_additions(
-            &history_addition_ranges,
-            &prediction_edits,
-            current_content,
-        );
+        let reversed_addition_chars =
+            compute_reversed_additions(&history_addition_ranges, &prediction_edits);
 
         // The "let x = 42;\n    " part was added by history, and prediction deletes it
         assert!(
@@ -790,7 +803,7 @@ mod tests {
         let prediction_edits = compute_granular_edits(current, predicted);
 
         let reversed_additions =
-            compute_reversed_additions(&history_addition_ranges, &prediction_edits, current);
+            compute_reversed_additions(&history_addition_ranges, &prediction_edits);
         let restored_deletions =
             compute_restored_deletions(&history_deletion_ranges, &prediction_edits);
 
@@ -860,11 +873,8 @@ mod tests {
         let history_addition_ranges = compute_history_addition_ranges(&history_edits);
         let history_deletion_ranges = compute_history_deletion_ranges(&history_edits);
 
-        let reversed_additions = compute_reversed_additions(
-            &history_addition_ranges,
-            &prediction_edits,
-            current_content,
-        );
+        let reversed_additions =
+            compute_reversed_additions(&history_addition_ranges, &prediction_edits);
         let restored_deletions =
             compute_restored_deletions(&history_deletion_ranges, &prediction_edits);
 
@@ -906,8 +916,8 @@ mod tests {
     #[test]
     fn test_filter_edit_history_by_path_with_prefix() {
         // Test that filter_edit_history_by_path correctly matches paths when
-        // the edit history has paths with a repo prefix (e.g., "repo/file.md")
-        // but the cursor_path is just the file name (e.g., "file.md")
+        // the edit history has paths with a repo prefix (e.g., "repo/src/file.rs")
+        // but the cursor_path doesn't have the repo prefix (e.g., "src/file.rs")
         let events = vec![
             Arc::new(zeta_prompt::Event::BufferChange {
                 path: Arc::from(Path::new("myrepo/src/file.rs")),
@@ -932,28 +942,46 @@ mod tests {
             }),
         ];
 
-        // When cursor_path is just "src/file.rs", it should match both
-        // "myrepo/src/file.rs" (ends_with) and "src/file.rs" (exact)
+        // "myrepo/src/file.rs" stripped -> "src/file.rs" matches cursor_path
+        // "src/file.rs" exact match
         let cursor_path = Path::new("src/file.rs");
         let filtered = filter_edit_history_by_path(&events, cursor_path);
         assert_eq!(
             filtered.len(),
             2,
-            "Should match both paths ending with src/file.rs"
+            "Should match myrepo/src/file.rs (stripped) and src/file.rs (exact)"
         );
 
-        // When cursor_path is "file.rs", it should match paths ending with "file.rs"
+        // "myrepo/src/file.rs" stripped -> "src/file.rs" != "file.rs"
+        // "src/file.rs" stripped -> "file.rs" == "file.rs"
         let cursor_path = Path::new("file.rs");
         let filtered = filter_edit_history_by_path(&events, cursor_path);
         assert_eq!(
             filtered.len(),
-            2,
-            "Should match myrepo/src/file.rs and src/file.rs"
+            1,
+            "Should only match src/file.rs (stripped to file.rs)"
         );
 
-        // When cursor_path is "other.rs", it should only match "myrepo/other.rs"
+        // "myrepo/other.rs" stripped -> "other.rs" == "other.rs"
         let cursor_path = Path::new("other.rs");
         let filtered = filter_edit_history_by_path(&events, cursor_path);
         assert_eq!(filtered.len(), 1, "Should match only myrepo/other.rs");
+    }
+
+    #[test]
+    fn test_reverse_diff_preserves_trailing_newline() {
+        let diff_with_trailing_newline = "--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new\n";
+        let reversed = reverse_diff(diff_with_trailing_newline);
+        assert!(
+            reversed.ends_with('\n'),
+            "Reversed diff should preserve trailing newline"
+        );
+
+        let diff_without_trailing_newline = "--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new";
+        let reversed = reverse_diff(diff_without_trailing_newline);
+        assert!(
+            !reversed.ends_with('\n'),
+            "Reversed diff should not add trailing newline if original didn't have one"
+        );
     }
 }
