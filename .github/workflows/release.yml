@@ -11,7 +11,7 @@ on:
 jobs:
   run_tests_mac:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -113,7 +113,7 @@ jobs:
     timeout-minutes: 60
   clippy_mac:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -322,7 +322,7 @@ jobs:
     - run_tests_mac
     - clippy_mac
     - check_scripts
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -369,7 +369,7 @@ jobs:
     - run_tests_mac
     - clippy_mac
     - check_scripts
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
