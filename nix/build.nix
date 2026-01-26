@@ -258,7 +258,9 @@ let
             drv;
       };
     };
-  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+  cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
+    cargoCheckCommand = "cargo build";
+  });
 in
 craneLib.buildPackage (
   lib.recursiveUpdate commonArgs {
