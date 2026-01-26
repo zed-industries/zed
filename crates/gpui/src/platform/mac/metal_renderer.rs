@@ -350,8 +350,15 @@ impl MetalRenderer {
 
         if self.path_sample_count > 1 {
             let mut msaa_descriptor = texture_descriptor;
+            #[cfg(target_arch = "aarch64")]
+            {
+                msaa_descriptor.set_storage_mode(metal::MTLStorageMode::Memoryless);
+            }
+            #[cfg(not(target_arch = "aarch64"))]
+            {
+                msaa_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
+            }
             msaa_descriptor.set_texture_type(metal::MTLTextureType::D2Multisample);
-            msaa_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
             msaa_descriptor.set_sample_count(self.path_sample_count as _);
             self.path_intermediate_msaa_texture = Some(self.device.new_texture(&msaa_descriptor));
         } else {
