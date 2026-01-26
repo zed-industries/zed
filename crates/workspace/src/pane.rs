@@ -3143,6 +3143,23 @@ impl Pane {
                                         }),
                                     )
                                 })
+                                .when_some(
+                                    pane.read(cx).entry_abs_path(entry, cx),
+                                    |menu, reveal_path| {
+                                        let reveal_label = if cfg!(target_os = "macos") {
+                                            "Reveal in Finder"
+                                        } else {
+                                            "Reveal in File Manager"
+                                        };
+                                        menu.entry(
+                                            reveal_label,
+                                            None,
+                                            window.handler_for(&pane, move |_, _, cx| {
+                                                cx.reveal_path(&reveal_path);
+                                            }),
+                                        )
+                                    },
+                                )
                                 .when_some(parent_abs_path, |menu, parent_abs_path| {
                                     menu.entry(
                                         "Open in Terminal",
@@ -3857,6 +3874,23 @@ impl Pane {
                                         }),
                                     )
                                 })
+                                .when_some(
+                                    pane.read(cx).entry_abs_path(entry, cx),
+                                    |menu, reveal_path| {
+                                        let reveal_label = if cfg!(target_os = "macos") {
+                                            "Reveal in Finder"
+                                        } else {
+                                            "Reveal in File Manager"
+                                        };
+                                        menu.entry(
+                                            reveal_label,
+                                            None,
+                                            window.handler_for(&pane, move |_, _, cx| {
+                                                cx.reveal_path(&reveal_path);
+                                            }),
+                                        )
+                                    },
+                                )
                                 .when_some(parent_abs_path, |menu, parent_abs_path| {
                                     menu.entry(
                                         "Open in Terminal",

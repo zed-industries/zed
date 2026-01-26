@@ -12616,6 +12616,7 @@ dependencies = [
  "file_icons",
  "git",
  "git_ui",
+ "globset",
  "gpui",
  "language",
  "menu",

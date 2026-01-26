@@ -15,6 +15,7 @@ use editor::{
 };
 use file_icons::FileIcons;
 use git;
+use globset::{Glob, GlobMatcher};
 use git::status::GitSummary;
 use git_ui;
 use git_ui::file_diff_view::FileDiffView;
@@ -143,6 +144,7 @@ pub struct ProjectPanel {
     last_reported_update: Instant,
     update_visible_entries_task: UpdateVisibleEntriesTask,
     state: State,
+    pre_filter_expanded_dir_ids: Option<HashMap<WorktreeId, Vec<ProjectEntryId>>>,
 }
 
 struct UpdateVisibleEntriesTask {
@@ -852,6 +854,7 @@ impl ProjectPanel {
                     unfolded_dir_ids: Default::default(),
                 },
                 update_visible_entries_task: Default::default(),
+                pre_filter_expanded_dir_ids: None,
             };
             this.update_visible_entries(None, false, false, window, cx);
 
@@ -3516,8 +3519,33 @@ impl ProjectPanel {
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
         let hide_hidden = settings.hide_hidden;
-        let filter_query = self.filter_editor.read(cx).text(cx).to_lowercase();
+        let filter_query = self.filter_editor.read(cx).text(cx);
         let has_filter = !filter_query.is_empty();
+
+        // Handle saving/restoring expansion state when filter changes
+        let was_filtering = self.pre_filter_expanded_dir_ids.is_some();
+        if has_filter && !was_filtering {
+            // Save expansion state when starting to filter
+            self.pre_filter_expanded_dir_ids = Some(self.state.expanded_dir_ids.clone());
+        } else if !has_filter && was_filtering {
+            // Restore expansion state when filter is cleared
+            if let Some(saved_state) = self.pre_filter_expanded_dir_ids.take() {
+                new_state.expanded_dir_ids = saved_state;
+            }
+        }
+
+        // Create glob matcher if the filter looks like a glob pattern
+        let glob_matcher: Option<GlobMatcher> = if has_filter
+            && (filter_query.contains('*') || filter_query.contains('?') || filter_query.contains('['))
+        {
+            Glob::new(&filter_query)
+                .or_else(|_| Glob::new(&format!("*{}*", filter_query)))
+                .ok()
+                .map(|g| g.compile_matcher())
+        } else {
+            None
+        };
+        let filter_query_lower = filter_query.to_lowercase();
 
         let visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
@@ -3610,13 +3638,31 @@ impl ProjectPanel {
                                 }
                             }
                             auto_folded_ancestors.clear();
-                            let matches_filter = !has_filter
-                                || !entry.is_file()
-                                || entry
-                                    .path
-                                    .file_name()
-                                    .map(|n| n.to_lowercase().contains(&filter_query))
-                                    .unwrap_or(false);
+
+                            // Determine if file matches the filter
+                            let file_matches_filter = if !has_filter {
+                                true
+                            } else if !entry.is_file() {
+                                false // Directories don't match directly; they're shown if they contain matches
+                            } else if let Some(file_name) = entry.path.file_name() {
+                                if let Some(ref matcher) = glob_matcher {
+                                    // Glob matching (case-sensitive by default for globs)
+                                    matcher.is_match(file_name)
+                                } else {
+                                    // Substring matching (case-insensitive)
+                                    file_name.to_lowercase().contains(&filter_query_lower)
+                                }
+                            } else {
+                                false
+                            };
+
+                            // When filtering, we need to track which directories contain matching files
+                            // For now, include the entry if:
+                            // - No filter active: use normal logic
+                            // - Filter active and entry is a file: only if it matches
+                            // - Filter active and entry is a directory: always include (we'll filter after traversal)
+                            let matches_filter = !has_filter || file_matches_filter || !entry.is_file();
+
                             if (!hide_gitignore || !entry.is_ignored)
                                 && (!hide_hidden || !entry.is_hidden)
                                 && matches_filter
@@ -3712,12 +3758,53 @@ impl ProjectPanel {
                                 }
                             }
 
-                            if expanded_dir_ids.binary_search(&entry.id).is_err()
+                            // When filtering, traverse all entries (ignore expansion state)
+                            // Otherwise, skip children of collapsed directories
+                            if !has_filter
+                                && expanded_dir_ids.binary_search(&entry.id).is_err()
                                 && entry_iter.advance_to_sibling()
                             {
                                 continue;
                             }
                             entry_iter.advance();
+                        }
+
+                        // When filtering, remove directories that don't contain matching files
+                        if has_filter {
+                            // Collect paths of all matching files as strings for comparison
+                            let matching_file_paths: HashSet<String> = visible_worktree_entries
+                                .iter()
+                                .filter(|e| e.is_file())
+                                .map(|e| e.path.as_unix_str().to_string())
+                                .collect();
+
+                            // Collect all ancestor paths of matching files
+                            let mut paths_to_show: HashSet<String> = HashSet::default();
+                            for file_path_str in &matching_file_paths {
+                                paths_to_show.insert(file_path_str.clone());
+                                // Add all ancestor directories
+                                let file_path = std::path::Path::new(file_path_str);
+                                let mut current = file_path;
+                                while let Some(parent) = current.parent() {
+                                    let parent_str = parent.to_string_lossy().to_string();
+                                    if parent_str.is_empty() {
+                                        break;
+                                    }
+                                    paths_to_show.insert(parent_str);
+                                    current = parent;
+                                }
+                            }
+
+                            // Filter entries to only show matching files and their ancestor directories
+                            visible_worktree_entries.retain(|entry| {
+                                let path_str = entry.path.as_unix_str().to_string();
+                                if entry.is_file() {
+                                    matching_file_paths.contains(&path_str)
+                                } else {
+                                    // Directory: show if it's an ancestor of a matching file
+                                    paths_to_show.contains(&path_str)
+                                }
+                            });
                         }
 
                         par_sort_worktree_entries_with_mode(

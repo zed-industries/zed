@@ -25,6 +25,7 @@ editor.workspace = true
 file_icons.workspace = true
 git_ui.workspace = true
 git.workspace = true
+globset.workspace = true
 gpui.workspace = true
 menu.workspace = true
 pretty_assertions.workspace = true

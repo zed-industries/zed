@@ -8,10 +8,10 @@ mod terminal_slash_command;
 use assistant_slash_command::SlashCommandRegistry;
 use editor::{Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
 use gpui::{
-    Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Hsla, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels,
-    Render, ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred,
-    div, rems,
+    Action, Animation, AnimationExt, AnyElement, App, ClipboardEntry, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, Hsla, KeyContext, KeyDownEvent, Keystroke, MouseButton,
+    MouseDownEvent, Pixels, Render, ScrollWheelEvent, Styled, Subscription, Task, WeakEntity,
+    actions, anchored, deferred, div, pulsating_between, rems,
 };
 use menu::{Cancel, Confirm};
 use persistence::TERMINAL_DB;
@@ -1294,6 +1294,8 @@ impl TerminalView {
     }
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_bell(cx);
+
         self.terminal.update(cx, |terminal, _| {
             terminal.set_cursor_shape(self.cursor_shape);
             terminal.focus_in();
@@ -1465,6 +1467,9 @@ impl Item for TerminalView {
         let has_custom_bg = terminal.tab_color().is_some();
         let custom_text_color = terminal.tab_text_color();
 
+        // Blink the tab when bell is active and terminal isn't the selected tab
+        let should_blink = self.has_bell && !params.selected;
+
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Running => (
@@ -1490,7 +1495,7 @@ impl Item for TerminalView {
             None => (IconName::Terminal, Color::Muted, None),
         };
 
-        h_flex()
+        let content = h_flex()
             .gap_1()
             .group("term-tab-icon")
             .child(
@@ -1522,8 +1527,21 @@ impl Item for TerminalView {
                 Color::Custom(Hsla { h: 0.0, s: 0.0, l: lightness, a: 1.0 })
             } else {
                 params.text_color()
-            }))
-            .into_any()
+            }));
+
+        if should_blink {
+            content
+                .with_animation(
+                    ("terminal-bell-blink", self.terminal.entity_id()),
+                    Animation::new(Duration::from_millis(1500))
+                        .repeat()
+                        .with_easing(pulsating_between(0.4, 1.0)),
+                    |element, delta| element.opacity(delta),
+                )
+                .into_any_element()
+        } else {
+            content.into_any()
+        }
     }
 
     fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
