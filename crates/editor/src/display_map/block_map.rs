@@ -664,11 +664,23 @@ impl BlockMap {
                         .map(|(_, range)| range.end)
                         .unwrap_or(wrap_snapshot.buffer_snapshot().max_point());
 
-                    let my_start = wrap_snapshot.make_wrap_point(my_start, Bias::Left);
+                    let mut my_start = wrap_snapshot.make_wrap_point(my_start, Bias::Left);
                     let mut my_end = wrap_snapshot.make_wrap_point(my_end, Bias::Left);
-                    if my_end.column() > 0 {
-                        my_end.0.row += 1;
-                        my_end.0.column = 0;
+                    if my_end.column() > 0 || my_end == wrap_snapshot.max_point() {
+                        *my_end.row_mut() += 1;
+                        *my_end.column_mut() = 0;
+                    }
+
+                    // Empty edits won't survive Patch::compose, but we still need to make sure
+                    // we recompute spacers when we get them.
+                    if my_start.row() == my_end.row() {
+                        if my_end.row() <= wrap_snapshot.max_point().row() {
+                            *my_end.row_mut() += 1;
+                            *my_end.column_mut() = 0;
+                        } else if my_start.row() > WrapRow(0) {
+                            *my_start.row_mut() += 1;
+                            *my_start.column_mut() = 0;
+                        }
                     }
 
                     WrapEdit {
@@ -4266,6 +4278,7 @@ mod tests {
         let companion = cx.new(|_| {
             let mut c = Companion::new(
                 rhs_entity_id,
+                Default::default(),
                 convert_rhs_rows_to_lhs,
                 convert_lhs_rows_to_rhs,
             );

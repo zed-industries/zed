@@ -23098,6 +23098,21 @@ impl Editor {
         Some(text_highlights)
     }
 
+    pub fn clear_background_highlights_key<T: 'static>(
+        &mut self,
+        key: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<BackgroundHighlight> {
+        let text_highlights = self
+            .background_highlights
+            .remove(&HighlightKey::TypePlus(TypeId::of::<T>(), key))?;
+        if !text_highlights.1.is_empty() {
+            self.scrollbar_marker_state.dirty = true;
+            cx.notify();
+        }
+        Some(text_highlights)
+    }
+
     pub fn highlight_gutter<T: 'static>(
         &mut self,
         ranges: impl Into<Vec<Range<Anchor>>>,
