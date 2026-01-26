@@ -2468,7 +2468,7 @@ mod tests {
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1);
-            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize, 0)
+            WorktreeId::local(worktrees[0].entity_id().as_u64() as usize)
         });
 
         // Open a file in dir2 to create navigation history.

@@ -104,6 +104,11 @@ impl From<WorktreeId> for usize {
 }
 
 impl WorktreeId {
+    /// Creates a `WorktreeId` for a local worktree (project_id = 0).
+    pub fn local(id: usize) -> Self {
+        Self { id, project_id: 0 }
+    }
+
     pub fn from_usize(handle_id: usize, project_id: u64) -> Self {
         Self {
             id: handle_id,

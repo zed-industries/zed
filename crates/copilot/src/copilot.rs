@@ -1601,7 +1601,7 @@ mod tests {
         }
 
         fn worktree_id(&self, _: &App) -> settings::WorktreeId {
-            settings::WorktreeId::from_usize(0, 0)
+            settings::WorktreeId::local(0)
         }
 
         fn is_private(&self) -> bool {

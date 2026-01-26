@@ -1393,7 +1393,7 @@ pub mod test {
         pub fn new(id: u64, path: &str, cx: &mut App) -> Entity<Self> {
             let entry_id = Some(ProjectEntryId::from_proto(id));
             let project_path = Some(ProjectPath {
-                worktree_id: WorktreeId::from_usize(0, 0),
+                worktree_id: WorktreeId::local(0),
                 path: rel_path(path).into(),
             });
             cx.new(|_| Self {
@@ -1414,7 +1414,7 @@ pub mod test {
         pub fn new_dirty(id: u64, path: &str, cx: &mut App) -> Entity<Self> {
             let entry_id = Some(ProjectEntryId::from_proto(id));
             let project_path = Some(ProjectPath {
-                worktree_id: WorktreeId::from_usize(0, 0),
+                worktree_id: WorktreeId::local(0),
                 path: rel_path(path).into(),
             });
             cx.new(|_| Self {

@@ -5736,7 +5736,7 @@ impl File for TestFile {
     }
 
     fn worktree_id(&self, _: &App) -> WorktreeId {
-        WorktreeId::from_usize(0, 0)
+        WorktreeId::local(0)
     }
 
     fn to_proto(&self, _: &App) -> rpc::proto::File {
