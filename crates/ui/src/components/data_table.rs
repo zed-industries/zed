@@ -723,6 +723,7 @@ impl TableWidths {
 #[derive(RegisterComponent, IntoElement)]
 pub struct Table {
     striped: bool,
+    show_row_borders: bool,
     width: Option<Length>,
     headers: Option<TableRow<AnyElement>>,
     rows: TableContents,
@@ -741,6 +742,7 @@ impl Table {
         Self {
             cols,
             striped: false,
+            show_row_borders: true,
             width: None,
             headers: None,
             rows: TableContents::Vec(Vec::new()),
@@ -801,6 +803,12 @@ impl Table {
     /// Enables row striping (alternating row colors)
     pub fn striped(mut self) -> Self {
         self.striped = true;
+        self
+    }
+
+    /// Hides the border lines between rows
+    pub fn hide_row_borders(mut self) -> Self {
+        self.show_row_borders = false;
         self
     }
 
@@ -941,7 +949,7 @@ pub fn render_table_row(
         .size_full()
         .when_some(bg, |row, bg| row.bg(bg))
         .hover(|s| s.bg(cx.theme().colors().element_hover.opacity(0.6)))
-        .when(!is_striped, |row| {
+        .when(!is_striped && table_context.show_row_borders, |row| {
             row.border_b_1()
                 .border_color(transparent_black())
                 .when(!is_last, |row| row.border_color(cx.theme().colors().border))
@@ -1046,6 +1054,7 @@ pub fn render_table_header(
 #[derive(Clone)]
 pub struct TableRenderContext {
     pub striped: bool,
+    pub show_row_borders: bool,
     pub total_row_count: usize,
     pub column_widths: Option<TableRow<Length>>,
     pub map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
@@ -1056,6 +1065,7 @@ impl TableRenderContext {
     fn new(table: &Table, cx: &App) -> Self {
         Self {
             striped: table.striped,
+            show_row_borders: table.show_row_borders,
             total_row_count: table.rows.len(),
             column_widths: table.col_widths.as_ref().map(|widths| widths.lengths(cx)),
             map_row: table.map_row.clone(),

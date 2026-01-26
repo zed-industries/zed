@@ -30,7 +30,7 @@ use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
-    Task, TaskLabel, TextStyle,
+    Task, TextStyle,
 };
 
 use lsp::{LanguageServerId, NumberOrString};
@@ -53,7 +53,7 @@ use std::{
     ops::{Deref, Range},
     path::PathBuf,
     rc,
-    sync::{Arc, LazyLock},
+    sync::Arc,
     time::{Duration, Instant},
     vec,
 };
@@ -75,10 +75,6 @@ use util::{RangeExt, debug_panic, maybe, paths::PathStyle, rel_path::RelPath};
 pub use {tree_sitter_python, tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
-
-/// A label for the background task spawned by the buffer to compute
-/// a diff against the contents of its file.
-pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 
 /// Indicate whether a [`Buffer`] has permissions to edit.
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -590,7 +586,7 @@ pub struct Chunk<'a> {
 }
 
 /// A set of edits to a given version of a buffer, computed asynchronously.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Diff {
     pub base_version: clock::Global,
     pub line_ending: LineEnding,
@@ -1091,6 +1087,7 @@ impl Buffer {
     }
 
     /// Assign a language to the buffer, blocking for up to 1ms to reparse the buffer, returning the buffer.
+    #[ztracing::instrument(skip_all, fields(lang = language.config.name.0.as_str()))]
     pub fn with_language(mut self, language: Arc<Language>, cx: &mut Context<Self>) -> Self {
         self.set_language(Some(language), cx);
         self
@@ -1418,6 +1415,7 @@ impl Buffer {
 
     /// Retrieve a snapshot of the buffer's raw text, without any
     /// language-related state like the syntax tree or diagnostics.
+    #[ztracing::instrument(skip_all)]
     pub fn text_snapshot(&self) -> text::BufferSnapshot {
         self.text.snapshot()
     }
@@ -1467,6 +1465,7 @@ impl Buffer {
         self.set_language_(language, true, cx);
     }
 
+    #[ztracing::instrument(skip_all)]
     fn set_language_(
         &mut self,
         language: Option<Arc<Language>>,
@@ -1749,6 +1748,7 @@ impl Buffer {
     /// initiate an additional reparse recursively. To avoid concurrent parses
     /// for the same buffer, we only initiate a new parse if we are not already
     /// parsing in the background.
+    #[ztracing::instrument(skip_all)]
     pub fn reparse(&mut self, cx: &mut Context<Self>, may_block: bool) {
         if self.text.version() != *self.tree_sitter_data.version() {
             self.invalidate_tree_sitter_data(self.text.snapshot());
@@ -1892,7 +1892,7 @@ impl Buffer {
         if let Some(indent_sizes) = self.compute_autoindents() {
             let indent_sizes = cx.background_spawn(indent_sizes);
             match cx
-                .background_executor()
+                .foreground_executor()
                 .block_with_timeout(block_budget, indent_sizes)
             {
                 Ok(indent_sizes) => self.apply_autoindents(indent_sizes, cx),
@@ -2148,21 +2148,24 @@ impl Buffer {
 
     /// Spawns a background task that asynchronously computes a `Diff` between the buffer's text
     /// and the given new text.
-    pub fn diff(&self, mut new_text: String, cx: &App) -> Task<Diff> {
+    pub fn diff<T>(&self, new_text: T, cx: &App) -> Task<Diff>
+    where
+        T: AsRef<str> + Send + 'static,
+    {
         let old_text = self.as_rope().clone();
         let base_version = self.version();
-        cx.background_executor()
-            .spawn_labeled(*BUFFER_DIFF_TASK, async move {
-                let old_text = old_text.to_string();
-                let line_ending = LineEnding::detect(&new_text);
-                LineEnding::normalize(&mut new_text);
-                let edits = text_diff(&old_text, &new_text);
-                Diff {
-                    base_version,
-                    line_ending,
-                    edits,
-                }
-            })
+        cx.background_spawn(async move {
+            let old_text = old_text.to_string();
+            let mut new_text = new_text.as_ref().to_owned();
+            let line_ending = LineEnding::detect(&new_text);
+            LineEnding::normalize(&mut new_text);
+            let edits = text_diff(&old_text, &new_text);
+            Diff {
+                base_version,
+                line_ending,
+                edits,
+            }
+        })
     }
 
     /// Spawns a background task that searches the buffer for any whitespace
@@ -3595,6 +3598,7 @@ impl BufferSnapshot {
         None
     }
 
+    #[ztracing::instrument(skip_all)]
     fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures<'_>, Vec<HighlightMap>) {
         let captures = self.syntax.captures(range, &self.text, |grammar| {
             grammar
@@ -3614,6 +3618,7 @@ impl BufferSnapshot {
     /// in an arbitrary way due to being stored in a [`Rope`](text::Rope). The text is also
     /// returned in chunks where each chunk has a single syntax highlighting style and
     /// diagnostic status.
+    #[ztracing::instrument(skip_all)]
     pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> BufferChunks<'_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
@@ -4449,7 +4454,7 @@ impl BufferSnapshot {
                 continue;
             }
 
-            let mut all_brackets = Vec::new();
+            let mut all_brackets: Vec<(BracketMatch<usize>, bool)> = Vec::new();
             let mut opens = Vec::new();
             let mut color_pairs = Vec::new();
 
@@ -4468,6 +4473,9 @@ impl BufferSnapshot {
                 .map(|grammar| grammar.brackets_config.as_ref().unwrap())
                 .collect::<Vec<_>>();
 
+            // Group matches by open range so we can either trust grammar output
+            // or repair it by picking a single closest close per open.
+            let mut open_to_close_ranges = BTreeMap::new();
             while let Some(mat) = matches.peek() {
                 let mut open = None;
                 let mut close = None;
@@ -4493,26 +4501,130 @@ impl BufferSnapshot {
                     continue;
                 }
 
-                let index = all_brackets.len();
-                all_brackets.push(BracketMatch {
-                    open_range: open_range.clone(),
-                    close_range: close_range.clone(),
-                    newline_only: pattern.newline_only,
-                    syntax_layer_depth,
-                    color_index: None,
-                });
+                open_to_close_ranges
+                    .entry((open_range.start, open_range.end))
+                    .or_insert_with(BTreeMap::new)
+                    .insert(
+                        (close_range.start, close_range.end),
+                        BracketMatch {
+                            open_range: open_range.clone(),
+                            close_range: close_range.clone(),
+                            syntax_layer_depth,
+                            newline_only: pattern.newline_only,
+                            color_index: None,
+                        },
+                    );
 
-                // Certain languages have "brackets" that are not brackets, e.g. tags. and such
-                // bracket will match the entire tag with all text inside.
-                // For now, avoid highlighting any pair that has more than single char in each bracket.
-                // We need to  colorize `<Element/>` bracket pairs, so cannot make this check stricter.
-                let should_color =
-                    !pattern.rainbow_exclude && (open_range.len() == 1 || close_range.len() == 1);
-                if should_color {
-                    opens.push(open_range.clone());
-                    color_pairs.push((open_range, close_range, index));
-                }
+                all_brackets.push((
+                    BracketMatch {
+                        open_range,
+                        close_range,
+                        syntax_layer_depth,
+                        newline_only: pattern.newline_only,
+                        color_index: None,
+                    },
+                    pattern.rainbow_exclude,
+                ));
             }
+
+            let has_bogus_matches = open_to_close_ranges
+                .iter()
+                .any(|(_, end_ranges)| end_ranges.len() > 1);
+            if has_bogus_matches {
+                // Grammar is producing bogus matches where one open is paired with multiple
+                // closes. Build a valid stack by walking through positions in order.
+                // For each close, we know the expected open_len from tree-sitter matches.
+
+                // Map each close to its expected open length (for inferring opens)
+                let close_to_open_len: HashMap<(usize, usize), usize> = all_brackets
+                    .iter()
+                    .map(|(m, _)| ((m.close_range.start, m.close_range.end), m.open_range.len()))
+                    .collect();
+
+                // Collect unique opens and closes within this chunk
+                let mut unique_opens: HashSet<(usize, usize)> = all_brackets
+                    .iter()
+                    .map(|(m, _)| (m.open_range.start, m.open_range.end))
+                    .filter(|(start, _)| chunk_range.contains(start))
+                    .collect();
+
+                let mut unique_closes: Vec<(usize, usize)> = all_brackets
+                    .iter()
+                    .map(|(m, _)| (m.close_range.start, m.close_range.end))
+                    .filter(|(start, _)| chunk_range.contains(start))
+                    .collect();
+                unique_closes.sort();
+                unique_closes.dedup();
+
+                // Build valid pairs by walking through closes in order
+                let mut unique_opens_vec: Vec<_> = unique_opens.iter().copied().collect();
+                unique_opens_vec.sort();
+
+                let mut valid_pairs: HashSet<((usize, usize), (usize, usize))> = HashSet::default();
+                let mut open_stack: Vec<(usize, usize)> = Vec::new();
+                let mut open_idx = 0;
+
+                for close in &unique_closes {
+                    // Push all opens before this close onto stack
+                    while open_idx < unique_opens_vec.len()
+                        && unique_opens_vec[open_idx].0 < close.0
+                    {
+                        open_stack.push(unique_opens_vec[open_idx]);
+                        open_idx += 1;
+                    }
+
+                    // Try to match with most recent open
+                    if let Some(open) = open_stack.pop() {
+                        valid_pairs.insert((open, *close));
+                    } else if let Some(&open_len) = close_to_open_len.get(close) {
+                        // No open on stack - infer one based on expected open_len
+                        if close.0 >= open_len {
+                            let inferred = (close.0 - open_len, close.0);
+                            unique_opens.insert(inferred);
+                            valid_pairs.insert((inferred, *close));
+                            all_brackets.push((
+                                BracketMatch {
+                                    open_range: inferred.0..inferred.1,
+                                    close_range: close.0..close.1,
+                                    newline_only: false,
+                                    syntax_layer_depth: 0,
+                                    color_index: None,
+                                },
+                                false,
+                            ));
+                        }
+                    }
+                }
+
+                all_brackets.retain(|(m, _)| {
+                    let open = (m.open_range.start, m.open_range.end);
+                    let close = (m.close_range.start, m.close_range.end);
+                    valid_pairs.contains(&(open, close))
+                });
+            }
+
+            let mut all_brackets = all_brackets
+                .into_iter()
+                .enumerate()
+                .map(|(index, (bracket_match, rainbow_exclude))| {
+                    // Certain languages have "brackets" that are not brackets, e.g. tags. and such
+                    // bracket will match the entire tag with all text inside.
+                    // For now, avoid highlighting any pair that has more than single char in each bracket.
+                    // We need to  colorize `<Element/>` bracket pairs, so cannot make this check stricter.
+                    let should_color = !rainbow_exclude
+                        && (bracket_match.open_range.len() == 1
+                            || bracket_match.close_range.len() == 1);
+                    if should_color {
+                        opens.push(bracket_match.open_range.clone());
+                        color_pairs.push((
+                            bracket_match.open_range.clone(),
+                            bracket_match.close_range.clone(),
+                            index,
+                        ));
+                    }
+                    bracket_match
+                })
+                .collect::<Vec<_>>();
 
             opens.sort_by_key(|r| (r.start, r.end));
             opens.dedup_by(|a, b| a.start == b.start && a.end == b.end);

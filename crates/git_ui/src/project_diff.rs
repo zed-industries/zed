@@ -8,8 +8,8 @@ use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
-    Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor,
-    actions::{GoToHunk, GoToPreviousHunk},
+    Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor, ToggleSplitDiff,
+    actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
@@ -70,6 +70,7 @@ pub struct ProjectDiff {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
+    review_comment_count: usize,
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
@@ -311,8 +312,16 @@ impl ProjectDiff {
                 });
             diff_display_editor
         });
-        cx.subscribe_in(&editor, window, Self::handle_editor_event)
-            .detach();
+        let editor_subscription = cx.subscribe_in(&editor, window, Self::handle_editor_event);
+
+        let primary_editor = editor.read(cx).primary_editor().clone();
+        let review_comment_subscription =
+            cx.subscribe(&primary_editor, |this, _editor, event: &EditorEvent, cx| {
+                if let EditorEvent::ReviewCommentsChanged { total_count } = event {
+                    this.review_comment_count = *total_count;
+                    cx.notify();
+                }
+            });
 
         let branch_diff_subscription = cx.subscribe_in(
             &branch_diff,
@@ -363,8 +372,12 @@ impl ProjectDiff {
             multibuffer,
             buffer_diff_subscriptions: Default::default(),
             pending_scroll: None,
+            review_comment_count: 0,
             _task: task,
-            _subscription: branch_diff_subscription,
+            _subscription: Subscription::join(
+                branch_diff_subscription,
+                Subscription::join(editor_subscription, review_comment_subscription),
+            ),
         }
     }
 
@@ -453,7 +466,18 @@ impl ProjectDiff {
         }
     }
 
+    /// Returns the total count of review comments across all hunks/files.
+    pub fn total_review_comment_count(&self) -> usize {
+        self.review_comment_count
+    }
+
+    /// Returns a reference to the splittable editor.
+    pub fn editor(&self) -> &Entity<SplittableEditor> {
+        &self.editor
+    }
+
     fn button_states(&self, cx: &App) -> ButtonStates {
+        let is_split = self.editor.read(cx).is_split();
         let editor = self.editor.read(cx).primary_editor().read(cx);
         let snapshot = self.multibuffer.read(cx).snapshot(cx);
         let prev_next = snapshot.diff_hunks().nth(1).is_some();
@@ -514,6 +538,7 @@ impl ProjectDiff {
             selection,
             stage_all,
             unstage_all,
+            is_split,
         }
     }
 
@@ -667,6 +692,7 @@ impl ProjectDiff {
         }
     }
 
+    #[instrument(skip_all)]
     pub async fn refresh(
         this: WeakEntity<Self>,
         reason: RefreshReason,
@@ -817,7 +843,7 @@ impl Item for ProjectDiff {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -1269,6 +1295,7 @@ struct ButtonStates {
     selection: bool,
     stage_all: bool,
     unstage_all: bool,
+    is_split: bool,
 }
 
 impl Render for ProjectDiffToolbar {
@@ -1278,6 +1305,7 @@ impl Render for ProjectDiffToolbar {
         };
         let focus_handle = project_diff.focus_handle(cx);
         let button_states = project_diff.read(cx).button_states(cx);
+        let review_count = project_diff.read(cx).total_review_comment_count();
 
         h_group_xl()
             .my_neg_1()
@@ -1408,6 +1436,24 @@ impl Render for ProjectDiffToolbar {
                         },
                     )
                     .child(
+                        Button::new(
+                            "toggle-split",
+                            if button_states.is_split {
+                                "Stacked View"
+                            } else {
+                                "Split View"
+                            },
+                        )
+                        .tooltip(Tooltip::for_action_title_in(
+                            "Toggle Split View",
+                            &ToggleSplitDiff,
+                            &focus_handle,
+                        ))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.dispatch_action(&ToggleSplitDiff, window, cx);
+                        })),
+                    )
+                    .child(
                         Button::new("commit", "Commit")
                             .tooltip(Tooltip::for_action_title_in(
                                 "Commit",
@@ -1419,6 +1465,109 @@ impl Render for ProjectDiffToolbar {
                             })),
                     ),
             )
+            // "Send Review to Agent" button (only shown when there are review comments)
+            .when(review_count > 0, |el| {
+                el.child(vertical_divider()).child(
+                    render_send_review_to_agent_button(review_count, &focus_handle).on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.dispatch_action(&SendReviewToAgent, window, cx)
+                        }),
+                    ),
+                )
+            })
+    }
+}
+
+fn render_send_review_to_agent_button(review_count: usize, focus_handle: &FocusHandle) -> Button {
+    Button::new(
+        "send-review",
+        format!("Send Review to Agent ({})", review_count),
+    )
+    .icon(IconName::ZedAssistant)
+    .icon_position(IconPosition::Start)
+    .tooltip(Tooltip::for_action_title_in(
+        "Send all review comments to the Agent panel",
+        &SendReviewToAgent,
+        focus_handle,
+    ))
+}
+
+pub struct BranchDiffToolbar {
+    project_diff: Option<WeakEntity<ProjectDiff>>,
+}
+
+impl BranchDiffToolbar {
+    pub fn new(_: &mut Context<Self>) -> Self {
+        Self { project_diff: None }
+    }
+
+    fn project_diff(&self, _: &App) -> Option<Entity<ProjectDiff>> {
+        self.project_diff.as_ref()?.upgrade()
+    }
+
+    fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(project_diff) = self.project_diff(cx) {
+            project_diff.focus_handle(cx).focus(window, cx);
+        }
+        let action = action.boxed_clone();
+        cx.defer(move |cx| {
+            cx.dispatch_action(action.as_ref());
+        })
+    }
+}
+
+impl EventEmitter<ToolbarItemEvent> for BranchDiffToolbar {}
+
+impl ToolbarItemView for BranchDiffToolbar {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ToolbarItemLocation {
+        self.project_diff = active_pane_item
+            .and_then(|item| item.act_as::<ProjectDiff>(cx))
+            .filter(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Merge { .. }))
+            .map(|entity| entity.downgrade());
+        if self.project_diff.is_some() {
+            ToolbarItemLocation::PrimaryRight
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+
+    fn pane_focus_update(
+        &mut self,
+        _pane_focused: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+}
+
+impl Render for BranchDiffToolbar {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(project_diff) = self.project_diff(cx) else {
+            return div();
+        };
+        let focus_handle = project_diff.focus_handle(cx);
+        let review_count = project_diff.read(cx).total_review_comment_count();
+
+        h_group_xl()
+            .my_neg_1()
+            .py_1()
+            .items_center()
+            .flex_wrap()
+            .justify_end()
+            .when(review_count > 0, |el| {
+                el.child(
+                    render_send_review_to_agent_button(review_count, &focus_handle).on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.dispatch_action(&SendReviewToAgent, window, cx)
+                        }),
+                    ),
+                )
+            })
     }
 }
 

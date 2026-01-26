@@ -30,7 +30,7 @@ impl<T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for StackEntry<'_, T, D> {
 pub struct Cursor<'a, 'b, T: Item, D> {
     tree: &'a SumTree<T>,
     stack: ArrayVec<StackEntry<'a, T, D>, 16>,
-    position: D,
+    pub position: D,
     did_seek: bool,
     at_end: bool,
     cx: <T::Summary as Summary>::Context<'b>,
@@ -72,7 +72,7 @@ where
         }
     }
 
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.did_seek = false;
         self.at_end = self.tree.is_empty();
         self.stack.truncate(0);

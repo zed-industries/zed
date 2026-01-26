@@ -13,7 +13,17 @@ path = "src/agent_ui.rs"
 doctest = false
 
 [features]
-test-support = ["assistant_text_thread/test-support", "acp_thread/test-support", "eval_utils", "gpui/test-support", "language/test-support", "reqwest_client", "workspace/test-support", "agent/test-support", "rules_library/test-support"]
+test-support = [
+    "assistant_text_thread/test-support",
+    "acp_thread/test-support",
+    "eval_utils",
+    "gpui/test-support",
+    "git_ui/test-support",
+    "language/test-support",
+    "reqwest_client",
+    "workspace/test-support",
+    "agent/test-support",
+]
 unit-eval = []
 
 [dependencies]
@@ -116,13 +126,17 @@ db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 eval_utils.workspace = true
 gpui = { workspace = true, "features" = ["test-support"] }
+git_ui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, "features" = ["test-support"] }
 languages = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, "features" = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+recent_projects = { workspace = true, features = ["test-support"] }
+title_bar = { workspace = true, features = ["test-support"] }
 semver.workspace = true
 reqwest_client.workspace = true
+tempfile.workspace = true
 tree-sitter-md.workspace = true
 unindent.workspace = true

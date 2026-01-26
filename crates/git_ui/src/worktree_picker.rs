@@ -112,7 +112,11 @@ impl WorktreeList {
         .detach_and_log_err(cx);
 
         let delegate = WorktreeListDelegate::new(workspace, repository, window, cx);
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(!embedded));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .show_scrollbar(true)
+                .modal(!embedded)
+        });
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();

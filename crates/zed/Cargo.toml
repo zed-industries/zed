@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.220.0"
+version = "0.222.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -24,6 +24,7 @@ test-support = [
     "terminal_view/test-support",
     "image_viewer/test-support",
     "recent_projects/test-support",
+    "repl/test-support",
 ]
 visual-tests = [
     "gpui/test-support",
@@ -40,6 +41,7 @@ visual-tests = [
     "image_viewer/test-support",
     "clock/test-support",
     "acp_thread/test-support",
+    "action_log/test-support",
     "agent_ui/test-support",
     "db/test-support",
     "agent/test-support",
@@ -86,12 +88,15 @@ command_palette.workspace = true
 component.workspace = true
 component_preview.workspace = true
 copilot.workspace = true
+copilot_chat.workspace = true
+copilot_ui.workspace = true
 crashes.workspace = true
 dap_adapters.workspace = true
 db.workspace = true
 debug_adapter_extension.workspace = true
 debugger_tools.workspace = true
 debugger_ui.workspace = true
+dev_container.workspace = true
 diagnostics.workspace = true
 editor.workspace = true
 encoding_selector.workspace = true
@@ -105,6 +110,7 @@ file_finder.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
+git_graph.workspace = true
 git_hosting_providers.workspace = true
 git_ui.workspace = true
 go_to_line.workspace = true
@@ -249,6 +255,7 @@ image.workspace = true
 agent_ui = { workspace = true, features = ["test-support"] }
 agent_ui_v2 = { workspace = true, features = ["test-support"] }
 search = { workspace = true, features = ["test-support"] }
+repl = { workspace = true, features = ["test-support"] }
 
 [package.metadata.bundle-dev]
 icon = ["resources/app-icon-dev@2x.png", "resources/app-icon-dev.png"]

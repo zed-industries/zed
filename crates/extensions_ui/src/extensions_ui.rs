@@ -1706,7 +1706,8 @@ impl Render for ExtensionsPage {
                     )
                     .children(ExtensionProvides::iter().filter_map(|provides| {
                         match provides {
-                            ExtensionProvides::SlashCommands
+                            ExtensionProvides::AgentServers
+                            | ExtensionProvides::SlashCommands
                             | ExtensionProvides::IndexedDocsProviders => return None,
                             _ => {}
                         }

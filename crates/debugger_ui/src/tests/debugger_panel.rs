@@ -314,6 +314,8 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
 ) {
+    // needed because the debugger launches a terminal which starts a background PTY
+    cx.executor().allow_parking();
     init_test(cx);
 
     let send_response = Arc::new(AtomicBool::new(false));
@@ -567,6 +569,7 @@ async fn test_handle_start_debugging_reverse_request(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
 ) {
+    cx.executor().allow_parking();
     init_test(cx);
 
     let send_response = Arc::new(AtomicBool::new(false));
@@ -1177,7 +1180,7 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
     });
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.move_down(&actions::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
         editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
     });
 
@@ -1215,7 +1218,7 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
     });
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.move_up(&actions::MoveUp, window, cx);
+        editor.move_up(&zed_actions::editor::MoveUp, window, cx);
         editor.insert("new text\n", window, cx);
     });
 
@@ -1309,18 +1312,18 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
     });
 
     first_editor.update_in(cx, |editor, window, cx| {
-        editor.move_down(&actions::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
         editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-        editor.move_down(&actions::MoveDown, window, cx);
-        editor.move_down(&actions::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
         editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
     });
 
     second_editor.update_in(cx, |editor, window, cx| {
         editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-        editor.move_down(&actions::MoveDown, window, cx);
-        editor.move_down(&actions::MoveDown, window, cx);
-        editor.move_down(&actions::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
         editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
     });
 
@@ -1910,6 +1913,7 @@ async fn test_adapter_shutdown_with_child_sessions_on_app_quit(
 
     let parent_disconnect_check = parent_disconnect_called.clone();
     let child_disconnect_check = child_disconnect_called.clone();
+    let executor_clone = executor.clone();
     let both_disconnected = executor
         .spawn(async move {
             let parent_disconnect = parent_disconnect_check;
@@ -1923,7 +1927,9 @@ async fn test_adapter_shutdown_with_child_sessions_on_app_quit(
                     return true;
                 }
 
-                gpui::Timer::after(std::time::Duration::from_millis(1)).await;
+                executor_clone
+                    .timer(std::time::Duration::from_millis(1))
+                    .await;
             }
 
             false

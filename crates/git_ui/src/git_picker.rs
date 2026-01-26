@@ -2,8 +2,8 @@ use std::fmt::Display;
 
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    KeyContext, ModifiersChangedEvent, MouseButton, ParentElement, Render, Styled, Subscription,
-    WeakEntity, Window, actions, rems,
+    KeyContext, ModifiersChangedEvent, MouseButton, ParentElement, Rems, Render, Styled,
+    Subscription, WeakEntity, Window, actions, rems,
 };
 use project::git_store::Repository;
 use ui::{
@@ -50,6 +50,7 @@ pub struct GitPicker {
     worktree_list: Option<Entity<WorktreeList>>,
     stash_list: Option<Entity<StashList>>,
     _subscriptions: Vec<Subscription>,
+    popover_style: bool,
 }
 
 impl GitPicker {
@@ -58,6 +59,18 @@ impl GitPicker {
         repository: Option<Entity<Repository>>,
         initial_tab: GitPickerTab,
         width: Rems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_internal(workspace, repository, initial_tab, width, false, window, cx)
+    }
+
+    fn new_internal(
+        workspace: WeakEntity<Workspace>,
+        repository: Option<Entity<Repository>>,
+        initial_tab: GitPickerTab,
+        width: Rems,
+        popover_style: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -70,6 +83,7 @@ impl GitPicker {
             worktree_list: None,
             stash_list: None,
             _subscriptions: Vec::new(),
+            popover_style,
         };
 
         this.ensure_active_picker(window, cx);
@@ -454,6 +468,11 @@ impl Render for GitPicker {
             .w(self.width)
             .elevation_3(cx)
             .overflow_hidden()
+            .when(self.popover_style, |el| {
+                el.on_mouse_down_out(cx.listener(|_, _, _, cx| {
+                    cx.emit(DismissEvent);
+                }))
+            })
             .key_context({
                 let mut key_context = KeyContext::new_with_defaults();
                 key_context.add("Pane");
@@ -549,14 +568,55 @@ fn open_with_tab(
     cx: &mut Context<Workspace>,
 ) {
     let workspace_handle = workspace.weak_handle();
-    let repository = workspace.project().read(cx).active_repository(cx);
+    let project = workspace.project().clone();
+
+    // Check if there's a worktree override from the project dropdown.
+    // This ensures the git picker shows info for the project the user
+    // explicitly selected in the title bar, not just the focused file's project.
+    // This is only relevant if for multi-projects workspaces.
+    let repository = workspace
+        .active_worktree_override()
+        .and_then(|override_id| {
+            let project_ref = project.read(cx);
+            project_ref
+                .worktree_for_id(override_id, cx)
+                .and_then(|worktree| {
+                    let worktree_abs_path = worktree.read(cx).abs_path();
+                    let git_store = project_ref.git_store().read(cx);
+                    git_store
+                        .repositories()
+                        .values()
+                        .find(|repo| {
+                            let repo_path = &repo.read(cx).work_directory_abs_path;
+                            *repo_path == worktree_abs_path
+                                || worktree_abs_path.starts_with(repo_path.as_ref())
+                        })
+                        .cloned()
+                })
+        })
+        .or_else(|| project.read(cx).active_repository(cx));
 
     workspace.toggle_modal(window, cx, |window, cx| {
         GitPicker::new(workspace_handle, repository, tab, rems(34.), window, cx)
     })
 }
 
-/// Register all git picker actions with the workspace.
+pub fn popover(
+    workspace: WeakEntity<Workspace>,
+    repository: Option<Entity<Repository>>,
+    initial_tab: GitPickerTab,
+    width: Rems,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<GitPicker> {
+    cx.new(|cx| {
+        let picker =
+            GitPicker::new_internal(workspace, repository, initial_tab, width, true, window, cx);
+        picker.focus_handle(cx).focus(window, cx);
+        picker
+    })
+}
+
 pub fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &zed_actions::git::Branch, window, cx| {
         open_with_tab(workspace, GitPickerTab::Branches, window, cx);

@@ -721,13 +721,14 @@ fn panic_char_boundary(text: &str, offset: usize) -> ! {
 #[inline(never)]
 #[track_caller]
 fn log_err_char_boundary(text: &str, offset: usize) {
-    if offset > text.len() {
+    if offset >= text.len() {
         log::error!(
             "byte index {} is out of bounds of `{:?}` (length: {})",
             offset,
             text,
             text.len()
         );
+        return;
     }
     // find the character
     let char_start = text.floor_char_boundary(offset);
