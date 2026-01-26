@@ -12,7 +12,6 @@ use crate::paths::LLM_CACHE_DB;
 use crate::word_diff::unified_to_word_diff;
 use anthropic::{Message, RequestContent, Role};
 use anyhow::Result;
-use std::fmt::Write as _;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
@@ -68,11 +67,11 @@ pub fn build_repair_prompt(example: &Example) -> Option<String> {
         }
     }
 
-    // Format related files context
-    let context = format_context(example);
+    // Format related files context (reuse from TeacherPrompt)
+    let context = TeacherPrompt::format_context(example);
 
     // Format cursor excerpt with editable region markers
-    let cursor_excerpt = format_cursor_excerpt(example)?;
+    let cursor_excerpt = format_cursor_excerpt_for_repair(example)?;
 
     // Get QA feedback
     let qa_reasoning = qa.reasoning.as_deref().unwrap_or("No reasoning provided");
@@ -95,47 +94,9 @@ pub fn build_repair_prompt(example: &Example) -> Option<String> {
     )
 }
 
-/// Format context (related files) - similar to TeacherPrompt::format_context
-fn format_context(example: &Example) -> String {
-    let related_files = example
-        .prompt_inputs
-        .as_ref()
-        .and_then(|pi| pi.related_files.as_ref());
-
-    let Some(related_files) = related_files else {
-        return "(No context)".to_string();
-    };
-
-    if related_files.is_empty() {
-        return "(No context)".to_string();
-    }
-
-    let mut prompt = String::new();
-    for file in related_files {
-        let path_str = file.path.to_string_lossy();
-        writeln!(&mut prompt, "`````{path_str}").ok();
-
-        let mut prev_row = 0;
-        for excerpt in &file.excerpts {
-            if excerpt.row_range.start > prev_row {
-                prompt.push_str("…\n");
-            }
-            prompt.push_str(&excerpt.text);
-            prompt.push('\n');
-            prev_row = excerpt.row_range.end;
-        }
-        if prev_row < file.max_row {
-            prompt.push_str("…\n");
-        }
-        prompt.push_str("\n`````\n");
-    }
-
-    prompt
-}
-
 /// Format cursor excerpt with editable region markers.
 /// This reconstructs the cursor excerpt from the prompt if available.
-fn format_cursor_excerpt(example: &Example) -> Option<String> {
+fn format_cursor_excerpt_for_repair(example: &Example) -> Option<String> {
     // If we have the original prompt, extract the cursor excerpt from it
     if let Some(prompt) = &example.prompt {
         // Find "# 3. Current File" section and extract the content

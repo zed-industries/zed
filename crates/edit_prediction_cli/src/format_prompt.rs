@@ -249,7 +249,7 @@ impl TeacherPrompt {
         history_lines.join("\n")
     }
 
-    fn format_context(example: &Example) -> String {
+    pub fn format_context(example: &Example) -> String {
         let related_files = example
             .prompt_inputs
             .as_ref()
