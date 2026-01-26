@@ -354,7 +354,7 @@ fn generate_slack_message(expression: String) -> (Step<Run>, StepOutput) {
 fn send_slack_message(message: String) -> Step<Run> {
     let script = formatdoc! {r#"
         curl -X POST -H 'Content-type: application/json'\
-          --data '{{"text":"{message}"}}' "$SLACK_WEBHOOK"
+         --data '{{"text":"{message}"}}' "$SLACK_WEBHOOK"
         "#
     };
     named::bash(&script).add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
