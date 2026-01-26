@@ -263,7 +263,7 @@ impl std::str::FromStr for TeacherBackend {
         match s.to_lowercase().as_str() {
             "sonnet45" | "sonnet" | "claude" => Ok(TeacherBackend::Sonnet45),
             "gpt52" | "gpt" | "openai" => Ok(TeacherBackend::Gpt52),
-            "V0114180EditableRegion" => Ok(TeacherBackend::Sonnet45),
+            "v0114180editableregion" => Ok(TeacherBackend::Sonnet45),
             _ => anyhow::bail!("unknown teacher backend `{s}`. Valid options: sonnet45, gpt52"),
         }
     }
