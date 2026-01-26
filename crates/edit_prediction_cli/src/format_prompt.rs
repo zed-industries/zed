@@ -61,14 +61,18 @@ pub async fn run_format_prompt(
             let context_range = context_range.to_offset(&snapshot);
 
             let prompt = TeacherPrompt::format_prompt(example, editable_range, context_range);
+            let expected_output = example
+                .spec
+                .expected_patches
+                .first()
+                .cloned()
+                .unwrap_or_default();
+            let rejected_output = example.spec.rejected_patch.clone();
+
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
-                expected_output: example
-                    .spec
-                    .expected_patches
-                    .first()
-                    .cloned()
-                    .unwrap_or_default(),
+                expected_output,
+                rejected_output,
                 provider: args.provider,
             });
         }
@@ -107,9 +111,16 @@ pub async fn run_format_prompt(
                     .clone(),
                 version,
             )?;
+            let rejected_output = example
+                .spec
+                .rejected_patch
+                .as_ref()
+                .and_then(|patch| zeta2_output_for_patch(&input, &patch, version).ok());
+
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
                 expected_output,
+                rejected_output,
                 provider: args.provider,
             });
         }

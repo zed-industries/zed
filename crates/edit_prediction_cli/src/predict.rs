@@ -149,6 +149,7 @@ pub async fn run_prediction(
                                 updated_example.prompt.get_or_insert(ExamplePrompt {
                                     input: prompt,
                                     expected_output: String::new(),
+                                    rejected_output: None,
                                     provider,
                                 });
                             }
