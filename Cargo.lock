@@ -6011,6 +6011,8 @@ dependencies = [
  "rpc",
  "serde",
  "serde_json",
+ "serde_json_lenient",
+ "snippet_provider",
  "theme",
  "tokio",
  "toml 0.8.23",
