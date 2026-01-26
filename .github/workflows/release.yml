@@ -26,6 +26,8 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
+    - name: steps::cargo_install_nextest
+      uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
       shell: bash -euxo pipefail {0}
