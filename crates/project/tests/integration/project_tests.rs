@@ -1137,7 +1137,7 @@ async fn test_invalid_local_tasks_shows_toast_with_doc_link(cx: &mut gpui::TestA
     let saw_toast = Rc::new(RefCell::new(false));
 
     // Update the `.zed/tasks.json` file with an invalid variable, so we can
-    // later asser that the `Event::Toast` even is emitted.
+    // later assert that the `Event::Toast` even is emitted.
     fs.save(
         path!("/dir/.zed/tasks.json").as_ref(),
         &r#"[{ "label": "test $ZED_FOO", "command": "echo" }]"#.into(),
