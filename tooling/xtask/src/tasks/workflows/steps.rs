@@ -126,7 +126,7 @@ echo "${{ github.job }}" > failed-jobs/${{ github.job }}
         .if_condition(Expression::new("failure()"));
 
     let create_check = Step::new("Create failed check")
-        .run(format!(r##"echo "Creating check run for job: ${{{{ github.job }}}}"
+        .run(r##"echo "Creating check run for job: ${{{{ github.job }}}}"
 echo "Repository: ${{{{ github.repository }}}}"
 # Use PR head SHA for pull_request events, otherwise use github.sha
 HEAD_SHA="${{{{ github.event.pull_request.head.sha || github.sha }}}}"
@@ -142,7 +142,7 @@ curl -v -X POST \
   -H "Accept: application/vnd.github+json" \
   "https://api.github.com/repos/${{{{ github.repository }}}}/check-runs" \
   -d "{{\"name\":\"Failed: ${{{{ github.job }}}}\",\"head_sha\":\"${{HEAD_SHA}}\",\"status\":\"completed\",\"conclusion\":\"failure\",\"details_url\":\"${{DETAILS_URL}}\",\"output\":{{\"title\":\"Job failed\",\"summary\":\"Job ${{{{ github.job }}}} failed and cancelled the workflow. [View logs](${{DETAILS_URL}})\"}}}}"
-"##))
+"##)
         .shell(BASH_SHELL)
         .add_env(("GITHUB_TOKEN", token.to_string()))
         .if_condition(Expression::new("failure()"));
