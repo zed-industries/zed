@@ -1350,6 +1350,7 @@ dependencies = [
  "ctor",
  "db",
  "futures 0.3.31",
+ "futures-lite 1.13.0",
  "gpui",
  "http_client",
  "log",
