@@ -68,10 +68,12 @@ use settings::SettingsStore;
 #[cfg(not(windows))]
 use std::os;
 use std::{
+    cell::RefCell,
     env, mem,
     num::NonZeroU32,
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
     str::FromStr,
     sync::{Arc, OnceLock},
     task::Poll,
@@ -1117,31 +1119,57 @@ async fn test_invalid_local_tasks_shows_toast_with_doc_link(cx: &mut gpui::TestA
     init_test(cx);
     TaskStore::init(None);
 
+    // We need to start with a valid `.zed/tasks.json` file as otherwise the
+    // event is emitted before we havd a chance to setup the event subscription.
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/dir"),
         json!({
             ".zed": {
-                "tasks.json": r#"{ invalid json }"#,
+                "tasks.json": r#"[{ "label": "valid task", "command": "echo" }]"#,
             },
+            "file.rs": ""
         }),
     )
     .await;
 
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-    let event = project.next_event(cx).await;
+    let saw_toast = Rc::new(RefCell::new(false));
 
-    match event {
-        Event::Toast {
-            notification_id,
-            link: Some(ToastLink { url, .. }),
-            ..
-        } => {
-            assert!(notification_id.starts_with("local-tasks-"));
-            assert_eq!(url, "https://zed.dev/docs/tasks");
-        }
-        event => panic!("Expected `Event::Toast`. Got {event:?}"),
-    }
+    // Update the `.zed/tasks.json` file with an invalid variable, so we can
+    // later asser that the `Event::Toast` even is emitted.
+    fs.save(
+        path!("/dir/.zed/tasks.json").as_ref(),
+        &r#"[{ "label": "test $ZED_FOO", "command": "echo" }]"#.into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    project.update(cx, |_, cx| {
+        let saw_toast = saw_toast.clone();
+
+        cx.subscribe(&project, move |_, _, event: &Event, _| match event {
+            Event::Toast {
+                notification_id,
+                message,
+                link: Some(ToastLink { url, .. }),
+            } => {
+                assert!(notification_id.starts_with("local-tasks-"));
+                assert!(message.contains("ZED_FOO"));
+                assert_eq!(*url, "https://zed.dev/docs/tasks");
+                *saw_toast.borrow_mut() = true;
+            }
+            _ => {}
+        })
+        .detach();
+    });
+
+    cx.run_until_parked();
+    assert!(
+        *saw_toast.borrow(),
+        "Expected `Event::Toast` was never emitted"
+    );
 }
 
 #[gpui::test]
