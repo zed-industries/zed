@@ -112,10 +112,26 @@ pub fn clippy(platform: Platform) -> Step<Run> {
     }
 }
 
-pub fn cancel_workflow_on_failure() -> Step<Use> {
-    Step::new("Cancel workflow on failure")
+pub fn cancel_workflow_on_failure(job: Job) -> Job {
+    let record_failure = Step::new("Record failure")
+        .run(indoc::indoc! {r#"
+            mkdir -p failed-jobs
+            echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+        "#})
+        .shell(BASH_SHELL)
+        .if_condition(Expression::new("failure()"));
+    let upload_failure = Step::new("Upload failure artifact")
+        .uses("actions", "upload-artifact", "v4")
+        .add_with(("name", "failed-job-${{ github.job }}"))
+        .add_with(("path", "failed-jobs/"))
+        .add_with(("retention-days", "1"))
+        .if_condition(Expression::new("failure()"));
+    let cancel = Step::new("Cancel workflow on failure")
         .uses("andymckay", "cancel-action", "0.5")
-        .if_condition(Expression::new("failure()"))
+        .if_condition(Expression::new("failure()"));
+    job.add_step(record_failure)
+        .add_step(upload_failure)
+        .add_step(cancel)
 }
 
 pub fn cache_rust_dependencies_namespace() -> Step<Use> {

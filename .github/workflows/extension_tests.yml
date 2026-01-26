@@ -112,13 +112,43 @@ jobs:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && always()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
+    - name: Download failure artifacts
+      if: always()
+      uses: actions/download-artifact@v4
+      with:
+        pattern: failed-job-*
+        path: failed-jobs
+        merge-multiple: 'true'
     - name: run_tests::tests_pass
       run: |
         set +x
         EXIT_CODE=0
 
+        # Check for original failure artifacts
+        if [ -d "failed-jobs" ] && [ "$(ls -A failed-jobs 2>/dev/null)" ]; then
+          echo "══════════════════════════════════════════════════════════"
+          echo "ORIGINAL FAILURE(S):"
+          for f in failed-jobs/*; do
+            if [ -f "$f" ]; then
+              job_name=$(cat "$f")
+              echo "  ✗ $job_name"
+            fi
+          done
+          echo "══════════════════════════════════════════════════════════"
+          echo ""
+        fi
+
+        echo "Job results:"
         check_result() {
-          echo "* $1: $2"
+          local status_icon="✓"
+          if [[ "$2" == "failure" ]]; then
+            status_icon="✗"
+          elif [[ "$2" == "cancelled" ]]; then
+            status_icon="⊘"
+          elif [[ "$2" == "skipped" ]]; then
+            status_icon="⊖"
+          fi
+          echo "  $status_icon $1: $2"
           if [[ "$2" != "skipped" && "$2" != "success" ]]; then EXIT_CODE=1; fi
         }
 

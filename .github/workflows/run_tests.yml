@@ -90,6 +90,19 @@ jobs:
       uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06
       with:
         config: ./typos.toml
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -112,6 +125,19 @@ jobs:
     - name: steps::clippy
       run: ./script/clippy.ps1
       shell: pwsh
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -147,6 +173,19 @@ jobs:
     - name: steps::clippy
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -169,6 +208,19 @@ jobs:
     - name: steps::clippy
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -198,6 +250,19 @@ jobs:
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
       shell: pwsh
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -247,6 +312,19 @@ jobs:
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -281,6 +359,19 @@ jobs:
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -323,6 +414,19 @@ jobs:
       run: |
         cargo test --workspace --doc --no-fail-fast
       shell: bash -euxo pipefail {0}
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -366,6 +470,19 @@ jobs:
     - name: cargo build --workspace --bins --examples
       run: cargo build --workspace --bins --examples
       shell: bash -euxo pipefail {0}
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -406,6 +523,19 @@ jobs:
       uses: actions/dependency-review-action@67d4f4bd7a9b17a0db54d2a7519187c65e339de8
       with:
         license-check: false
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -462,6 +592,19 @@ jobs:
         args: --no-progress --exclude '^http' 'target/deploy/docs'
         fail: true
         jobSummary: false
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -486,6 +629,19 @@ jobs:
     - name: ./script/generate-licenses
       run: ./script/generate-licenses
       shell: bash -euxo pipefail {0}
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -519,6 +675,19 @@ jobs:
           exit 1
         fi
       shell: bash -euxo pipefail {0}
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -631,6 +800,19 @@ jobs:
       with:
         input: crates/proto/proto/
         against: https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -656,13 +838,43 @@ jobs:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && always()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
+    - name: Download failure artifacts
+      if: always()
+      uses: actions/download-artifact@v4
+      with:
+        pattern: failed-job-*
+        path: failed-jobs
+        merge-multiple: 'true'
     - name: run_tests::tests_pass
       run: |
         set +x
         EXIT_CODE=0
 
+        # Check for original failure artifacts
+        if [ -d "failed-jobs" ] && [ "$(ls -A failed-jobs 2>/dev/null)" ]; then
+          echo "══════════════════════════════════════════════════════════"
+          echo "ORIGINAL FAILURE(S):"
+          for f in failed-jobs/*; do
+            if [ -f "$f" ]; then
+              job_name=$(cat "$f")
+              echo "  ✗ $job_name"
+            fi
+          done
+          echo "══════════════════════════════════════════════════════════"
+          echo ""
+        fi
+
+        echo "Job results:"
         check_result() {
-          echo "* $1: $2"
+          local status_icon="✓"
+          if [[ "$2" == "failure" ]]; then
+            status_icon="✗"
+          elif [[ "$2" == "cancelled" ]]; then
+            status_icon="⊘"
+          elif [[ "$2" == "skipped" ]]; then
+            status_icon="⊖"
+          fi
+          echo "  $status_icon $1: $2"
           if [[ "$2" != "skipped" && "$2" != "success" ]]; then EXIT_CODE=1; fi
         }
 

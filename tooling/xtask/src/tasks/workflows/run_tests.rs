@@ -185,12 +185,42 @@ pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
 }
 
 pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
+    let download_failures = Step::new("Download failure artifacts")
+        .uses("actions", "download-artifact", "v4")
+        .add_with(("pattern", "failed-job-*"))
+        .add_with(("path", "failed-jobs"))
+        .add_with(("merge-multiple", "true"))
+        .if_condition(Expression::new("always()"));
+
     let mut script = String::from(indoc::indoc! {r#"
         set +x
         EXIT_CODE=0
 
+        # Check for original failure artifacts
+        if [ -d "failed-jobs" ] && [ "$(ls -A failed-jobs 2>/dev/null)" ]; then
+          echo "══════════════════════════════════════════════════════════"
+          echo "ORIGINAL FAILURE(S):"
+          for f in failed-jobs/*; do
+            if [ -f "$f" ]; then
+              job_name=$(cat "$f")
+              echo "  ✗ $job_name"
+            fi
+          done
+          echo "══════════════════════════════════════════════════════════"
+          echo ""
+        fi
+
+        echo "Job results:"
         check_result() {
-          echo "* $1: $2"
+          local status_icon="✓"
+          if [[ "$2" == "failure" ]]; then
+            status_icon="✗"
+          elif [[ "$2" == "cancelled" ]]; then
+            status_icon="⊘"
+          elif [[ "$2" == "skipped" ]]; then
+            status_icon="⊖"
+          fi
+          echo "  $status_icon $1: $2"
           if [[ "$2" != "skipped" && "$2" != "success" ]]; then EXIT_CODE=1; fi
         }
 
@@ -219,6 +249,7 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
                 .collect::<Vec<String>>(),
         )
         .cond(repository_owner_guard_expression(true))
+        .add_step(download_failures)
         .add_step(named::bash(&script));
 
     named::job(job)
@@ -244,7 +275,7 @@ fn check_style() -> NamedJob {
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
             .add_step(check_for_typos())
-            .add_step(steps::cancel_workflow_on_failure()),
+            .map(steps::cancel_workflow_on_failure),
     )
 }
 
@@ -291,7 +322,7 @@ fn check_dependencies() -> NamedJob {
             .add_step(run_cargo_machete())
             .add_step(check_cargo_lock())
             .add_step(check_vulnerable_dependencies())
-            .add_step(steps::cancel_workflow_on_failure()),
+            .map(steps::cancel_workflow_on_failure),
     )
 }
 
@@ -305,7 +336,7 @@ fn check_workspace_binaries() -> NamedJob {
             .map(steps::install_linux_dependencies)
             .add_step(steps::script("cargo build -p collab"))
             .add_step(steps::script("cargo build --workspace --bins --examples"))
-            .add_step(steps::cancel_workflow_on_failure())
+            .map(steps::cancel_workflow_on_failure)
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
 }
@@ -330,7 +361,7 @@ pub(crate) fn clippy(platform: Platform) -> NamedJob {
                 steps::install_linux_dependencies,
             )
             .add_step(steps::clippy(platform))
-            .add_step(steps::cancel_workflow_on_failure()),
+            .map(steps::cancel_workflow_on_failure),
     }
 }
 
@@ -359,7 +390,7 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
             })
             .add_step(steps::clear_target_dir_if_large(platform))
             .add_step(steps::cargo_nextest(platform))
-            .add_step(steps::cancel_workflow_on_failure())
+            .map(steps::cancel_workflow_on_failure)
             .add_step(steps::cleanup_cargo_config(platform)),
     }
 }
@@ -405,7 +436,7 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_step(ensure_fresh_merge())
             .add_step(bufbuild_setup_action())
             .add_step(bufbuild_breaking_action())
-            .add_step(steps::cancel_workflow_on_failure()),
+            .map(steps::cancel_workflow_on_failure),
     )
 }
 
@@ -425,7 +456,7 @@ fn doctests() -> NamedJob {
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(run_doctests())
-            .add_step(steps::cancel_workflow_on_failure())
+            .map(steps::cancel_workflow_on_failure)
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
 }
@@ -438,7 +469,7 @@ fn check_licenses() -> NamedJob {
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::script("./script/check-licenses"))
             .add_step(steps::script("./script/generate-licenses"))
-            .add_step(steps::cancel_workflow_on_failure()),
+            .map(steps::cancel_workflow_on_failure),
     )
 }
 
@@ -487,7 +518,7 @@ fn check_docs() -> NamedJob {
             .add_step(
                 lychee_link_check("target/deploy/docs"), // check links in generated html
             )
-            .add_step(steps::cancel_workflow_on_failure()),
+            .map(steps::cancel_workflow_on_failure),
     )
 }
 
@@ -527,6 +558,6 @@ pub(crate) fn check_scripts() -> NamedJob {
             .add_step(download_actionlint().id("get_actionlint"))
             .add_step(run_actionlint())
             .add_step(check_xtask_workflows())
-            .add_step(steps::cancel_workflow_on_failure()),
+            .map(steps::cancel_workflow_on_failure),
     )
 }

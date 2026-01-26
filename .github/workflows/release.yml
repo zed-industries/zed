@@ -32,6 +32,19 @@ jobs:
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -79,6 +92,19 @@ jobs:
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -111,6 +137,19 @@ jobs:
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
       shell: pwsh
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -136,6 +175,19 @@ jobs:
     - name: steps::clippy
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -169,6 +221,19 @@ jobs:
     - name: steps::clippy
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -189,6 +254,19 @@ jobs:
     - name: steps::clippy
       run: ./script/clippy.ps1
       shell: pwsh
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
@@ -221,6 +299,19 @@ jobs:
           exit 1
         fi
       shell: bash -euxo pipefail {0}
+    - name: Record failure
+      if: failure()
+      run: |
+        mkdir -p failed-jobs
+        echo "${{ github.job }}" > failed-jobs/${{ github.job }}
+      shell: bash -euxo pipefail {0}
+    - name: Upload failure artifact
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-job-${{ github.job }}
+        path: failed-jobs/
+        retention-days: '1'
     - name: Cancel workflow on failure
       if: failure()
       uses: andymckay/cancel-action@0.5
