@@ -48,8 +48,8 @@ fn run_clippy() -> Step<Run> {
 fn check_rust() -> NamedJob {
     let job = Job::default()
         .with_repository_owner_guard()
-        .runs_on(runners::LINUX_MEDIUM)
-        .timeout_minutes(3u32)
+        .runs_on(runners::LINUX_LARGE)
+        .timeout_minutes(6u32)
         .add_step(steps::checkout_repo())
         .add_step(steps::cache_rust_dependencies_namespace())
         .add_step(steps::cargo_fmt())
