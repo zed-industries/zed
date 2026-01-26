@@ -1,3 +1,4 @@
+use crate::qa::QaResult;
 use crate::PredictionProvider;
 use crate::paths::WORKTREES_DIR;
 use anyhow::{Context as _, Result};
@@ -40,6 +41,10 @@ pub struct Example {
     /// predictions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub score: Vec<ExampleScore>,
+
+    /// QA evaluation results for each prediction (indexed parallel to `predictions`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub qa: Vec<Option<QaResult>>,
 
     /// The application state used to process this example.
     #[serde(skip)]
@@ -253,6 +258,7 @@ fn parse_markdown_example(input: &str) -> Result<Example> {
         prompt: None,
         predictions: Vec::new(),
         score: Vec::new(),
+        qa: Vec::new(),
         state: None,
     })
 }

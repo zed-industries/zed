@@ -356,26 +356,22 @@ pub async fn run_qa(
             continue;
         }
 
-        let result = results_by_idx
-            .get(&idx)
-            .cloned()
-            .unwrap_or_else(|| QaResult {
-                reasoning: None,
-                reverts_edits: None,
-                confidence: None,
-                response: None,
-                error: Some("Result not found".to_string()),
-            });
+        let result = results_by_idx.get(&idx).cloned();
 
-        if result.reverts_edits == Some(true) {
+        if result.as_ref().and_then(|r| r.reverts_edits) == Some(true) {
             num_reverts_edits += 1;
         }
         num_total += 1;
 
-        // Add QA result to example and output
-        let mut example_json = serde_json::to_value(&example)?;
-        example_json["qa"] = serde_json::to_value(&result)?;
-        writeln!(writer, "{}", serde_json::to_string(&example_json)?)?;
+        // Populate QA results for each prediction (currently only first prediction is evaluated)
+        example.qa = example
+            .predictions
+            .iter()
+            .enumerate()
+            .map(|(i, _)| if i == 0 { result.clone() } else { None })
+            .collect();
+
+        writeln!(writer, "{}", serde_json::to_string(&example)?)?;
     }
 
     if let Some(path) = output_path {
