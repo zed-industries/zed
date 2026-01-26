@@ -16,7 +16,7 @@ let
       "x86_64-linux" = {
         os = "linux";
         arch = "x64";
-        hash = pkgs.lib.fakeHash;
+        hash = "sha256-bGUC4UDxFeeRgXNs68Q1wUshbw6EBx7SsfmYRI62oS8=";
       };
     };
   };
