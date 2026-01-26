@@ -113,6 +113,9 @@ pub fn clippy(platform: Platform) -> Step<Run> {
 }
 
 pub fn cancel_workflow_on_failure(job: Job) -> Job {
+    let (authenticate, token) = authenticate_as_zippy();
+    let authenticate = authenticate.if_condition(Expression::new("failure()"));
+
     let record_failure = Step::new("Record failure")
         .run(r##"mkdir -p failed-jobs
 echo "${{ github.job }}" > failed-jobs/${{ github.job }}
@@ -124,6 +127,18 @@ echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
 "##)
         .shell(BASH_SHELL)
         .if_condition(Expression::new("failure()"));
+
+    let create_check = Step::new("Create failed check")
+        .run(format!(r##"curl -X POST \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  "https://api.github.com/repos/${{{{ github.repository }}}}/check-runs" \
+  -d '{{"name":"CI Failed","head_sha":"${{{{ github.sha }}}}","status":"completed","conclusion":"failure","output":{{"title":"Failed: ${{{{ github.job }}}}","summary":"Job ${{{{ github.job }}}} failed and cancelled the workflow."}}}}'
+"##))
+        .shell(BASH_SHELL)
+        .add_env(("GITHUB_TOKEN", token.to_string()))
+        .if_condition(Expression::new("failure()"));
+
     let upload_failure = Step::new("Upload failure artifact")
         .uses("actions", "upload-artifact", "v4")
         .add_with(("name", "failed-job-${{ github.job }}"))
@@ -133,7 +148,9 @@ echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
     let cancel = Step::new("Cancel workflow on failure")
         .uses("andymckay", "cancel-action", "0.5")
         .if_condition(Expression::new("failure()"));
-    job.add_step(record_failure)
+    job.add_step(authenticate)
+        .add_step(record_failure)
+        .add_step(create_check)
         .add_step(upload_failure)
         .add_step(cancel)
 }

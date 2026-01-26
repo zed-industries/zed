@@ -32,6 +32,13 @@ jobs:
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
+    - id: get-app-token
+      name: steps::authenticate_as_zippy
+      if: failure()
+      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: Record failure
       if: failure()
       run: |
@@ -43,6 +50,17 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
+    - name: Create failed check
+      if: failure()
+      run: |
+        curl -X POST \
+          -H "Authorization: Bearer $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/${{ github.repository }}/check-runs" \
+          -d '{"name":"CI Failed","head_sha":"${{ github.sha }}","status":"completed","conclusion":"failure","output":{"title":"Failed: ${{ github.job }}","summary":"Job ${{ github.job }} failed and cancelled the workflow."}}'
+      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
     - name: Upload failure artifact
       if: failure()
       uses: actions/upload-artifact@v4
@@ -97,6 +115,13 @@ jobs:
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
+    - id: get-app-token
+      name: steps::authenticate_as_zippy
+      if: failure()
+      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: Record failure
       if: failure()
       run: |
@@ -108,6 +133,17 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
+    - name: Create failed check
+      if: failure()
+      run: |
+        curl -X POST \
+          -H "Authorization: Bearer $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/${{ github.repository }}/check-runs" \
+          -d '{"name":"CI Failed","head_sha":"${{ github.sha }}","status":"completed","conclusion":"failure","output":{"title":"Failed: ${{ github.job }}","summary":"Job ${{ github.job }} failed and cancelled the workflow."}}'
+      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
     - name: Upload failure artifact
       if: failure()
       uses: actions/upload-artifact@v4
@@ -147,6 +183,13 @@ jobs:
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
       shell: pwsh
+    - id: get-app-token
+      name: steps::authenticate_as_zippy
+      if: failure()
+      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: Record failure
       if: failure()
       run: |
@@ -158,6 +201,17 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
+    - name: Create failed check
+      if: failure()
+      run: |
+        curl -X POST \
+          -H "Authorization: Bearer $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/${{ github.repository }}/check-runs" \
+          -d '{"name":"CI Failed","head_sha":"${{ github.sha }}","status":"completed","conclusion":"failure","output":{"title":"Failed: ${{ github.job }}","summary":"Job ${{ github.job }} failed and cancelled the workflow."}}'
+      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
     - name: Upload failure artifact
       if: failure()
       uses: actions/upload-artifact@v4
@@ -190,6 +244,13 @@ jobs:
     - name: steps::clippy
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
+    - id: get-app-token
+      name: steps::authenticate_as_zippy
+      if: failure()
+      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: Record failure
       if: failure()
       run: |
@@ -201,6 +262,17 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
+    - name: Create failed check
+      if: failure()
+      run: |
+        curl -X POST \
+          -H "Authorization: Bearer $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/${{ github.repository }}/check-runs" \
+          -d '{"name":"CI Failed","head_sha":"${{ github.sha }}","status":"completed","conclusion":"failure","output":{"title":"Failed: ${{ github.job }}","summary":"Job ${{ github.job }} failed and cancelled the workflow."}}'
+      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
     - name: Upload failure artifact
       if: failure()
       uses: actions/upload-artifact@v4
@@ -241,6 +313,13 @@ jobs:
     - name: steps::clippy
       run: ./script/clippy
       shell: bash -euxo pipefail {0}
+    - id: get-app-token
+      name: steps::authenticate_as_zippy
+      if: failure()
+      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: Record failure
       if: failure()
       run: |
@@ -252,6 +331,17 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
+    - name: Create failed check
+      if: failure()
+      run: |
+        curl -X POST \
+          -H "Authorization: Bearer $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/${{ github.repository }}/check-runs" \
+          -d '{"name":"CI Failed","head_sha":"${{ github.sha }}","status":"completed","conclusion":"failure","output":{"title":"Failed: ${{ github.job }}","summary":"Job ${{ github.job }} failed and cancelled the workflow."}}'
+      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
     - name: Upload failure artifact
       if: failure()
       uses: actions/upload-artifact@v4
@@ -279,6 +369,13 @@ jobs:
     - name: steps::clippy
       run: ./script/clippy.ps1
       shell: pwsh
+    - id: get-app-token
+      name: steps::authenticate_as_zippy
+      if: failure()
+      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: Record failure
       if: failure()
       run: |
@@ -290,6 +387,17 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
+    - name: Create failed check
+      if: failure()
+      run: |
+        curl -X POST \
+          -H "Authorization: Bearer $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/${{ github.repository }}/check-runs" \
+          -d '{"name":"CI Failed","head_sha":"${{ github.sha }}","status":"completed","conclusion":"failure","output":{"title":"Failed: ${{ github.job }}","summary":"Job ${{ github.job }} failed and cancelled the workflow."}}'
+      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
     - name: Upload failure artifact
       if: failure()
       uses: actions/upload-artifact@v4
@@ -329,6 +437,13 @@ jobs:
           exit 1
         fi
       shell: bash -euxo pipefail {0}
+    - id: get-app-token
+      name: steps::authenticate_as_zippy
+      if: failure()
+      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: Record failure
       if: failure()
       run: |
@@ -340,6 +455,17 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
       shell: bash -euxo pipefail {0}
+    - name: Create failed check
+      if: failure()
+      run: |
+        curl -X POST \
+          -H "Authorization: Bearer $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/${{ github.repository }}/check-runs" \
+          -d '{"name":"CI Failed","head_sha":"${{ github.sha }}","status":"completed","conclusion":"failure","output":{"title":"Failed: ${{ github.job }}","summary":"Job ${{ github.job }} failed and cancelled the workflow."}}'
+      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
     - name: Upload failure artifact
       if: failure()
       uses: actions/upload-artifact@v4
