@@ -4899,13 +4899,16 @@ impl GitPanel {
                 let new_name = entry.repo_path.file_name().unwrap_or_default();
                 (
                     format!("{} → {}", old_name, new_name),
-                    old_parent.map(|p| p.display(path_style).to_string())
+                    old_parent.map(|p| p.display(path_style).to_string()),
                 )
-            }
-            else {
+            } else {
                 (
-                    format!("{} → {}", old_path.display(path_style), entry.repo_path.display(path_style)),
-                    None
+                    format!(
+                        "{} → {}",
+                        old_path.display(path_style),
+                        entry.repo_path.display(path_style)
+                    ),
+                    None,
                 )
             }
         } else {
@@ -4920,25 +4923,17 @@ impl GitPanel {
         let has_conflict = status.is_conflicted();
         let is_modified = status.is_modified();
         let is_deleted = status.is_deleted();
-<<<<<<< HEAD
-        let is_renamed = status.is_renamed(); 
-=======
+        let is_renamed = status.is_renamed();
         let is_created = status.is_created();
->>>>>>> upstream/main
 
         let label_color = if status_style == StatusStyle::LabelColor {
             if has_conflict {
                 Color::VersionControlConflict
-<<<<<<< HEAD
-            } else if is_renamed || is_modified {
-=======
             } else if is_created {
                 Color::VersionControlAdded
-            } else if is_modified {
->>>>>>> upstream/main
+            } else if is_renamed || is_modified {
                 Color::VersionControlModified
             } else if is_deleted {
-                // We don't want a bunch of red labels in the list
                 Color::Disabled
             } else {
                 Color::VersionControlAdded
@@ -5010,15 +5005,15 @@ impl GitPanel {
             .map(|this| {
                 if tree_view {
                     this.pl(px(depth as f32 * TREE_INDENT)).child(
-                        self.entry_label(display_name, label_color)
+                        self.entry_label(file_name, label_color)
                             .when(status.is_deleted(), Label::strikethrough)
                             .truncate(),
                     )
                 } else {
                     this.child(self.path_formatted(
-                        entry.parent_dir(path_style),
+                        parent_dir,
                         path_color,
-                        display_name,
+                        file_name,
                         label_color,
                         path_style,
                         git_path_style,
@@ -5092,25 +5087,6 @@ impl GitPanel {
                             }),
                     ),
             )
-<<<<<<< HEAD
-            .child(git_status_icon(status))
-            .child(
-                h_flex()
-                    .items_center()
-                    .flex_1()
-                    .child(h_flex().items_center().flex_1().map(|this| {
-                        self.path_formatted(
-                            this,
-                            parent_dir,
-                            path_color,
-                            file_name,
-                            label_color,
-                            path_style,
-                            git_path_style,
-                            status.is_deleted(),
-                        )
-                    })),
-=======
             .on_click({
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.selected_entry = Some(ix);
@@ -5139,7 +5115,6 @@ impl GitPanel {
                     });
                     cx.stop_propagation();
                 },
->>>>>>> upstream/main
             )
             .into_any_element()
     }

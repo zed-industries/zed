@@ -1,10 +1,10 @@
-use crate::{repository::RepoPath, Oid};
-use anyhow::{anyhow, Result};
+use crate::{Oid, repository::RepoPath};
+use anyhow::{Result, anyhow};
 use collections::HashMap;
 use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use std::{str::FromStr, sync::Arc};
-use util::{rel_path::RelPath, ResultExt};
+use util::{ResultExt, rel_path::RelPath};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FileStatus {
