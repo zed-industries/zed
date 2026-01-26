@@ -31,7 +31,7 @@ pub use workspace::*;
 use collections::{HashMap, IndexMap};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings_macros::{with_fallible_options, MergeFrom};
+use settings_macros::{MergeFrom, with_fallible_options};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 pub use util::serde::default_true;
