@@ -48,13 +48,13 @@ pub async fn run_format_prompt(
     let snapshot = cx.background_spawn(snapshot_fut).await;
 
     match args.provider {
-        PredictionProvider::Teacher(version) | PredictionProvider::TeacherNonBatching(version) => {
+        PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_) => {
             step_progress.set_substatus("formatting teacher prompt");
 
             let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
                 cursor_point,
                 &snapshot,
-                edit_prediction::zeta2::max_editable_tokens(version),
+                edit_prediction::zeta2::max_editable_tokens(ZetaVersion::default()),
                 edit_prediction::zeta2::MAX_CONTEXT_TOKENS,
             );
             let editable_range = editable_range.to_offset(&snapshot);
