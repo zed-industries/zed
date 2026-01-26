@@ -3403,8 +3403,6 @@ mod tests {
             &mut cx,
         );
 
-        "---------------------";
-
         assert_split_content_with_widths(
             &editor,
             px(200.0),
