@@ -231,6 +231,7 @@ fn examples_from_response(
                 prompt: None,
                 predictions: Vec::new(),
                 score: Vec::new(),
+                qa: Vec::new(),
                 state: None,
             }),
             Err(error) => {
@@ -756,6 +757,7 @@ fn build_rejected_example(
         prompt: None,
         predictions: Vec::new(),
         score: Vec::new(),
+        qa: Vec::new(),
         state: None,
     }
 }

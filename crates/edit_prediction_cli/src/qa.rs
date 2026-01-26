@@ -5,20 +5,19 @@
 
 use crate::anthropic_client::AnthropicClient;
 use crate::example::Example;
-use crate::paths::CACHE_DIR;
+use crate::format_prompt::extract_cursor_excerpt_from_example;
+use crate::paths::LLM_CACHE_DB;
 use crate::word_diff::unified_to_word_diff;
 use anthropic::{Message, RequestContent, Role};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
-use std::sync::LazyLock;
 
 /// Model to use for QA evaluation.
 const MODEL: &str = "claude-sonnet-4-5";
 
-/// Path to the QA cache database.
-pub static QA_CACHE_DB: LazyLock<PathBuf> = LazyLock::new(|| CACHE_DIR.join("qa_cache.sqlite"));
+const PROMPT_TEMPLATE: &str = include_str!("prompts/qa.md");
 
 /// Arguments for the QA command.
 #[derive(Debug, Clone, clap::Args)]
@@ -64,6 +63,9 @@ pub fn build_prompt(example: &Example) -> Option<String> {
 
     let actual_patch_word_diff = unified_to_word_diff(actual_patch);
 
+    // Format cursor excerpt (reuse from format_prompt)
+    let cursor_excerpt = extract_cursor_excerpt_from_example(example)?;
+
     let mut edit_history = String::new();
     for event in &prompt_inputs.edit_history {
         match event.as_ref() {
@@ -83,49 +85,12 @@ pub fn build_prompt(example: &Example) -> Option<String> {
         }
     }
 
-    Some(format!(
-        r#"
-You are evaluating an edit prediction model for a code editor. The model observes a programmer's recent edit history and predicts what edit they will make next.
-
-All diffs are in the word-diff format.
-
-The model is instructed to:
-- Complete partially-applied refactoring or changes
-- Maintain consistency with established patterns and style
-- NOT delete or revert text that was just added (unless the user explicitly undid it themselves)
-
-## Edit History (chronological)
-```````
-{edit_history}
-```````
-
-## Predicted Next Edit
-```````
-{actual_patch_word_diff}
-```````
-
-## Evaluate
-
-1. **reverts_edits**: Does the prediction undo, or revert changes the user intentionally made in the **edit history**?
-
-2. **confidence**: How likely is the user to accept this suggestion?
-   - 1 = Definitely reject (wrong, nonsensical, or harmful)
-   - 2 = Probably reject (doesn't fit intent or pattern)
-   - 3 = Uncertain (plausible but not clearly correct)
-   - 4 = Probably accept (reasonable next step)
-   - 5 = Definitely accept (obvious continuation)
-
-Output JSON in this format:
-
-```
-{{
-    "reasoning": "your reasoning here",
-    "reverts_edits": true/false,
-    "confidence": 1-5
-}}
-```
-"#
-    ))
+    Some(
+        PROMPT_TEMPLATE
+            .replace("{edit_history}", &edit_history)
+            .replace("{cursor_excerpt}", &cursor_excerpt)
+            .replace("{actual_patch_word_diff}", &actual_patch_word_diff),
+    )
 }
 
 /// Extract a code block from a response.
@@ -191,7 +156,7 @@ pub async fn run_qa(
     let client = if args.no_batch {
         AnthropicClient::plain()?
     } else {
-        AnthropicClient::batch(&QA_CACHE_DB)?
+        AnthropicClient::batch(&LLM_CACHE_DB)?
     };
 
     eprintln!("Using model: {}, batching: {}", MODEL, !args.no_batch);
@@ -356,26 +321,22 @@ pub async fn run_qa(
             continue;
         }
 
-        let result = results_by_idx
-            .get(&idx)
-            .cloned()
-            .unwrap_or_else(|| QaResult {
-                reasoning: None,
-                reverts_edits: None,
-                confidence: None,
-                response: None,
-                error: Some("Result not found".to_string()),
-            });
+        let result = results_by_idx.get(&idx).cloned();
 
-        if result.reverts_edits == Some(true) {
+        if result.as_ref().and_then(|r| r.reverts_edits) == Some(true) {
             num_reverts_edits += 1;
         }
         num_total += 1;
 
-        // Add QA result to example and output
-        let mut example_json = serde_json::to_value(&example)?;
-        example_json["qa"] = serde_json::to_value(&result)?;
-        writeln!(writer, "{}", serde_json::to_string(&example_json)?)?;
+        // Populate QA results for each prediction (currently only first prediction is evaluated)
+        example.qa = example
+            .predictions
+            .iter()
+            .enumerate()
+            .map(|(i, _)| if i == 0 { result.clone() } else { None })
+            .collect();
+
+        writeln!(writer, "{}", serde_json::to_string(&example)?)?;
     }
 
     if let Some(path) = output_path {

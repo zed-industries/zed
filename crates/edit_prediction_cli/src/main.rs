@@ -14,6 +14,7 @@ mod progress;
 mod pull_examples;
 mod qa;
 mod reorder_patch;
+mod repair;
 mod retrieve_context;
 mod score;
 mod split_commit;
@@ -169,6 +170,8 @@ enum Command {
     ImportBatch(ImportBatchArgs),
     /// Assess the quality of predictions using LLM-as-a-judge
     Qa(qa::QaArgs),
+    /// Repair predictions that received poor QA scores by generating improved predictions
+    Repair(repair::RepairArgs),
 }
 
 impl Display for Command {
@@ -207,6 +210,9 @@ impl Display for Command {
             Command::Qa(_) => {
                 write!(f, "qa")
             }
+            Command::Repair(_) => {
+                write!(f, "repair")
+            }
         }
     }
 }
@@ -242,6 +248,7 @@ enum PredictionProvider {
     Zeta2(ZetaVersion),
     Teacher(ZetaVersion),
     TeacherNonBatching(ZetaVersion),
+    Repair,
 }
 
 impl Default for PredictionProvider {
@@ -261,6 +268,7 @@ impl std::fmt::Display for PredictionProvider {
             PredictionProvider::TeacherNonBatching(version) => {
                 write!(f, "teacher-non-batching:{version}")
             }
+            PredictionProvider::Repair => write!(f, "repair"),
         }
     }
 }
@@ -285,9 +293,10 @@ impl std::str::FromStr for PredictionProvider {
             "teacher-non-batching" | "teacher_non_batching" | "teachernonbatching" => {
                 Ok(PredictionProvider::TeacherNonBatching(version))
             }
+            "repair" => Ok(PredictionProvider::Repair),
             _ => {
                 anyhow::bail!(
-                    "unknown provider `{s}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher-non-batching\n\
+                    "unknown provider `{s}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher-non-batching, repair\n\
                  For zeta2, you can optionally specify a version like `zeta2:ordered` or `zeta2:V0113_Ordered`.\n\
                  Available zeta versions:\n{}",
                     ZetaVersion::options_as_string()
@@ -617,6 +626,34 @@ fn main() {
             });
             return;
         }
+        Command::Repair(repair_args) => {
+            // Read examples from input files
+            let mut examples = example::read_example_files(&args.inputs);
+
+            // Apply filters
+            if let Some(name_filter) = &args.name {
+                examples.retain(|e| e.spec.name.contains(name_filter));
+            }
+            if let Some(repo_filter) = &args.repo {
+                examples.retain(|e| e.spec.repository_url.contains(repo_filter));
+            }
+            if let Some(offset) = args.offset {
+                examples.splice(0..offset, []);
+            }
+            if let Some(limit) = args.limit {
+                examples.truncate(limit);
+            }
+
+            smol::block_on(async {
+                if let Err(e) =
+                    repair::run_repair(&mut examples, repair_args, output.as_ref()).await
+                {
+                    eprintln!("Error: {:?}", e);
+                    std::process::exit(1);
+                }
+            });
+            return;
+        }
         _ => {}
     }
 
@@ -784,7 +821,8 @@ fn main() {
                                         | Command::Split(_)
                                         | Command::FilterLanguages(_)
                                         | Command::ImportBatch(_)
-                                        | Command::Qa(_) => {
+                                        | Command::Qa(_)
+                                        | Command::Repair(_) => {
                                             unreachable!()
                                         }
                                     }
