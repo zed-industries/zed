@@ -662,20 +662,20 @@ fn build_rejected_example(
     let events: Vec<CapturedEvent> = input
         .events
         .iter()
-        .filter_map(|event| match event.as_ref() {
+        .map(|event| match event.as_ref() {
             zeta_prompt::Event::BufferChange {
                 path,
                 old_path,
                 diff,
                 predicted,
                 in_open_source_repo,
-            } => Some(CapturedEvent {
+            } => CapturedEvent {
                 path: path.clone(),
                 old_path: old_path.clone(),
                 diff: diff.clone(),
                 predicted: *predicted,
                 in_open_source_repo: *in_open_source_repo,
-            }),
+            },
         })
         .collect();
 

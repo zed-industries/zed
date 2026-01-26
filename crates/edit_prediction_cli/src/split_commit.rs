@@ -1395,7 +1395,6 @@ Date: Mon Jan 1 00:00:00 2024
             repository_url: "https://github.com/test/repo".to_string(),
             revision: "abc123~1".to_string(),
             edit_history: "patch1".to_string(),
-            // cursor_position: "file.rs:10:5".to_string(),
             cursor_path: Path::new("file.rs").into(),
             cursor_position: "some code<|user_cursor|>".to_string(),
             expected_patches: vec!["patch".to_string()],
@@ -1404,6 +1403,7 @@ Date: Mon Jan 1 00:00:00 2024
             uncommitted_diff: String::new(),
             rejected_patch: None,
             captured_prompt_input: None,
+            telemetry: None,
         };
 
         let json = serde_json::to_string(&case).unwrap();

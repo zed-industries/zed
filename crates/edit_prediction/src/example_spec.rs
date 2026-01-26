@@ -499,6 +499,7 @@ mod tests {
             expected_patches: Vec::new(),
             rejected_patch: None,
             captured_prompt_input: None,
+            telemetry: None,
         };
 
         // Cursor before `42`
@@ -633,6 +634,7 @@ mod tests {
             expected_patches: Vec::new(),
             rejected_patch: None,
             captured_prompt_input: None,
+            telemetry: None,
         };
 
         // Cursor before `42` using inline marker

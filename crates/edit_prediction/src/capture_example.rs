@@ -600,6 +600,7 @@ mod tests {
                     .to_string()
                 ),
                 captured_prompt_input: example.captured_prompt_input.clone(),
+                telemetry: None,
             }
         );
 
