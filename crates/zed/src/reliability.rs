@@ -19,7 +19,6 @@ use crate::STARTUP_TIME;
 const MAX_HANG_TRACES: usize = 3;
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
-    cleanup_old_hang_traces();
     monitor_hangs(cx);
 
     if client.telemetry().diagnostics_enabled() {
@@ -85,6 +84,8 @@ fn monitor_hangs(cx: &App) {
         .spawn({
             let background_executor = background_executor.clone();
             async move {
+                cleanup_old_hang_traces();
+
                 let mut hang_time = None;
 
                 let mut hanging = false;
