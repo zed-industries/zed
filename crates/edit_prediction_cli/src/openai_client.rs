@@ -2,7 +2,7 @@ use anyhow::Result;
 use http_client::HttpClient;
 use indoc::indoc;
 use open_ai::{
-    OPEN_AI_API_URL, MessageContent, Request as OpenAiRequest, RequestMessage,
+    MessageContent, OPEN_AI_API_URL, Request as OpenAiRequest, RequestMessage,
     Response as OpenAiResponse, batches, non_streaming_completion,
 };
 use reqwest_client::ReqwestClient;
@@ -111,8 +111,7 @@ impl BatchingOpenAiClient {
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY environment variable not set"))?;
 
-        let connection =
-            sqlez::connection::Connection::open_file(cache_path.to_str().unwrap());
+        let connection = sqlez::connection::Connection::open_file(cache_path.to_str().unwrap());
         let mut statement = sqlez::statement::Statement::prepare(
             &connection,
             indoc! {"
@@ -244,11 +243,7 @@ impl BatchingOpenAiClient {
             )
             .await
             .map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to download batch results for {}: {:?}",
-                    batch_id,
-                    e
-                )
+                anyhow::anyhow!("Failed to download batch results for {}: {:?}", batch_id, e)
             })?;
 
             let results = batches::parse_batch_output(&results_content)
@@ -337,8 +332,7 @@ impl BatchingOpenAiClient {
     async fn download_finished_batches(&self) -> Result<()> {
         let batch_ids: Vec<String> = {
             let connection = self.connection.lock().unwrap();
-            let q =
-                sql!(SELECT DISTINCT batch_id FROM openai_cache WHERE batch_id IS NOT NULL AND response IS NULL);
+            let q = sql!(SELECT DISTINCT batch_id FROM openai_cache WHERE batch_id IS NOT NULL AND response IS NULL);
             connection.select(q)?()?
         };
 
@@ -639,9 +633,10 @@ impl OpenAiClient {
         messages: Vec<RequestMessage>,
     ) -> Result<Option<OpenAiResponse>> {
         match self {
-            OpenAiClient::Plain(plain_client) => {
-                plain_client.generate(model, max_tokens, messages).await.map(Some)
-            }
+            OpenAiClient::Plain(plain_client) => plain_client
+                .generate(model, max_tokens, messages)
+                .await
+                .map(Some),
             OpenAiClient::Batch(batching_client) => {
                 batching_client.generate(model, max_tokens, messages).await
             }

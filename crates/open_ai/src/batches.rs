@@ -141,10 +141,8 @@ pub async fn upload_batch_file(
     body.extend_from_slice(b"batch\r\n");
     body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
     body.extend_from_slice(
-        format!(
-            "Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
-        )
-        .as_bytes(),
+        format!("Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n")
+            .as_bytes(),
     );
     body.extend_from_slice(b"Content-Type: application/jsonl\r\n\r\n");
     body.extend_from_slice(&content);
