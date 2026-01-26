@@ -52,7 +52,7 @@ jobs:
       shell: pwsh
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -77,7 +77,7 @@ jobs:
       shell: pwsh
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     timeout-minutes: 60
   bundle_linux_aarch64:
     needs:

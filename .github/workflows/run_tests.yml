@@ -92,7 +92,7 @@ jobs:
         config: ./typos.toml
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     timeout-minutes: 60
   clippy_windows:
     needs:
@@ -114,7 +114,7 @@ jobs:
       shell: pwsh
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     timeout-minutes: 60
   clippy_linux:
     needs:
@@ -149,7 +149,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     timeout-minutes: 60
   clippy_mac:
     needs:
@@ -171,7 +171,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     timeout-minutes: 60
   run_tests_windows:
     needs:
@@ -200,7 +200,7 @@ jobs:
       shell: pwsh
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -249,7 +249,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -283,7 +283,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -325,7 +325,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -368,7 +368,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -408,7 +408,7 @@ jobs:
         license-check: false
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     timeout-minutes: 60
   check_docs:
     needs:
@@ -464,7 +464,7 @@ jobs:
         jobSummary: false
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     timeout-minutes: 60
   check_licenses:
     needs:
@@ -488,7 +488,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
   check_scripts:
     needs:
     - orchestrate
@@ -521,7 +521,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     timeout-minutes: 60
   build_nix_linux_x86_64:
     needs:
@@ -633,7 +633,7 @@ jobs:
         against: https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     timeout-minutes: 60
   tests_pass:
     needs:

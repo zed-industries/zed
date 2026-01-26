@@ -34,7 +34,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -81,7 +81,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -113,7 +113,7 @@ jobs:
       shell: pwsh
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -138,7 +138,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     timeout-minutes: 60
   clippy_linux:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -171,7 +171,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     timeout-minutes: 60
   clippy_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -191,7 +191,7 @@ jobs:
       shell: pwsh
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     timeout-minutes: 60
   check_scripts:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -223,7 +223,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     - name: Cancel workflow on failure
       if: failure()
-      uses: styfle/cancel-workflow-action@0.12.1
+      uses: andymckay/cancel-action@0.5
     timeout-minutes: 60
   create_draft_release:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')

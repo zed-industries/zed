@@ -114,7 +114,7 @@ pub fn clippy(platform: Platform) -> Step<Run> {
 
 pub fn cancel_workflow_on_failure() -> Step<Use> {
     Step::new("Cancel workflow on failure")
-        .uses("styfle", "cancel-workflow-action", "0.12.1")
+        .uses("andymckay", "cancel-action", "0.5")
         .if_condition(Expression::new("failure()"))
 }
 
