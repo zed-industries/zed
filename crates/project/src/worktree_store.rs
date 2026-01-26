@@ -70,6 +70,8 @@ impl WorktreeStore {
         client.add_entity_request_handler(Self::handle_create_project_entry);
         client.add_entity_request_handler(Self::handle_copy_project_entry);
         client.add_entity_request_handler(Self::handle_delete_project_entry);
+        client.add_entity_request_handler(Self::handle_trash_project_entry);
+        client.add_entity_request_handler(Self::handle_restore_project_entry);
         client.add_entity_request_handler(Self::handle_expand_project_entry);
         client.add_entity_request_handler(Self::handle_expand_all_for_project_entry);
     }
@@ -995,7 +997,7 @@ impl WorktreeStore {
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::DeleteProjectEntry>,
         mut cx: AsyncApp,
-    ) -> Result<proto::ProjectEntryResponse> {
+    ) -> Result<proto::DeleteProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this.update(&mut cx, |this, cx| {
             let Some((_, project_id)) = this.downstream_client else {
@@ -1011,6 +1013,41 @@ impl WorktreeStore {
                 .context("worktree not found")
         })?;
         Worktree::handle_delete_entry(worktree, envelope.payload, cx).await
+    }
+
+    pub async fn handle_trash_project_entry(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::TrashProjectEntry>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::TrashProjectEntryResponse> {
+        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let worktree = this.update(&mut cx, |this, cx| {
+            let Some((_, project_id)) = this.downstream_client else {
+                bail!("no downstream client")
+            };
+            let Some(entry) = this.entry_for_id(entry_id, cx) else {
+                bail!("no entry")
+            };
+            if entry.is_private && project_id != REMOTE_SERVER_PROJECT_ID {
+                bail!("entry is private")
+            }
+            this.worktree_for_entry(entry_id, cx)
+                .context("worktree not found")
+        })?;
+        Worktree::handle_trash_entry(worktree, envelope.payload, cx).await
+    }
+
+    pub async fn handle_restore_project_entry(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RestoreProjectEntry>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let worktree = this.update(&mut cx, |this, cx| {
+            this.worktree_for_id(worktree_id, cx)
+                .context("worktree not found")
+        })?;
+        Worktree::handle_restore_entry(worktree, envelope.payload, cx).await
     }
 
     pub async fn handle_rename_project_entry(

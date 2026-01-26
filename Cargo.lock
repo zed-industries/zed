@@ -6503,10 +6503,8 @@ name = "fs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ashpd",
  "async-tar",
  "async-trait",
- "cocoa 0.26.0",
  "collections",
  "fs",
  "fsevent",
@@ -6518,7 +6516,6 @@ dependencies = [
  "libc",
  "log",
  "notify 8.2.0",
- "objc",
  "parking_lot",
  "paths",
  "proto",
@@ -6529,7 +6526,9 @@ dependencies = [
  "tempfile",
  "text",
  "time",
+ "trash",
  "util",
+ "uuid",
  "windows 0.61.3",
 ]
 
@@ -17619,6 +17618,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "trash"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "objc2",
+ "objc2-foundation",
+ "once_cell",
+ "percent-encoding",
+ "scopeguard",
+ "urlencoding",
+ "windows 0.61.3",
+]
+
+[[package]]
 name = "tree-sitter"
 version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20513,6 +20527,7 @@ dependencies = [
  "sum_tree",
  "text",
  "tracing",
+ "trash",
  "util",
  "worktree",
  "zlog",

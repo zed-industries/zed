@@ -80,6 +80,10 @@ message Envelope {
         RenameProjectEntry rename_project_entry = 47;
         CopyProjectEntry copy_project_entry = 48;
         DeleteProjectEntry delete_project_entry = 49;
+        DeleteProjectEntryResponse delete_project_entry_response = 414;
+        RestoreProjectEntry restore_project_entry = 413;
+        TrashProjectEntry trash_project_entry = 415;
+        TrashProjectEntryResponse trash_project_entry_response = 416;
         ProjectEntryResponse project_entry_response = 50;
         ExpandProjectEntry expand_project_entry = 51;
         ExpandProjectEntryResponse expand_project_entry_response = 52;
@@ -455,8 +459,9 @@ message Envelope {
         FindSearchCandidatesChunk find_search_candidates_chunk = 409;
         FindSearchCandidatesCancelled find_search_candidates_cancelled = 410;
         GetContextServerCommand get_context_server_command = 411;
-        ContextServerCommand context_server_command = 412; // current max
+        ContextServerCommand context_server_command = 412;
     }
+    // current max field: 416
 
     reserved 87 to 88;
     reserved 90;

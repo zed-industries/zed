@@ -1,0 +1,30 @@
+[package]
+name = "trash"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/trash.rs"
+
+[dependencies]
+anyhow.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
+percent-encoding = "2.3.1"
+
+[target.'cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))'.dependencies]
+libc = "0.2.149"
+scopeguard = "1.2.0"
+urlencoding = "2.1.3"
+once_cell = "1.18.0"
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+scopeguard = "1.2.0"

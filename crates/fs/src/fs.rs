@@ -9,8 +9,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use anyhow::{Context as _, Result, anyhow};
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-use ashpd::desktop::trash;
 use futures::stream::iter;
 use gpui::App;
 use gpui::BackgroundExecutor;
@@ -105,13 +103,10 @@ pub trait Fs: Send + Sync {
     async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()>;
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.remove_dir(path, options).await
-    }
+    async fn trash_dir(&self, path: &Path) -> Result<trash::TrashItem>;
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
-    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.remove_file(path, options).await
-    }
+    async fn trash_file(&self, path: &Path) -> Result<trash::TrashItem>;
+    async fn restore_from_trash(&self, item: &trash::TrashItem) -> Result<()>;
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>>;
     async fn load(&self, path: &Path) -> Result<String> {
@@ -646,93 +641,19 @@ impl Fs for RealFs {
         }
     }
 
-    #[cfg(target_os = "macos")]
-    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        use cocoa::{
-            base::{id, nil},
-            foundation::{NSAutoreleasePool, NSString},
-        };
-        use objc::{class, msg_send, sel, sel_impl};
-
-        unsafe {
-            /// Allow NSString::alloc use here because it sets autorelease
-            #[allow(clippy::disallowed_methods)]
-            unsafe fn ns_string(string: &str) -> id {
-                unsafe { NSString::alloc(nil).init_str(string).autorelease() }
-            }
-
-            let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(path.to_string_lossy().as_ref())];
-            let array: id = msg_send![class!(NSArray), arrayWithObject: url];
-            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-
-            let _: id = msg_send![workspace, recycleURLs: array completionHandler: nil];
-        }
-        Ok(())
+    async fn trash_file(&self, path: &Path) -> Result<trash::TrashItem> {
+        let path = path.to_path_buf();
+        smol::unblock(move || trash::trash_file(&path)).await
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        if let Ok(Some(metadata)) = self.metadata(path).await
-            && metadata.is_symlink
-        {
-            // TODO: trash_file does not support trashing symlinks yet - https://github.com/bilelmoussaoui/ashpd/issues/255
-            return self.remove_file(path, RemoveOptions::default()).await;
-        }
-        let file = smol::fs::File::open(path).await?;
-        match trash::trash_file(&file.as_fd()).await {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                log::error!("Failed to trash file: {}", err);
-                // Trashing files can fail if you don't have a trashing dbus service configured.
-                // In that case, delete the file directly instead.
-                return self.remove_file(path, RemoveOptions::default()).await;
-            }
-        }
+    async fn trash_dir(&self, path: &Path) -> Result<trash::TrashItem> {
+        let path = path.to_path_buf();
+        smol::unblock(move || trash::trash_dir(&path)).await
     }
 
-    #[cfg(target_os = "windows")]
-    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        use util::paths::SanitizedPath;
-        use windows::{
-            Storage::{StorageDeleteOption, StorageFile},
-            core::HSTRING,
-        };
-        // todo(windows)
-        // When new version of `windows-rs` release, make this operation `async`
-        let path = path.canonicalize()?;
-        let path = SanitizedPath::new(&path);
-        let path_string = path.to_string();
-        let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path_string))?.get()?;
-        file.DeleteAsync(StorageDeleteOption::Default)?.get()?;
-        Ok(())
-    }
-
-    #[cfg(target_os = "macos")]
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.trash_file(path, options).await
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.trash_file(path, options).await
-    }
-
-    #[cfg(target_os = "windows")]
-    async fn trash_dir(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        use util::paths::SanitizedPath;
-        use windows::{
-            Storage::{StorageDeleteOption, StorageFolder},
-            core::HSTRING,
-        };
-
-        // todo(windows)
-        // When new version of `windows-rs` release, make this operation `async`
-        let path = path.canonicalize()?;
-        let path = SanitizedPath::new(&path);
-        let path_string = path.to_string();
-        let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path_string))?.get()?;
-        folder.DeleteAsync(StorageDeleteOption::Default)?.get()?;
-        Ok(())
+    async fn restore_from_trash(&self, item: &trash::TrashItem) -> Result<()> {
+        let item = item.clone();
+        smol::unblock(move || trash::restore(&item)).await
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
@@ -2554,6 +2475,36 @@ impl Fs for FakeFs {
         Ok(())
     }
 
+    async fn trash_dir(&self, path: &Path) -> Result<trash::TrashItem> {
+        self.simulate_random_delay().await;
+
+        let original_path = normalize_path(path);
+        self.state.lock().entry(&original_path)?;
+
+        let trash_dir = PathBuf::from("/.trash");
+        if !self.is_dir(&trash_dir).await {
+            self.create_dir(&trash_dir).await?;
+        }
+
+        let path_in_trash = trash_dir.join(uuid::Uuid::new_v4().to_string());
+        self.rename(
+            &original_path,
+            &path_in_trash,
+            RenameOptions {
+                overwrite: false,
+                ignore_if_exists: false,
+                create_parents: false,
+            },
+        )
+        .await?;
+
+        Ok(trash::TrashItem {
+            original_path,
+            path_in_trash,
+            is_dir: true,
+        })
+    }
+
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         self.simulate_random_delay().await;
 
@@ -2578,6 +2529,49 @@ impl Fs for FakeFs {
         }
         state.emit_event([(path, Some(PathEventKind::Removed))]);
         Ok(())
+    }
+
+    async fn trash_file(&self, path: &Path) -> Result<trash::TrashItem> {
+        self.simulate_random_delay().await;
+
+        let original_path = normalize_path(path);
+        self.state.lock().entry(&original_path)?;
+
+        let trash_dir = PathBuf::from("/.trash");
+        if !self.is_dir(&trash_dir).await {
+            self.create_dir(&trash_dir).await?;
+        }
+
+        let path_in_trash = trash_dir.join(uuid::Uuid::new_v4().to_string());
+        self.rename(
+            &original_path,
+            &path_in_trash,
+            RenameOptions {
+                overwrite: false,
+                ignore_if_exists: false,
+                create_parents: false,
+            },
+        )
+        .await?;
+
+        Ok(trash::TrashItem {
+            original_path,
+            path_in_trash,
+            is_dir: false,
+        })
+    }
+
+    async fn restore_from_trash(&self, item: &trash::TrashItem) -> Result<()> {
+        self.rename(
+            &item.path_in_trash,
+            &item.original_path,
+            RenameOptions {
+                overwrite: false,
+                ignore_if_exists: false,
+                create_parents: true,
+            },
+        )
+        .await
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {

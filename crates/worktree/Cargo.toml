@@ -56,6 +56,7 @@ smallvec.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true
+trash.workspace = true
 tracing.workspace = true
 util.workspace = true
 ztracing.workspace = true
