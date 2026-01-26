@@ -645,7 +645,9 @@ fn main() {
             }
 
             smol::block_on(async {
-                if let Err(e) = repair::run_repair(&mut examples, repair_args, output.as_ref()).await {
+                if let Err(e) =
+                    repair::run_repair(&mut examples, repair_args, output.as_ref()).await
+                {
                     eprintln!("Error: {:?}", e);
                     std::process::exit(1);
                 }

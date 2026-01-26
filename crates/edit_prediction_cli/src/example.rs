@@ -1,6 +1,6 @@
-use crate::qa::QaResult;
 use crate::PredictionProvider;
 use crate::paths::WORKTREES_DIR;
+use crate::qa::QaResult;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use edit_prediction::example_spec::ExampleSpec;
