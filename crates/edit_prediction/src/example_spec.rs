@@ -30,6 +30,18 @@ pub struct ExampleSpec {
     pub rejected_patch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub captured_prompt_input: Option<CapturedPromptInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry: Option<TelemetrySource>,
+}
+
+/// Metadata for examples sourced from production telemetry (rejected predictions).
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct TelemetrySource {
+    pub request_id: String,
+    pub device_id: String,
+    pub time: String,
+    pub rejection_reason: String,
+    pub was_shown: bool,
 }
 
 /// All data needed to run format_prompt without loading the project.
@@ -239,6 +251,7 @@ impl ExampleSpec {
             expected_patches: Vec::new(),
             rejected_patch: None,
             captured_prompt_input: None,
+            telemetry: None,
         };
 
         if let Some(rest) = input.strip_prefix("+++\n")
@@ -486,6 +499,7 @@ mod tests {
             expected_patches: Vec::new(),
             rejected_patch: None,
             captured_prompt_input: None,
+            telemetry: None,
         };
 
         // Cursor before `42`
@@ -620,6 +634,7 @@ mod tests {
             expected_patches: Vec::new(),
             rejected_patch: None,
             captured_prompt_input: None,
+            telemetry: None,
         };
 
         // Cursor before `42` using inline marker
