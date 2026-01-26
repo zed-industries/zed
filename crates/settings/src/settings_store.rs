@@ -33,8 +33,8 @@ use crate::editorconfig_store::EditorconfigStore;
 
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, LspSettings, LspSettingsMap, ThemeName, UserSettingsContentExt,
-    VsCodeSettings, WorktreeId,
+    LanguageToSettingsMap, LspSettings, LspSettingsMap, SemanticTokenRules, ThemeName,
+    UserSettingsContentExt, VsCodeSettings, WorktreeId,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, RootUserSettings, SettingsContent,
         UserSettingsContent, merge_from::MergeFrom,
@@ -272,11 +272,32 @@ pub struct SettingsJsonSchemaParams<'a> {
 
 impl SettingsStore {
     pub fn new(cx: &mut App, default_settings: &str) -> Self {
+        Self::new_with_semantic_tokens(cx, default_settings, &crate::default_semantic_token_rules())
+    }
+
+    pub fn new_with_semantic_tokens(
+        cx: &mut App,
+        default_settings: &str,
+        default_semantic_tokens: &str,
+    ) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
-        let default_settings: Rc<SettingsContent> =
-            SettingsContent::parse_json_with_comments(default_settings)
-                .unwrap()
-                .into();
+        let mut default_settings: SettingsContent =
+            SettingsContent::parse_json_with_comments(default_settings).unwrap();
+
+        // Merge default semantic token rules from the separate file
+        if let Ok(semantic_token_rules) =
+            crate::parse_json_with_comments::<SemanticTokenRules>(default_semantic_tokens)
+        {
+            let global_lsp = default_settings
+                .global_lsp_settings
+                .get_or_insert_with(Default::default);
+            let existing_rules = global_lsp
+                .semantic_token_rules
+                .get_or_insert_with(Default::default);
+            existing_rules.rules.extend(semantic_token_rules.rules);
+        }
+
+        let default_settings: Rc<SettingsContent> = default_settings.into();
         let mut this = Self {
             setting_values: Default::default(),
             default_settings: default_settings.clone(),

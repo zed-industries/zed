@@ -253,6 +253,12 @@ pub fn debug_scenarios_file() -> &'static PathBuf {
     DEBUG_SCENARIOS_FILE.get_or_init(|| config_dir().join("debug.json"))
 }
 
+/// Returns the path to the `semantic_token_rules.json` file.
+pub fn semantic_token_rules_file() -> &'static PathBuf {
+    static SEMANTIC_TOKEN_RULES_FILE: OnceLock<PathBuf> = OnceLock::new();
+    SEMANTIC_TOKEN_RULES_FILE.get_or_init(|| config_dir().join("semantic_token_rules.json"))
+}
+
 /// Returns the path to the extensions directory.
 ///
 /// This is where installed extensions are stored.

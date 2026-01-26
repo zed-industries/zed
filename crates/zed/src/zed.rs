@@ -123,6 +123,8 @@ actions!(
         OpenTasks,
         /// Opens debug tasks configuration.
         OpenDebugTasks,
+        /// Opens semantic token rules configuration.
+        OpenSemanticTokenRules,
         /// Resets the application database.
         ResetDatabase,
         /// Shows all hidden windows.
@@ -237,6 +239,16 @@ pub fn init(cx: &mut App) {
             open_settings_file(
                 paths::debug_scenarios_file(),
                 || settings::initial_debug_tasks_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    })
+    .on_action(|_: &OpenSemanticTokenRules, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::semantic_token_rules_file(),
+                || settings::default_semantic_token_rules().as_ref().into(),
                 window,
                 cx,
             );

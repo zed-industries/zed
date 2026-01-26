@@ -141,6 +141,10 @@ pub fn default_settings() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/default.json")
 }
 
+pub fn default_semantic_token_rules() -> Cow<'static, str> {
+    asset_str::<SettingsAssets>("settings/default_semantic_token_rules.json")
+}
+
 #[cfg(target_os = "macos")]
 pub const DEFAULT_KEYMAP_PATH: &str = "keymaps/default-macos.json";
 
