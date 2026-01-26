@@ -1,3 +1,5 @@
+pub mod responses;
+
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
@@ -81,6 +83,8 @@ pub enum Model {
     O4Mini,
     #[serde(rename = "gpt-5")]
     Five,
+    #[serde(rename = "gpt-5-codex")]
+    FiveCodex,
     #[serde(rename = "gpt-5-mini")]
     FiveMini,
     #[serde(rename = "gpt-5-nano")]
@@ -89,6 +93,8 @@ pub enum Model {
     FivePointOne,
     #[serde(rename = "gpt-5.2")]
     FivePointTwo,
+    #[serde(rename = "gpt-5.2-codex")]
+    FivePointTwoCodex,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -98,7 +104,13 @@ pub enum Model {
         max_output_tokens: Option<u64>,
         max_completion_tokens: Option<u64>,
         reasoning_effort: Option<ReasoningEffort>,
+        #[serde(default = "default_supports_chat_completions")]
+        supports_chat_completions: bool,
     },
+}
+
+const fn default_supports_chat_completions() -> bool {
+    true
 }
 
 impl Model {
@@ -122,10 +134,12 @@ impl Model {
             "o3" => Ok(Self::O3),
             "o4-mini" => Ok(Self::O4Mini),
             "gpt-5" => Ok(Self::Five),
+            "gpt-5-codex" => Ok(Self::FiveCodex),
             "gpt-5-mini" => Ok(Self::FiveMini),
             "gpt-5-nano" => Ok(Self::FiveNano),
             "gpt-5.1" => Ok(Self::FivePointOne),
             "gpt-5.2" => Ok(Self::FivePointTwo),
+            "gpt-5.2-codex" => Ok(Self::FivePointTwoCodex),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -145,10 +159,12 @@ impl Model {
             Self::O3 => "o3",
             Self::O4Mini => "o4-mini",
             Self::Five => "gpt-5",
+            Self::FiveCodex => "gpt-5-codex",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
             Self::FivePointOne => "gpt-5.1",
             Self::FivePointTwo => "gpt-5.2",
+            Self::FivePointTwoCodex => "gpt-5.2-codex",
             Self::Custom { name, .. } => name,
         }
     }
@@ -168,10 +184,12 @@ impl Model {
             Self::O3 => "o3",
             Self::O4Mini => "o4-mini",
             Self::Five => "gpt-5",
+            Self::FiveCodex => "gpt-5-codex",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
             Self::FivePointOne => "gpt-5.1",
             Self::FivePointTwo => "gpt-5.2",
+            Self::FivePointTwoCodex => "gpt-5.2-codex",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -193,10 +211,12 @@ impl Model {
             Self::O3 => 200_000,
             Self::O4Mini => 200_000,
             Self::Five => 272_000,
+            Self::FiveCodex => 272_000,
             Self::FiveMini => 272_000,
             Self::FiveNano => 272_000,
             Self::FivePointOne => 400_000,
             Self::FivePointTwo => 400_000,
+            Self::FivePointTwoCodex => 400_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -219,10 +239,12 @@ impl Model {
             Self::O3 => Some(100_000),
             Self::O4Mini => Some(100_000),
             Self::Five => Some(128_000),
+            Self::FiveCodex => Some(128_000),
             Self::FiveMini => Some(128_000),
             Self::FiveNano => Some(128_000),
             Self::FivePointOne => Some(128_000),
             Self::FivePointTwo => Some(128_000),
+            Self::FivePointTwoCodex => Some(128_000),
         }
     }
 
@@ -232,6 +254,17 @@ impl Model {
                 reasoning_effort, ..
             } => reasoning_effort.to_owned(),
             _ => None,
+        }
+    }
+
+    pub fn supports_chat_completions(&self) -> bool {
+        match self {
+            Self::Custom {
+                supports_chat_completions,
+                ..
+            } => *supports_chat_completions,
+            Self::FiveCodex | Self::FivePointTwoCodex => false,
+            _ => true,
         }
     }
 
@@ -249,9 +282,11 @@ impl Model {
             | Self::FourPointOneMini
             | Self::FourPointOneNano
             | Self::Five
+            | Self::FiveCodex
             | Self::FiveMini
             | Self::FivePointOne
             | Self::FivePointTwo
+            | Self::FivePointTwoCodex
             | Self::FiveNano => true,
             Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini | Model::Custom { .. } => false,
         }
@@ -428,6 +463,8 @@ pub struct ResponseMessageDelta {
     pub content: Option<String>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
+    #[serde(default, skip_serializing_if = "is_none_or_empty")]
+    pub reasoning_content: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

@@ -22,9 +22,7 @@ use std::{
 };
 use uuid::Uuid;
 
-use crate::Session;
-
-use super::RunningKernel;
+use super::{KernelSession, RunningKernel};
 
 #[derive(Debug, Clone)]
 pub struct LocalKernelSpecification {
@@ -105,13 +103,13 @@ impl Debug for NativeRunningKernel {
 }
 
 impl NativeRunningKernel {
-    pub fn new(
+    pub fn new<S: KernelSession + 'static>(
         kernel_specification: LocalKernelSpecification,
         entity_id: EntityId,
         working_directory: PathBuf,
         fs: Arc<dyn Fs>,
         // todo: convert to weak view
-        session: Entity<Session>,
+        session: Entity<S>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
@@ -294,15 +292,13 @@ impl NativeRunningKernel {
                         if let Err(err) = result {
                             log::error!("kernel: handling failed for {name}: {err:?}");
 
-                            session
-                                .update(cx, |session, cx| {
-                                    session.kernel_errored(
-                                        format!("handling failed for {name}: {err}"),
-                                        cx,
-                                    );
-                                    cx.notify();
-                                })
-                                .ok();
+                            session.update(cx, |session, cx| {
+                                session.kernel_errored(
+                                    format!("handling failed for {name}: {err}"),
+                                    cx,
+                                );
+                                cx.notify();
+                            });
                         }
                     }
                 }
@@ -328,13 +324,11 @@ impl NativeRunningKernel {
 
                 log::error!("{}", error_message);
 
-                session
-                    .update(cx, |session, cx| {
-                        session.kernel_errored(error_message, cx);
+                session.update(cx, |session, cx| {
+                    session.kernel_errored(error_message, cx);
 
-                        cx.notify();
-                    })
-                    .ok();
+                    cx.notify();
+                });
             });
 
             anyhow::Ok(Box::new(Self {

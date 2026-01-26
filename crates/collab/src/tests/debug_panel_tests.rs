@@ -933,8 +933,8 @@ async fn test_updated_breakpoints_send_to_dap(
         .unwrap();
 
     editor_b.update_in(remote_cx, |editor, window, cx| {
-        editor.move_down(&editor::actions::MoveDown, window, cx);
-        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
         editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     });
 
@@ -972,8 +972,8 @@ async fn test_updated_breakpoints_send_to_dap(
 
     // remove the breakpoint that client B added
     editor_a.update_in(host_cx, |editor, window, cx| {
-        editor.move_down(&editor::actions::MoveDown, window, cx);
-        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
+        editor.move_down(&zed_actions::editor::MoveDown, window, cx);
         editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     });
 
@@ -1029,7 +1029,7 @@ async fn test_updated_breakpoints_send_to_dap(
     // Add our own breakpoint now
     editor_a.update_in(host_cx, |editor, window, cx| {
         editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
-        editor.move_up(&editor::actions::MoveUp, window, cx);
+        editor.move_up(&zed_actions::editor::MoveUp, window, cx);
         editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     });
 
@@ -1751,9 +1751,9 @@ async fn test_ignore_breakpoints(
     //     .unwrap();
 
     // local_editor.update_in(host_cx, |editor, window, cx| {
-    //     editor.move_down(&editor::actions::MoveDown, window, cx);
+    //     editor.move_down(&zed_actions::editor::MoveDown, window, cx);
     //     editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx); // Line 2
-    //     editor.move_down(&editor::actions::MoveDown, window, cx);
+    //     editor.move_down(&zed_actions::editor::MoveDown, window, cx);
     //     editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     //     // Line 3
     // });

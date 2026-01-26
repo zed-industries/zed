@@ -89,7 +89,7 @@ impl SearchQuery {
     /// Create a text query
     ///
     /// If `match_full_paths` is true, include/exclude patterns will always be matched against fully qualified project paths beginning with a project root.
-    /// If `match_full_paths` is false, patterns will be matched against full paths only when the project has multiple roots.
+    /// If `match_full_paths` is false, patterns will be matched against worktree-relative paths.
     pub fn text(
         query: impl ToString,
         whole_word: bool,
@@ -180,6 +180,10 @@ impl SearchQuery {
         }
 
         let multiline = query.contains('\n') || query.contains("\\n");
+        if multiline {
+            query.insert_str(0, "(?m)");
+        }
+
         let regex = RegexBuilder::new(&query)
             .case_insensitive(!case_sensitive)
             .build()?;
@@ -286,7 +290,7 @@ impl SearchQuery {
                 message.include_ignored,
                 PathMatcher::new(files_to_include, path_style)?,
                 PathMatcher::new(files_to_exclude, path_style)?,
-                false,
+                message.match_full_paths,
                 None, // search opened only don't need search remote
             )
         }
@@ -326,39 +330,65 @@ impl SearchQuery {
         }
     }
 
-    pub(crate) fn detect(
+    pub(crate) async fn detect(
         &self,
         mut reader: BufReader<Box<dyn Read + Send + Sync>>,
     ) -> Result<bool> {
+        let query_str = self.as_str();
+        let needle_len = query_str.len();
+        if needle_len == 0 {
+            return Ok(false);
+        }
         if self.as_str().is_empty() {
             return Ok(false);
         }
 
+        let mut text = String::new();
+        let mut bytes_read = 0;
+        // Yield from this function every 128 bytes scanned.
+        const YIELD_THRESHOLD: usize = 128;
         match self {
             Self::Text { search, .. } => {
-                let mat = search.stream_find_iter(reader).next();
-                match mat {
-                    Some(Ok(_)) => Ok(true),
-                    Some(Err(err)) => Err(err.into()),
-                    None => Ok(false),
+                if query_str.contains('\n') {
+                    reader.read_to_string(&mut text)?;
+                    Ok(search.is_match(&text))
+                } else {
+                    // Yield from this function every 128 bytes scanned.
+                    const YIELD_THRESHOLD: usize = 128;
+                    while reader.read_line(&mut text)? > 0 {
+                        if search.is_match(&text) {
+                            return Ok(true);
+                        }
+                        bytes_read += text.len();
+                        if bytes_read >= YIELD_THRESHOLD {
+                            bytes_read = 0;
+                            smol::future::yield_now().await;
+                        }
+                        text.clear();
+                    }
+                    Ok(false)
                 }
             }
             Self::Regex {
                 regex, multiline, ..
             } => {
                 if *multiline {
-                    let mut text = String::new();
                     if let Err(err) = reader.read_to_string(&mut text) {
                         Err(err.into())
                     } else {
-                        Ok(regex.find(&text)?.is_some())
+                        Ok(regex.is_match(&text)?)
                     }
                 } else {
-                    for line in reader.lines() {
-                        let line = line?;
-                        if regex.find(&line)?.is_some() {
+                    while reader.read_line(&mut text)? > 0 {
+                        if regex.is_match(&text)? {
                             return Ok(true);
                         }
+                        bytes_read += text.len();
+                        if bytes_read >= YIELD_THRESHOLD {
+                            bytes_read = 0;
+                            smol::future::yield_now().await;
+                        }
+                        text.clear();
                     }
                     Ok(false)
                 }
@@ -595,138 +625,5 @@ impl SearchQuery {
             } => Some(*one_match_per_line),
             Self::Text { .. } => None,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn path_matcher_creation_for_valid_paths() {
-        for valid_path in [
-            "file",
-            "Cargo.toml",
-            ".DS_Store",
-            "~/dir/another_dir/",
-            "./dir/file",
-            "dir/[a-z].txt",
-        ] {
-            let path_matcher = PathMatcher::new(&[valid_path.to_owned()], PathStyle::local())
-                .unwrap_or_else(|e| {
-                    panic!("Valid path {valid_path} should be accepted, but got: {e}")
-                });
-            assert!(
-                path_matcher
-                    .is_match(&RelPath::new(valid_path.as_ref(), PathStyle::local()).unwrap()),
-                "Path matcher for valid path {valid_path} should match itself"
-            )
-        }
-    }
-
-    #[test]
-    fn path_matcher_creation_for_globs() {
-        for invalid_glob in ["dir/[].txt", "dir/[a-z.txt", "dir/{file"] {
-            match PathMatcher::new(&[invalid_glob.to_owned()], PathStyle::local()) {
-                Ok(_) => panic!("Invalid glob {invalid_glob} should not be accepted"),
-                Err(_expected) => {}
-            }
-        }
-
-        for valid_glob in [
-            "dir/?ile",
-            "dir/*.txt",
-            "dir/**/file",
-            "dir/[a-z].txt",
-            "{dir,file}",
-        ] {
-            match PathMatcher::new(&[valid_glob.to_owned()], PathStyle::local()) {
-                Ok(_expected) => {}
-                Err(e) => panic!("Valid glob should be accepted, but got: {e}"),
-            }
-        }
-    }
-
-    #[test]
-    fn test_case_sensitive_pattern_items() {
-        let case_sensitive = false;
-        let search_query = SearchQuery::regex(
-            "test\\C",
-            false,
-            case_sensitive,
-            false,
-            false,
-            Default::default(),
-            Default::default(),
-            false,
-            None,
-        )
-        .expect("Should be able to create a regex SearchQuery");
-
-        assert_eq!(
-            search_query.case_sensitive(),
-            true,
-            "Case sensitivity should be enabled when \\C pattern item is present in the query."
-        );
-
-        let case_sensitive = true;
-        let search_query = SearchQuery::regex(
-            "test\\c",
-            true,
-            case_sensitive,
-            false,
-            false,
-            Default::default(),
-            Default::default(),
-            false,
-            None,
-        )
-        .expect("Should be able to create a regex SearchQuery");
-
-        assert_eq!(
-            search_query.case_sensitive(),
-            false,
-            "Case sensitivity should be disabled when \\c pattern item is present, even if initially set to true."
-        );
-
-        let case_sensitive = false;
-        let search_query = SearchQuery::regex(
-            "test\\c\\C",
-            false,
-            case_sensitive,
-            false,
-            false,
-            Default::default(),
-            Default::default(),
-            false,
-            None,
-        )
-        .expect("Should be able to create a regex SearchQuery");
-
-        assert_eq!(
-            search_query.case_sensitive(),
-            true,
-            "Case sensitivity should be enabled when \\C is the last pattern item, even after a \\c."
-        );
-
-        let case_sensitive = false;
-        let search_query = SearchQuery::regex(
-            "tests\\\\C",
-            false,
-            case_sensitive,
-            false,
-            false,
-            Default::default(),
-            Default::default(),
-            false,
-            None,
-        )
-        .expect("Should be able to create a regex SearchQuery");
-
-        assert_eq!(
-            search_query.case_sensitive(),
-            false,
-            "Case sensitivity should not be enabled when \\C pattern item is preceded by a backslash."
-        );
     }
 }

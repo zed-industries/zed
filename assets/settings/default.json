@@ -169,6 +169,15 @@
   //  2. Always quit the application
   //         "on_last_window_closed": "quit_app",
   "on_last_window_closed": "platform_default",
+  // The text rendering mode to use.
+  // May take 3 values:
+  //  1. Use platform default behavior:
+  //         "text_rendering_mode": "platform_default"
+  //  2. Use subpixel (ClearType-style) text rendering:
+  //         "text_rendering_mode": "subpixel"
+  //  3. Use grayscale text rendering:
+  //         "text_rendering_mode": "grayscale"
+  "text_rendering_mode": "platform_default",
   // Whether to show padding for zoomed panels.
   // When enabled, zoomed center panels (e.g. code editor) will have padding all around,
   // while zoomed bottom/left/right panels will have padding to the top/right/left (respectively).
@@ -284,6 +293,8 @@
   // 4. Never show the scrollbar:
   //    "never" (default)
   "completion_menu_scrollbar": "never",
+  // Whether to align detail text in code completions context menus left or right.
+  "completion_detail_alignment": "left",
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
   // Whether to show the signature help after completion or a bracket pair inserted.
@@ -902,8 +913,6 @@
     "inline_assistant_use_streaming_tools": true,
     // Whether the agent is enabled.
     "enabled": true,
-    // What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
-    "preferred_completion_mode": "normal",
     // Whether to show the agent panel button in the status bar.
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
@@ -945,11 +954,87 @@
       //   "temperature": 1.0
       // }
     ],
-    // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
+    // When enabled, the agent can run tool actions without asking for your confirmation.
+    // This setting takes precedence over `always_confirm` patterns and `default_mode` settings,
+    // but `always_deny` patterns still block actions for security.
     //
     // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
     //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
     "always_allow_tool_actions": false,
+    // Per-tool permission rules for granular control over tool actions.
+    // This setting only applies to the native Zed agent.
+    "tool_permissions": {
+      "tools": {
+        "terminal": {
+          "default_mode": "confirm",
+          "always_deny": [
+            // Dangerous rm commands
+            { "pattern": "rm\\s+-rf\\s+(/|\\.\\.|\"|~|\\*)" },
+            { "pattern": "rm\\s+-rf\\s*$" },
+            // Disk destruction
+            { "pattern": "> /dev/sd" },
+            { "pattern": "mkfs\\." },
+            { "pattern": "dd\\s+if=/dev/(zero|random)" },
+            // Fork bomb
+            { "pattern": ":\\(\\)\\{\\s*:\\|:&\\s*\\};:" },
+            // System files
+            { "pattern": "/etc/passwd" },
+            { "pattern": "/etc/shadow" },
+            // Windows destructive commands
+            { "pattern": "del /f /s /q c:\\\\" },
+            { "pattern": "format c:" },
+            { "pattern": "rd /s /q" },
+          ],
+          "always_confirm": [
+            // File deletion
+            { "pattern": "rm\\s" },
+            // Destructive git operations
+            { "pattern": "git\\s+(reset|clean)\\s+--hard" },
+            { "pattern": "git\\s+push\\s+(-f|--force)" },
+            // Database operations
+            { "pattern": "DROP\\s+TABLE", "case_sensitive": true },
+            { "pattern": "DELETE\\s+FROM", "case_sensitive": true },
+            // Privileged commands
+            { "pattern": "sudo\\s" },
+          ],
+        },
+        "edit_file": {
+          "default_mode": "confirm",
+          "always_deny": [
+            // Secrets and credentials
+            { "pattern": "\\.env($|\\.)" },
+            { "pattern": "secrets?/" },
+            { "pattern": "\\.pem$" },
+            { "pattern": "\\.key$" },
+          ],
+        },
+        "delete_path": {
+          "default_mode": "confirm",
+          "always_deny": [
+            // System directories
+            { "pattern": "^/etc" },
+            { "pattern": "^/usr" },
+            { "pattern": "^/bin" },
+            { "pattern": "^/sbin" },
+            { "pattern": "^/var" },
+            { "pattern": "^/boot" },
+            { "pattern": "^/root" },
+            // Home directory root
+            { "pattern": "^~$" },
+            { "pattern": "^/Users/[^/]+$" },
+            { "pattern": "^/home/[^/]+$" },
+            // Git directory
+            { "pattern": "\\.git/?$" },
+            // Windows system directories
+            { "pattern": "^C:\\\\Windows" },
+            { "pattern": "^C:\\\\Program Files" },
+          ],
+        },
+        "fetch": {
+          "default_mode": "confirm",
+        },
+      },
+    },
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": true,
     // When enabled, show voting thumbs for feedback on agent edits.
@@ -976,6 +1061,7 @@
           "save_file": true,
           "open": true,
           "grep": true,
+          "subagent": true,
           "terminal": true,
           "thinking": true,
           "web_search": true,
@@ -995,6 +1081,7 @@
           "read_file": true,
           "open": true,
           "grep": true,
+          "subagent": true,
           "thinking": true,
           "web_search": true,
         },
@@ -1025,6 +1112,11 @@
     //
     // Default: true
     "expand_terminal_card": true,
+    // Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
+    // Note that this only applies to the stop button, not to ctrl+c inside the terminal.
+    //
+    // Default: true
+    "cancel_generation_on_terminal_stop": true,
     // Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages in the agent panel.
     //
     // Default: false
@@ -1033,6 +1125,10 @@
     //
     // Default: 4
     "message_editor_min_lines": 4,
+    // Whether to show turn statistics (elapsed time during generation, final turn duration).
+    //
+    // Default: false
+    "show_turn_stats": false,
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
@@ -1068,6 +1164,10 @@
     "show_nav_history_buttons": true,
     // Whether or not to show the tab bar buttons.
     "show_tab_bar_buttons": true,
+    // Whether or not to show pinned tabs in a separate row.
+    // When enabled, pinned tabs appear in a top row and unpinned tabs in a bottom row.
+    // When disabled, all tabs appear in a single row (default behavior).
+    "show_pinned_tabs_in_separate_row": false,
   },
   // Settings related to the editor's tabs
   "tabs": {
@@ -1308,6 +1408,7 @@
     "**/.svn",
     "**/.hg",
     "**/.jj",
+    "**/.sl",
     "**/.repo",
     "**/CVS",
     "**/.DS_Store",
@@ -1323,6 +1424,9 @@
   // Globs to match files that will be considered "hidden". These files can be hidden from the
   // project panel by toggling the "hide_hidden" setting.
   "hidden_files": ["**/.*"],
+  // Globs to match files that will be opened as read-only. You can still view these files,
+  // but cannot edit them. This is useful for generated files or external dependencies.
+  "read_only_files": [],
   // Git gutter behavior configuration.
   "git": {
     // Global switch to enable or disable all git integration features.
@@ -1423,11 +1527,13 @@
     //   "enterprise_uri": "",
     //   "proxy": "",
     //   "proxy_no_verify": false
+    //   "enable_next_edit_suggestions": true
     // },
     "copilot": {
       "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null,
+      "enable_next_edit_suggestions": true,
     },
     "codestral": {
       "api_url": "https://codestral.mistral.ai",
@@ -1458,6 +1564,8 @@
     "cursor_position_button": true,
     // Whether to show active line endings button in the status bar.
     "line_endings_button": false,
+    // Control when to show the active encoding in the status bar.
+    "active_encoding_button": "non_utf8",
   },
   // Settings specific to the terminal
   "terminal": {
@@ -2135,6 +2243,11 @@
   "global_lsp_settings": {
     // Whether to show the LSP servers button in the status bar.
     "button": true,
+    "notifications": {
+      // Timeout in milliseconds for automatically dismissing language server notifications.
+      // Set to 0 to disable auto-dismiss.
+      "dismiss_timeout_ms": 5000,
+    },
   },
   // Jupyter settings
   "jupyter": {
@@ -2163,11 +2276,15 @@
     "use_smartcase_find": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},
-    // Cursor shape for the each mode.
-    // Specify the mode as the key and the shape as the value.
-    // The mode can be one of the following: "normal", "replace", "insert", "visual".
+    // Cursor shape for each mode.
     // The shape can be one of the following: "block", "bar", "underline", "hollow".
-    "cursor_shape": {},
+    "cursor_shape": {
+      "normal": "block",
+      "replace": "underline",
+      "visual": "block",
+      // Set to "inherit" to use the editor's cursor_shape.
+      "insert": "inherit",
+    },
   },
   // Which-key popup settings
   "which_key": {
@@ -2230,7 +2347,7 @@
   // Examples:
   //   - "proxy": "socks5h://localhost:10808"
   //   - "proxy": "http://127.0.0.1:10809"
-  "proxy": null,
+  "proxy": "",
   // Set to configure aliases for the command palette.
   // When typing a query which is a key of this object, the value will be used instead.
   //
@@ -2257,6 +2374,17 @@
   "ssh_connections": [],
   // Whether to read ~/.ssh/config for ssh connection sources.
   "read_ssh_config": true,
+  // Default timeout in seconds for all context server tool calls.
+  // Individual servers can override this in their configuration.
+  // Examples:
+  // "context_servers": {
+  //   "my-stdio-server": {
+  //     "command": "/path/to/server",
+  //     "timeout": 120  // Override: 2 minutes for this server
+  //   },
+  // }
+  // Default: 60
+  "context_server_timeout": 60,
   // Configures context servers for use by the agent.
   "context_servers": {},
   // Configures agent servers available in the agent panel.

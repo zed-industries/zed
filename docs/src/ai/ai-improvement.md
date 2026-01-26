@@ -51,7 +51,7 @@ Users who are working on open source licensed projects may optionally opt-in to 
 
 When working on other projects where you haven't opted-in, Zed will not persistently store user content or use user content for training of its models.
 
-You can see exactly how Zed detects open source licenses in: [license_detection.rs](https://github.com/zed-industries/zed/blob/main/crates/zeta/src/license_detection.rs).
+You can see exactly how Zed detects open source licenses in: [license_detection.rs](https://github.com/zed-industries/zed/blob/main/crates/edit_prediction/src/license_detection.rs).
 
 ### Exclusions
 
@@ -77,7 +77,7 @@ You can inspect this exclusion list by opening `zed: open default settings` from
 }
 ```
 
-Users may explicitly exclude additional paths and/or file extensions by adding them to [`edit_predictions.disabled_globs`](https://zed.dev/docs/configuring-zed#edit-predictions) in their Zed settings.json:
+Users may explicitly exclude additional paths and/or file extensions by adding them to [`edit_predictions.disabled_globs`](https://zed.dev/docs/reference/all-settings#edit-predictions) in their Zed settings.json:
 
 ```json [settings]
 {
@@ -93,6 +93,7 @@ For open source projects where you have opted-in, Zed may store copies of reques
 
 This data includes:
 
+- sampled edit prediction examples (cursor context + recent diffs/edits) for offline evaluation
 - the edit prediction
 - a portion of the buffer content around the cursor
 - a few recent edits

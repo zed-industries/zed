@@ -1,4 +1,7 @@
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    sync::Arc,
+};
 
 use collections::HashMap;
 use dap::StackFrameId;
@@ -183,13 +186,13 @@ impl StackTraceView {
                     .await?;
 
                 let project_path = ProjectPath {
-                    worktree_id: worktree.read_with(cx, |tree, _| tree.id())?,
+                    worktree_id: worktree.read_with(cx, |tree, _| tree.id()),
                     path: relative_path,
                 };
 
                 if let Some(buffer) = this
                     .read_with(cx, |this, _| this.project.clone())?
-                    .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                    .update(cx, |project, cx| project.open_buffer(project_path, cx))
                     .await
                     .log_err()
                 {
@@ -333,7 +336,7 @@ impl Item for StackTraceView {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {

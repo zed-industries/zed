@@ -31,9 +31,8 @@ use smallvec::SmallVec;
 use std::{mem, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
-    Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu, Facepile, HighlightedLabel,
-    Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem, Tab, Tooltip,
-    prelude::*, tooltip_container,
+    Avatar, AvatarAvailabilityIndicator, ContextMenu, CopyButton, Facepile, HighlightedLabel,
+    IconButtonShape, Indicator, ListHeader, ListItem, Tab, Tooltip, prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
@@ -489,6 +488,7 @@ impl CollabPanel {
         let channel_store = self.channel_store.read(cx);
         let user_store = self.user_store.read(cx);
         let query = self.filter_editor.read(cx).text(cx);
+        let fg_executor = cx.foreground_executor();
         let executor = cx.background_executor().clone();
 
         let prev_selected_entry = self.selection.and_then(|ix| self.entries.get(ix).cloned());
@@ -518,7 +518,7 @@ impl CollabPanel {
                     self.match_candidates.clear();
                     self.match_candidates
                         .push(StringMatchCandidate::new(0, &user.github_login));
-                    let matches = executor.block(match_strings(
+                    let matches = fg_executor.block_on(match_strings(
                         &self.match_candidates,
                         &query,
                         true,
@@ -562,7 +562,7 @@ impl CollabPanel {
                             &participant.user.github_login,
                         )
                     }));
-                let mut matches = executor.block(match_strings(
+                let mut matches = fg_executor.block_on(match_strings(
                     &self.match_candidates,
                     &query,
                     true,
@@ -614,7 +614,7 @@ impl CollabPanel {
                             StringMatchCandidate::new(id, &participant.github_login)
                         },
                     ));
-                let matches = executor.block(match_strings(
+                let matches = fg_executor.block_on(match_strings(
                     &self.match_candidates,
                     &query,
                     true,
@@ -649,7 +649,7 @@ impl CollabPanel {
                 .ordered_channels()
                 .map(|(_, chan)| chan)
                 .collect::<Vec<_>>();
-            let matches = executor.block(match_strings(
+            let matches = fg_executor.block_on(match_strings(
                 &self.match_candidates,
                 &query,
                 true,
@@ -751,7 +751,7 @@ impl CollabPanel {
                     .enumerate()
                     .map(|(ix, channel)| StringMatchCandidate::new(ix, &channel.name)),
             );
-            let matches = executor.block(match_strings(
+            let matches = fg_executor.block_on(match_strings(
                 &self.match_candidates,
                 &query,
                 true,
@@ -787,7 +787,7 @@ impl CollabPanel {
                     .enumerate()
                     .map(|(ix, user)| StringMatchCandidate::new(ix, &user.github_login)),
             );
-            let matches = executor.block(match_strings(
+            let matches = fg_executor.block_on(match_strings(
                 &self.match_candidates,
                 &query,
                 true,
@@ -812,7 +812,7 @@ impl CollabPanel {
                     .enumerate()
                     .map(|(ix, user)| StringMatchCandidate::new(ix, &user.github_login)),
             );
-            let matches = executor.block(match_strings(
+            let matches = fg_executor.block_on(match_strings(
                 &self.match_candidates,
                 &query,
                 true,
@@ -846,14 +846,14 @@ impl CollabPanel {
                     .map(|(ix, contact)| StringMatchCandidate::new(ix, &contact.user.github_login)),
             );
 
-            let matches = executor.block(match_strings(
+            let matches = fg_executor.block_on(match_strings(
                 &self.match_candidates,
                 &query,
                 true,
                 true,
                 usize::MAX,
                 &Default::default(),
-                executor.clone(),
+                executor,
             ));
 
             let (online_contacts, offline_contacts) = matches
@@ -2180,7 +2180,7 @@ impl CollabPanel {
             cx.spawn_in(window, async move |this, cx| {
                 if answer.await? == 0 {
                     channel_store
-                        .update(cx, |channels, _| channels.remove_channel(channel_id))?
+                        .update(cx, |channels, _| channels.remove_channel(channel_id))
                         .await
                         .notify_async_err(cx);
                     this.update_in(cx, |_, window, cx| cx.focus_self(window))
@@ -2214,7 +2214,7 @@ impl CollabPanel {
         cx.spawn_in(window, async move |_, cx| {
             if answer.await? == 0 {
                 user_store
-                    .update(cx, |store, cx| store.remove_contact(user_id, cx))?
+                    .update(cx, |store, cx| store.remove_contact(user_id, cx))
                     .await
                     .notify_async_err(cx);
             }
@@ -2422,6 +2422,9 @@ impl CollabPanel {
         self.channel_store.update(cx, |channel_store, _| {
             channel_store.initialize();
         });
+
+        let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
+
         v_flex()
             .size_full()
             .gap_1()
@@ -2437,7 +2440,18 @@ impl CollabPanel {
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(self.render_filter_input(&self.filter_editor, cx)),
+                    .child(self.render_filter_input(&self.filter_editor, cx))
+                    .when(has_query, |this| {
+                        this.pr_2p5().child(
+                            IconButton::new("clear_filter", IconName::Close)
+                                .shape(IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Clear Filter"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.reset_filter_editor_text(window, cx);
+                                    cx.notify();
+                                })),
+                        )
+                    }),
             )
             .child(
                 list(
@@ -2527,16 +2541,9 @@ impl CollabPanel {
 
         let button = match section {
             Section::ActiveCall => channel_link.map(|channel_link| {
-                let channel_link_copy = channel_link;
-                IconButton::new("channel-link", IconName::Copy)
-                    .icon_size(IconSize::Small)
-                    .size(ButtonSize::None)
+                CopyButton::new("copy-channel-link", channel_link)
                     .visible_on_hover("section-header")
-                    .on_click(move |_, _, cx| {
-                        let item = ClipboardItem::new_string(channel_link_copy.clone());
-                        cx.write_to_clipboard(item)
-                    })
-                    .tooltip(Tooltip::text("Copy channel link"))
+                    .tooltip_label("Copy Channel Link")
                     .into_any_element()
             }),
             Section::Contacts => Some(

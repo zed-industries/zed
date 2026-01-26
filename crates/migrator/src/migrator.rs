@@ -191,10 +191,6 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             &SETTINGS_QUERY_2025_05_08,
         ),
         MigrationType::TreeSitter(
-            migrations::m_2025_05_29::SETTINGS_PATTERNS,
-            &SETTINGS_QUERY_2025_05_29,
-        ),
-        MigrationType::TreeSitter(
             migrations::m_2025_06_16::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_06_16,
         ),
@@ -329,10 +325,6 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_05_08,
     migrations::m_2025_05_08::SETTINGS_PATTERNS
-);
-define_query!(
-    SETTINGS_QUERY_2025_05_29,
-    migrations::m_2025_05_29::SETTINGS_PATTERNS
 );
 define_query!(
     SETTINGS_QUERY_2025_06_16,
@@ -964,67 +956,6 @@ mod tests {
     }
 
     #[test]
-    fn test_preferred_completion_mode_migration() {
-        assert_migrate_settings(
-            r#"{
-                "agent": {
-                    "preferred_completion_mode": "max",
-                    "enabled": true
-                }
-            }"#,
-            Some(
-                r#"{
-                "agent": {
-                    "preferred_completion_mode": "burn",
-                    "enabled": true
-                }
-            }"#,
-            ),
-        );
-
-        assert_migrate_settings(
-            r#"{
-                "agent": {
-                    "preferred_completion_mode": "normal",
-                    "enabled": true
-                }
-            }"#,
-            None,
-        );
-
-        assert_migrate_settings(
-            r#"{
-                "agent": {
-                    "preferred_completion_mode": "burn",
-                    "enabled": true
-                }
-            }"#,
-            None,
-        );
-
-        assert_migrate_settings(
-            r#"{
-                "other_section": {
-                    "preferred_completion_mode": "max"
-                },
-                "agent": {
-                    "preferred_completion_mode": "max"
-                }
-            }"#,
-            Some(
-                r#"{
-                "other_section": {
-                    "preferred_completion_mode": "max"
-                },
-                "agent": {
-                    "preferred_completion_mode": "burn"
-                }
-            }"#,
-            ),
-        );
-    }
-
-    #[test]
     fn test_mcp_settings_migration() {
         assert_migrate_settings_with_migrations(
             &[MigrationType::TreeSitter(
@@ -1299,7 +1230,6 @@ mod tests {
     "agent": {
         "version": "2",
         "enabled": true,
-        "preferred_completion_mode": "normal",
         "button": true,
         "dock": "right",
         "default_width": 640,
@@ -1322,7 +1252,6 @@ mod tests {
     },
     "agent": {
         "enabled": true,
-        "preferred_completion_mode": "normal",
         "button": true,
         "dock": "right",
         "default_width": 640,

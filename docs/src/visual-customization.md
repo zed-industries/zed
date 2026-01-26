@@ -2,7 +2,7 @@
 
 Various aspects of Zed's visual layout can be configured via either the settings window or the `settings.json` file, which you can access via {#action zed::OpenSettings} ({#kb zed::OpenSettings}) and {#action zed::OpenSettingsFile} ({#kb zed::OpenSettingsFile}) respectively.
 
-See [Configuring Zed](./configuring-zed.md) for additional information and other non-visual settings.
+See [All Settings](./reference/all-settings.md) for additional information and other non-visual settings.
 
 ## Themes
 
@@ -332,7 +332,11 @@ TBD: Centered layout related settings
     // Show/hide a button that displays the buffer's line-ending mode.
     // Clicking the button brings up the line-ending selector.
     // Defaults to false.
-    "line_endings_button": false
+    "line_endings_button": false,
+    // Show/hide a button that displays the buffer's character encoding.
+    // If set to "non_utf8", the button is hidden only for UTF-8 without BOM.
+    // Defaults to "non_utf8".
+    "active_encoding_button": "non_utf8"
   },
   "global_lsp_settings": {
     // Show/hide the LSP button in the status bar.
@@ -525,7 +529,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
   }
 ```
 
-See [Terminal settings](./configuring-zed.md#terminal) for additional non-visual customization options.
+See [Terminal settings](./reference/all-settings.md#terminal) for additional non-visual customization options.
 
 ### Other Panels
 

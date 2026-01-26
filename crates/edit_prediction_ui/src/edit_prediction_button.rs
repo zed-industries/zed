@@ -2,7 +2,7 @@ use anyhow::Result;
 use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
 use codestral::CodestralEditPredictionDelegate;
-use copilot::{Copilot, Status};
+use copilot::Status;
 use edit_prediction::{
     EditPredictionStore, MercuryFeatureFlag, SweepFeatureFlag, Zeta2FeatureFlag,
 };
@@ -22,7 +22,7 @@ use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
-use project::DisableAiSettings;
+use project::{DisableAiSettings, Project};
 use regex::Regex;
 use settings::{
     EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
@@ -36,8 +36,8 @@ use std::{
 };
 use supermaven::{AccountStatus, Supermaven};
 use ui::{
-    Clickable, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, IconButton,
-    IconButtonShape, Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
+    Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
+    Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -75,6 +75,7 @@ pub struct EditPredictionButton {
     fs: Arc<dyn Fs>,
     user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
+    project: WeakEntity<Project>,
 }
 
 enum SupermavenButtonStatus {
@@ -95,7 +96,9 @@ impl Render for EditPredictionButton {
 
         match all_language_settings.edit_predictions.provider {
             EditPredictionProvider::Copilot => {
-                let Some(copilot) = Copilot::global(cx) else {
+                let Some(copilot) = EditPredictionStore::try_global(cx)
+                    .and_then(|store| store.read(cx).copilot_for_project(&self.project.upgrade()?))
+                else {
                     return div().hidden();
                 };
                 let status = copilot.read(cx).status();
@@ -121,6 +124,7 @@ impl Render for EditPredictionButton {
                             .on_click(cx.listener(move |_, _, window, cx| {
                                 if let Some(workspace) = window.root::<Workspace>().flatten() {
                                     workspace.update(cx, |workspace, cx| {
+                                        let copilot = copilot.clone();
                                         workspace.show_toast(
                                             Toast::new(
                                                 NotificationId::unique::<CopilotErrorToast>(),
@@ -128,8 +132,12 @@ impl Render for EditPredictionButton {
                                             )
                                             .on_click(
                                                 "Reinstall Copilot",
-                                                |window, cx| {
-                                                    copilot::reinstall_and_sign_in(window, cx)
+                                                move |window, cx| {
+                                                    copilot_ui::reinstall_and_sign_in(
+                                                        copilot.clone(),
+                                                        window,
+                                                        cx,
+                                                    )
                                                 },
                                             ),
                                             cx,
@@ -143,11 +151,16 @@ impl Render for EditPredictionButton {
                     );
                 }
                 let this = cx.weak_entity();
-
+                let project = self.project.clone();
                 div().child(
                     PopoverMenu::new("copilot")
                         .menu(move |window, cx| {
-                            let current_status = Copilot::global(cx)?.read(cx).status();
+                            let current_status = EditPredictionStore::try_global(cx)
+                                .and_then(|store| {
+                                    store.read(cx).copilot_for_project(&project.upgrade()?)
+                                })?
+                                .read(cx)
+                                .status();
                             match current_status {
                                 Status::Authorized => this.update(cx, |this, cx| {
                                     this.build_copilot_context_menu(window, cx)
@@ -478,9 +491,13 @@ impl EditPredictionButton {
         user_store: Entity<UserStore>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
         client: Arc<Client>,
+        project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Self {
-        if let Some(copilot) = Copilot::global(cx) {
+        let copilot = EditPredictionStore::try_global(cx).and_then(|store| {
+            store.update(cx, |this, cx| this.start_copilot_for_project(&project, cx))
+        });
+        if let Some(copilot) = copilot {
             cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
         }
 
@@ -514,6 +531,7 @@ impl EditPredictionButton {
             edit_prediction_provider: None,
             user_store,
             popover_menu_handle,
+            project: project.downgrade(),
             fs,
         }
     }
@@ -529,10 +547,10 @@ impl EditPredictionButton {
             ));
         }
 
-        if let Some(copilot) = Copilot::global(cx) {
-            if matches!(copilot.read(cx).status(), Status::Authorized) {
-                providers.push(EditPredictionProvider::Copilot);
-            }
+        if let Some(_) = EditPredictionStore::try_global(cx)
+            .and_then(|store| store.read(cx).copilot_for_project(&self.project.upgrade()?))
+        {
+            providers.push(EditPredictionProvider::Copilot);
         }
 
         if let Some(supermaven) = Supermaven::global(cx) {
@@ -628,19 +646,28 @@ impl EditPredictionButton {
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
         let fs = self.fs.clone();
+        let project = self.project.clone();
         ContextMenu::build(window, cx, |menu, _, _| {
-            menu.entry("Sign In to Copilot", None, copilot::initiate_sign_in)
-                .entry("Disable Copilot", None, {
-                    let fs = fs.clone();
-                    move |_window, cx| hide_copilot(fs.clone(), cx)
-                })
-                .separator()
-                .entry("Use Zed AI", None, {
-                    let fs = fs.clone();
-                    move |_window, cx| {
-                        set_completion_provider(fs.clone(), cx, EditPredictionProvider::Zed)
-                    }
-                })
+            menu.entry("Sign In to Copilot", None, move |window, cx| {
+                if let Some(copilot) = EditPredictionStore::try_global(cx).and_then(|store| {
+                    store.update(cx, |this, cx| {
+                        this.start_copilot_for_project(&project.upgrade()?, cx)
+                    })
+                }) {
+                    copilot_ui::initiate_sign_in(copilot, window, cx);
+                }
+            })
+            .entry("Disable Copilot", None, {
+                let fs = fs.clone();
+                move |_window, cx| hide_copilot(fs.clone(), cx)
+            })
+            .separator()
+            .entry("Use Zed AI", None, {
+                let fs = fs.clone();
+                move |_window, cx| {
+                    set_completion_provider(fs.clone(), cx, EditPredictionProvider::Zed)
+                }
+            })
         })
     }
 
@@ -680,7 +707,7 @@ impl EditPredictionButton {
                     menu = menu.item(
                         entry
                             .disabled(true)
-                            .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |_cx| {
+                            .documentation_aside(DocumentationSide::Left, move |_cx| {
                                 Label::new(format!("Edit predictions cannot be toggled for this buffer because they are disabled for {}", language.name()))
                                     .into_any_element()
                             })
@@ -726,7 +753,7 @@ impl EditPredictionButton {
                 .item(
                     ContextMenuEntry::new("Eager")
                         .toggleable(IconPosition::Start, eager_mode)
-                        .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |_| {
+                        .documentation_aside(DocumentationSide::Left, move |_| {
                             Label::new("Display predictions inline when there are no language server completions available.").into_any_element()
                         })
                         .handler({
@@ -739,7 +766,7 @@ impl EditPredictionButton {
                 .item(
                     ContextMenuEntry::new("Subtle")
                         .toggleable(IconPosition::Start, subtle_mode)
-                        .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |_| {
+                        .documentation_aside(DocumentationSide::Left, move |_| {
                             Label::new("Display predictions inline only when holding a modifier key (alt by default).").into_any_element()
                         })
                         .handler({
@@ -778,7 +805,8 @@ impl EditPredictionButton {
                             .toggleable(IconPosition::Start, data_collection.is_enabled())
                             .icon(icon_name)
                             .icon_color(icon_color)
-                            .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |cx| {
+                            .disabled(cx.is_staff())
+                            .documentation_aside(DocumentationSide::Left, move |cx| {
                                 let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                     (true, true) => (
                                         "Project identified as open source, and you're sharing data.",
@@ -862,7 +890,7 @@ impl EditPredictionButton {
             ContextMenuEntry::new("Configure Excluded Files")
                 .icon(IconName::LockOutlined)
                 .icon_color(Color::Muted)
-                .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, |_| {
+                .documentation_aside(DocumentationSide::Left, |_| {
                     Label::new(indoc!{"
                         Open your settings to add sensitive paths for which Zed will never predict edits."}).into_any_element()
                 })
@@ -915,11 +943,8 @@ impl EditPredictionButton {
                 .when(
                     cx.has_flag::<PredictEditsRatePredictionsFeatureFlag>(),
                     |this| {
-                        this.action(
-                            "Capture Edit Prediction Example",
-                            CaptureExample.boxed_clone(),
-                        )
-                        .action("Rate Predictions", RatePredictions.boxed_clone())
+                        this.action("Capture Prediction Example", CaptureExample.boxed_clone())
+                            .action("Rate Predictions", RatePredictions.boxed_clone())
                     },
                 );
         }
@@ -933,7 +958,12 @@ impl EditPredictionButton {
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
         let all_language_settings = all_language_settings(None, cx);
-        let copilot_config = copilot::copilot_chat::CopilotChatConfiguration {
+        let next_edit_suggestions = all_language_settings
+            .edit_predictions
+            .copilot
+            .enable_next_edit_suggestions
+            .unwrap_or(true);
+        let copilot_config = copilot_chat::CopilotChatConfiguration {
             enterprise_uri: all_language_settings
                 .edit_predictions
                 .copilot
@@ -948,6 +978,27 @@ impl EditPredictionButton {
                 self.add_provider_switching_section(menu, EditPredictionProvider::Copilot, cx);
 
             menu.separator()
+                .item(
+                    ContextMenuEntry::new("Copilot: Next Edit Suggestions")
+                        .toggleable(IconPosition::Start, next_edit_suggestions)
+                        .handler({
+                            let fs = self.fs.clone();
+                            move |_, cx| {
+                                update_settings_file(fs.clone(), cx, move |settings, _| {
+                                    settings
+                                        .project
+                                        .all_languages
+                                        .edit_predictions
+                                        .get_or_insert_default()
+                                        .copilot
+                                        .get_or_insert_default()
+                                        .enable_next_edit_suggestions =
+                                        Some(!next_edit_suggestions);
+                                });
+                            }
+                        }),
+                )
+                .separator()
                 .link(
                     "Go to Copilot Settings",
                     OpenBrowser { url: settings_url }.boxed_clone(),
@@ -1336,7 +1387,7 @@ fn toggle_show_edit_predictions_for_language(
             .all_languages
             .languages
             .0
-            .entry(language.name().0)
+            .entry(language.name().0.to_string())
             .or_default()
             .show_edit_predictions = Some(!show_edit_predictions);
     });
