@@ -83,7 +83,6 @@ impl Database {
     }
 
     #[cfg(feature = "test-support")]
-
     pub fn reset(&self) {
         self.rooms.clear();
         self.projects.clear();

@@ -3,7 +3,6 @@ use super::*;
 impl Database {
     /// Records that a given user has signed the CLA.
     #[cfg(feature = "test-support")]
-
     pub async fn add_contributor(
         &self,
         github_login: &str,
