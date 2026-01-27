@@ -409,6 +409,22 @@ To create your own theme extension, refer to the [Developing Theme Extensions](.
 
 ## Using Language Server Features
 
+### Semantic Tokens
+
+Semantic tokens provide richer syntax highlighting by using type and scope information from language servers. Enable them with the `semantic_tokens` setting:
+
+```json [settings]
+"semantic_tokens": "combined"
+```
+
+- `"off"` — Tree-sitter highlighting only (default)
+- `"combined"` — LSP semantic tokens overlaid on tree-sitter
+- `"full"` — LSP semantic tokens replace tree-sitter entirely
+
+You can customize token colors and styles through `global_lsp_settings.semantic_token_rules` in your settings or via a dedicated `~/.config/zed/semantic_token_rules.json` file.
+
+→ [Semantic Tokens documentation](./semantic-tokens.md)
+
 ### Inlay Hints
 
 Inlay hints provide additional information inline in your code, such as parameter names or inferred types. Configure inlay hints in your `settings.json`:
