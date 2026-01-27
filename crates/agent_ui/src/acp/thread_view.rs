@@ -80,7 +80,7 @@ use crate::user_slash_command::{
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
     CycleFavoriteModels, CycleModeSelector, EditFirstQueuedMessage, ExpandMessageEditor, Follow,
-    KeepAll, NewThread, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
+    KeepAll, NewThread, OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
     RemoveFirstQueuedMessage, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
     ToggleProfileSelector,
 };
@@ -396,6 +396,7 @@ pub struct AcpThreadView {
     turn_generation: usize,
     _turn_timer_task: Option<Task<()>>,
     hovered_edited_file_buttons: Option<usize>,
+    add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 enum ThreadState {
@@ -640,6 +641,7 @@ impl AcpThreadView {
             turn_generation: 0,
             _turn_timer_task: None,
             hovered_edited_file_buttons: None,
+            add_context_menu_handle: PopoverMenuHandle::default(),
         }
     }
 
@@ -6861,27 +6863,168 @@ impl AcpThreadView {
             }))
     }
 
-    fn render_add_context_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let message_editor = self.message_editor.clone();
-        let menu_visible = message_editor.read(cx).is_completions_menu_visible(cx);
+    fn render_add_context_button(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus_handle = self.message_editor.focus_handle(cx);
+        let weak_self = cx.weak_entity();
 
-        IconButton::new("add-context", IconName::AtSign)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .when(!menu_visible, |this| {
-                this.tooltip(move |_window, cx| {
-                    Tooltip::with_meta("Add Context", None, "Or type @ to include context", cx)
-                })
+        PopoverMenu::new("add-context-menu")
+            .trigger_with_tooltip(
+                IconButton::new("add-context", IconName::Plus)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted),
+                {
+                    move |_window, cx| {
+                        Tooltip::for_action_in(
+                            "Add Context",
+                            &OpenAddContextMenu,
+                            &focus_handle,
+                            cx,
+                        )
+                    }
+                },
+            )
+            .anchor(gpui::Corner::BottomLeft)
+            .with_handle(self.add_context_menu_handle.clone())
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-2.0),
             })
-            .on_click(cx.listener(move |_this, _, window, cx| {
-                let message_editor_clone = message_editor.clone();
+            .menu(move |window, cx| {
+                weak_self
+                    .update(cx, |this, cx| this.build_add_context_menu(window, cx))
+                    .ok()
+            })
+    }
 
-                window.defer(cx, move |window, cx| {
-                    message_editor_clone.update(cx, |message_editor, cx| {
-                        message_editor.trigger_completion_menu(window, cx);
-                    });
-                });
-            }))
+    fn build_add_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        let message_editor = self.message_editor.clone();
+        let workspace = self.workspace.clone();
+        let supports_images = self.prompt_capabilities.borrow().image;
+
+        let has_selection = workspace
+            .upgrade()
+            .and_then(|ws| {
+                ws.read(cx)
+                    .active_item(cx)
+                    .and_then(|item| item.downcast::<Editor>())
+            })
+            .is_some_and(|editor| {
+                editor.update(cx, |editor, cx| {
+                    editor.has_non_empty_selection(&editor.display_snapshot(cx))
+                })
+            });
+
+        ContextMenu::build(window, cx, move |menu, _window, _cx| {
+            menu.key_context("AddContextMenu")
+                .header("Context")
+                .item(
+                    ContextMenuEntry::new("Files & Directories")
+                        .icon(IconName::File)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_context_type("file", window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Symbols")
+                        .icon(IconName::Code)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_context_type("symbol", window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Threads")
+                        .icon(IconName::Thread)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_context_type("thread", window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Rules")
+                        .icon(IconName::Reader)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_context_type("rule", window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Image")
+                        .icon(IconName::Image)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .disabled(!supports_images)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.add_images_from_picker(window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Selection")
+                        .icon(IconName::CursorIBeam)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .disabled(!has_selection)
+                        .handler({
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_selections(window, cx);
+                                });
+                            }
+                        }),
+                )
+        })
+    }
+
+    fn open_add_context_menu(
+        &mut self,
+        _action: &OpenAddContextMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let menu_handle = self.add_context_menu_handle.clone();
+        window.defer(cx, move |window, cx| {
+            menu_handle.toggle(window, cx);
+        });
     }
 
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
@@ -8386,6 +8529,7 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::handle_authorize_tool_call))
             .on_action(cx.listener(Self::handle_select_permission_granularity))
             .on_action(cx.listener(Self::open_permission_dropdown))
+            .on_action(cx.listener(Self::open_add_context_menu))
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
                 this.send_queued_message_at_index(0, true, window, cx);
             }))
