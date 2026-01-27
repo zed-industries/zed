@@ -57,6 +57,7 @@ const RESIZE_HANDLE_HEIGHT: f32 = 6.0;
 const RESIZE_HANDLE_WIDTH: f32 = 6.0;
 const CLICK_THRESHOLD_MS: u128 = 50;
 const DOUBLE_CLICK_THRESHOLD_MS: u128 = 300;
+const SEARCH_RESULTS_BATCH_SIZE: usize = 256;
 
 const REPLACE_PLACEHOLDER: &str = "Replace in project…";
 const INCLUDE_PLACEHOLDER: &str = "Include: e.g. src/**/*.rs";
@@ -2162,7 +2163,7 @@ impl PickerDelegate for QuickSearchDelegate {
 
             let mut first_batch = true;
             let SearchResults { rx, _task_handle } = search_results;
-            let mut results_stream = pin!(rx.ready_chunks(256));
+            let mut results_stream = pin!(rx.ready_chunks(SEARCH_RESULTS_BATCH_SIZE));
 
             while let Some(results) = results_stream.next().await {
                 if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
