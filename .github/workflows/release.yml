@@ -102,6 +102,9 @@ jobs:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-windows-large
     steps:
+    - name: steps::enable_long_paths
+      run: git config --system core.longpaths true
+      shell: pwsh
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
@@ -115,6 +118,8 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
+    - name: steps::cargo_install_nextest
+      uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
@@ -179,6 +184,9 @@ jobs:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-windows-large
     steps:
+    - name: steps::enable_long_paths
+      run: git config --system core.longpaths true
+      shell: pwsh
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
