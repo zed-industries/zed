@@ -24,6 +24,7 @@ jobs:
     permissions:
       contents: read
       issues: read
+      id-token: write
 
     steps:
       - name: Get github app token
@@ -115,7 +116,7 @@ jobs:
           steps.check-type.outputs.is_target_type == 'true' &&
           steps.check-staff.outputs.is_staff == 'false'
         id: analyze
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@231bd75b7196d48291c1498f1c6d277c2810d9a3 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY_ISSUE_DEDUP }}
           github_token: ${{ steps.get-app-token.outputs.token }}
