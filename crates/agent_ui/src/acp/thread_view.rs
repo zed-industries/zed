@@ -344,7 +344,6 @@ pub struct AcpThreadView {
     profile_selector: Option<Entity<ProfileSelector>>,
     notifications: Vec<WindowHandle<AgentNotification>>, // keep
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>, // keep
-    thread_retry_status: Option<RetryStatus>,
     thread_error: Option<ThreadError>,
     thread_error_markdown: Option<Entity<Markdown>>,
     command_load_errors: Vec<CommandLoadError>, // keep
@@ -406,6 +405,7 @@ enum ThreadState {
         mode_selector: Option<Entity<ModeSelector>>,
         model_selector: Option<Entity<AcpModelSelectorPopover>>,
         permission_dropdown_handle: PopoverMenuHandle<ContextMenu>,
+        thread_retry_status: Option<RetryStatus>,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -572,7 +572,6 @@ impl AcpThreadView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             list_state,
-            thread_retry_status: None,
             thread_error: None,
             thread_error_markdown: None,
             command_load_errors,
@@ -911,6 +910,7 @@ impl AcpThreadView {
                             mode_selector,
                             model_selector,
                             permission_dropdown_handle: PopoverMenuHandle::default(),
+                            thread_retry_status: None,
                             _subscriptions: subscriptions,
                         };
 
@@ -1152,7 +1152,13 @@ impl AcpThreadView {
 
     pub fn cancel_generation(&mut self, cx: &mut Context<Self>) {
         self.thread_error.take();
-        self.thread_retry_status.take();
+        if let ThreadState::Ready {
+            thread_retry_status,
+            ..
+        } = &mut self.thread_state
+        {
+            thread_retry_status.take();
+        }
         self.user_interrupted_generation = true;
 
         if let Some(thread) = self.thread() {
@@ -2095,10 +2101,22 @@ impl AcpThreadView {
                 self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
             }
             AcpThreadEvent::Retry(retry) => {
-                self.thread_retry_status = Some(retry.clone());
+                if let ThreadState::Ready {
+                    thread_retry_status,
+                    ..
+                } = &mut self.thread_state
+                {
+                    *thread_retry_status = Some(retry.clone());
+                }
             }
             AcpThreadEvent::Stopped => {
-                self.thread_retry_status.take();
+                if let ThreadState::Ready {
+                    thread_retry_status,
+                    ..
+                } = &mut self.thread_state
+                {
+                    thread_retry_status.take();
+                }
                 let used_tools = thread.read(cx).used_tools_since_last_user_message();
                 self.notify_with_sound(
                     if used_tools {
@@ -2132,7 +2150,13 @@ impl AcpThreadView {
                 self.history.update(cx, |history, cx| history.refresh(cx));
             }
             AcpThreadEvent::Refusal => {
-                self.thread_retry_status.take();
+                if let ThreadState::Ready {
+                    thread_retry_status,
+                    ..
+                } = &mut self.thread_state
+                {
+                    thread_retry_status.take();
+                }
                 let thread_error = ThreadError::Refusal;
                 self.emit_thread_error_telemetry(&thread_error, cx);
                 self.thread_error = Some(thread_error);
@@ -2142,7 +2166,13 @@ impl AcpThreadView {
                 self.notify_with_sound(&notification_message, IconName::Warning, window, cx);
             }
             AcpThreadEvent::Error => {
-                self.thread_retry_status.take();
+                if let ThreadState::Ready {
+                    thread_retry_status,
+                    ..
+                } = &mut self.thread_state
+                {
+                    thread_retry_status.take();
+                }
                 self.notify_with_sound(
                     "Agent stopped due to an error",
                     IconName::Warning,
@@ -2151,7 +2181,6 @@ impl AcpThreadView {
                 );
             }
             AcpThreadEvent::LoadError(error) => {
-                self.thread_retry_status.take();
                 self.thread_state = ThreadState::LoadError(error.clone());
                 if self.message_editor.focus_handle(cx).is_focused(window) {
                     self.focus_handle.focus(window, cx)
@@ -7861,7 +7890,14 @@ impl AcpThreadView {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Callout> {
-        let state = self.thread_retry_status.as_ref()?;
+        let ThreadState::Ready {
+            thread_retry_status,
+            ..
+        } = &self.thread_state
+        else {
+            return None;
+        };
+        let state = thread_retry_status.as_ref()?;
 
         let next_attempt_in = state
             .duration
