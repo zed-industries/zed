@@ -1209,6 +1209,7 @@
       "ctrl-alt-right": "pane::SplitRight",
       "cmd-d": "pane::SplitRight",
       "cmd-alt-r": "terminal::RerunTask",
+      "cmd->": "agent::AddSelectionToThread",
     },
   },
   {
