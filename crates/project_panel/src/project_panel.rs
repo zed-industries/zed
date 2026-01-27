@@ -1863,7 +1863,6 @@ impl ProjectPanel {
         }
 
         let previous_edit_state = self.state.edit_state.take();
-
         self.update_visible_entries(None, false, false, window, cx);
         self.marked_entries.clear();
 
@@ -1943,7 +1942,6 @@ impl ProjectPanel {
 
         let directory_id;
         let new_entry_id = self.resolve_entry(entry_id);
-
         let mut temporarily_unfolded = None;
 
         if new_entry_id != entry_id {
