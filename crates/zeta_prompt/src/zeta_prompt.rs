@@ -135,68 +135,98 @@ pub struct RelatedExcerpt {
 }
 
 pub fn format_zeta_prompt(input: &ZetaPromptInput, version: ZetaVersion) -> String {
-    let mut prompt = String::new();
-    let mut related_file_ranges = write_related_files(&mut prompt, &input.related_files);
-    let mut event_ranges = write_edit_history_section(&mut prompt, input);
-
+    let mut cursor_section = String::new();
     match version {
         ZetaVersion::V0112MiddleAtEnd => {
-            v0112_middle_at_end::write_cursor_excerpt_section(&mut prompt, input);
+            v0112_middle_at_end::write_cursor_excerpt_section(&mut cursor_section, input);
         }
         ZetaVersion::V0113Ordered | ZetaVersion::V0114180EditableRegion => {
-            v0113_ordered::write_cursor_excerpt_section(&mut prompt, input)
+            v0113_ordered::write_cursor_excerpt_section(&mut cursor_section, input)
         }
-
         ZetaVersion::V0120GitMergeMarkers => {
-            v0120_git_merge_markers::write_cursor_excerpt_section(&mut prompt, input)
+            v0120_git_merge_markers::write_cursor_excerpt_section(&mut cursor_section, input)
         }
     }
 
-    truncate_prompt_to_budget(
-        &mut prompt,
-        &mut related_file_ranges,
-        &mut event_ranges,
-        MAX_PROMPT_TOKENS,
-    );
+    let cursor_tokens = estimate_tokens(cursor_section.len());
+    let budget_after_cursor = MAX_PROMPT_TOKENS.saturating_sub(cursor_tokens);
 
+    let edit_history_section = format_edit_history_within_budget(&input.events, budget_after_cursor);
+    let edit_history_tokens = estimate_tokens(edit_history_section.len());
+    let budget_after_edit_history = budget_after_cursor.saturating_sub(edit_history_tokens);
+
+    let related_files_section =
+        format_related_files_within_budget(&input.related_files, budget_after_edit_history);
+
+    let mut prompt = String::new();
+    prompt.push_str(&related_files_section);
+    prompt.push_str(&edit_history_section);
+    prompt.push_str(&cursor_section);
     prompt
 }
 
-fn truncate_prompt_to_budget(
-    prompt: &mut String,
-    related_file_ranges: &mut Vec<Range<usize>>,
-    event_ranges: &mut Vec<Range<usize>>,
-    max_tokens: usize,
-) {
-    let mut event_index = 0;
-    while estimate_tokens(prompt.len()) > max_tokens {
-        let removed_range;
-        if let Some(range) = related_file_ranges.pop() {
-            removed_range = range;
-        } else if event_index < event_ranges.len() {
-            removed_range = event_ranges[event_index].clone();
-            event_index += 1;
-        } else {
+fn format_edit_history_within_budget(events: &[Arc<Event>], max_tokens: usize) -> String {
+    let header = "<|file_sep|>edit history\n";
+    let header_tokens = estimate_tokens(header.len());
+    if header_tokens >= max_tokens {
+        return String::new();
+    }
+
+    let mut event_strings: Vec<String> = Vec::new();
+    let mut total_tokens = header_tokens;
+
+    for event in events.iter().rev() {
+        let mut event_str = String::new();
+        write_event(&mut event_str, event);
+        let event_tokens = estimate_tokens(event_str.len());
+
+        if total_tokens + event_tokens > max_tokens {
             break;
         }
-
-        prompt.replace_range(removed_range.clone(), "");
-        let removed_len = removed_range.end - removed_range.start;
-
-        for r in related_file_ranges.iter_mut() {
-            if r.start > removed_range.start {
-                r.start -= removed_len;
-                r.end -= removed_len;
-            }
-        }
-
-        for r in event_ranges[event_index..].iter_mut() {
-            if r.start > removed_range.start {
-                r.start -= removed_len;
-                r.end -= removed_len;
-            }
-        }
+        total_tokens += event_tokens;
+        event_strings.push(event_str);
     }
+
+    if event_strings.is_empty() {
+        return String::new();
+    }
+
+    event_strings.reverse();
+
+    let mut result = String::from(header);
+    for event_str in event_strings {
+        result.push_str(&event_str);
+    }
+    result
+}
+
+fn format_related_files_within_budget(related_files: &[RelatedFile], max_tokens: usize) -> String {
+    let mut result = String::new();
+    let mut total_tokens = 0;
+
+    for file in related_files {
+        let mut file_str = String::new();
+        let path_str = file.path.to_string_lossy();
+        write!(file_str, "<|file_sep|>{}\n", path_str).ok();
+        for excerpt in &file.excerpts {
+            file_str.push_str(&excerpt.text);
+            if !file_str.ends_with('\n') {
+                file_str.push('\n');
+            }
+            if excerpt.row_range.end < file.max_row {
+                file_str.push_str("...\n");
+            }
+        }
+
+        let file_tokens = estimate_tokens(file_str.len());
+        if total_tokens + file_tokens > max_tokens {
+            break;
+        }
+        total_tokens += file_tokens;
+        result.push_str(&file_str);
+    }
+
+    result
 }
 
 pub fn write_related_files(
@@ -217,18 +247,6 @@ pub fn write_related_files(
                 prompt.push_str("...\n");
             }
         }
-        let end = prompt.len();
-        ranges.push(start..end);
-    }
-    ranges
-}
-
-fn write_edit_history_section(prompt: &mut String, input: &ZetaPromptInput) -> Vec<Range<usize>> {
-    let mut ranges = Vec::new();
-    prompt.push_str("<|file_sep|>edit history\n");
-    for event in &input.events {
-        let start = prompt.len();
-        write_event(prompt, event);
         let end = prompt.len();
         ranges.push(start..end);
     }
