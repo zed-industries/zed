@@ -672,7 +672,22 @@ impl MessageEditor {
     }
 
     pub fn trigger_completion_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.insert_context_prefix("@", window, cx);
+    }
+
+    pub fn insert_context_type(
+        &mut self,
+        context_keyword: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let prefix = format!("@{}", context_keyword);
+        self.insert_context_prefix(&prefix, window, cx);
+    }
+
+    fn insert_context_prefix(&mut self, prefix: &str, window: &mut Window, cx: &mut Context<Self>) {
         let editor = self.editor.clone();
+        let prefix = prefix.to_string();
 
         cx.spawn_in(window, async move |_, cx| {
             editor
@@ -682,27 +697,27 @@ impl MessageEditor {
                             matches!(menu, CodeContextMenu::Completions(_)) && menu.visible()
                         });
 
-                    let has_at_sign = {
+                    let has_prefix = {
                         let snapshot = editor.display_snapshot(cx);
                         let cursor = editor.selections.newest::<text::Point>(&snapshot).head();
                         let offset = cursor.to_offset(&snapshot);
-                        if offset.0 > 0 {
-                            snapshot
-                                .buffer_snapshot()
-                                .reversed_chars_at(offset)
-                                .next()
-                                .map(|sign| sign == '@')
-                                .unwrap_or(false)
+                        if offset.0 >= prefix.len() {
+                            let start_offset = MultiBufferOffset(offset.0 - prefix.len());
+                            let buffer_snapshot = snapshot.buffer_snapshot();
+                            let text = buffer_snapshot
+                                .text_for_range(start_offset..offset)
+                                .collect::<String>();
+                            text == prefix
                         } else {
                             false
                         }
                     };
 
-                    if menu_is_open && has_at_sign {
+                    if menu_is_open && has_prefix {
                         return;
                     }
 
-                    editor.insert("@", window, cx);
+                    editor.insert(&prefix, window, cx);
                     editor.show_completions(&editor::actions::ShowCompletions, window, cx);
                 })
                 .log_err();
