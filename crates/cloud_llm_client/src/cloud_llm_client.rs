@@ -79,12 +79,6 @@ pub enum Plan {
     V2(PlanV2),
 }
 
-impl Plan {
-    pub fn is_v2(&self) -> bool {
-        matches!(self, Self::V2(_))
-    }
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanV2 {
