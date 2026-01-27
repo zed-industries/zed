@@ -844,7 +844,7 @@ fn test_comment_triggered_injection_toggle(cx: &mut App) {
     let l_position = buffer.as_rope().to_string().find("l\n").unwrap();
     buffer.edit([(l_position..l_position + 1, "")]);
     syntax_map.interpolate(&buffer);
-    syntax_map.reparse(python.clone(), &buffer);
+    syntax_map.reparse(python, &buffer);
 
     // Should have no unknown injections again - SQL injection should be invalidated
     assert!(
