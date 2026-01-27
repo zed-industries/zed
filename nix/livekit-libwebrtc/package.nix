@@ -117,7 +117,7 @@ stdenv.mkDerivation {
     # Required for dynamically linking to ffmpeg libraries and exposing symbols
     ./0001-shared-libraries.patch
     # Borrow a patch from chromium to prevent a build failure due to missing libclang libraries
-    ./applications/networking/browsers/chromium/patches/chromium-129-rust.patch
+    ./chromium-129-rust.patch
   ];
 
   postPatch = ''
