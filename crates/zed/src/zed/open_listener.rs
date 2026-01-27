@@ -688,7 +688,7 @@ async fn open_local_workspace(
 }
 
 pub async fn derive_paths_with_position(
-    fs: &dyn Fs,
+    _fs: &dyn Fs,
     path_strings: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> Vec<PathWithPosition> {
     join_all(path_strings.into_iter().map(|path_str| async move {
