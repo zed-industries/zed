@@ -2277,10 +2277,7 @@ impl Window {
         #[cfg(any(feature = "inspector", debug_assertions))]
         let inspector_element = self.prepaint_inspector(_inspector_width, cx);
 
-        let mut sorted_deferred_draws =
-            (0..self.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
-        sorted_deferred_draws.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
-        self.prepaint_deferred_draws(&sorted_deferred_draws, cx);
+        self.prepaint_deferred_draws(cx);
 
         let mut prompt_element = None;
         let mut active_drag_element = None;
@@ -2309,7 +2306,7 @@ impl Window {
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector(inspector_element, cx);
 
-        self.paint_deferred_draws(&sorted_deferred_draws, cx);
+        self.paint_deferred_draws(cx);
 
         if let Some(mut prompt_element) = prompt_element {
             prompt_element.paint(self, cx);
@@ -2392,54 +2389,81 @@ impl Window {
         None
     }
 
-    fn prepaint_deferred_draws(&mut self, deferred_draw_indices: &[usize], cx: &mut App) {
+    fn prepaint_deferred_draws(&mut self, cx: &mut App) {
         assert_eq!(self.element_id_stack.len(), 0);
 
-        let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
-        for deferred_draw_ix in deferred_draw_indices {
-            let deferred_draw = &mut deferred_draws[*deferred_draw_ix];
-            self.element_id_stack
-                .clone_from(&deferred_draw.element_id_stack);
-            self.text_style_stack
-                .clone_from(&deferred_draw.text_style_stack);
-            self.next_frame
-                .dispatch_tree
-                .set_active_node(deferred_draw.parent_node);
+        let mut completed_draws = Vec::new();
 
-            let prepaint_start = self.prepaint_index();
-            if let Some(element) = deferred_draw.element.as_mut() {
-                self.with_rendered_view(deferred_draw.current_view, |window| {
-                    window.with_rem_size(Some(deferred_draw.rem_size), |window| {
-                        window.with_absolute_element_offset(
-                            deferred_draw.absolute_offset,
-                            |window| {
-                                element.prepaint(window, cx);
-                            },
-                        );
-                    });
-                })
-            } else {
-                self.reuse_prepaint(deferred_draw.prepaint_range.clone());
+        // Process deferred draws in multiple rounds to support nesting.
+        // Each round processes all current deferred draws, which may produce new ones.
+        loop {
+            let deferred_count = self.next_frame.deferred_draws.len();
+            if deferred_count == 0 {
+                break;
             }
-            let prepaint_end = self.prepaint_index();
-            deferred_draw.prepaint_range = prepaint_start..prepaint_end;
+
+            // Sort by priority for this round
+            let mut sorted_indices = (0..deferred_count).collect::<SmallVec<[_; 8]>>();
+            sorted_indices.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
+
+            let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
+
+            for deferred_draw_ix in sorted_indices {
+                let deferred_draw = &mut deferred_draws[deferred_draw_ix];
+                self.element_id_stack
+                    .clone_from(&deferred_draw.element_id_stack);
+                self.text_style_stack
+                    .clone_from(&deferred_draw.text_style_stack);
+                self.next_frame
+                    .dispatch_tree
+                    .set_active_node(deferred_draw.parent_node);
+
+                let prepaint_start = self.prepaint_index();
+                if let Some(element) = deferred_draw.element.as_mut() {
+                    self.with_rendered_view(deferred_draw.current_view, |window| {
+                        window.with_rem_size(Some(deferred_draw.rem_size), |window| {
+                            window.with_absolute_element_offset(
+                                deferred_draw.absolute_offset,
+                                |window| {
+                                    element.prepaint(window, cx);
+                                },
+                            );
+                        });
+                    })
+                } else {
+                    self.reuse_prepaint(deferred_draw.prepaint_range.clone());
+                }
+                let prepaint_end = self.prepaint_index();
+                deferred_draw.prepaint_range = prepaint_start..prepaint_end;
+            }
+
+            // Save completed draws and continue with newly added ones
+            completed_draws.append(&mut deferred_draws);
+
+            self.element_id_stack.clear();
+            self.text_style_stack.clear();
         }
-        assert_eq!(
-            self.next_frame.deferred_draws.len(),
-            0,
-            "cannot call defer_draw during deferred drawing"
-        );
-        self.next_frame.deferred_draws = deferred_draws;
-        self.element_id_stack.clear();
-        self.text_style_stack.clear();
+
+        // Restore all completed draws
+        self.next_frame.deferred_draws = completed_draws;
     }
 
-    fn paint_deferred_draws(&mut self, deferred_draw_indices: &[usize], cx: &mut App) {
+    fn paint_deferred_draws(&mut self, cx: &mut App) {
         assert_eq!(self.element_id_stack.len(), 0);
 
+        // Paint all deferred draws in priority order.
+        // Since prepaint has already processed nested deferreds, we just paint them all.
+        let deferred_count = self.next_frame.deferred_draws.len();
+        if deferred_count == 0 {
+            return;
+        }
+
+        let mut sorted_indices = (0..deferred_count).collect::<SmallVec<[_; 8]>>();
+        sorted_indices.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
+
         let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
-        for deferred_draw_ix in deferred_draw_indices {
-            let mut deferred_draw = &mut deferred_draws[*deferred_draw_ix];
+        for deferred_draw_ix in sorted_indices {
+            let mut deferred_draw = &mut deferred_draws[deferred_draw_ix];
             self.element_id_stack
                 .clone_from(&deferred_draw.element_id_stack);
             self.next_frame
