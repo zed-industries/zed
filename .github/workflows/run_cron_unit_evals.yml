@@ -7,8 +7,6 @@ env:
   RUST_BACKTRACE: '1'
   ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
 on:
-  schedule:
-  - cron: 47 1 * * 2
   workflow_dispatch: {}
 jobs:
   cron_unit_evals:
