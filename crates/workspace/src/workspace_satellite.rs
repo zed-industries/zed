@@ -1,11 +1,11 @@
-use gpui::{EventEmitter, WeakEntity};
+use gpui::{Entity, EventEmitter, Focusable};
 use ui::{ParentElement, Render, Styled, div};
 
 use crate::{ActivePaneDecorator, PaneGroup, Workspace, client_side_decorations};
 
 pub struct WorkspaceSatellite {
     pub(crate) center: PaneGroup,
-    pub(crate) workspace: WeakEntity<Workspace>,
+    pub(crate) workspace: Entity<Workspace>,
 }
 
 pub enum WorkspaceSatelliteEvent {
@@ -21,7 +21,8 @@ impl Render for WorkspaceSatellite {
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
         let pane = self.center.first_pane();
-        let decorator = ActivePaneDecorator::new(&pane, &self.workspace);
+        let weak_workspace = self.workspace.downgrade();
+        let decorator = ActivePaneDecorator::new(&pane, &weak_workspace);
 
         client_side_decorations(
             div()
@@ -30,5 +31,11 @@ impl Render for WorkspaceSatellite {
             window,
             cx,
         )
+    }
+}
+
+impl Focusable for WorkspaceSatellite {
+    fn focus_handle(&self, cx: &gpui::App) -> gpui::FocusHandle {
+        self.workspace.read(cx).active_pane.focus_handle(cx)
     }
 }

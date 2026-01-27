@@ -3273,7 +3273,7 @@ impl Workspace {
             },
         };
 
-        let weak_self = self.weak_handle();
+        let workspace = cx.entity();
         // TODO: this is added in the current window
         let empty_pane = self.add_pane(window, cx);
         let window_handle = cx.open_window(
@@ -3291,7 +3291,7 @@ impl Workspace {
 
                     cx.new(|_| WorkspaceSatellite {
                         center: group,
-                        workspace: weak_self,
+                        workspace,
                     })
                 }
             },
