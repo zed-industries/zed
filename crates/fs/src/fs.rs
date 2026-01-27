@@ -1,3 +1,7 @@
+#[cfg(target_os = "macos")]
+mod mac_watcher;
+
+#[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
 use parking_lot::Mutex;
@@ -972,6 +976,62 @@ impl Fs for RealFs {
         Ok(Box::pin(result))
     }
 
+    #[cfg(target_os = "macos")]
+    async fn watch(
+        &self,
+        path: &Path,
+        latency: Duration,
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
+        Arc<dyn Watcher>,
+    ) {
+        use fsevent::StreamFlags;
+
+        let (events_tx, events_rx) = smol::channel::unbounded();
+        let handles = Arc::new(parking_lot::Mutex::new(collections::BTreeMap::default()));
+        let watcher = Arc::new(mac_watcher::MacWatcher::new(
+            events_tx,
+            Arc::downgrade(&handles),
+            latency,
+        ));
+        watcher.add(path).expect("handles can't be dropped");
+
+        (
+            Box::pin(
+                events_rx
+                    .map(|events| {
+                        events
+                            .into_iter()
+                            .map(|event| {
+                                log::trace!("fs path event: {event:?}");
+                                let kind = if event.flags.contains(StreamFlags::ITEM_REMOVED) {
+                                    Some(PathEventKind::Removed)
+                                } else if event.flags.contains(StreamFlags::ITEM_CREATED) {
+                                    Some(PathEventKind::Created)
+                                } else if event.flags.contains(StreamFlags::ITEM_MODIFIED)
+                                    | event.flags.contains(StreamFlags::ITEM_RENAMED)
+                                {
+                                    Some(PathEventKind::Changed)
+                                } else {
+                                    None
+                                };
+                                PathEvent {
+                                    path: event.path,
+                                    kind,
+                                }
+                            })
+                            .collect()
+                    })
+                    .chain(futures::stream::once(async move {
+                        drop(handles);
+                        vec![]
+                    })),
+            ),
+            watcher,
+        )
+    }
+
+    #[cfg(not(target_os = "macos"))]
     async fn watch(
         &self,
         path: &Path,
