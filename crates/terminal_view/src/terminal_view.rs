@@ -92,6 +92,7 @@ actions!(
 
 /// Renames the terminal tab.
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = terminal)]
 pub struct RenameTerminal;
 
 pub fn init(cx: &mut App) {
