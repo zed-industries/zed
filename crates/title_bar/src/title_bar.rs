@@ -441,18 +441,26 @@ impl TitleBar {
         let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.display_name().into();
 
-        let (nickname, tooltip_title, icon) = match options {
-            RemoteConnectionOptions::Ssh(options) => (
-                options.nickname.map(|nick| nick.into()),
+        let (nickname, tooltip_title, icon) = if let RemoteConnectionOptions::Ssh(options) = &options
+        {
+            (
+                options.nickname.clone().map(SharedString::from),
                 "Remote Project",
                 IconName::Server,
-            ),
-            RemoteConnectionOptions::Wsl(_) => (None, "Remote Project", IconName::Linux),
-            RemoteConnectionOptions::Docker(_dev_container_connection) => {
-                (None, "Dev Container", IconName::Box)
-            }
+            )
+        } else if let RemoteConnectionOptions::Wsl(_) = &options {
+            (None, "Remote Project", IconName::Linux)
+        } else if let RemoteConnectionOptions::Docker(_dev_container_connection) = &options {
+            (None, "Dev Container", IconName::Box)
+        } else {
             #[cfg(any(test, feature = "test-support"))]
-            RemoteConnectionOptions::Mock(_) => (None, "Mock Remote Project", IconName::Server),
+            {
+                (None, "Mock Remote Project", IconName::Server)
+            }
+            #[cfg(not(any(test, feature = "test-support")))]
+            {
+                (None, "Remote Project", IconName::Server)
+            }
         };
 
         let nickname = nickname.unwrap_or_else(|| host.clone());

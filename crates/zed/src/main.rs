@@ -54,7 +54,7 @@ use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
-    AppState, PathList, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceId,
+    AppState, Panel, PathList, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceId,
     WorkspaceSettings, WorkspaceStore, notifications::NotificationId,
 };
 use zed::{
@@ -323,15 +323,20 @@ fn main() {
 
     // Try to listen for CLI connections (for terminal commands, etc.)
     // On Dev channel, we allow multiple instances but still want CLI connectivity
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let cli_listen_result = crate::zed::listen_for_cli_connections(open_listener.clone());
+
+    #[cfg(target_os = "macos")]
+    if let Err(error) = crate::zed::listen_for_cli_connections(open_listener.clone()) {
+        log::debug!("Failed to listen for CLI connections: {error}");
+    }
 
     let failed_single_instance_check = if *zed_env_vars::ZED_STATELESS
         || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev
     {
         false
     } else {
-        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         {
             cli_listen_result.is_err()
         }
@@ -339,6 +344,12 @@ fn main() {
         #[cfg(target_os = "windows")]
         {
             !crate::zed::windows_only_instance::handle_single_instance(open_listener.clone(), &args)
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            use zed::mac_only_instance::*;
+            ensure_only_instance() != IsOnlyInstance::Yes
         }
     };
     if failed_single_instance_check {
