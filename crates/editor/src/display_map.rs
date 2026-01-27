@@ -97,7 +97,9 @@ use gpui::{
     App, Context, Entity, EntityId, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle,
     WeakEntity,
 };
-use language::{Point, Subscription as BufferSubscription, language_settings::language_settings};
+use language::{
+    Chunk, Point, Subscription as BufferSubscription, language_settings::language_settings,
+};
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
     MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
@@ -1732,6 +1734,63 @@ impl DisplaySnapshot {
         )
     }
 
+    pub(crate) fn highlight_style_for_chunk<'a>(
+        chunk: &Chunk<'_>,
+        editor_style: &'a EditorStyle,
+        diagnostics_max_severity: DiagnosticSeverity,
+    ) -> Option<HighlightStyle> {
+        let highlight_style = chunk
+            .syntax_highlight_id
+            .and_then(|id| id.style(&editor_style.syntax));
+
+        let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
+            HighlightStyle {
+                // For color inlays, blend the color with the editor background
+                // if the color has transparency (alpha < 1.0)
+                color: chunk_highlight.color.map(|color| {
+                    if chunk.is_inlay && !color.is_opaque() {
+                        editor_style.background.blend(color)
+                    } else {
+                        color
+                    }
+                }),
+                ..chunk_highlight
+            }
+        });
+
+        let diagnostic_highlight = chunk
+            .diagnostic_severity
+            .filter(|severity| {
+                diagnostics_max_severity
+                    .into_lsp()
+                    .is_some_and(|max_severity| severity <= &max_severity)
+            })
+            .map(|severity| HighlightStyle {
+                fade_out: chunk
+                    .is_unnecessary
+                    .then_some(editor_style.unnecessary_code_fade),
+                underline: (chunk.underline
+                    && editor_style.show_underlines
+                    && !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
+                    .then(|| {
+                        let diagnostic_color =
+                            super::diagnostic_style(severity, &editor_style.status);
+                        UnderlineStyle {
+                            color: Some(diagnostic_color),
+                            thickness: 1.0.into(),
+                            wavy: true,
+                        }
+                    }),
+                ..Default::default()
+            });
+
+        let style = [highlight_style, chunk_highlight, diagnostic_highlight]
+            .into_iter()
+            .flatten()
+            .reduce(|acc, highlight| acc.highlight(highlight));
+        style
+    }
+
     #[instrument(skip_all)]
     pub fn highlighted_chunks<'a>(
         &'a self,
@@ -1739,7 +1798,6 @@ impl DisplaySnapshot {
         language_aware: bool,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
-        // dbg!(&display_rows);
         self.chunks(
             display_rows,
             language_aware,
@@ -1802,6 +1860,11 @@ impl DisplaySnapshot {
             HighlightedChunk {
                 text: chunk.text,
                 style,
+                // Self::highlight_style_for_chunk(
+                //     chunk,
+                //     editor_style,
+                //     self.diagnostics_max_severity,
+                // ),
                 is_tab: chunk.is_tab,
                 is_inlay: chunk.is_inlay,
                 replacement: chunk.renderer.map(ChunkReplacement::Renderer),

@@ -4834,106 +4834,41 @@ impl EditorElement {
 
         let mut lines = Vec::<StickyHeaderLine>::new();
 
-        for (
-            StickyHeader {
-                item,
-                sticky_row,
-                start_point,
-                offset,
-            },
-            point,
-            excerpt_id,
-        ) in rows.into_iter().rev()
+        for StickyHeader {
+            item,
+            sticky_row,
+            start_point,
+            offset,
+        } in rows.into_iter().rev()
         {
-            // OOOOH keep in mind that multibuffer anchor has a text anchor and an excerpt id
-            // let Some(&row_info) = row_infos.get(start_point.row as usize) else {
-            //     continue;
-            // };
-            // TODO why is start point wrong then?
-            // dbg!(&item.text, &start_point, &point, &sticky_row);
-
-            // let display_point = snapshot.point_to_display_point(point, Bias::Left);
-            // let chars = snapshot.buffer_chars_at(point.to_offset(&snapshot.buffer));
-            // dbg!(
-            //     display_point,
-            //     chars.collect::<Vec<(char, MultiBufferOffset)>>()
-            // );
-
-            let Some(better_snapshot) = snapshot.buffer_for_excerpt(excerpt_id) else {
-                dbg!("no snapshot for excerpt");
+            let Some(buffer_snapshot) = snapshot.buffer_for_excerpt(item.range.start.excerpt_id)
+            else {
+                log::warn!("no snapshot for excerpt");
                 continue;
             };
 
+            let buffer_point: Point =
+                buffer_snapshot.summary_for_anchor(&item.range.start.text_anchor);
+
             let mut range_start_in_buffer =
-                text::ToPoint::to_point(&item.range.start.text_anchor, better_snapshot);
+                text::ToPoint::to_point(&item.range.start.text_anchor, buffer_snapshot);
             range_start_in_buffer.column = 0;
             let range_start_buffer_offset =
-                text::ToOffset::to_offset(&range_start_in_buffer, better_snapshot);
+                text::ToOffset::to_offset(&range_start_in_buffer, buffer_snapshot);
             let range_end_buffer_offset =
-                text::ToOffset::to_offset(&item.range.end.text_anchor, better_snapshot);
+                text::ToOffset::to_offset(&item.range.end.text_anchor, buffer_snapshot);
 
             let better_range = range_start_buffer_offset..range_end_buffer_offset;
 
-            // Probably missing wraps
-            // Definitely missing tabs
-            // Probably missing folds
-            // Probably missing inlays
-            let buffer_chunks = better_snapshot.chunks(better_range, true);
+            let buffer_chunks = buffer_snapshot.chunks(better_range, true);
             let chunks = buffer_chunks.flat_map(|c| {
-                // TODO definitely encaptulate this somewhere in display_map.rs
-                let highlight_style = c
-                    .syntax_highlight_id
-                    .and_then(|id| id.style(&self.style.syntax));
-
-                let chunk_highlight = c.highlight_style.map(|chunk_highlight| {
-                    HighlightStyle {
-                        // For color inlays, blend the color with the editor background
-                        // if the color has transparency (alpha < 1.0)
-                        color: chunk_highlight.color.map(|color| {
-                            if c.is_inlay && !color.is_opaque() {
-                                self.style.background.blend(color)
-                            } else {
-                                color
-                            }
-                        }),
-                        ..chunk_highlight
-                    }
-                });
-
-                let diagnostic_highlight = c
-                    .diagnostic_severity
-                    .filter(|severity| {
-                        snapshot
-                            .display_snapshot
-                            .diagnostics_max_severity
-                            .into_lsp()
-                            .is_some_and(|max_severity| severity <= &max_severity)
-                    })
-                    .map(|severity| HighlightStyle {
-                        fade_out: c.is_unnecessary.then_some(self.style.unnecessary_code_fade),
-                        underline: (c.underline
-                            && self.style.show_underlines
-                            && !(c.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
-                            .then(|| {
-                                let diagnostic_color =
-                                    super::diagnostic_style(severity, &self.style.status);
-                                UnderlineStyle {
-                                    color: Some(diagnostic_color),
-                                    thickness: 1.0.into(),
-                                    wavy: true,
-                                }
-                            }),
-                        ..Default::default()
-                    });
-
-                let style = [highlight_style, chunk_highlight, diagnostic_highlight]
-                    .into_iter()
-                    .flatten()
-                    .reduce(|acc, highlight| acc.highlight(highlight));
-
                 HighlightedChunk {
                     text: c.text,
-                    style: style,
+                    style: DisplaySnapshot::highlight_style_for_chunk(
+                        &c,
+                        &self.style,
+                        snapshot.diagnostics_max_severity,
+                    ),
                     is_tab: c.is_tab,
                     is_inlay: c.is_inlay,
                     replacement: None,
@@ -4941,9 +4876,6 @@ impl EditorElement {
                 .highlight_invisibles(&self.style)
             });
 
-            // let editor = Editor::for_buffer(better_snapshot, project, window, cx)
-            let row = DisplayRow(point.row);
-            // dbg!(&row);
             let line = layout_line_v2(
                 chunks,
                 snapshot,
@@ -4954,12 +4886,7 @@ impl EditorElement {
                 cx,
             );
 
-            // So why do we have the wrong text here in the multibuffer case?
-            // dbg!(&line.fragments);
-
             let line_number = show_line_numbers.then(|| {
-                let buffer_row_number = point.row;
-
                 let start_display_row = start_point.to_display_point(snapshot).row();
                 let relative_number = relative_to
                     .filter(|_| relative_line_numbers != RelativeLineNumbers::Disabled)
@@ -4973,26 +4900,8 @@ impl EditorElement {
                 let number = relative_number
                     .filter(|&delta| delta != 0)
                     .map(|delta| delta.unsigned_abs() as u32)
-                    .unwrap_or(buffer_row_number + 1);
+                    .unwrap_or(buffer_point.row + 1);
 
-                // Doesn't work in a singleton buffer, which appears to account for the sticky headers already.
-                // let number = row_infos
-                //     .get(start_point.row as usize)
-                //     .map(|row| row.buffer_row.map(|r| r + 1))
-                //     .unwrap_or(Some(number))
-                //     .unwrap();
-                // let foo = row_infos
-                //     .iter()
-                //     .find(|row_info| {
-                //         if let Some(mb_row) = row_info.multibuffer_row {
-                //             mb_row.0 == number
-                //         } else {
-                //             false
-                //         }
-                //     })
-                //     .map(|row| row.buffer_row.map(|r| r + 1))
-                //     .unwrap_or(Some(number))
-                //     .unwrap();
                 let color = cx.theme().colors().editor_line_number;
                 self.shape_line_number(SharedString::from(number.to_string()), color, window)
             });
@@ -5031,43 +4940,34 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
         cx: &App,
-    ) -> Vec<(StickyHeader, Point, ExcerptId)> {
+    ) -> Vec<StickyHeader> {
         let mut scroll_top = snapshot.scroll_position().y;
         if !snapshot.is_singleton() {
             scroll_top = scroll_top + FILE_HEADER_HEIGHT as f64;
         }
 
         let mut end_rows = Vec::<DisplayRow>::new();
-        let mut rows = Vec::<(StickyHeader, Point, ExcerptId)>::new();
+        let mut rows = Vec::<StickyHeader>::new();
 
         let items = editor
             .sticky_headers(&snapshot.display_snapshot, style, cx)
             .unwrap_or_default();
 
-        for (item, point, excerpt_id) in items {
+        for item in items {
             let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
             let end_point = item.range.end.to_point(snapshot.buffer_snapshot());
-
-            // Start of the excerpt (visually) in a multibuffer context
-            // dbg!(&start_point, &item.text);
 
             let sticky_row = snapshot
                 .display_snapshot
                 .point_to_display_point(start_point, Bias::Left)
                 .row();
-            // dbg!(&sticky_row, &item.text);
-            // if !snapshot.is_singleton() {
-            //     sticky_row = sticky_row + DisplayRow(FILE_HEADER_HEIGHT);
-            // }
+
             let end_row = snapshot
                 .display_snapshot
                 .point_to_display_point(end_point, Bias::Left)
                 .row();
-            // TODO does endrow need the same mutation?
             let max_sticky_row = end_row.previous_row();
             if max_sticky_row <= sticky_row {
-                // TODO constraint needs to look at different row definitions in non-singleton cases
-                // dbg!("Skipping sticky header, max_sticky_row <= sticky_row");
                 continue;
             }
 
@@ -5080,17 +4980,9 @@ impl EditorElement {
             let depth = end_rows.len();
 
             let adjusted_scroll_top = scroll_top + depth as f64;
-            // dbg!(&adjusted_scroll_top, &window.line_height());
-            // if !snapshot.is_singleton() {
-            //     adjusted_scroll_top = adjusted_scroll_top + FILE_HEADER_HEIGHT as f64;
-            // }
 
             if sticky_row.as_f64() > adjusted_scroll_top || end_row.as_f64() <= adjusted_scroll_top
             {
-                // TODO constraint needs to look at different row definitions in non-singleton cases
-                // dbg!(
-                //     "Skipping sticky header, sticky_row >= adjusted_scroll_top || end_row <= adjusted_scroll_top"
-                // );
                 continue;
             }
 
@@ -5100,8 +4992,6 @@ impl EditorElement {
             // I mean this isn't going to work
             // TODO need to refine this can create a realistic algorithm
             let extra = FILE_HEADER_HEIGHT as f64 * 0.932952880859375;
-            // dbg!(&offset);
-            // dbg!(extra);
 
             if !snapshot.is_singleton() {
                 // Why is this needed if scroll_top is already adjusted for the header height?
@@ -5109,18 +4999,13 @@ impl EditorElement {
             }
 
             end_rows.push(end_row);
-            rows.push((
-                StickyHeader {
-                    item,
-                    sticky_row,
-                    start_point,
-                    offset,
-                },
-                point,
-                excerpt_id,
-            ));
+            rows.push(StickyHeader {
+                item,
+                sticky_row,
+                start_point,
+                offset,
+            });
         }
-
         rows
     }
 

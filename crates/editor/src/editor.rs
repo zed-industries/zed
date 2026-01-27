@@ -1948,7 +1948,7 @@ impl Editor {
         snapshot: &DisplaySnapshot,
         style: &EditorStyle,
         cx: &App,
-    ) -> Option<Vec<(OutlineItem<Anchor>, Point, ExcerptId)>> {
+    ) -> Option<Vec<OutlineItem<Anchor>>> {
         let selections = self.selections.all::<Point>(&snapshot);
         let multi_buffer = self.buffer().read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
@@ -1981,55 +1981,28 @@ impl Editor {
                     Some(style.syntax.as_ref()),
                 );
 
-                // let range = if multi_buffer_snapshot.is_singleton() {
-                //     Anchor::range_in_buffer(excerpt_id, outline_item.range)
-                // } else {
-                //     outline_
-                // }
-
                 let outline_items = contained_outline_items
                     .into_iter()
-                    .map(move |outline_item| {
-                        // dbg!(
-                        //     &outline_item.range,
-                        //     Anchor::range_in_buffer(excerpt_id, outline_item.range.clone())
-                        // );
-                        // dbg!(
-                        //     &outline_item.source_range_for_text,
-                        //     Anchor::range_in_buffer(
-                        //         excerpt_id,
-                        //         outline_item.source_range_for_text.clone()
-                        //     )
-                        // );
-                        // dbg!(&outline_item.body_range, Anchor::range_in_buffer(excerpt_id, outline_item.body_range))
-                        // dbg!(&outline_item.text);
-                        let buffer_point: Point =
-                            buffer.summary_for_anchor(&outline_item.range.start);
-                        (
-                            OutlineItem {
-                                depth: outline_item.depth,
-                                range: Anchor::range_in_buffer(excerpt_id, outline_item.range),
-                                source_range_for_text: Anchor::range_in_buffer(
-                                    excerpt_id,
-                                    outline_item.source_range_for_text,
-                                ),
-                                text: outline_item.text,
-                                highlight_ranges: outline_item.highlight_ranges,
-                                name_ranges: outline_item.name_ranges,
-                                body_range: outline_item
-                                    .body_range
-                                    .map(|range| Anchor::range_in_buffer(excerpt_id, range)),
-                                annotation_range: outline_item
-                                    .annotation_range
-                                    .map(|range| Anchor::range_in_buffer(excerpt_id, range)),
-                            },
-                            buffer_point,
+                    .map(move |outline_item| OutlineItem {
+                        depth: outline_item.depth,
+                        range: Anchor::range_in_buffer(excerpt_id, outline_item.range),
+                        source_range_for_text: Anchor::range_in_buffer(
                             excerpt_id,
-                        )
+                            outline_item.source_range_for_text,
+                        ),
+                        text: outline_item.text,
+                        highlight_ranges: outline_item.highlight_ranges,
+                        name_ranges: outline_item.name_ranges,
+                        body_range: outline_item
+                            .body_range
+                            .map(|range| Anchor::range_in_buffer(excerpt_id, range)),
+                        annotation_range: outline_item
+                            .annotation_range
+                            .map(|range| Anchor::range_in_buffer(excerpt_id, range)),
                     });
                 outline_items
             })
-            .collect::<Vec<(OutlineItem<Anchor>, Point, ExcerptId)>>();
+            .collect::<Vec<OutlineItem<Anchor>>>();
         Some(outline_items)
     }
 

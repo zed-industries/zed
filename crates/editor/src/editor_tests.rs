@@ -28870,15 +28870,11 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
             EditorElement::sticky_headers(&e, &e.snapshot(window, cx), &style, cx)
                 .into_iter()
                 .map(
-                    |(
-                        StickyHeader {
-                            start_point,
-                            offset,
-                            ..
-                        },
-                        _,
-                        _,
-                    )| { (start_point, offset) },
+                    |StickyHeader {
+                         start_point,
+                         offset,
+                         ..
+                     }| { (start_point, offset) },
                 )
                 .collect::<Vec<_>>()
         })
