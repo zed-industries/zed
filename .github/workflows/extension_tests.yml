@@ -6,6 +6,8 @@ env:
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
   ZED_EXTENSION_CLI_SHA: 7cfce605704d41ca247e3f84804bf323f6c6caaf
+  RUSTUP_TOOLCHAIN: stable
+  CARGO_BUILD_TARGET: wasm32-wasip2
 on:
   workflow_call: {}
 jobs:
@@ -51,7 +53,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.check_rust == 'true'
-    runs-on: namespace-profile-4x8-ubuntu-2204
+    runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -61,6 +63,10 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
+        path: ~/.rustup
+    - name: extension_tests::install_rust_target
+      run: rustup target add wasm32-wasip2
+      shell: bash -euxo pipefail {0}
     - name: steps::cargo_fmt
       run: cargo fmt --all -- --check
       shell: bash -euxo pipefail {0}
@@ -70,11 +76,11 @@ jobs:
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast
+      run: 'cargo nextest run --workspace --no-fail-fast --target "$(rustc -vV | sed -n ''s|host: ||p'')"'
       shell: bash -euxo pipefail {0}
       env:
         NEXTEST_NO_TESTS: warn
-    timeout-minutes: 3
+    timeout-minutes: 6
   check_extension:
     needs:
     - orchestrate
@@ -103,7 +109,7 @@ jobs:
         mkdir -p /tmp/ext-output
         ./zed-extension --source-dir . --scratch-dir /tmp/ext-scratch --output-dir /tmp/ext-output
       shell: bash -euxo pipefail {0}
-    timeout-minutes: 2
+    timeout-minutes: 4
   tests_pass:
     needs:
     - orchestrate

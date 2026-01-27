@@ -1350,6 +1350,7 @@ dependencies = [
  "ctor",
  "db",
  "futures 0.3.31",
+ "futures-lite 1.13.0",
  "gpui",
  "http_client",
  "log",
@@ -3292,6 +3293,7 @@ dependencies = [
  "chrono",
  "client",
  "clock",
+ "collab",
  "collab_ui",
  "collections",
  "command_palette_hooks",
@@ -5641,8 +5643,13 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "encoding_rs",
+ "fuzzy",
  "gpui",
+ "language",
+ "picker",
+ "project",
  "ui",
+ "util",
  "workspace",
 ]
 
@@ -6009,6 +6016,8 @@ dependencies = [
  "rpc",
  "serde",
  "serde_json",
+ "serde_json_lenient",
+ "snippet_provider",
  "theme",
  "tokio",
  "toml 0.8.23",
@@ -7075,7 +7084,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow"
 version = "0.8.0"
-source = "git+https://github.com/zed-industries/gh-workflow?rev=09acfdf2bd5c1d6254abefd609c808ff73547b2c#09acfdf2bd5c1d6254abefd609c808ff73547b2c"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=c9eac0ed361583e1072860d96776fa52775b82ac#c9eac0ed361583e1072860d96776fa52775b82ac"
 dependencies = [
  "async-trait",
  "derive_more 2.0.1",
@@ -7092,7 +7101,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow-macros"
 version = "0.8.0"
-source = "git+https://github.com/zed-industries/gh-workflow?rev=09acfdf2bd5c1d6254abefd609c808ff73547b2c#09acfdf2bd5c1d6254abefd609c808ff73547b2c"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=c9eac0ed361583e1072860d96776fa52775b82ac#c9eac0ed361583e1072860d96776fa52775b82ac"
 dependencies = [
  "heck 0.5.0",
  "quote",
@@ -12657,6 +12666,7 @@ dependencies = [
  "dap",
  "dap_adapters",
  "db",
+ "encoding_rs",
  "extension",
  "fancy-regex",
  "fs",
@@ -12681,6 +12691,7 @@ dependencies = [
  "postage",
  "prettier",
  "pretty_assertions",
+ "project",
  "rand 0.9.2",
  "regex",
  "release_channel",
@@ -15418,7 +15429,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "indoc",
- "log",
  "parking_lot",
  "paths",
  "schemars",
@@ -16758,6 +16768,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "log",
+ "menu",
  "pretty_assertions",
  "project",
  "rand 0.9.2",
@@ -20684,6 +20695,7 @@ dependencies = [
  "cargo_metadata",
  "cargo_toml",
  "clap",
+ "extension",
  "gh-workflow",
  "indexmap",
  "indoc",

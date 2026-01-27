@@ -14,6 +14,7 @@ backtrace.workspace = true
 cargo_metadata.workspace = true
 cargo_toml.workspace = true
 clap = { workspace = true, features = ["derive"] }
+extension.workspace = true
 toml.workspace = true
 indoc.workspace = true
 indexmap.workspace = true

@@ -945,9 +945,15 @@ impl SshRemoteConnection {
                 .try_quote(&orig_tmp_path)
                 .context("shell quoting")?;
             let tmp_path = shell_kind.try_quote(tmp_path).context("shell quoting")?;
+            let tmp_exe_path = format!("{tmp_path}\\remote_server.exe");
+            let tmp_exe_path = shell_kind
+                .try_quote(&tmp_exe_path)
+                .context("shell quoting")?;
             format!(
                 "Expand-Archive -Force -Path {orig_tmp_path} -DestinationPath {tmp_path} -ErrorAction Stop;
-                 Move-Item -Force {tmp_path} {dst_path}",
+                 Move-Item -Force {tmp_exe_path} {dst_path};
+                 Remove-Item -Force {tmp_path} -Recurse;
+                 Remove-Item -Force {orig_tmp_path}",
             )
         } else {
             let orig_tmp_path = shell_kind
