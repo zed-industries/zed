@@ -4476,17 +4476,24 @@ impl Repository {
 
     pub fn fetch_commit_data(&mut self, sha: Oid, cx: &mut Context<Self>) -> &CommitDataState {
         if !self.commit_data.contains_key(&sha) {
-            match &self.graph_commit_data_handler {
-                GraphCommitHandlerState::Open(handler) => {
-                    if handler.commit_data_request.try_send(sha).is_ok() {
-                        let old_value = self.commit_data.insert(sha, CommitDataState::Loading);
-                        debug_assert!(old_value.is_none(), "We should never overwrite commit data");
+            loop {
+                match &self.graph_commit_data_handler {
+                    GraphCommitHandlerState::Open(handler) => {
+                        if handler.commit_data_request.try_send(sha).is_ok() {
+                            let old_value = self.commit_data.insert(sha, CommitDataState::Loading);
+                            debug_assert!(
+                                old_value.is_none(),
+                                "We should never overwrite commit data"
+                            );
+                        }
                     }
+                    GraphCommitHandlerState::Closed => {
+                        self.open_graph_commit_data_handler(cx);
+                        continue;
+                    }
+                    GraphCommitHandlerState::Starting => {}
                 }
-                GraphCommitHandlerState::Closed => {
-                    self.open_graph_commit_data_handler(cx);
-                }
-                GraphCommitHandlerState::Starting => {}
+                break;
             }
         }
 

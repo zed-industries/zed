@@ -16,6 +16,8 @@ default = []
 test-support = [
     "project/test-support",
     "gpui/test-support",
+    "git_ui/test-support",
+    "dep:rand"
 ]
 
 [dependencies]
@@ -31,6 +33,7 @@ smallvec.workspace = true
 theme.workspace = true
 time.workspace = true
 ui.workspace = true
+rand = { workspace = true, optional = true }
 workspace.workspace = true
 
 [dev-dependencies]
@@ -39,8 +42,8 @@ fs = { workspace = true, features = ["test-support"] }
 git = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
-rand.workspace = true
 recent_projects = { workspace = true, features = ["test-support"] }
+rand = { workspace = true }
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

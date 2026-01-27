@@ -113,9 +113,9 @@ impl LaneState {
                 let final_color = color.unwrap_or(parent_color);
 
                 Some(CommitLine {
-                    #[cfg(test)]
+                    #[cfg(any(test, feature = "test-support"))]
                     child,
-                    #[cfg(test)]
+                    #[cfg(any(test, feature = "test-support"))]
                     parent,
                     child_column: starting_col,
                     full_interval: starting_row..ending_row,
@@ -268,9 +268,9 @@ enum CommitLineSegment {
 
 #[derive(Debug)]
 struct CommitLine {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     child: Oid,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     parent: Oid,
     child_column: usize,
     full_interval: Range<usize>,
@@ -316,7 +316,7 @@ struct CommitLineKey {
     parent: Oid,
 }
 
-struct GraphData {
+pub struct GraphData {
     lane_states: SmallVec<[LaneState; 8]>,
     lane_colors: HashMap<ActiveLaneIdx, BranchColor>,
     parent_to_lanes: HashMap<Oid, SmallVec<[usize; 1]>>,
@@ -331,7 +331,7 @@ struct GraphData {
 }
 
 impl GraphData {
-    fn new(accent_colors_count: usize) -> Self {
+    pub fn new(accent_colors_count: usize) -> Self {
         GraphData {
             lane_states: SmallVec::default(),
             lane_colors: HashMap::default(),
@@ -379,7 +379,7 @@ impl GraphData {
         })
     }
 
-    fn add_commits(&mut self, commits: &[Arc<InitialGraphCommitData>]) {
+    pub fn add_commits(&mut self, commits: &[Arc<InitialGraphCommitData>]) {
         self.commits.reserve(commits.len());
         self.lines.reserve(commits.len() / 2);
 
@@ -1742,29 +1742,16 @@ mod persistence {
     }
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_util {
     use super::*;
     use anyhow::{Context, Result, bail};
     use collections::{HashMap, HashSet};
-    use fs::FakeFs;
-    use git::Oid;
     use git::repository::InitialGraphCommitData;
-    use gpui::TestAppContext;
-    use project::Project;
+    use git::{Oid, repository::GraphCommitData};
     use rand::prelude::*;
-    use serde_json::json;
-    use settings::SettingsStore;
     use smallvec::{SmallVec, smallvec};
-    use std::path::Path;
     use std::sync::Arc;
-
-    fn init_test(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-        });
-    }
 
     /// Generates a random commit DAG suitable for testing git graph rendering.
     ///
@@ -1776,7 +1763,7 @@ mod tests {
     /// When `adversarial` is true, generates complex topologies with many branches
     /// and octopus merges. Otherwise generates more realistic linear histories
     /// with occasional branches.
-    fn generate_random_commit_dag(
+    pub fn generate_random_commit_dag(
         rng: &mut StdRng,
         num_commits: usize,
         adversarial: bool,
@@ -1813,6 +1800,75 @@ mod tests {
         }
 
         commits
+    }
+
+    pub fn generate_commit_datas(
+        rng: &mut StdRng,
+        commits: &Vec<Arc<InitialGraphCommitData>>,
+    ) -> HashMap<Oid, GraphCommitData> {
+        let mut result = HashMap::default();
+
+        for commit in commits.iter() {
+            // Generate random author name
+            let author_names = [
+                "Alice Johnson",
+                "Bob Smith",
+                "Charlie Brown",
+                "Diana Prince",
+                "Eve Adams",
+                "Frank Miller",
+                "Grace Lee",
+                "Henry Davis",
+            ];
+            let author_name =
+                SharedString::from(author_names[rng.random_range(0..author_names.len())]);
+
+            // Generate random email
+            let emails = [
+                "alice@example.com",
+                "bob@example.com",
+                "charlie@example.com",
+                "diana@example.com",
+                "eve@example.com",
+                "frank@example.com",
+                "grace@example.com",
+                "henry@example.com",
+            ];
+            let author_email = SharedString::from(emails[rng.random_range(0..emails.len())]);
+
+            // Generate random timestamp (within a reasonable range)
+            let commit_timestamp = 1609459200 + (rng.next_u64() % (10 * 365 * 24 * 60 * 60)) as i64; // From 2021 to 2031
+
+            // Generate random commit subject
+            let subjects = [
+                "Add new feature",
+                "Fix bug in authentication",
+                "Update documentation",
+                "Refactor core module",
+                "Improve performance",
+                "Add unit tests",
+                "Update dependencies",
+                "Fix typo in README",
+                "Remove deprecated code",
+                "Add error handling",
+                "Optimize database queries",
+                "Update UI components",
+            ];
+            let subject = SharedString::from(subjects[rng.random_range(0..subjects.len())]);
+
+            let graph_commit_data = GraphCommitData {
+                sha: commit.sha,
+                parents: commit.parents.clone(),
+                author_name,
+                author_email,
+                commit_timestamp,
+                subject,
+            };
+
+            result.insert(commit.sha, graph_commit_data);
+        }
+
+        result
     }
 
     fn generate_parents_from_oids(
@@ -2208,7 +2264,7 @@ mod tests {
         Ok(())
     }
 
-    fn verify_all_invariants(
+    pub fn verify_all_invariants(
         graph: &GraphData,
         commits: &[Arc<InitialGraphCommitData>],
     ) -> Result<()> {
@@ -2222,6 +2278,30 @@ mod tests {
         verify_coverage(graph).context("coverage")?;
         verify_line_overlaps(graph).context("line overlaps")?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::{generate_random_commit_dag, verify_all_invariants};
+    use fs::FakeFs;
+    use git::Oid;
+    use git::repository::InitialGraphCommitData;
+    use gpui::TestAppContext;
+    use project::Project;
+    use rand::prelude::*;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use smallvec::smallvec;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
     }
 
     #[test]

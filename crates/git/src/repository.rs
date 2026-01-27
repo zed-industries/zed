@@ -53,7 +53,7 @@ static GRAPH_COMMIT_FORMAT: &str = "--format=%H%x00%P%x00%D";
 pub const GRAPH_CHUNK_SIZE: usize = 1000;
 
 /// Commit data needed for the git graph visualization.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GraphCommitData {
     pub sha: Oid,
     /// Most commits have a single parent, so we use a SmallVec to avoid allocations.

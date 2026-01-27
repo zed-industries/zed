@@ -6,9 +6,10 @@ use git::{
     Oid, RunHook,
     blame::Blame,
     repository::{
-        AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions, FetchOptions,
-        GRAPH_CHUNK_SIZE, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder,
-        LogSource, PushOptions, Remote, RepoPath, ResetMode, Worktree,
+        AskPassDelegate, Branch, CommitDataReader, CommitDataRequest, CommitDetails, CommitOptions,
+        FetchOptions, GIT_GRAPH_MAX_BATCH_SIZE, GRAPH_CHUNK_SIZE, GitRepository,
+        GitRepositoryCheckpoint, GraphCommitData, InitialGraphCommitData, LogOrder, LogSource,
+        PushOptions, Remote, RepoPath, ResetMode, Worktree,
     },
     status::{
         DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
@@ -51,6 +52,7 @@ pub struct FakeGitRepositoryState {
     pub simulated_index_write_error_message: Option<String>,
     pub refs: HashMap<String, String>,
     pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
+    pub graph_commit_details: HashMap<Oid, GraphCommitData>,
 }
 
 impl FakeGitRepositoryState {
@@ -69,6 +71,7 @@ impl FakeGitRepositoryState {
             oids: Default::default(),
             remotes: HashMap::default(),
             graph_commits: Vec::new(),
+            graph_commit_details: HashMap::default(),
         }
     }
 }
@@ -762,6 +765,28 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn commit_data_reader(&self) -> Result<CommitDataReader> {
-        anyhow::bail!("commit_data_reader not supported for FakeGitRepository")
+        let (request_tx, request_rx) =
+            smol::channel::bounded::<CommitDataRequest>(GIT_GRAPH_MAX_BATCH_SIZE);
+        let fs = self.fs.clone();
+        let dot_git_path = self.dot_git_path.clone();
+        let commit_details = fs.with_git_state(&dot_git_path, false, |state| {
+            state.graph_commit_details.clone()
+        })?;
+        let task = self.executor.spawn(async move {
+            while let Ok(request) = request_rx.recv().await {
+                let commit_data = commit_details
+                    .get(&request.sha)
+                    .cloned()
+                    .expect("Failed to get commit data");
+                request
+                    .response_tx
+                    .send(Ok(commit_data))
+                    .expect("Failed to send commit data");
+            }
+        });
+        Ok(CommitDataReader {
+            request_tx,
+            _task: task,
+        })
     }
 }
