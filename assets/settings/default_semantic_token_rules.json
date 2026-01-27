@@ -23,222 +23,222 @@
   {
     "token_type": "namespace",
     "token_modifiers": [],
-    "style": ["namespace", "module", "type"]
+    "style": ["namespace", "module", "type"],
   },
   {
     "token_type": "class",
     "token_modifiers": ["declaration"],
-    "style": ["type.class.definition", "type.definition"]
+    "style": ["type.class.definition", "type.definition"],
   },
   {
     "token_type": "class",
     "token_modifiers": ["definition"],
-    "style": ["type.class.definition", "type.definition"]
+    "style": ["type.class.definition", "type.definition"],
   },
   {
     "token_type": "class",
     "token_modifiers": [],
-    "style": ["type.class", "class", "type"]
+    "style": ["type.class", "class", "type"],
   },
   {
     "token_type": "enum",
     "token_modifiers": ["declaration"],
-    "style": ["type.enum.definition", "type.definition"]
+    "style": ["type.enum.definition", "type.definition"],
   },
   {
     "token_type": "enum",
     "token_modifiers": ["definition"],
-    "style": ["type.enum.definition", "type.definition"]
+    "style": ["type.enum.definition", "type.definition"],
   },
   {
     "token_type": "enum",
     "token_modifiers": [],
-    "style": ["type.enum", "enum", "type"]
+    "style": ["type.enum", "enum", "type"],
   },
   {
     "token_type": "interface",
     "token_modifiers": ["declaration"],
-    "style": ["type.interface.definition", "type.definition"]
+    "style": ["type.interface.definition", "type.definition"],
   },
   {
     "token_type": "interface",
     "token_modifiers": ["definition"],
-    "style": ["type.interface.definition", "type.definition"]
+    "style": ["type.interface.definition", "type.definition"],
   },
   {
     "token_type": "interface",
     "token_modifiers": [],
-    "style": ["type.interface", "interface", "type"]
+    "style": ["type.interface", "interface", "type"],
   },
   {
     "token_type": "struct",
     "token_modifiers": ["declaration"],
-    "style": ["type.struct.definition", "type.definition"]
+    "style": ["type.struct.definition", "type.definition"],
   },
   {
     "token_type": "struct",
     "token_modifiers": ["definition"],
-    "style": ["type.struct.definition", "type.definition"]
+    "style": ["type.struct.definition", "type.definition"],
   },
   {
     "token_type": "struct",
     "token_modifiers": [],
-    "style": ["type.struct", "struct", "type"]
+    "style": ["type.struct", "struct", "type"],
   },
   {
     "token_type": "typeParameter",
     "token_modifiers": ["declaration"],
-    "style": ["type.parameter.definition", "type.definition"]
+    "style": ["type.parameter.definition", "type.definition"],
   },
   {
     "token_type": "typeParameter",
     "token_modifiers": ["definition"],
-    "style": ["type.parameter.definition", "type.definition"]
+    "style": ["type.parameter.definition", "type.definition"],
   },
   {
     "token_type": "typeParameter",
     "token_modifiers": [],
-    "style": ["type.parameter", "type"]
+    "style": ["type.parameter", "type"],
   },
   {
     "token_type": "type",
     "token_modifiers": ["declaration"],
-    "style": ["type.definition"]
+    "style": ["type.definition"],
   },
   {
     "token_type": "type",
     "token_modifiers": ["definition"],
-    "style": ["type.definition"]
+    "style": ["type.definition"],
   },
   {
     "token_type": "type",
     "token_modifiers": [],
-    "style": ["type"]
+    "style": ["type"],
   },
   // References
   {
     "token_type": "parameter",
     "token_modifiers": [],
-    "style": ["parameter"]
+    "style": ["parameter"],
   },
   {
     "token_type": "variable",
     "token_modifiers": ["defaultLibrary", "constant"],
-    "style": ["constant.builtin"]
+    "style": ["constant.builtin"],
   },
   {
     "token_type": "variable",
     "token_modifiers": ["defaultLibrary"],
-    "style": ["variable.builtin"]
+    "style": ["variable.builtin"],
   },
   {
     "token_type": "variable",
     "token_modifiers": ["constant"],
-    "style": ["constant"]
+    "style": ["constant"],
   },
   {
     "token_type": "variable",
     "token_modifiers": [],
-    "style": ["variable"]
+    "style": ["variable"],
   },
   {
     "token_type": "property",
     "token_modifiers": [],
-    "style": ["property"]
+    "style": ["property"],
   },
   {
     "token_type": "enumMember",
     "token_modifiers": [],
-    "style": ["type.enum.member", "type.enum", "variant"]
+    "style": ["type.enum.member", "type.enum", "variant"],
   },
   {
     "token_type": "decorator",
     "token_modifiers": [],
-    "style": ["function.decorator", "function.annotation"]
+    "style": ["function.decorator", "function.annotation"],
   },
   // Declarations in the docs, but in practice, also references
   {
     "token_type": "function",
     "token_modifiers": ["defaultLibrary"],
-    "style": ["function.builtin"]
+    "style": ["function.builtin"],
   },
   {
     "token_type": "function",
     "token_modifiers": [],
-    "style": ["function"]
+    "style": ["function"],
   },
   {
     "token_type": "method",
     "token_modifiers": ["defaultLibrary"],
-    "style": ["function.builtin"]
+    "style": ["function.builtin"],
   },
   {
     "token_type": "method",
     "token_modifiers": [],
-    "style": ["function.method", "function"]
+    "style": ["function.method", "function"],
   },
   {
     "token_type": "macro",
     "token_modifiers": [],
-    "style": ["function.macro", "function"]
+    "style": ["function.macro", "function"],
   },
   {
     "token_type": "label",
     "token_modifiers": [],
-    "style": ["label"]
+    "style": ["label"],
   },
   // Tokens
   {
     "token_type": "comment",
     "token_modifiers": ["documentation"],
-    "style": ["comment.documentation", "comment.doc"]
+    "style": ["comment.documentation", "comment.doc"],
   },
   {
     "token_type": "comment",
     "token_modifiers": [],
-    "style": ["comment"]
+    "style": ["comment"],
   },
   {
     "token_type": "string",
     "token_modifiers": [],
-    "style": ["string"]
+    "style": ["string"],
   },
   {
     "token_type": "keyword",
     "token_modifiers": [],
-    "style": ["keyword"]
+    "style": ["keyword"],
   },
   {
     "token_type": "number",
     "token_modifiers": [],
-    "style": ["number"]
+    "style": ["number"],
   },
   {
     "token_type": "regexp",
     "token_modifiers": [],
-    "style": ["string.regexp", "string"]
+    "style": ["string.regexp", "string"],
   },
   {
     "token_type": "operator",
     "token_modifiers": [],
-    "style": ["operator"]
+    "style": ["operator"],
   },
   // Not in the VS Code docs, but in the LSP spec.
   {
     "token_type": "modifier",
     "token_modifiers": [],
-    "style": ["keyword.modifier"]
+    "style": ["keyword.modifier"],
   },
   // C#
   {
     "token_type": "event",
     "token_modifiers": [],
-    "style": ["type.event", "type"]
+    "style": ["type.event", "type"],
   },
   // Rust
   {
     "token_type": "lifetime",
     "token_modifiers": [],
-    "style": ["symbol", "type.parameter", "type"]
-  }
+    "style": ["symbol", "type.parameter", "type"],
+  },
 ]
