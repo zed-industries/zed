@@ -753,13 +753,6 @@ impl ProjectPanel {
                                     task.detach_and_notify_err(window, cx);
                                 }
                                 None => {
-                                    if let Some(edit_state) = project_panel.state.edit_state.take()
-                                    {
-                                        if let Some(entry_id) = edit_state.temporarily_unfolded {
-                                            project_panel.state.unfolded_dir_ids.remove(&entry_id);
-                                        }
-                                    }
-
                                     project_panel.state.edit_state = None;
                                     project_panel
                                         .update_visible_entries(None, false, false, window, cx);
@@ -1773,7 +1766,6 @@ impl ProjectPanel {
         if refocus {
             window.focus(&self.focus_handle, cx);
         }
-        let temporarily_unfolded = edit_state.temporarily_unfolded;
         edit_state.processing_filename = Some(filename);
         cx.notify();
 
@@ -1788,10 +1780,6 @@ impl ProjectPanel {
                 Err(e) => {
                     project_panel
                         .update_in(cx, |project_panel, window, cx| {
-                            if let Some(entry_id) = &temporarily_unfolded {
-                                project_panel.state.unfolded_dir_ids.remove(&entry_id);
-                            }
-
                             project_panel.marked_entries.clear();
                             project_panel.update_visible_entries(None, false, false, window, cx);
                         })
@@ -1800,10 +1788,6 @@ impl ProjectPanel {
                 }
                 Ok(CreatedEntry::Included(new_entry)) => {
                     project_panel.update_in(cx, |project_panel, window, cx| {
-                        if let Some(entry_id) = &temporarily_unfolded {
-                            project_panel.state.unfolded_dir_ids.remove(&entry_id);
-                        }
-
                         if let Some(selection) = &mut project_panel.state.selection
                             && selection.entry_id == edited_entry_id
                         {
@@ -1825,10 +1809,6 @@ impl ProjectPanel {
                 Ok(CreatedEntry::Excluded { abs_path }) => {
                     if let Some(open_task) = project_panel
                         .update_in(cx, |project_panel, window, cx| {
-                            if let Some(entry_id) = &temporarily_unfolded {
-                                project_panel.state.unfolded_dir_ids.remove(&entry_id);
-                            }
-
                             project_panel.marked_entries.clear();
                             project_panel.update_visible_entries(None, false, false, window, cx);
 
@@ -1884,12 +1864,6 @@ impl ProjectPanel {
 
         let previous_edit_state = self.state.edit_state.take();
 
-        if let Some(ref edit_state) = previous_edit_state {
-            if let Some(entry_id) = &edit_state.temporarily_unfolded {
-                self.state.unfolded_dir_ids.remove(&entry_id);
-            }
-        }
-
         self.update_visible_entries(None, false, false, window, cx);
         self.marked_entries.clear();
 
@@ -1943,12 +1917,6 @@ impl ProjectPanel {
     }
 
     fn add_entry(&mut self, is_dir: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(previous_edit_state) = self.state.edit_state.take() {
-            if let Some(entry_id) = previous_edit_state.temporarily_unfolded {
-                self.state.unfolded_dir_ids.remove(&entry_id);
-            }
-        }
-
         let Some((worktree_id, entry_id)) = self
             .state
             .selection
@@ -1979,10 +1947,7 @@ impl ProjectPanel {
         let mut temporarily_unfolded = None;
 
         if new_entry_id != entry_id {
-            if !self.state.unfolded_dir_ids.contains(&new_entry_id) {
-                self.state.unfolded_dir_ids.insert(new_entry_id);
-                temporarily_unfolded = Some(new_entry_id);
-            }
+            temporarily_unfolded = Some(new_entry_id);
         }
 
         if let Some((worktree, expanded_dir_ids)) = self
@@ -3554,6 +3519,11 @@ impl ProjectPanel {
                     for worktree_snapshot in visible_worktrees {
                         let worktree_id = worktree_snapshot.id();
 
+                        let temporarily_unfolded = new_state
+                            .edit_state
+                            .as_ref()
+                            .and_then(|e| e.temporarily_unfolded);
+
                         let expanded_dir_ids = match new_state.expanded_dir_ids.entry(worktree_id) {
                             hash_map::Entry::Occupied(e) => e.into_mut(),
                             hash_map::Entry::Vacant(e) => {
@@ -3602,6 +3572,7 @@ impl ProjectPanel {
                             if auto_collapse_dirs && entry.kind.is_dir() {
                                 auto_folded_ancestors.push(entry.id);
                                 if !new_state.unfolded_dir_ids.contains(&entry.id)
+                                    && temporarily_unfolded != Some(entry.id)
                                     && let Some(root_path) = worktree_snapshot.root_entry()
                                 {
                                     let mut child_entries =
