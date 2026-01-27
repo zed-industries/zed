@@ -1954,35 +1954,15 @@ impl GitRepository for RealGitRepository {
         let git_binary_path = self.any_git_binary_path.clone();
         self.executor
             .spawn(async move {
-                if paths.is_empty() {
-                    return Ok(());
-                }
-
-                let mut child = new_smol_command(&git_binary_path)
-                    .current_dir(&working_directory?)
+                let mut cmd = new_smol_command(&git_binary_path);
+                cmd.current_dir(&working_directory?)
                     .envs(env.iter())
-                    .args([
-                        "stash",
-                        "push",
-                        "--quiet",
-                        "--include-untracked",
-                        "--pathspec-from-file=-",
-                        "--pathspec-file-nul",
-                    ])
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                    .context("failed to spawn git stash")?;
+                    .args(["stash", "push", "--quiet"])
+                    .arg("--include-untracked");
 
-                let mut stdin = child.stdin.take().context("failed to get stdin")?;
-                for path in &paths {
-                    stdin.write_all(path.as_unix_str().as_bytes()).await?;
-                    stdin.write_all(b"\0").await?;
-                }
-                drop(stdin);
+                cmd.args(paths.iter().map(|p| p.as_unix_str()));
 
-                let output = child.output().await?;
+                let output = cmd.output().await?;
 
                 anyhow::ensure!(
                     output.status.success(),
