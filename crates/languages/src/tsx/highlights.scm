@@ -263,36 +263,57 @@
 )
 
 [
+  "abstract"
   "as"
   "async"
   "await"
-  "class"
-  "const"
   "debugger"
+  "declare"
   "default"
   "delete"
-  "export"
   "extends"
-  "from"
-  "function"
   "get"
-  "import"
+  "implements"
   "in"
+  "infer"
   "instanceof"
   "is"
-  "let"
+  "keyof"
+  "module"
+  "namespace"
   "new"
   "of"
+  "override"
+  "private"
+  "protected"
+  "public"
+  "readonly"
   "satisfies"
   "set"
   "static"
   "target"
   "typeof"
   "using"
-  "var"
   "void"
   "with"
 ] @keyword
+
+[
+  "const"
+  "let"
+  "var"
+  "function"
+  "class"
+  "enum"
+  "interface"
+  "type"
+] @keyword.declaration
+
+[
+  "export"
+  "from"
+  "import"
+] @keyword.import
 
 [
   "break"
@@ -381,11 +402,6 @@
   "override"
 ] @keyword
 
-; JSX elements
-(jsx_opening_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
-(jsx_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
-(jsx_self_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
-
 (jsx_opening_element
   [
     (identifier) @type
@@ -413,6 +429,10 @@
     )
   ]
 )
+
+(jsx_opening_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
+(jsx_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
+(jsx_self_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
 
 (jsx_attribute (property_identifier) @attribute.jsx)
 (jsx_opening_element (["<" ">"]) @punctuation.bracket.jsx)

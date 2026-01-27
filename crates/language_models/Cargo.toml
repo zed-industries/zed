@@ -21,15 +21,19 @@ aws_http_client.workspace = true
 bedrock.workspace = true
 chrono.workspace = true
 client.workspace = true
+cloud_api_types.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 component.workspace = true
 convert_case.workspace = true
 copilot.workspace = true
+copilot_chat.workspace = true
+copilot_ui.workspace = true
 credentials_provider.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
 extension.workspace = true
 extension_host.workspace = true
+feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 google_ai = { workspace = true, features = ["schemars"] }

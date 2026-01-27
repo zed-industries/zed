@@ -7,6 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::acp::AcpThreadHistory;
 use crate::context::load_context;
 use crate::mention_set::MentionSet;
 use crate::{
@@ -15,7 +16,7 @@ use crate::{
     inline_prompt_editor::{CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent},
     terminal_inline_assistant::TerminalInlineAssistant,
 };
-use agent::HistoryStore;
+use agent::ThreadStore;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet, VecDeque, hash_map};
@@ -264,6 +265,7 @@ impl InlineAssistant {
 
         let prompt_store = agent_panel.prompt_store().as_ref().cloned();
         let thread_store = agent_panel.thread_store().clone();
+        let history = agent_panel.history().downgrade();
 
         let handle_assist =
             |window: &mut Window, cx: &mut Context<Workspace>| match inline_assist_target {
@@ -275,6 +277,7 @@ impl InlineAssistant {
                             workspace.project().downgrade(),
                             thread_store,
                             prompt_store,
+                            history,
                             action.prompt.clone(),
                             window,
                             cx,
@@ -289,6 +292,7 @@ impl InlineAssistant {
                             workspace.project().downgrade(),
                             thread_store,
                             prompt_store,
+                            history,
                             action.prompt.clone(),
                             window,
                             cx,
@@ -300,7 +304,7 @@ impl InlineAssistant {
         if let Some(error) = configuration_error() {
             if let ConfigurationError::ProviderNotAuthenticated(provider) = error {
                 cx.spawn(async move |_, cx| {
-                    cx.update(|cx| provider.authenticate(cx))?.await?;
+                    cx.update(|cx| provider.authenticate(cx)).await?;
                     anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
@@ -468,8 +472,9 @@ impl InlineAssistant {
         editor: &Entity<Editor>,
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        thread_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: WeakEntity<AcpThreadHistory>,
         initial_prompt: Option<String>,
         window: &mut Window,
         codegen_ranges: &[Range<Anchor>],
@@ -516,6 +521,7 @@ impl InlineAssistant {
                     self.fs.clone(),
                     thread_store.clone(),
                     prompt_store.clone(),
+                    history.clone(),
                     project.clone(),
                     workspace.clone(),
                     window,
@@ -605,8 +611,9 @@ impl InlineAssistant {
         editor: &Entity<Editor>,
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        thread_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: WeakEntity<AcpThreadHistory>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -625,6 +632,7 @@ impl InlineAssistant {
             project,
             thread_store,
             prompt_store,
+            history,
             initial_prompt,
             window,
             &codegen_ranges,
@@ -648,8 +656,9 @@ impl InlineAssistant {
         initial_transaction_id: Option<TransactionId>,
         focus: bool,
         workspace: Entity<Workspace>,
-        thread_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: WeakEntity<AcpThreadHistory>,
         window: &mut Window,
         cx: &mut App,
     ) -> InlineAssistId {
@@ -669,6 +678,7 @@ impl InlineAssistant {
                 project,
                 thread_store,
                 prompt_store,
+                history,
                 Some(initial_prompt),
                 window,
                 &[range],
@@ -1064,7 +1074,8 @@ impl InlineAssistant {
                 let language_name = assist.editor.upgrade().and_then(|editor| {
                     let multibuffer = editor.read(cx).buffer().read(cx);
                     let snapshot = multibuffer.snapshot(cx);
-                    let ranges = snapshot.range_to_buffer_ranges(assist.range.clone());
+                    let ranges =
+                        snapshot.range_to_buffer_ranges(assist.range.start..=assist.range.end);
                     ranges
                         .first()
                         .and_then(|(buffer, _, _)| buffer.language())
@@ -1633,7 +1644,7 @@ impl EditorInlineAssists {
                         let editor = editor.upgrade().context("editor was dropped")?;
                         cx.update_global(|assistant: &mut InlineAssistant, cx| {
                             assistant.update_editor_highlights(&editor, cx);
-                        })?;
+                        });
                     }
                     Ok(())
                 }
@@ -1937,16 +1948,13 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         let prompt_store = PromptStore::global(cx);
         window.spawn(cx, async move |cx| {
             let workspace = workspace.upgrade().context("workspace was released")?;
-            let thread_store = cx.update(|_window, cx| {
-                anyhow::Ok(
-                    workspace
-                        .read(cx)
-                        .panel::<AgentPanel>(cx)
-                        .context("missing agent panel")?
-                        .read(cx)
-                        .thread_store()
-                        .clone(),
-                )
+            let (thread_store, history) = cx.update(|_window, cx| {
+                let panel = workspace
+                    .read(cx)
+                    .panel::<AgentPanel>(cx)
+                    .context("missing agent panel")?
+                    .read(cx);
+                anyhow::Ok((panel.thread_store().clone(), panel.history().downgrade()))
             })??;
             let editor = editor.upgrade().context("editor was released")?;
             let range = editor
@@ -1978,7 +1986,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                         let multibuffer_snapshot = multibuffer.read(cx);
                         multibuffer_snapshot.anchor_range_in_excerpt(excerpt_id, action.range)
                     })
-                })?
+                })
                 .context("invalid range")?;
 
             let prompt_store = prompt_store.await.ok();
@@ -1992,6 +2000,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                     workspace,
                     thread_store,
                     prompt_store,
+                    history,
                     window,
                     cx,
                 );
@@ -2031,8 +2040,7 @@ pub mod test {
 
     use std::sync::Arc;
 
-    use agent::HistoryStore;
-    use assistant_text_thread::TextThreadStore;
+    use agent::ThreadStore;
     use client::{Client, UserStore};
     use editor::{Editor, MultiBuffer, MultiBufferOffset};
     use fs::FakeFs;
@@ -2103,9 +2111,9 @@ pub mod test {
             cx.set_global(inline_assistant);
         });
 
-        let project = cx
-            .executor()
-            .block_test(async { Project::test(fs.clone(), [], cx).await });
+        let foreground_executor = cx.foreground_executor().clone();
+        let project =
+            foreground_executor.block_test(async { Project::test(fs.clone(), [], cx).await });
 
         // Create workspace with window
         let (workspace, cx) = cx.add_window_view(|window, cx| {
@@ -2115,7 +2123,7 @@ pub mod test {
 
         setup(cx);
 
-        let (_editor, buffer) = cx.update(|window, cx| {
+        let (_editor, buffer, _history) = cx.update(|window, cx| {
             let buffer = cx.new(|cx| Buffer::local("", cx));
             let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
             let editor = cx.new(|cx| Editor::for_multibuffer(multibuffer, None, window, cx));
@@ -2131,8 +2139,8 @@ pub mod test {
                 })
             });
 
-            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-            let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+            let thread_store = cx.new(|cx| ThreadStore::new(cx));
+            let history = cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx));
 
             // Add editor to workspace
             workspace.update(cx, |workspace, cx| {
@@ -2146,8 +2154,9 @@ pub mod test {
                         &editor,
                         workspace.downgrade(),
                         project.downgrade(),
-                        history_store, // thread_store
-                        None,          // prompt_store
+                        thread_store,
+                        None,
+                        history.downgrade(),
                         Some(prompt),
                         window,
                         cx,
@@ -2157,15 +2166,14 @@ pub mod test {
                 inline_assistant.start_assist(assist_id, window, cx);
             });
 
-            (editor, buffer)
+            (editor, buffer, history)
         });
 
         cx.run_until_parked();
 
         test(cx);
 
-        let assist_id = cx
-            .executor()
+        let assist_id = foreground_executor
             .block_test(async { completion_rx.next().await })
             .unwrap()
             .unwrap();
@@ -2208,7 +2216,6 @@ pub mod evals {
     use eval_utils::{EvalOutput, NoProcessor};
     use gpui::TestAppContext;
     use language_model::{LanguageModelRegistry, SelectedModel};
-    use rand::{SeedableRng as _, rngs::StdRng};
 
     use crate::inline_assistant::test::{InlineAssistantOutput, run_inline_assistant_test};
 
@@ -2310,7 +2317,7 @@ pub mod evals {
         let prompt = prompt.into();
 
         eval_utils::eval(iterations, expected_pass_ratio, NoProcessor, move || {
-            let dispatcher = gpui::TestDispatcher::new(StdRng::from_os_rng());
+            let dispatcher = gpui::TestDispatcher::new(rand::random());
             let mut cx = TestAppContext::build(dispatcher, None);
             cx.skip_drawing();
 

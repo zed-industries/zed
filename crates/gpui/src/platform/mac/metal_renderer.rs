@@ -630,6 +630,7 @@ impl MetalRenderer {
                     viewport_size,
                     command_encoder,
                 ),
+                PrimitiveBatch::SubpixelSprites { .. } => unreachable!(),
             };
             if !ok {
                 command_encoder.end_encoding();

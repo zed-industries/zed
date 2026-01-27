@@ -182,6 +182,7 @@ impl ConfigurationSource {
                             id,
                             ContextServerSettings::Stdio {
                                 enabled: true,
+                                remote: false,
                                 command,
                             },
                         )
@@ -209,6 +210,7 @@ impl ConfigurationSource {
                     id.clone(),
                     ContextServerSettings::Extension {
                         enabled: true,
+                        remote: false,
                         settings,
                     },
                 ))
@@ -404,6 +406,7 @@ impl ConfigureContextServerModal {
                 ContextServerSettings::Stdio {
                     enabled: _,
                     command,
+                    ..
                 } => Some(ConfigurationTarget::Existing {
                     id: server_id,
                     command,
@@ -413,6 +416,7 @@ impl ConfigureContextServerModal {
                     url,
                     headers,
                     timeout: _,
+                    ..
                 } => Some(ConfigurationTarget::ExistingHttp {
                     id: server_id,
                     url,

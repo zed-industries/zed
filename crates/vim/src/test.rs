@@ -20,13 +20,18 @@ use language::{CursorShape, Language, LanguageConfig, Point};
 pub use neovim_backed_test_context::*;
 use settings::SettingsStore;
 use ui::Pixels;
-use util::test::marked_text_ranges;
+use util::{path, test::marked_text_ranges};
 pub use vim_test_context::*;
 
+use gpui::VisualTestContext;
 use indoc::indoc;
+use project::FakeFs;
 use search::BufferSearchBar;
+use search::{ProjectSearchView, project_search};
+use serde_json::json;
+use workspace::DeploySearch;
 
-use crate::{PushSneak, PushSneakBackward, insert::NormalBefore, motion, state::Mode};
+use crate::{PushSneak, PushSneakBackward, VimAddon, insert::NormalBefore, motion, state::Mode};
 
 use util_macros::perf;
 
@@ -1303,6 +1308,39 @@ async fn test_mouse_selection(cx: &mut TestAppContext) {
     cx.assert_state("one «ˇtwo» three", Mode::Visual)
 }
 
+#[gpui::test]
+async fn test_mouse_drag_across_anchor_does_not_drift(cx: &mut TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state("ˇone two three four", Mode::Normal);
+
+    let click_pos = cx.pixel_position("one ˇtwo three four");
+    let drag_left = cx.pixel_position("ˇone two three four");
+    let anchor_pos = cx.pixel_position("one tˇwo three four");
+
+    cx.simulate_mouse_down(click_pos, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    cx.simulate_mouse_move(drag_left, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    cx.assert_state("«ˇone t»wo three four", Mode::Visual);
+
+    cx.simulate_mouse_move(anchor_pos, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    cx.simulate_mouse_move(drag_left, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    cx.assert_state("«ˇone t»wo three four", Mode::Visual);
+
+    cx.simulate_mouse_move(anchor_pos, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    cx.simulate_mouse_move(drag_left, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    cx.assert_state("«ˇone t»wo three four", Mode::Visual);
+
+    cx.simulate_mouse_up(drag_left, MouseButton::Left, Modifiers::none());
+}
+
 #[perf]
 #[gpui::test]
 async fn test_lowercase_marks(cx: &mut TestAppContext) {
@@ -2499,5 +2537,178 @@ async fn test_deactivate(cx: &mut gpui::TestAppContext) {
 
     cx.update_editor(|editor, _window, _cx| {
         assert_eq!(editor.cursor_shape(), CursorShape::Underline);
+    });
+}
+
+// workspace::SendKeystrokes should pass literal keystrokes without triggering vim motions.
+// When sending `" _ x`, the `_` should select the blackhole register, not trigger
+// vim::StartOfLineDownward.
+#[gpui::test]
+async fn test_send_keystrokes_underscore_is_literal_46509(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    // Bind a key to send `" _ x` which should:
+    // `"` - start register selection
+    // `_` - select blackhole register (NOT vim::StartOfLineDownward)
+    // `x` - delete character into blackhole register
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "g x",
+            workspace::SendKeystrokes("\" _ x".to_string()),
+            Some("VimControl"),
+        )])
+    });
+
+    cx.set_state("helˇlo", Mode::Normal);
+
+    cx.simulate_keystrokes("g x");
+    cx.run_until_parked();
+
+    cx.assert_state("helˇo", Mode::Normal);
+}
+
+#[gpui::test]
+async fn test_send_keystrokes_no_key_equivalent_mapping_46509(cx: &mut gpui::TestAppContext) {
+    use collections::HashMap;
+    use gpui::{KeybindingKeystroke, Keystroke, PlatformKeyboardMapper};
+
+    // create a mock Danish keyboard mapper
+    // on Danish keyboards, the macOS key equivalents mapping includes: '{' -> 'Æ' and '}' -> 'Ø'
+    // this means the `{` character is produced by the key labeled `Æ` (with shift modifier)
+    struct DanishKeyboardMapper;
+    impl PlatformKeyboardMapper for DanishKeyboardMapper {
+        fn map_key_equivalent(
+            &self,
+            mut keystroke: Keystroke,
+            use_key_equivalents: bool,
+        ) -> KeybindingKeystroke {
+            if use_key_equivalents {
+                if keystroke.key == "{" {
+                    keystroke.key = "Æ".to_string();
+                }
+                if keystroke.key == "}" {
+                    keystroke.key = "Ø".to_string();
+                }
+            }
+            KeybindingKeystroke::from_keystroke(keystroke)
+        }
+
+        fn get_key_equivalents(&self) -> Option<&HashMap<char, char>> {
+            None
+        }
+    }
+
+    let mapper = DanishKeyboardMapper;
+
+    let keystroke_brace = Keystroke::parse("{").unwrap();
+    let mapped_with_bug = mapper.map_key_equivalent(keystroke_brace.clone(), true);
+    assert_eq!(
+        mapped_with_bug.key(),
+        "Æ",
+        "BUG: With use_key_equivalents=true, {{ is mapped to Æ on Danish keyboard"
+    );
+
+    // Fixed behavior, where the literal `{` character is preserved
+    let mapped_fixed = mapper.map_key_equivalent(keystroke_brace.clone(), false);
+    assert_eq!(
+        mapped_fixed.key(),
+        "{",
+        "FIX: With use_key_equivalents=false, {{ stays as {{"
+    );
+
+    // Same applies to }
+    let keystroke_close = Keystroke::parse("}").unwrap();
+    let mapped_close_bug = mapper.map_key_equivalent(keystroke_close.clone(), true);
+    assert_eq!(mapped_close_bug.key(), "Ø");
+    let mapped_close_fixed = mapper.map_key_equivalent(keystroke_close.clone(), false);
+    assert_eq!(mapped_close_fixed.key(), "}");
+
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "g p",
+            workspace::SendKeystrokes("{".to_string()),
+            Some("vim_mode == normal"),
+        )])
+    });
+
+    cx.set_state(
+        indoc! {"
+            first paragraph
+
+            second paragraphˇ
+
+            third paragraph
+        "},
+        Mode::Normal,
+    );
+
+    cx.simulate_keystrokes("g p");
+    cx.run_until_parked();
+
+    cx.assert_state(
+        indoc! {"
+            first paragraph
+            ˇ
+            second paragraph
+
+            third paragraph
+        "},
+        Mode::Normal,
+    );
+}
+
+#[gpui::test]
+async fn test_project_search_opens_in_normal_mode(cx: &mut gpui::TestAppContext) {
+    VimTestContext::init(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file_a.rs": "// File A.",
+            "file_b.rs": "// File B.",
+        }),
+    )
+    .await;
+
+    let project = project::Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let workspace =
+        cx.add_window(|window, cx| workspace::Workspace::test_new(project.clone(), window, cx));
+
+    cx.update(|cx| {
+        VimTestContext::init_keybindings(true, cx);
+    });
+
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    workspace
+        .update(cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(workspace, &DeploySearch::default(), window, cx)
+        })
+        .unwrap();
+
+    let search_view = workspace
+        .update(cx, |workspace, _, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .items()
+                .find_map(|item| item.downcast::<ProjectSearchView>())
+                .expect("Project search view should be active")
+        })
+        .unwrap();
+
+    project_search::perform_project_search(&search_view, "File A", cx);
+
+    search_view.update(cx, |search_view, cx| {
+        let vim_mode = search_view
+            .results_editor()
+            .read(cx)
+            .addon::<VimAddon>()
+            .map(|addon| addon.entity.read(cx).mode);
+
+        assert_eq!(vim_mode, Some(Mode::Normal));
     });
 }

@@ -54,6 +54,7 @@ livekit = { rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d", git = "https://git
 scap.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+cocoa.workspace = true
 core-foundation.workspace = true
 core-video.workspace = true
 coreaudio-rs = "0.12.1"

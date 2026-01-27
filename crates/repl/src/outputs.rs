@@ -34,7 +34,7 @@
 //! interpreting and displaying various types of Jupyter output.
 
 use editor::{Editor, MultiBuffer};
-use gpui::{AnyElement, ClipboardItem, Entity, Render, WeakEntity};
+use gpui::{AnyElement, ClipboardItem, Entity, EventEmitter, Render, WeakEntity};
 use language::Buffer;
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
 use ui::{CommonAnimationExt, CopyButton, IconButton, Tooltip, prelude::*};
@@ -54,6 +54,9 @@ use plain::TerminalOutput;
 pub(crate) mod user_error;
 use user_error::ErrorView;
 use workspace::Workspace;
+
+use crate::repl_settings::ReplSettings;
+use settings::Settings;
 
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
@@ -122,6 +125,43 @@ pub enum Output {
         display_id: Option<String>,
     },
     ClearOutputWaitMarker,
+}
+
+impl Output {
+    pub fn to_nbformat(&self, cx: &App) -> Option<nbformat::v4::Output> {
+        match self {
+            Output::Stream { content } => {
+                let text = content.read(cx).full_text();
+                Some(nbformat::v4::Output::Stream {
+                    name: "stdout".to_string(),
+                    text: nbformat::v4::MultilineString(text),
+                })
+            }
+            Output::Plain { content, .. } => {
+                let text = content.read(cx).full_text();
+                let mut data = jupyter_protocol::media::Media::default();
+                data.content.push(jupyter_protocol::MediaType::Plain(text));
+                Some(nbformat::v4::Output::DisplayData(
+                    nbformat::v4::DisplayData {
+                        data,
+                        metadata: serde_json::Map::new(),
+                    },
+                ))
+            }
+            Output::ErrorOutput(error_view) => {
+                let traceback_text = error_view.traceback.read(cx).full_text();
+                let traceback_lines: Vec<String> =
+                    traceback_text.lines().map(|s| s.to_string()).collect();
+                Some(nbformat::v4::Output::Error(nbformat::v4::ErrorOutput {
+                    ename: error_view.ename.clone(),
+                    evalue: error_view.evalue.clone(),
+                    traceback: traceback_lines,
+                }))
+            }
+            Output::Message(_) | Output::ClearOutputWaitMarker => None,
+            Output::Image { .. } | Output::Table { .. } | Output::Markdown { .. } => None,
+        }
+    }
 }
 
 impl Output {
@@ -243,7 +283,8 @@ impl Output {
                             let traceback_text = traceback.read(cx).full_text();
                             let full_error = format!("{}: {}\n{}", ename, evalue, traceback_text);
 
-                            CopyButton::new(full_error).tooltip_label("Copy Full Error")
+                            CopyButton::new("copy-full-error", full_error)
+                                .tooltip_label("Copy Full Error")
                         })
                         .child(
                             IconButton::new(
@@ -359,6 +400,9 @@ pub enum ExecutionStatus {
     Restarting,
 }
 
+pub struct ExecutionViewFinishedEmpty;
+pub struct ExecutionViewFinishedSmall(pub String);
+
 /// An ExecutionView shows the outputs of an execution.
 /// It can hold zero or more outputs, which the user
 /// sees as "the output" for a single execution.
@@ -368,6 +412,9 @@ pub struct ExecutionView {
     pub outputs: Vec<Output>,
     pub status: ExecutionStatus,
 }
+
+impl EventEmitter<ExecutionViewFinishedEmpty> for ExecutionView {}
+impl EventEmitter<ExecutionViewFinishedSmall> for ExecutionView {}
 
 impl ExecutionView {
     pub fn new(
@@ -445,7 +492,16 @@ impl ExecutionView {
                     ExecutionState::Busy => {
                         self.status = ExecutionStatus::Executing;
                     }
-                    ExecutionState::Idle => self.status = ExecutionStatus::Finished,
+                    ExecutionState::Idle => {
+                        self.status = ExecutionStatus::Finished;
+                        if self.outputs.is_empty() {
+                            cx.emit(ExecutionViewFinishedEmpty);
+                        } else if ReplSettings::get_global(cx).inline_output {
+                            if let Some(small_text) = self.get_small_inline_output(cx) {
+                                cx.emit(ExecutionViewFinishedSmall(small_text));
+                            }
+                        }
+                    }
                     ExecutionState::Unknown => self.status = ExecutionStatus::Unknown,
                     ExecutionState::Starting => self.status = ExecutionStatus::ConnectingToKernel,
                     ExecutionState::Restarting => self.status = ExecutionStatus::Restarting,
@@ -495,6 +551,35 @@ impl ExecutionView {
         if any {
             cx.notify();
         }
+    }
+
+    /// Check if the output is a single small plain text that can be shown inline.
+    /// Returns the text if it's suitable for inline display (single line, short enough).
+    fn get_small_inline_output(&self, cx: &App) -> Option<String> {
+        // Only consider single outputs
+        if self.outputs.len() != 1 {
+            return None;
+        }
+
+        let output = self.outputs.first()?;
+
+        // Only Plain outputs can be inlined
+        let content = match output {
+            Output::Plain { content, .. } => content,
+            _ => return None,
+        };
+
+        let text = content.read(cx).full_text();
+        let trimmed = text.trim();
+
+        let max_length = ReplSettings::get_global(cx).inline_output_max_length;
+
+        // Must be a single line and within the configured max length
+        if trimmed.contains('\n') || trimmed.len() > max_length {
+            return None;
+        }
+
+        Some(trimmed.to_string())
     }
 
     fn apply_terminal_text(

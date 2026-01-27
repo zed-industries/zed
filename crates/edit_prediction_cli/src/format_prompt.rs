@@ -1,78 +1,106 @@
 use crate::{
-    PromptFormat,
+    FormatPromptArgs, PredictionProvider,
     example::{Example, ExamplePrompt},
     headless::EpAppState,
-    load_project::run_load_project,
-    progress::{Progress, Step},
+    progress::{ExampleProgress, Step},
     retrieve_context::run_context_retrieval,
 };
-use anyhow::{Context as _, Result, ensure};
-use edit_prediction::{
-    EditPredictionStore,
-    zeta2::{zeta2_output_for_patch, zeta2_prompt_input},
-};
-use gpui::AsyncApp;
+use anyhow::{Context as _, Result};
+use edit_prediction::cursor_excerpt::editable_and_context_ranges_for_cursor_position;
+use gpui::{AppContext, AsyncApp};
+use language::{Buffer, OffsetRangeExt, Point};
+use similar::DiffableStr;
 use std::sync::Arc;
+use std::{fmt::Write as _, ops::Range};
+use zeta_prompt::ZetaVersion;
 use zeta_prompt::format_zeta_prompt;
 
 pub async fn run_format_prompt(
     example: &mut Example,
-    prompt_format: PromptFormat,
+    args: &FormatPromptArgs,
     app_state: Arc<EpAppState>,
-    mut cx: AsyncApp,
+    example_progress: &ExampleProgress,
+    cx: AsyncApp,
 ) -> Result<()> {
-    run_context_retrieval(example, app_state.clone(), cx.clone()).await?;
+    run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
 
-    let _step_progress = Progress::global().start(Step::FormatPrompt, &example.spec.name);
+    let step_progress = example_progress.start(Step::FormatPrompt);
 
-    match prompt_format {
-        PromptFormat::Teacher => {
-            let prompt = TeacherPrompt::format_prompt(example);
+    let prompt_inputs = example
+        .prompt_inputs
+        .as_ref()
+        .context("prompt_inputs must be set after context retrieval")?;
+
+    let language = app_state
+        .languages
+        .load_language_for_file_path(&example.spec.cursor_path)
+        .await
+        .ok();
+    let snapshot_fut = cx.update(|cx| {
+        Buffer::build_snapshot(
+            prompt_inputs.content.as_str().into(),
+            language,
+            Some(app_state.languages.clone()),
+            cx,
+        )
+    });
+    let cursor_point = Point::new(prompt_inputs.cursor_row, prompt_inputs.cursor_column);
+    let snapshot = cx.background_spawn(snapshot_fut).await;
+
+    match args.provider {
+        PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_) => {
+            step_progress.set_substatus("formatting teacher prompt");
+
+            let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
+                cursor_point,
+                &snapshot,
+                edit_prediction::zeta2::max_editable_tokens(ZetaVersion::default()),
+                edit_prediction::zeta2::MAX_CONTEXT_TOKENS,
+            );
+            let editable_range = editable_range.to_offset(&snapshot);
+            let context_range = context_range.to_offset(&snapshot);
+
+            let prompt = TeacherPrompt::format_prompt(example, editable_range, context_range);
+            let expected_output = example
+                .spec
+                .expected_patches
+                .first()
+                .cloned()
+                .unwrap_or_default();
+            let rejected_output = example.spec.rejected_patch.clone();
+
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
-                expected_output: example
-                    .spec
-                    .expected_patches
-                    .first()
-                    .cloned()
-                    .unwrap_or_default(),
-                format: prompt_format,
+                expected_output,
+                rejected_output,
+                provider: args.provider,
             });
         }
-        PromptFormat::Zeta2 => {
-            run_load_project(example, app_state, cx.clone()).await?;
+        PredictionProvider::Zeta2(version) => {
+            step_progress.set_substatus("formatting zeta2 prompt");
 
-            let ep_store = cx.update(|cx| {
-                EditPredictionStore::try_global(cx).context("EditPredictionStore not initialized")
-            })??;
+            let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
+                cursor_point,
+                &snapshot,
+                edit_prediction::zeta2::max_editable_tokens(version),
+                edit_prediction::zeta2::MAX_CONTEXT_TOKENS,
+            );
+            let editable_range = editable_range.to_offset(&snapshot);
+            let context_range = context_range.to_offset(&snapshot);
 
-            let state = example.state.as_ref().context("state must be set")?;
-            let snapshot = state.buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
-            let project = state.project.clone();
-            let (_, input) = ep_store.update(&mut cx, |ep_store, cx| {
-                let events = ep_store
-                    .edit_history_for_project(&project, cx)
-                    .into_iter()
-                    .map(|e| e.event)
-                    .collect();
-                anyhow::Ok(zeta2_prompt_input(
-                    &snapshot,
-                    example
-                        .context
-                        .as_ref()
-                        .context("context must be set")?
-                        .files
-                        .clone(),
-                    events,
-                    example.spec.cursor_path.clone(),
-                    example
-                        .buffer
-                        .as_ref()
-                        .context("buffer must be set")?
-                        .cursor_offset,
-                ))
-            })??;
-            let prompt = format_zeta_prompt(&input);
+            let context_start = context_range.start;
+            let cursor_offset_in_excerpt = prompt_inputs.cursor_offset - context_start;
+            let editable_range_in_excerpt =
+                (editable_range.start - context_start)..(editable_range.end - context_start);
+            let input = zeta_prompt::ZetaPromptInput {
+                cursor_path: example.spec.cursor_path.clone(),
+                cursor_excerpt: prompt_inputs.content[context_range].to_string().into(),
+                editable_range_in_excerpt,
+                cursor_offset_in_excerpt,
+                events: prompt_inputs.edit_history.clone(),
+                related_files: prompt_inputs.related_files.clone().unwrap_or_default(),
+            };
+            let prompt = format_zeta_prompt(&input, version);
             let expected_output = zeta2_output_for_patch(
                 &input,
                 &example
@@ -81,70 +109,125 @@ pub async fn run_format_prompt(
                     .first()
                     .context("expected patches is empty")?
                     .clone(),
+                version,
             )?;
+            let rejected_output = example
+                .spec
+                .rejected_patch
+                .as_ref()
+                .and_then(|patch| zeta2_output_for_patch(&input, &patch, version).ok());
+
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
                 expected_output,
-                format: prompt_format,
+                rejected_output,
+                provider: args.provider,
             });
+        }
+        _ => {
+            panic!("Cannot format prompt for {:?}", args.provider);
         }
     };
     Ok(())
 }
 
+pub fn zeta2_output_for_patch(
+    input: &zeta_prompt::ZetaPromptInput,
+    patch: &str,
+    version: ZetaVersion,
+) -> Result<String> {
+    let mut old_editable_region =
+        input.cursor_excerpt[input.editable_range_in_excerpt.clone()].to_string();
+
+    if !old_editable_region.ends_with_newline() {
+        old_editable_region.push('\n');
+    }
+
+    let mut result = edit_prediction::udiff::apply_diff_to_string(patch, &old_editable_region)
+        .with_context(|| {
+            format!(
+                "Patch:\n```\n{}```\n\nEditable region:\n```\n{}```",
+                patch, old_editable_region
+            )
+        })?;
+
+    if version == ZetaVersion::V0120GitMergeMarkers {
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push_str(zeta_prompt::v0120_git_merge_markers::END_MARKER);
+    }
+
+    Ok(result)
+}
+
 pub struct TeacherPrompt;
 
 impl TeacherPrompt {
-    const PROMPT: &str = include_str!("teacher.prompt.md");
+    const PROMPT: &str = include_str!("prompts/teacher.md");
     pub(crate) const EDITABLE_REGION_START: &str = "<|editable_region_start|>\n";
-    pub(crate) const EDITABLE_REGION_END: &str = "<|editable_region_end|>";
+    pub(crate) const EDITABLE_REGION_END: &str = "\n<|editable_region_end|>";
     pub(crate) const USER_CURSOR_MARKER: &str = "<|user_cursor|>";
 
     /// Truncate edit history to this number of last lines
     const MAX_HISTORY_LINES: usize = 128;
 
-    pub fn format_prompt(example: &Example) -> String {
+    pub fn format_prompt(
+        example: &Example,
+        editable_range: Range<usize>,
+        context_range: Range<usize>,
+    ) -> String {
         let edit_history = Self::format_edit_history(&example.spec.edit_history);
         let context = Self::format_context(example);
-        let editable_region = Self::format_editable_region(example);
+        let cursor_excerpt = Self::format_cursor_excerpt(example, editable_range, context_range);
 
         let prompt = Self::PROMPT
             .replace("{{context}}", &context)
             .replace("{{edit_history}}", &edit_history)
-            .replace("{{editable_region}}", &editable_region);
+            .replace("{{cursor_excerpt}}", &cursor_excerpt);
 
         prompt
     }
 
     pub fn parse(example: &Example, response: &str) -> Result<String> {
-        // Ideally, we should always be able to find cursor position in the retrieved context.
-        // In reality, sometimes we don't find it for these reasons:
-        // 1. `example.cursor_position` contains _more_ context than included in the retrieved context
-        //    (can be fixed by getting cursor coordinates at the load_example stage)
-        // 2. Context retriever just didn't include cursor line.
-        //
-        // In that case, fallback to using `cursor_position` as excerpt.
-        let cursor_file = &example
-            .buffer
-            .as_ref()
-            .context("`buffer` should be filled in in the context collection step")?
-            .content;
-
-        // Extract updated (new) editable region from the model response
+        // Extract updated (new) editable region from the model response.
+        // The model may include editable region markers in its output, so we need to strip them.
         let new_editable_region = extract_last_codeblock(response);
-
-        // Reconstruct old editable region we sent to the model
-        let old_editable_region = Self::format_editable_region(example);
-        let old_editable_region = Self::extract_editable_region(&old_editable_region);
-        ensure!(
-            cursor_file.contains(&old_editable_region),
-            "Something's wrong: editable_region is not found in the cursor file"
+        let mut new_editable_region = Self::extract_editable_region(&new_editable_region);
+        let old_editable_region = Self::extract_editable_region(
+            &example
+                .prompt
+                .as_ref()
+                .context("example prompt missing")?
+                .input,
         );
+        let prompt_inputs = example
+            .prompt_inputs
+            .as_ref()
+            .context("example is missing prompt inputs")?;
 
-        // Apply editable region to a larger context and compute diff.
-        // This is needed to get a better context lines around the editable region
-        let edited_file = cursor_file.replace(&old_editable_region, &new_editable_region);
-        let diff = language::unified_diff(&cursor_file, &edited_file);
+        // Normalize leading newlines: if old starts with newline but new doesn't,
+        // prepend newline to new to preserve whitespace structure.
+        // This handles the case where the model drops the leading blank line.
+        if old_editable_region.starts_with('\n') && !new_editable_region.starts_with('\n') {
+            new_editable_region.insert(0, '\n');
+        }
+
+        let (editable_region_offset, _) = prompt_inputs
+            .content
+            .match_indices(&old_editable_region)
+            .min_by_key(|(index, _)| index.abs_diff(prompt_inputs.cursor_offset))
+            .unwrap();
+        let editable_region_start_line = prompt_inputs.content[..editable_region_offset]
+            .matches('\n')
+            .count();
+
+        let diff = language::unified_diff_with_offsets(
+            &old_editable_region,
+            &new_editable_region,
+            editable_region_start_line as u32,
+            editable_region_start_line as u32,
+        );
 
         let diff = indoc::formatdoc! {"
             --- a/{path}
@@ -177,31 +260,61 @@ impl TeacherPrompt {
         history_lines.join("\n")
     }
 
-    fn format_context(example: &Example) -> String {
-        assert!(example.context.is_some(), "Missing context retriever step");
+    pub fn format_context(example: &Example) -> String {
+        let related_files = example
+            .prompt_inputs
+            .as_ref()
+            .and_then(|pi| pi.related_files.as_ref());
+
+        let Some(related_files) = related_files else {
+            return "(No context)".to_string();
+        };
+
+        if related_files.is_empty() {
+            return "(No context)".to_string();
+        }
 
         let mut prompt = String::new();
-        zeta_prompt::write_related_files(&mut prompt, &example.context.as_ref().unwrap().files);
+        for file in related_files {
+            let path_str = file.path.to_string_lossy();
+            writeln!(&mut prompt, "`````{path_str}").ok();
+
+            let mut prev_row = 0;
+            for excerpt in &file.excerpts {
+                if excerpt.row_range.start > prev_row {
+                    prompt.push_str("…\n");
+                }
+                prompt.push_str(&excerpt.text);
+                prompt.push('\n');
+                prev_row = excerpt.row_range.end;
+            }
+            if prev_row < file.max_row {
+                prompt.push_str("…\n");
+            }
+            prompt.push_str("\n`````\n");
+        }
 
         prompt
     }
 
-    fn format_editable_region(example: &Example) -> String {
+    fn format_cursor_excerpt(
+        example: &Example,
+        editable_range: Range<usize>,
+        context_range: Range<usize>,
+    ) -> String {
         let mut result = String::new();
 
+        let prompt_inputs = example.prompt_inputs.as_ref().unwrap();
+
         let path_str = example.spec.cursor_path.to_string_lossy();
-        result.push_str(&format!("`````path=\"{path_str}\"\n"));
+        result.push_str(&format!("`````{path_str}\n"));
+        result.push_str(&prompt_inputs.content[context_range.start..editable_range.start]);
         result.push_str(Self::EDITABLE_REGION_START);
-
-        // TODO: control number of lines around cursor
-        let (mut excerpt, offset) = example.spec.cursor_excerpt().unwrap();
-        excerpt.insert_str(offset, Self::USER_CURSOR_MARKER);
-        result.push_str(&excerpt);
-        if !result.ends_with('\n') {
-            result.push('\n');
-        }
-
+        result.push_str(&prompt_inputs.content[editable_range.start..prompt_inputs.cursor_offset]);
+        result.push_str(Self::USER_CURSOR_MARKER);
+        result.push_str(&prompt_inputs.content[prompt_inputs.cursor_offset..editable_range.end]);
         result.push_str(Self::EDITABLE_REGION_END);
+        result.push_str(&prompt_inputs.content[editable_range.end..context_range.end]);
         result.push_str("\n`````");
 
         result
@@ -209,13 +322,14 @@ impl TeacherPrompt {
 
     fn extract_editable_region(text: &str) -> String {
         let start = text
-            .find(Self::EDITABLE_REGION_START)
+            .rfind(Self::EDITABLE_REGION_START)
             .map_or(0, |pos| pos + Self::EDITABLE_REGION_START.len());
-        let end = text.find(Self::EDITABLE_REGION_END).unwrap_or(text.len());
+        let end = text.rfind(Self::EDITABLE_REGION_END).unwrap_or(text.len());
 
         let region = &text[start..end];
+        let region = region.strip_suffix('\n').unwrap_or(region);
 
-        region.replace("<|user_cursor|>", "")
+        region.replace(Self::USER_CURSOR_MARKER, "")
     }
 
     fn is_udiff_content_line(s: &str) -> bool {
@@ -226,6 +340,52 @@ impl TeacherPrompt {
             || s.starts_with("+++")
             || s.starts_with("@@")
     }
+}
+
+/// Extract the cursor excerpt from an example.
+/// First tries to extract from an existing prompt, then falls back to constructing from prompt_inputs.
+pub fn extract_cursor_excerpt_from_example(example: &Example) -> Option<String> {
+    // If we have the original prompt, extract the cursor excerpt from it
+    if let Some(prompt) = &example.prompt {
+        // Find "# 3. Current File" section and extract the content
+        if let Some(start) = prompt.input.find("# 3. Current File") {
+            let content_start = prompt.input[start..].find('`').map(|i| start + i)?;
+            let backtick_count = prompt.input[content_start..]
+                .chars()
+                .take_while(|&c| c == '`')
+                .count();
+            let content_start = content_start + backtick_count;
+
+            // Find the path line and skip it
+            let newline_pos = prompt.input[content_start..].find('\n')?;
+            let text_start = content_start + newline_pos + 1;
+
+            // Find the closing backticks
+            let closing_pattern = "`".repeat(backtick_count);
+            let text_end = prompt.input[text_start..].find(&closing_pattern)?;
+            let cursor_excerpt = &prompt.input[text_start..text_start + text_end];
+
+            let path_str = example.spec.cursor_path.to_string_lossy();
+            return Some(format!("`````{path_str}\n{cursor_excerpt}`````"));
+        }
+    }
+
+    // Fallback: construct from prompt_inputs if available
+    let prompt_inputs = example.prompt_inputs.as_ref()?;
+    let content = &prompt_inputs.content;
+    let cursor_offset = prompt_inputs.cursor_offset;
+
+    // Simple fallback: just show content around cursor with markers
+    let path_str = example.spec.cursor_path.to_string_lossy();
+    let mut result = format!("`````{path_str}\n");
+    result.push_str(TeacherPrompt::EDITABLE_REGION_START);
+    result.push_str(&content[..cursor_offset]);
+    result.push_str(TeacherPrompt::USER_CURSOR_MARKER);
+    result.push_str(&content[cursor_offset..]);
+    result.push_str(TeacherPrompt::EDITABLE_REGION_END);
+    result.push_str("\n`````");
+
+    Some(result)
 }
 
 fn extract_last_codeblock(text: &str) -> String {
@@ -242,16 +402,16 @@ fn extract_last_codeblock(text: &str) -> String {
         }
 
         let backtick_count = backtick_end - start;
-        let closing_backticks = "`".repeat(backtick_count);
+        let closing_pattern = format!("\n{}", "`".repeat(backtick_count));
 
         while backtick_end < bytes.len() && bytes[backtick_end] != b'\n' {
             backtick_end += 1;
         }
 
-        if let Some(end_pos) = text[backtick_end..].find(&closing_backticks) {
-            let code_block = &text[backtick_end + 1..backtick_end + end_pos];
+        if let Some(end_pos) = text[backtick_end..].find(&closing_pattern) {
+            let code_block = &text[backtick_end + 1..backtick_end + end_pos + 1];
             last_block = Some(code_block.to_string());
-            search_start = backtick_end + end_pos + backtick_count;
+            search_start = backtick_end + end_pos + closing_pattern.len();
         } else {
             break;
         }
@@ -282,6 +442,37 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_codeblock_with_nested_fences() {
+        let text = indoc::indoc! {"
+            `````
+            content with ``` inline
+            and ```python nested
+            more content
+            `````
+            "};
+        let last_block = extract_last_codeblock(text);
+        assert_eq!(
+            last_block,
+            "content with ``` inline\nand ```python nested\nmore content\n"
+        );
+    }
+
+    #[test]
+    fn test_extract_codeblock_ignores_inline_backticks() {
+        let text = indoc::indoc! {"
+            `````
+            here is some `code` with inline backticks
+            and here```more```stuff
+            `````
+            "};
+        let last_block = extract_last_codeblock(text);
+        assert_eq!(
+            last_block,
+            "here is some `code` with inline backticks\nand here```more```stuff\n"
+        );
+    }
+
+    #[test]
     fn test_extract_editable_region() {
         let text = indoc::indoc! {"
             some lines
@@ -300,9 +491,77 @@ mod tests {
             parsed,
             indoc::indoc! {"
             one
-            two three
+            two three"}
+        );
+    }
 
-            "}
+    #[test]
+    fn test_extract_last_codeblock_nested_bibtex() {
+        let text = indoc::indoc! {r#"
+            Looking at the edit history, I can see that a Citation section was just added.
+
+            `````
+            ## Collaborations
+            Our mission is to create a 4D generative model.
+
+            ## Citation
+
+            If you found Unique3D helpful, please cite our report:
+            ```bibtex
+            @misc{wu2024unique3d,
+                  title={Unique3D},
+            }
+            ```
+            `````
+            "#};
+        let last_block = extract_last_codeblock(text);
+        assert_eq!(
+            last_block,
+            indoc::indoc! {r#"
+            ## Collaborations
+            Our mission is to create a 4D generative model.
+
+            ## Citation
+
+            If you found Unique3D helpful, please cite our report:
+            ```bibtex
+            @misc{wu2024unique3d,
+                  title={Unique3D},
+            }
+            ```
+            "#}
+        );
+    }
+
+    #[test]
+    fn test_extract_editable_region_no_markers() {
+        let text = indoc::indoc! {"
+            one
+            two three"};
+        let parsed = TeacherPrompt::extract_editable_region(text);
+        assert_eq!(
+            parsed,
+            indoc::indoc! {"
+            one
+            two three"}
+        );
+    }
+
+    #[test]
+    fn test_extract_editable_region_strips_cursor_marker() {
+        let text = indoc::indoc! {"
+            <|editable_region_start|>
+            one
+            <|user_cursor|>two three
+
+            <|editable_region_end|>
+            "};
+        let parsed = TeacherPrompt::extract_editable_region(text);
+        assert_eq!(
+            parsed,
+            indoc::indoc! {"
+            one
+            two three"}
         );
     }
 }

@@ -13,7 +13,17 @@ path = "src/agent_ui.rs"
 doctest = false
 
 [features]
-test-support = ["assistant_text_thread/test-support", "eval_utils", "gpui/test-support", "language/test-support", "reqwest_client", "workspace/test-support", "agent/test-support"]
+test-support = [
+    "assistant_text_thread/test-support",
+    "acp_thread/test-support",
+    "eval_utils",
+    "gpui/test-support",
+    "git_ui/test-support",
+    "language/test-support",
+    "reqwest_client",
+    "workspace/test-support",
+    "agent/test-support",
+]
 unit-eval = []
 
 [dependencies]
@@ -33,6 +43,7 @@ audio.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 client.workspace = true
+cloud_api_types.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
@@ -47,6 +58,7 @@ feature_flags.workspace = true
 file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
+git_ui.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
@@ -106,6 +118,7 @@ reqwest_client = { workspace = true, optional = true }
 
 [dev-dependencies]
 acp_thread = { workspace = true, features = ["test-support"] }
+base64.workspace = true
 agent = { workspace = true, features = ["test-support"] }
 assistant_text_thread = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }
@@ -114,13 +127,17 @@ db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 eval_utils.workspace = true
 gpui = { workspace = true, "features" = ["test-support"] }
+git_ui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, "features" = ["test-support"] }
 languages = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, "features" = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+recent_projects = { workspace = true, features = ["test-support"] }
+title_bar = { workspace = true, features = ["test-support"] }
 semver.workspace = true
 reqwest_client.workspace = true
+tempfile.workspace = true
 tree-sitter-md.workspace = true
 unindent.workspace = true

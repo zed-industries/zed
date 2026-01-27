@@ -28,6 +28,14 @@
 
 (enum_specifier
     "enum" @context
+    [
+        "class"
+        "struct"
+    ]? @context
+    name: (_) @name) @item
+
+(union_specifier
+    "union" @context
     name: (_) @name) @item
 
 (enumerator
@@ -38,13 +46,18 @@
     name: (_) @name) @item
 
 (declaration
-    (storage_class_specifier) @context
-    (type_qualifier)? @context
+    [
+        (storage_class_specifier)
+        (type_qualifier)
+    ]* @context
     type: (_) @context
-    declarator: (init_declarator
-      ; The declaration may define multiple variables, using @item on the
-      ; declarator so that they get distinct ranges.
-      declarator: (_) @item @name))
+    declarator: [
+        ; The declaration may define multiple variables, using @item on the
+        ; declarator so that they get distinct ranges.
+        (init_declarator
+            declarator: (_) @item @name)
+        (identifier) @item @name
+    ] @item)
 
 (function_definition
     (type_qualifier)? @context
@@ -121,7 +134,10 @@
     (type_qualifier)? @context) @item
 
 (field_declaration
-    (type_qualifier)? @context
+    [
+        (storage_class_specifier)
+        (type_qualifier)
+    ]* @context
     type: (_) @context
     declarator: [
         (field_identifier) @name
