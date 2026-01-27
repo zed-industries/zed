@@ -97,7 +97,7 @@ pub struct ExtensionManifest {
     pub capabilities: Vec<ExtensionCapability>,
 
     #[serde(flatten)]
-    pub provides: ExtensionFeatures,
+    pub provided_features: ExtensionFeatures,
 }
 
 impl ExtensionManifest {
@@ -123,9 +123,13 @@ impl ExtensionManifest {
     }
 
     pub fn allow_remote_load(&self) -> bool {
-        !self.provides.language_servers.is_empty()
-            || !self.provides.debug_adapters.is_empty()
-            || !self.provides.debug_locators.is_empty()
+        !self.provided_features.language_servers.is_empty()
+            || !self.provided_features.debug_adapters.is_empty()
+            || !self.provided_features.debug_locators.is_empty()
+    }
+
+    pub fn provides(&self) -> &ExtensionFeatures {
+        &self.provided_features
     }
 }
 
@@ -376,7 +380,7 @@ fn manifest_from_old_manifest(
         schema_version: SchemaVersion::ZERO,
         lib: Default::default(),
         capabilities: Vec::new(),
-        provides: ExtensionFeatures {
+        provided_features: ExtensionFeatures {
             themes: {
                 let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
                 themes.sort();
@@ -426,7 +430,7 @@ mod tests {
             authors: vec![],
             lib: Default::default(),
             capabilities: vec![],
-            provides: ExtensionFeatures {
+            provided_features: ExtensionFeatures {
                 themes: vec![],
                 icon_themes: vec![],
                 languages: vec![],
@@ -560,8 +564,8 @@ args = ["--serve"]
 
         let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
         assert_eq!(manifest.id.as_ref(), "example.agent-server-ext");
-        assert!(manifest.provides.agent_servers.contains_key("foo"));
-        let entry = manifest.provides.agent_servers.get("foo").unwrap();
+        assert!(manifest.provided_features.agent_servers.contains_key("foo"));
+        let entry = manifest.provided_features.agent_servers.get("foo").unwrap();
         assert!(entry.targets.contains_key("linux-x86_64"));
         let target = entry.targets.get("linux-x86_64").unwrap();
         assert_eq!(target.archive, "https://example.com/agent-linux-x64.tar.gz");

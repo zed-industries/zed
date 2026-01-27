@@ -34,13 +34,13 @@ pub(crate) fn init(language_registry: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, cx
                     }
                     extension::Event::ExtensionUninstalled(manifest) => {
                         remove_context_server_settings(
-                            manifest.provides.context_servers.keys().cloned().collect(),
+                            manifest.provides().context_servers.keys().cloned().collect(),
                             fs.clone(),
                             cx,
                         );
                     }
                     extension::Event::ConfigureExtensionRequested(manifest) => {
-                        if !manifest.provides.context_servers.is_empty() {
+                        if !manifest.provides().context_servers.is_empty() {
                             show_configure_mcp_modal(
                                 language_registry.clone(),
                                 manifest,
@@ -88,7 +88,7 @@ fn show_configure_mcp_modal(
     }
 
     let ids = manifest
-        .provides
+        .provides()
         .context_servers
         .keys()
         .cloned()

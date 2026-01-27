@@ -203,7 +203,7 @@ impl AgentServerStore {
             } => {
                 extension_agents.clear();
                 for (ext_id, manifest) in manifests {
-                    for (agent_name, agent_entry) in &manifest.provides.agent_servers {
+                    for (agent_name, agent_entry) in &manifest.provides().agent_servers {
                         let display_name = SharedString::from(agent_entry.name.clone());
                         let icon_path = agent_entry.icon.as_ref().and_then(|icon| {
                             resolve_extension_icon_path(&extensions_dir, ext_id, icon)
@@ -227,7 +227,7 @@ impl AgentServerStore {
             } => {
                 let mut agents = vec![];
                 for (ext_id, manifest) in manifests {
-                    for (agent_name, agent_entry) in &manifest.provides.agent_servers {
+                    for (agent_name, agent_entry) in &manifest.provides().agent_servers {
                         let display_name = SharedString::from(agent_entry.name.clone());
                         let icon_path = agent_entry.icon.as_ref().and_then(|icon| {
                             resolve_extension_icon_path(&extensions_dir, ext_id, icon)

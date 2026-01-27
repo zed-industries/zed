@@ -782,7 +782,7 @@ impl AgentConfiguration {
                                     resolve_extension_for_context_server(&context_server_id, cx),
                                 ) {
                                     (true, Some((id, manifest))) => {
-                                        if extension_only_provides_context_server(&manifest.provides)
+                                        if extension_only_provides_context_server(&manifest.provides())
                                         {
                                             ExtensionStore::global(cx).update(cx, |store, cx| {
                                                 store.uninstall_extension(id, cx)
@@ -1291,7 +1291,13 @@ pub(crate) fn resolve_extension_for_context_server(
         .read(cx)
         .installed_extensions()
         .iter()
-        .find(|(_, entry)| entry.manifest.provides.context_servers.contains_key(&id.0))
+        .find(|(_, entry)| {
+            entry
+                .manifest
+                .provides()
+                .context_servers
+                .contains_key(&id.0)
+        })
         .map(|(id, entry)| (id.clone(), entry.manifest.clone()))
 }
 

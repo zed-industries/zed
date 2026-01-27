@@ -1188,7 +1188,7 @@ impl ExtensionStore {
             let Some(extension) = old_index.extensions.get(extension_id) else {
                 continue;
             };
-            let provides = &extension.manifest.provides;
+            let provides = &extension.manifest.provides();
             grammars_to_remove.extend(provides.grammars.keys().cloned());
             for (language_server_name, config) in &provides.language_servers {
                 for language in config.languages() {
@@ -1230,7 +1230,7 @@ impl ExtensionStore {
                 continue;
             };
 
-            let extension_provides = &extension.manifest.provides;
+            let extension_provides = &extension.manifest.provides();
 
             grammars_to_add.extend(extension_provides.grammars.keys().map(|grammar_name| {
                 let mut grammar_path = self.installed_dir.clone();
@@ -1394,7 +1394,7 @@ impl ExtensionStore {
                 for (manifest, wasm_extension) in &wasm_extensions {
                     let extension = Arc::new(wasm_extension.clone());
 
-                    let provides = &manifest.provides;
+                    let provides = &manifest.provides();
 
                     for (language_server_id, language_server_config) in &provides.language_servers {
                         for language in language_server_config.languages() {
@@ -1557,12 +1557,12 @@ impl ExtensionStore {
 
                 let relative_path = relative_path.to_path_buf();
                 if !extension_manifest
-                    .provides
+                    .provided_features
                     .languages
                     .contains(&relative_path)
                 {
                     extension_manifest
-                        .provides
+                        .provided_features
                         .languages
                         .push(relative_path.clone());
                 }
@@ -1596,9 +1596,13 @@ impl ExtensionStore {
                 };
 
                 let relative_path = relative_path.to_path_buf();
-                if !extension_manifest.provides.themes.contains(&relative_path) {
+                if !extension_manifest
+                    .provided_features
+                    .themes
+                    .contains(&relative_path)
+                {
                     extension_manifest
-                        .provides
+                        .provided_features
                         .themes
                         .push(relative_path.clone());
                 }
@@ -1632,12 +1636,12 @@ impl ExtensionStore {
 
                 let relative_path = relative_path.to_path_buf();
                 if !extension_manifest
-                    .provides
+                    .provided_features
                     .icon_themes
                     .contains(&relative_path)
                 {
                     extension_manifest
-                        .provides
+                        .provided_features
                         .icon_themes
                         .push(relative_path.clone());
                 }
@@ -1717,7 +1721,7 @@ impl ExtensionStore {
                 .await?
             }
 
-            for language_path in loaded_extension.manifest.provides.languages.iter() {
+            for language_path in loaded_extension.manifest.provided_features.languages.iter() {
                 if fs
                     .is_file(&src_dir.join(language_path).join(CONFIG_TOML))
                     .await
@@ -1732,7 +1736,12 @@ impl ExtensionStore {
                 }
             }
 
-            for (adapter_name, meta) in loaded_extension.manifest.provides.debug_adapters.iter() {
+            for (adapter_name, meta) in loaded_extension
+                .manifest
+                .provided_features
+                .debug_adapters
+                .iter()
+            {
                 let schema_path = &extension::build_debug_adapter_schema_path(adapter_name, meta);
 
                 if fs.is_file(&src_dir.join(schema_path)).await {

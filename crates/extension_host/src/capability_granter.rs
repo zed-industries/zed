@@ -102,7 +102,7 @@ mod tests {
             authors: vec![],
             lib: Default::default(),
             capabilities: vec![],
-            provides: ExtensionFeatures {
+            provided_features: ExtensionFeatures {
                 themes: vec![],
                 icon_themes: vec![],
                 languages: vec![],
