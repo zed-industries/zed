@@ -87,7 +87,7 @@ impl CapabilityGranter {
 mod tests {
     use std::collections::BTreeMap;
 
-    use extension::{ExtensionFeatures, ProcessExecCapability, SchemaVersion};
+    use extension::{ProcessExecCapability, SchemaVersion};
 
     use super::*;
 
@@ -101,21 +101,19 @@ mod tests {
             repository: None,
             authors: vec![],
             lib: Default::default(),
+            themes: vec![],
+            icon_themes: vec![],
+            languages: vec![],
+            grammars: BTreeMap::default(),
+            language_servers: BTreeMap::default(),
+            context_servers: BTreeMap::default(),
+            agent_servers: BTreeMap::default(),
+            slash_commands: BTreeMap::default(),
+            snippets: None,
             capabilities: vec![],
-            provides: ExtensionFeatures {
-                themes: vec![],
-                icon_themes: vec![],
-                languages: vec![],
-                grammars: BTreeMap::default(),
-                language_servers: BTreeMap::default(),
-                context_servers: BTreeMap::default(),
-                agent_servers: BTreeMap::default(),
-                slash_commands: BTreeMap::default(),
-                debug_adapters: Default::default(),
-                snippets: None,
-                debug_locators: Default::default(),
-                language_model_providers: BTreeMap::default(),
-            },
+            debug_adapters: Default::default(),
+            debug_locators: Default::default(),
+            language_model_providers: BTreeMap::default(),
         }
     }
 

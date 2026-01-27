@@ -274,7 +274,6 @@ impl LspAdapter for ExtensionLspAdapter {
         let code_action_kinds = self
             .extension
             .manifest()
-            .provides
             .language_servers
             .get(&self.language_server_id)
             .and_then(|server| server.code_action_kinds.clone());
@@ -301,7 +300,6 @@ impl LspAdapter for ExtensionLspAdapter {
 
         self.extension
             .manifest()
-            .provides
             .language_servers
             .get(&self.language_server_id)
             .map(|server| server.language_ids.clone())

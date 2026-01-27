@@ -1188,9 +1188,8 @@ impl ExtensionStore {
             let Some(extension) = old_index.extensions.get(extension_id) else {
                 continue;
             };
-            let provides = &extension.manifest.provides;
-            grammars_to_remove.extend(provides.grammars.keys().cloned());
-            for (language_server_name, config) in &provides.language_servers {
+            grammars_to_remove.extend(extension.manifest.grammars.keys().cloned());
+            for (language_server_name, config) in &extension.manifest.language_servers {
                 for language in config.languages() {
                     server_removal_tasks.push(self.proxy.remove_language_server(
                         &language,
@@ -1200,16 +1199,16 @@ impl ExtensionStore {
                 }
             }
 
-            for server_id in provides.context_servers.keys() {
+            for server_id in extension.manifest.context_servers.keys() {
                 self.proxy.unregister_context_server(server_id.clone(), cx);
             }
-            for adapter in provides.debug_adapters.keys() {
+            for adapter in extension.manifest.debug_adapters.keys() {
                 self.proxy.unregister_debug_adapter(adapter.clone());
             }
-            for locator in provides.debug_locators.keys() {
+            for locator in extension.manifest.debug_locators.keys() {
                 self.proxy.unregister_debug_locator(locator.clone());
             }
-            for command_name in provides.slash_commands.keys() {
+            for command_name in extension.manifest.slash_commands.keys() {
                 self.proxy.unregister_slash_command(command_name.clone());
             }
         }
@@ -1230,21 +1229,19 @@ impl ExtensionStore {
                 continue;
             };
 
-            let extension_provides = &extension.manifest.provides;
-
-            grammars_to_add.extend(extension_provides.grammars.keys().map(|grammar_name| {
+            grammars_to_add.extend(extension.manifest.grammars.keys().map(|grammar_name| {
                 let mut grammar_path = self.installed_dir.clone();
                 grammar_path.extend([extension_id.as_ref(), "grammars"]);
                 grammar_path.push(grammar_name.as_ref());
                 grammar_path.set_extension("wasm");
                 (grammar_name.clone(), grammar_path)
             }));
-            themes_to_add.extend(extension_provides.themes.iter().map(|theme_path| {
+            themes_to_add.extend(extension.manifest.themes.iter().map(|theme_path| {
                 let mut path = self.installed_dir.clone();
                 path.extend([Path::new(extension_id.as_ref()), theme_path.as_path()]);
                 path
             }));
-            icon_themes_to_add.extend(extension_provides.icon_themes.iter().map(
+            icon_themes_to_add.extend(extension.manifest.icon_themes.iter().map(
                 |icon_theme_path| {
                     let mut path = self.installed_dir.clone();
                     path.extend([Path::new(extension_id.as_ref()), icon_theme_path.as_path()]);
@@ -1255,7 +1252,7 @@ impl ExtensionStore {
                     (path, icons_root_path)
                 },
             ));
-            snippets_to_add.extend(extension_provides.snippets.iter().flat_map(|snippets| {
+            snippets_to_add.extend(extension.manifest.snippets.iter().flat_map(|snippets| {
                 snippets.paths().map(|snippets_path| {
                     let mut path = self.installed_dir.clone();
                     path.extend([Path::new(extension_id.as_ref()), snippets_path.as_path()]);
@@ -1394,9 +1391,7 @@ impl ExtensionStore {
                 for (manifest, wasm_extension) in &wasm_extensions {
                     let extension = Arc::new(wasm_extension.clone());
 
-                    let provides = &manifest.provides;
-
-                    for (language_server_id, language_server_config) in &provides.language_servers {
+                    for (language_server_id, language_server_config) in &manifest.language_servers {
                         for language in language_server_config.languages() {
                             this.proxy.register_language_server(
                                 extension.clone(),
@@ -1406,7 +1401,7 @@ impl ExtensionStore {
                         }
                     }
 
-                    for (slash_command_name, slash_command) in &provides.slash_commands {
+                    for (slash_command_name, slash_command) in &manifest.slash_commands {
                         this.proxy.register_slash_command(
                             extension.clone(),
                             extension::SlashCommand {
@@ -1421,12 +1416,12 @@ impl ExtensionStore {
                         );
                     }
 
-                    for id in provides.context_servers.keys() {
+                    for id in manifest.context_servers.keys() {
                         this.proxy
                             .register_context_server(extension.clone(), id.clone(), cx);
                     }
 
-                    for (debug_adapter, meta) in &provides.debug_adapters {
+                    for (debug_adapter, meta) in &manifest.debug_adapters {
                         let mut path = root_dir.clone();
                         path.push(Path::new(manifest.id.as_ref()));
                         if let Some(schema_path) = &meta.schema_path {
@@ -1443,7 +1438,7 @@ impl ExtensionStore {
                         );
                     }
 
-                    for debug_adapter in provides.debug_locators.keys() {
+                    for debug_adapter in manifest.debug_locators.keys() {
                         this.proxy
                             .register_debug_locator(extension.clone(), debug_adapter.clone());
                     }
@@ -1556,15 +1551,8 @@ impl ExtensionStore {
                 let config = ::toml::from_str::<LanguageConfig>(&config)?;
 
                 let relative_path = relative_path.to_path_buf();
-                if !extension_manifest
-                    .provides
-                    .languages
-                    .contains(&relative_path)
-                {
-                    extension_manifest
-                        .provides
-                        .languages
-                        .push(relative_path.clone());
+                if !extension_manifest.languages.contains(&relative_path) {
+                    extension_manifest.languages.push(relative_path.clone());
                 }
 
                 index.languages.insert(
@@ -1596,11 +1584,8 @@ impl ExtensionStore {
                 };
 
                 let relative_path = relative_path.to_path_buf();
-                if !extension_manifest.provides.themes.contains(&relative_path) {
-                    extension_manifest
-                        .provides
-                        .themes
-                        .push(relative_path.clone());
+                if !extension_manifest.themes.contains(&relative_path) {
+                    extension_manifest.themes.push(relative_path.clone());
                 }
 
                 for theme_name in theme_families {
@@ -1631,15 +1616,8 @@ impl ExtensionStore {
                 };
 
                 let relative_path = relative_path.to_path_buf();
-                if !extension_manifest
-                    .provides
-                    .icon_themes
-                    .contains(&relative_path)
-                {
-                    extension_manifest
-                        .provides
-                        .icon_themes
-                        .push(relative_path.clone());
+                if !extension_manifest.icon_themes.contains(&relative_path) {
+                    extension_manifest.icon_themes.push(relative_path.clone());
                 }
 
                 for icon_theme_name in icon_theme_families {
@@ -1717,7 +1695,7 @@ impl ExtensionStore {
                 .await?
             }
 
-            for language_path in loaded_extension.manifest.provides.languages.iter() {
+            for language_path in loaded_extension.manifest.languages.iter() {
                 if fs
                     .is_file(&src_dir.join(language_path).join(CONFIG_TOML))
                     .await
@@ -1732,7 +1710,7 @@ impl ExtensionStore {
                 }
             }
 
-            for (adapter_name, meta) in loaded_extension.manifest.provides.debug_adapters.iter() {
+            for (adapter_name, meta) in loaded_extension.manifest.debug_adapters.iter() {
                 let schema_path = &extension::build_debug_adapter_schema_path(adapter_name, meta);
 
                 if fs.is_file(&src_dir.join(schema_path)).await {

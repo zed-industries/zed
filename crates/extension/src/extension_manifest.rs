@@ -94,10 +94,31 @@ pub struct ExtensionManifest {
     pub lib: LibManifestEntry,
 
     #[serde(default)]
+    pub themes: Vec<PathBuf>,
+    #[serde(default)]
+    pub icon_themes: Vec<PathBuf>,
+    #[serde(default)]
+    pub languages: Vec<PathBuf>,
+    #[serde(default)]
+    pub grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
+    #[serde(default)]
+    pub language_servers: BTreeMap<LanguageServerName, LanguageServerManifestEntry>,
+    #[serde(default)]
+    pub context_servers: BTreeMap<Arc<str>, ContextServerManifestEntry>,
+    #[serde(default)]
+    pub agent_servers: BTreeMap<Arc<str>, AgentServerManifestEntry>,
+    #[serde(default)]
+    pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
+    #[serde(default)]
+    pub snippets: Option<ExtensionSnippets>,
+    #[serde(default)]
     pub capabilities: Vec<ExtensionCapability>,
-
-    #[serde(flatten)]
-    pub provides: ExtensionFeatures,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub debug_adapters: BTreeMap<Arc<str>, DebugAdapterManifestEntry>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub debug_locators: BTreeMap<Arc<str>, DebugLocatorManifestEntry>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub language_model_providers: BTreeMap<Arc<str>, LanguageModelProviderManifestEntry>,
 }
 
 impl ExtensionManifest {
@@ -123,38 +144,10 @@ impl ExtensionManifest {
     }
 
     pub fn allow_remote_load(&self) -> bool {
-        !self.provides.language_servers.is_empty()
-            || !self.provides.debug_adapters.is_empty()
-            || !self.provides.debug_locators.is_empty()
+        !self.language_servers.is_empty()
+            || !self.debug_adapters.is_empty()
+            || !self.debug_locators.is_empty()
     }
-}
-
-#[derive(Debug, Default, PartialEq, Eq, Clone, Serialize, Deserialize)]
-pub struct ExtensionFeatures {
-    #[serde(default)]
-    pub themes: Vec<PathBuf>,
-    #[serde(default)]
-    pub icon_themes: Vec<PathBuf>,
-    #[serde(default)]
-    pub languages: Vec<PathBuf>,
-    #[serde(default)]
-    pub grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
-    #[serde(default)]
-    pub language_servers: BTreeMap<LanguageServerName, LanguageServerManifestEntry>,
-    #[serde(default)]
-    pub context_servers: BTreeMap<Arc<str>, ContextServerManifestEntry>,
-    #[serde(default)]
-    pub agent_servers: BTreeMap<Arc<str>, AgentServerManifestEntry>,
-    #[serde(default)]
-    pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
-    #[serde(default)]
-    pub snippets: Option<ExtensionSnippets>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub debug_adapters: BTreeMap<Arc<str>, DebugAdapterManifestEntry>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub debug_locators: BTreeMap<Arc<str>, DebugLocatorManifestEntry>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub language_model_providers: BTreeMap<Arc<str>, LanguageModelProviderManifestEntry>,
 }
 
 pub fn build_debug_adapter_schema_path(
@@ -375,35 +368,33 @@ fn manifest_from_old_manifest(
         authors: manifest_json.authors,
         schema_version: SchemaVersion::ZERO,
         lib: Default::default(),
-        capabilities: Vec::new(),
-        provides: ExtensionFeatures {
-            themes: {
-                let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
-                themes.sort();
-                themes.dedup();
-                themes
-            },
-            icon_themes: Vec::new(),
-            languages: {
-                let mut languages = manifest_json.languages.into_values().collect::<Vec<_>>();
-                languages.sort();
-                languages.dedup();
-                languages
-            },
-            grammars: manifest_json
-                .grammars
-                .into_keys()
-                .map(|grammar_name| (grammar_name, Default::default()))
-                .collect(),
-            language_servers: Default::default(),
-            context_servers: BTreeMap::default(),
-            agent_servers: BTreeMap::default(),
-            slash_commands: BTreeMap::default(),
-            snippets: None,
-            debug_adapters: Default::default(),
-            debug_locators: Default::default(),
-            language_model_providers: Default::default(),
+        themes: {
+            let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
+            themes.sort();
+            themes.dedup();
+            themes
         },
+        icon_themes: Vec::new(),
+        languages: {
+            let mut languages = manifest_json.languages.into_values().collect::<Vec<_>>();
+            languages.sort();
+            languages.dedup();
+            languages
+        },
+        grammars: manifest_json
+            .grammars
+            .into_keys()
+            .map(|grammar_name| (grammar_name, Default::default()))
+            .collect(),
+        language_servers: Default::default(),
+        context_servers: BTreeMap::default(),
+        agent_servers: BTreeMap::default(),
+        slash_commands: BTreeMap::default(),
+        snippets: None,
+        capabilities: Vec::new(),
+        debug_adapters: Default::default(),
+        debug_locators: Default::default(),
+        language_model_providers: Default::default(),
     }
 }
 
@@ -425,21 +416,19 @@ mod tests {
             repository: None,
             authors: vec![],
             lib: Default::default(),
+            themes: vec![],
+            icon_themes: vec![],
+            languages: vec![],
+            grammars: BTreeMap::default(),
+            language_servers: BTreeMap::default(),
+            context_servers: BTreeMap::default(),
+            agent_servers: BTreeMap::default(),
+            slash_commands: BTreeMap::default(),
+            snippets: None,
             capabilities: vec![],
-            provides: ExtensionFeatures {
-                themes: vec![],
-                icon_themes: vec![],
-                languages: vec![],
-                grammars: BTreeMap::default(),
-                language_servers: BTreeMap::default(),
-                context_servers: BTreeMap::default(),
-                agent_servers: BTreeMap::default(),
-                slash_commands: BTreeMap::default(),
-                snippets: None,
-                debug_adapters: Default::default(),
-                debug_locators: Default::default(),
-                language_model_providers: BTreeMap::default(),
-            },
+            debug_adapters: Default::default(),
+            debug_locators: Default::default(),
+            language_model_providers: BTreeMap::default(),
         }
     }
 
@@ -560,8 +549,8 @@ args = ["--serve"]
 
         let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
         assert_eq!(manifest.id.as_ref(), "example.agent-server-ext");
-        assert!(manifest.provides.agent_servers.contains_key("foo"));
-        let entry = manifest.provides.agent_servers.get("foo").unwrap();
+        assert!(manifest.agent_servers.contains_key("foo"));
+        let entry = manifest.agent_servers.get("foo").unwrap();
         assert!(entry.targets.contains_key("linux-x86_64"));
         let target = entry.targets.get("linux-x86_64").unwrap();
         assert_eq!(target.archive, "https://example.com/agent-linux-x64.tar.gz");

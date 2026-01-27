@@ -105,7 +105,7 @@ impl ExtensionBuilder {
             log::info!("compiled Rust extension {}", extension_dir.display());
         }
 
-        for (debug_adapter_name, meta) in &mut extension_manifest.provides.debug_adapters {
+        for (debug_adapter_name, meta) in &mut extension_manifest.debug_adapters {
             let debug_adapter_schema_path =
                 extension_dir.join(build_debug_adapter_schema_path(debug_adapter_name, meta));
 
@@ -117,7 +117,7 @@ impl ExtensionBuilder {
                 format!("Debug adapter schema for `{debug_adapter_name}` (path: `{debug_adapter_schema_path:?}`) is not a valid JSON")
             })?;
         }
-        for (grammar_name, grammar_metadata) in &extension_manifest.provides.grammars {
+        for (grammar_name, grammar_metadata) in &extension_manifest.grammars {
             let snake_cased_grammar_name = grammar_name.to_snake_case();
             if grammar_name.as_ref() != snake_cased_grammar_name.as_str() {
                 bail!(
@@ -562,9 +562,9 @@ async fn populate_defaults(
     // For legacy extensions on the v0 schema (aka, using `extension.json`), clear out any existing
     // contents of the computed fields, since we don't care what the existing values are.
     if manifest.schema_version.is_v0() {
-        manifest.provides.languages.clear();
-        manifest.provides.grammars.clear();
-        manifest.provides.themes.clear();
+        manifest.languages.clear();
+        manifest.grammars.clear();
+        manifest.themes.clear();
     }
 
     let cargo_toml_path = extension_path.join("Cargo.toml");
@@ -585,8 +585,8 @@ async fn populate_defaults(
             if fs.is_file(config_path.as_path()).await {
                 let relative_language_dir =
                     language_dir.strip_prefix(extension_path)?.to_path_buf();
-                if !manifest.provides.languages.contains(&relative_language_dir) {
-                    manifest.provides.languages.push(relative_language_dir);
+                if !manifest.languages.contains(&relative_language_dir) {
+                    manifest.languages.push(relative_language_dir);
                 }
             }
         }
@@ -603,8 +603,8 @@ async fn populate_defaults(
             let theme_path = theme_path?;
             if theme_path.extension() == Some("json".as_ref()) {
                 let relative_theme_path = theme_path.strip_prefix(extension_path)?.to_path_buf();
-                if !manifest.provides.themes.contains(&relative_theme_path) {
-                    manifest.provides.themes.push(relative_theme_path);
+                if !manifest.themes.contains(&relative_theme_path) {
+                    manifest.themes.push(relative_theme_path);
                 }
             }
         }
@@ -622,21 +622,17 @@ async fn populate_defaults(
             if icon_theme_path.extension() == Some("json".as_ref()) {
                 let relative_icon_theme_path =
                     icon_theme_path.strip_prefix(extension_path)?.to_path_buf();
-                if !manifest
-                    .provides
-                    .icon_themes
-                    .contains(&relative_icon_theme_path)
-                {
-                    manifest.provides.icon_themes.push(relative_icon_theme_path);
+                if !manifest.icon_themes.contains(&relative_icon_theme_path) {
+                    manifest.icon_themes.push(relative_icon_theme_path);
                 }
             }
         }
     };
-    if manifest.provides.snippets.is_none()
+    if manifest.snippets.is_none()
         && let snippets_json_path = extension_path.join("snippets.json")
         && fs.is_file(&snippets_json_path).await
     {
-        manifest.provides.snippets = Some("snippets.json".into());
+        manifest.snippets = Some("snippets.json".into());
     }
 
     // For legacy extensions on the v0 schema (aka, using `extension.json`), we want to populate the grammars in
@@ -667,8 +663,8 @@ async fn populate_defaults(
                         .file_stem()
                         .and_then(|stem| stem.to_str())
                         .context("no grammar name")?;
-                    if !manifest.provides.grammars.contains_key(grammar_name) {
-                        manifest.provides.grammars.insert(
+                    if !manifest.grammars.contains_key(grammar_name) {
+                        manifest.grammars.insert(
                             grammar_name.into(),
                             GrammarManifestEntry {
                                 repository: grammar_config.repository,
@@ -794,7 +790,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            manifest.provides.snippets,
+            manifest.snippets,
             Some(ExtensionSnippets::Single(
                 PathBuf::from_str("./snippets/snippets.json").unwrap()
             ))
@@ -831,7 +827,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            manifest.provides.snippets,
+            manifest.snippets,
             Some(ExtensionSnippets::Single(
                 PathBuf::from_str("snippets.json").unwrap()
             ))
