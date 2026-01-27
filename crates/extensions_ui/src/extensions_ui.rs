@@ -1041,7 +1041,7 @@ impl ExtensionsPage {
             },
             ExtensionStatus::Upgrading => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
-                    SharedString::from(extension.id.clone()),
+                    SharedString::from(format!("uninstall-{}", extension.id)),
                     "Uninstall",
                 )
                 .style(ButtonStyle::OutlinedGhost)
@@ -1054,12 +1054,12 @@ impl ExtensionsPage {
                     .disabled(true)
                 }),
                 upgrade: Some(
-                    Button::new(SharedString::from(extension.id.clone()), "Upgrade").disabled(true),
+                    Button::new(SharedString::from(format!("upgrade-{}", extension.id)), "Upgrade").disabled(true),
                 ),
             },
             ExtensionStatus::Installed(installed_version) => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
-                    SharedString::from(extension.id.clone()),
+                    SharedString::from(format!("uninstall-{}", extension.id)),
                     "Uninstall",
                 )
                 .style(ButtonStyle::OutlinedGhost)
@@ -1103,7 +1103,7 @@ impl ExtensionsPage {
                     None
                 } else {
                     Some(
-                        Button::new(SharedString::from(extension.id.clone()), "Upgrade")
+                        Button::new(SharedString::from(format!("upgrade-{}", extension.id)), "Upgrade")
                           .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                             .when(!is_compatible, |upgrade_button| {
                                 upgrade_button.disabled(true).tooltip({
