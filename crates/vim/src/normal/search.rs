@@ -127,6 +127,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::move_to_previous_match);
     Vim::action(editor, cx, Vim::search);
     Vim::action(editor, cx, Vim::search_deploy);
+    Vim::action(editor, cx, Vim::search_dismiss);
     Vim::action(editor, cx, Vim::find_command);
     Vim::action(editor, cx, Vim::replace_command);
 }
@@ -273,6 +274,18 @@ impl Vim {
         self.search = Default::default();
         self.search.prior_mode = current_mode;
         cx.propagate();
+    }
+
+    fn search_dismiss(&mut self, _: &buffer_search::Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        let prior_selections: Vec<_> = self.search.prior_selections.drain(..).collect();
+        if !prior_selections.is_empty() {
+            self.update_editor(cx, |_, editor, cx| {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_ranges(prior_selections);
+                });
+            });
+        }
+        self.search = SearchState::default();
     }
 
     pub fn search_submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
