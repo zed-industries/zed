@@ -3,9 +3,10 @@ use anthropic::AnthropicModelMode;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::{Client, UserStore, zed_urls};
+use cloud_api_types::{Plan, PlanV2};
 use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody,
-    CompletionEvent, CountTokensBody, CountTokensResponse, ListModelsResponse, Plan, PlanV2,
+    CompletionEvent, CountTokensBody, CountTokensResponse, ListModelsResponse,
     SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
 use feature_flags::{CloudThinkingToggleFeatureFlag, FeatureFlagAppExt as _};

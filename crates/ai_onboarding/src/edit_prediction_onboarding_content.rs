@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use client::{Client, UserStore};
-use cloud_llm_client::{Plan, PlanV2};
+use cloud_api_types::{Plan, PlanV2};
 use gpui::{Entity, IntoElement, ParentElement};
 use ui::prelude::*;
 

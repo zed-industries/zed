@@ -74,20 +74,6 @@ impl FromStr for UsageLimit {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Plan {
-    V2(PlanV2),
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PlanV2 {
-    #[default]
-    ZedFree,
-    ZedPro,
-    ZedProTrial,
-}
-
 #[derive(
     Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize, EnumString, EnumIter, Display,
 )]
@@ -337,22 +323,7 @@ pub struct UsageData {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-    use serde_json::json;
-
     use super::*;
-
-    #[test]
-    fn test_plan_v2_deserialize_snake_case() {
-        let plan = serde_json::from_value::<PlanV2>(json!("zed_free")).unwrap();
-        assert_eq!(plan, PlanV2::ZedFree);
-
-        let plan = serde_json::from_value::<PlanV2>(json!("zed_pro")).unwrap();
-        assert_eq!(plan, PlanV2::ZedPro);
-
-        let plan = serde_json::from_value::<PlanV2>(json!("zed_pro_trial")).unwrap();
-        assert_eq!(plan, PlanV2::ZedProTrial);
-    }
 
     #[test]
     fn test_usage_limit_from_str() {
