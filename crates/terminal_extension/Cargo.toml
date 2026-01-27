@@ -13,7 +13,6 @@ path = "src/terminal_extension.rs"
 
 [dependencies]
 anyhow.workspace = true
-collections.workspace = true
 extension.workspace = true
 futures.workspace = true
 gpui.workspace = true
