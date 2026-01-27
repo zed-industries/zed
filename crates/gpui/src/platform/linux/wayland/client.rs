@@ -215,6 +215,7 @@ pub(crate) struct WaylandClientState {
     pre_edit_text: Option<String>,
     ime_pre_edit: Option<String>,
     composing: bool,
+    ime_area_cache: Option<Bounds<Pixels>>,
     // Surface to Window mapping
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
     // Output to scale mapping
@@ -586,6 +587,7 @@ impl WaylandClient {
             pre_edit_text: None,
             ime_pre_edit: None,
             composing: false,
+            ime_area_cache: None,
             outputs: HashMap::default(),
             in_progress_outputs,
             windows: HashMap::default(),
@@ -1490,15 +1492,18 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
         let mut state = client.borrow_mut();
         match event {
             zwp_text_input_v3::Event::Enter { .. } => {
+                state.ime_area_cache = None;
                 drop(state);
                 this.enable_ime();
             }
             zwp_text_input_v3::Event::Leave { .. } => {
+                state.ime_area_cache = None;
                 drop(state);
                 this.disable_ime();
             }
             zwp_text_input_v3::Event::CommitString { text } => {
                 state.composing = false;
+                state.ime_area_cache = None;
                 let Some(window) = state.keyboard_focused_window.clone() else {
                     return;
                 };
@@ -1525,6 +1530,19 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
             zwp_text_input_v3::Event::PreeditString { text, .. } => {
                 state.composing = true;
                 state.ime_pre_edit = text;
+                if state.ime_area_cache.is_none() {
+                    if let Some(window) = state.keyboard_focused_window.clone() {
+                        if let Some(area) = window.get_ime_area() {
+                            state.ime_area_cache = Some(area);
+                            text_input.set_cursor_rectangle(
+                                area.origin.x.0 as i32,
+                                area.origin.y.0 as i32,
+                                area.size.width.0 as i32,
+                                area.size.height.0 as i32,
+                            );
+                        }
+                    }
+                }
             }
             zwp_text_input_v3::Event::Done { serial } => {
                 let last_serial = state.serial_tracker.get(SerialKind::InputMethod);
@@ -1532,23 +1550,15 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                 let Some(window) = state.keyboard_focused_window.clone() else {
                     return;
                 };
-
                 if let Some(text) = state.ime_pre_edit.take() {
                     drop(state);
                     window.handle_ime(ImeInput::SetMarkedText(text));
-                    if let Some(area) = window.get_ime_area() {
-                        text_input.set_cursor_rectangle(
-                            area.origin.x.0 as i32,
-                            area.origin.y.0 as i32,
-                            area.size.width.0 as i32,
-                            area.size.height.0 as i32,
-                        );
-                        if last_serial == serial {
-                            text_input.commit();
-                        }
+                    if last_serial == serial {
+                        text_input.commit();
                     }
                 } else {
                     state.composing = false;
+                    state.ime_area_cache = None;
                     drop(state);
                     window.handle_ime(ImeInput::DeleteText);
                 }
