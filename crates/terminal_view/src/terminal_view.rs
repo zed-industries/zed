@@ -1999,6 +1999,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_custom_title_initially_none(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
         let (project, workspace) = init_test(cx).await;
 
         let terminal = project
@@ -2027,6 +2029,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_set_custom_title(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
         let (project, workspace) = init_test(cx).await;
 
         let terminal = project
@@ -2056,6 +2060,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_set_custom_title_empty_becomes_none(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
         let (project, workspace) = init_test(cx).await;
 
         let terminal = project
@@ -2091,6 +2097,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_custom_title_marks_needs_serialize(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
         let (project, workspace) = init_test(cx).await;
 
         let terminal = project
@@ -2121,6 +2129,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_tab_content_uses_custom_title(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
         let (project, workspace) = init_test(cx).await;
 
         let terminal = project
@@ -2159,6 +2169,8 @@ mod tests {
     async fn test_tab_content_shows_terminal_title_when_custom_title_directly_set_empty(
         cx: &mut TestAppContext,
     ) {
+        cx.executor().allow_parking();
+
         let (project, workspace) = init_test(cx).await;
 
         let terminal = project
