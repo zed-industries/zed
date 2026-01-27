@@ -4061,14 +4061,6 @@ impl EditorElement {
         let editor = self.editor.read(cx);
         let multi_buffer = editor.buffer.read(cx);
         let is_read_only = self.editor.read(cx).read_only(cx);
-        let editor_handle: &dyn ItemHandle = &self.editor;
-
-        let breadcrumbs = None;
-        // let breadcrumbs = if is_selected {
-        //     editor.breadcrumbs_inner(cx.theme(), cx)
-        // } else {
-        //     None
-        // };
 
         let file_status = multi_buffer
             .all_diff_hunks_expanded()
@@ -4310,16 +4302,6 @@ impl EditorElement {
                                             el.child(
                                                 Icon::new(IconName::FileLock).color(Color::Muted),
                                             )
-                                        })
-                                        .when_some(breadcrumbs, |then, breadcrumbs| {
-                                            then.child(render_breadcrumb_text(
-                                                breadcrumbs,
-                                                None,
-                                                editor_handle,
-                                                true,
-                                                window,
-                                                cx,
-                                            ))
                                         })
                                 },
                             ))
@@ -4811,7 +4793,6 @@ impl EditorElement {
     fn layout_sticky_headers(
         &self,
         snapshot: &EditorSnapshot,
-        _row_infos: &Vec<RowInfo>,
         editor_width: Pixels,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         line_height: Pixels,
@@ -4876,7 +4857,7 @@ impl EditorElement {
                 .highlight_invisibles(&self.style)
             });
 
-            let line = layout_line_v2(
+            let line = layout_line_from_chunks(
                 chunks,
                 snapshot,
                 &self.style,
@@ -9509,7 +9490,6 @@ impl Element for EditorElement {
         };
 
         let is_minimap = self.editor.read(cx).mode.is_minimap();
-        let _is_singleton = self.editor.read(cx).buffer_kind(cx) == ItemBufferKind::Singleton;
 
         if !is_minimap {
             let focus_handle = self.editor.focus_handle(cx);
@@ -9857,9 +9837,30 @@ impl Element for EditorElement {
                         .editor_with_selections(cx)
                         .map(|editor| {
                             editor.update(cx, |editor, cx| {
+                                let all_selections =
+                                    editor.selections.all::<Point>(&snapshot.display_snapshot);
                                 let all_anchor_selections =
                                     editor.selections.all_anchors(&snapshot.display_snapshot);
-                                let selected_buffer_ids = editor.selected_buffer_ids(&snapshot, cx);
+                                let selected_buffer_ids =
+                                    if editor.buffer_kind(cx) == ItemBufferKind::Singleton {
+                                        Vec::new()
+                                    } else {
+                                        let mut selected_buffer_ids =
+                                            Vec::with_capacity(all_selections.len());
+
+                                        for selection in all_selections {
+                                            for buffer_id in snapshot
+                                                .buffer_snapshot()
+                                                .buffer_ids_for_range(selection.range())
+                                            {
+                                                if selected_buffer_ids.last() != Some(&buffer_id) {
+                                                    selected_buffer_ids.push(buffer_id);
+                                                }
+                                            }
+                                        }
+
+                                        selected_buffer_ids
+                                    };
 
                                 let mut selections = editor.selections.disjoint_in_range(
                                     start_anchor..end_anchor,
@@ -10267,31 +10268,28 @@ impl Element for EditorElement {
                         scroll_position.x * f64::from(em_advance),
                         scroll_position.y * f64::from(line_height),
                     );
-                    let sticky_headers = if !is_minimap
-                        // && is_singleton
-                        && EditorSettings::get_global(cx).sticky_scroll.enabled
-                    {
-                        let relative = self.editor.read(cx).relative_line_numbers(cx);
-                        self.layout_sticky_headers(
-                            &snapshot,
-                            &row_infos,
-                            editor_width,
-                            is_row_soft_wrapped,
-                            line_height,
-                            scroll_pixel_position,
-                            content_origin,
-                            &gutter_dimensions,
-                            &gutter_hitbox,
-                            &text_hitbox,
-                            &style,
-                            relative,
-                            current_selection_head,
-                            window,
-                            cx,
-                        )
-                    } else {
-                        None
-                    };
+                    let sticky_headers =
+                        if !is_minimap && EditorSettings::get_global(cx).sticky_scroll.enabled {
+                            let relative = self.editor.read(cx).relative_line_numbers(cx);
+                            self.layout_sticky_headers(
+                                &snapshot,
+                                editor_width,
+                                is_row_soft_wrapped,
+                                line_height,
+                                scroll_pixel_position,
+                                content_origin,
+                                &gutter_dimensions,
+                                &gutter_hitbox,
+                                &text_hitbox,
+                                &style,
+                                relative,
+                                current_selection_head,
+                                window,
+                                cx,
+                            )
+                        } else {
+                            None
+                        };
                     self.editor.update(cx, |editor, _| {
                         editor.scroll_manager.set_sticky_header_line_count(
                             sticky_headers.as_ref().map_or(0, |h| h.lines.len()),
@@ -11729,7 +11727,7 @@ pub(crate) struct BlockLayout {
     pub(crate) is_buffer_header: bool,
 }
 
-pub fn layout_line_v2<'a>(
+pub fn layout_line_from_chunks<'a>(
     chunks: impl Iterator<Item = HighlightedChunk<'a>>,
     snapshot: &EditorSnapshot,
     style: &EditorStyle,
@@ -11764,20 +11762,15 @@ pub fn layout_line(
     cx: &mut App,
 ) -> LineWithInvisibles {
     let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), true, style);
-    LineWithInvisibles::from_chunks(
+    layout_line_from_chunks(
         chunks,
+        snapshot,
         style,
-        MAX_LINE_LEN,
-        1,
-        &snapshot.mode,
         text_width,
         is_row_soft_wrapped,
-        &[],
         window,
         cx,
     )
-    .pop()
-    .unwrap()
 }
 
 #[derive(Debug)]

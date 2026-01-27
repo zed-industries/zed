@@ -24953,28 +24953,6 @@ impl Editor {
         }));
         Some(breadcrumbs)
     }
-
-    fn selected_buffer_ids(&self, snapshot: &EditorSnapshot, cx: &mut App) -> Vec<BufferId> {
-        let all_selections = self.selections.all::<Point>(&snapshot.display_snapshot);
-        if self.buffer_kind(cx) == ItemBufferKind::Singleton {
-            Vec::new()
-        } else {
-            let mut selected_buffer_ids = Vec::with_capacity(all_selections.len());
-
-            for selection in all_selections {
-                for buffer_id in snapshot
-                    .buffer_snapshot()
-                    .buffer_ids_for_range(selection.range())
-                {
-                    if selected_buffer_ids.last() != Some(&buffer_id) {
-                        selected_buffer_ids.push(buffer_id);
-                    }
-                }
-            }
-
-            selected_buffer_ids
-        }
-    }
 }
 
 fn edit_for_markdown_paste<'a>(
