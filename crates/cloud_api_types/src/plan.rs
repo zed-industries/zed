@@ -13,6 +13,7 @@ pub enum Plan {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlanInfo {
+    #[serde(alias = "plan_v3")]
     pub plan: KnownOrUnknown<Plan, String>,
     pub subscription_period: Option<SubscriptionPeriod>,
     pub usage: cloud_llm_client::CurrentUsage,
