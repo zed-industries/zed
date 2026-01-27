@@ -6425,12 +6425,16 @@ fn cmp_files_first(a: &Entry, b: &Entry) -> cmp::Ordering {
 #[inline]
 fn cmp_with_mode(a: &Entry, b: &Entry, mode: &settings::ProjectPanelSortMode) -> cmp::Ordering {
     if a.id == NEW_ENTRY_ID || b.id == NEW_ENTRY_ID {
-        if a.path.parent() == b.path.parent() {
-            match (a.id == NEW_ENTRY_ID, b.id == NEW_ENTRY_ID) {
-                (true, false) => return cmp::Ordering::Less,
-                (false, true) => return cmp::Ordering::Greater,
-                _ => {}
-            };
+        let (new_entry, other) = if a.id == NEW_ENTRY_ID { (a, b) } else { (b, a) };
+
+        if let Some(new_parent) = new_entry.path.parent() {
+            if other.path.starts_with(new_parent) && other.path.as_ref() != new_parent {
+                return if a.id == NEW_ENTRY_ID {
+                    cmp::Ordering::Less
+                } else {
+                    cmp::Ordering::Greater
+                };
+            }
         }
     }
 
