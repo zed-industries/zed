@@ -341,7 +341,6 @@ pub struct AcpThreadView {
     hovered_recent_history_item: Option<usize>, // keep
     message_editor: Entity<MessageEditor>, // keep
     focus_handle: FocusHandle, // keep
-    config_options_view: Option<Entity<ConfigOptionsView>>,
     profile_selector: Option<Entity<ProfileSelector>>,
     notifications: Vec<WindowHandle<AgentNotification>>, // keep
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>, // keep
@@ -403,6 +402,7 @@ enum ThreadState {
         thread: Entity<AcpThread>,
         entry_view_state: Entity<EntryViewState>,
         title_editor: Option<Entity<Editor>>,
+        config_options_view: Option<Entity<ConfigOptionsView>>,
         mode_selector: Option<Entity<ModeSelector>>,
         model_selector: Option<Entity<AcpModelSelectorPopover>>,
         permission_dropdown_handle: PopoverMenuHandle<ContextMenu>,
@@ -568,7 +568,6 @@ impl AcpThreadView {
             ),
             login: None,
             message_editor,
-            config_options_view: None,
             profile_selector: None,
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
@@ -828,20 +827,21 @@ impl AcpThreadView {
                         let config_options_provider =
                             connection.session_config_options(&session_id, cx);
 
+                        let config_options_view;
                         let mode_selector;
                         let model_selector;
                         if let Some(config_options) = config_options_provider {
                             // Use config options - don't create mode_selector or model_selector
                             let agent_server = this.agent.clone();
                             let fs = this.project.read(cx).fs().clone();
-                            this.config_options_view = Some(cx.new(|cx| {
+                            config_options_view = Some(cx.new(|cx| {
                                 ConfigOptionsView::new(config_options, agent_server, fs, window, cx)
                             }));
                             model_selector = None;
                             mode_selector = None;
                         } else {
                             // Fall back to legacy mode/model selectors
-                            this.config_options_view = None;
+                            config_options_view = None;
                             model_selector =
                                 connection.model_selector(&session_id).map(|selector| {
                                     let agent_server = this.agent.clone();
@@ -907,6 +907,7 @@ impl AcpThreadView {
                             thread,
                             entry_view_state,
                             title_editor,
+                            config_options_view,
                             mode_selector,
                             model_selector,
                             permission_dropdown_handle: PopoverMenuHandle::default(),
@@ -1108,6 +1109,18 @@ impl AcpThreadView {
     pub fn model_selector(&self) -> Option<&Entity<AcpModelSelectorPopover>> {
         match &self.thread_state {
             ThreadState::Ready { model_selector, .. } => model_selector.as_ref(),
+            ThreadState::Unauthenticated { .. }
+            | ThreadState::Loading { .. }
+            | ThreadState::LoadError { .. } => None,
+        }
+    }
+
+    fn config_options_view(&self) -> Option<&Entity<ConfigOptionsView>> {
+        match &self.thread_state {
+            ThreadState::Ready {
+                config_options_view,
+                ..
+            } => config_options_view.as_ref(),
             ThreadState::Unauthenticated { .. }
             | ThreadState::Loading { .. }
             | ThreadState::LoadError { .. } => None,
@@ -6287,8 +6300,8 @@ impl AcpThreadView {
                             .children(self.render_thinking_toggle(cx))
                             .children(self.profile_selector.clone())
                             // Either config_options_view OR (mode_selector + model_selector)
-                            .children(self.config_options_view.clone())
-                            .when(self.config_options_view.is_none(), |this| {
+                            .children(self.config_options_view().cloned())
+                            .when(self.config_options_view().is_none(), |this| {
                                 this.children(self.mode_selector().cloned())
                                     .children(self.model_selector().cloned())
                             })
@@ -8488,7 +8501,7 @@ impl Render for AcpThreadView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
-                if let Some(config_options_view) = this.config_options_view.as_ref() {
+                if let Some(config_options_view) = this.config_options_view() {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.toggle_category_picker(
                             acp::SessionConfigOptionCategory::Mode,
@@ -8508,7 +8521,7 @@ impl Render for AcpThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
-                if let Some(config_options_view) = this.config_options_view.as_ref() {
+                if let Some(config_options_view) = this.config_options_view() {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.cycle_category_option(
                             acp::SessionConfigOptionCategory::Mode,
@@ -8532,7 +8545,7 @@ impl Render for AcpThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
-                if let Some(config_options_view) = this.config_options_view.as_ref() {
+                if let Some(config_options_view) = this.config_options_view() {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.toggle_category_picker(
                             acp::SessionConfigOptionCategory::Model,
@@ -8551,7 +8564,7 @@ impl Render for AcpThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
-                if let Some(config_options_view) = this.config_options_view.as_ref() {
+                if let Some(config_options_view) = this.config_options_view() {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.cycle_category_option(
                             acp::SessionConfigOptionCategory::Model,
