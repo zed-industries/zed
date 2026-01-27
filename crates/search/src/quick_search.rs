@@ -913,11 +913,11 @@ impl QuickSearch {
             })
     }
 
-    fn render_preview(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_preview_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let delegate = &self.picker.read(cx).delegate;
         let selected_match = delegate.matches.get(delegate.selected_index);
 
-        let preview_header = if let Some(m) = selected_match {
+        if let Some(m) = selected_match {
             let path = &m.path.path;
             let file_name = path
                 .file_name()
@@ -952,14 +952,18 @@ impl QuickSearch {
                 .child(self.render_split_menu(split_menu_handle, focus_handle, window, cx))
         } else {
             h_flex().h(px(26.0))
-        };
+        }
+    }
 
-        v_flex().child(preview_header).child(
-            div()
-                .h(self.stacked.preview_height)
-                .overflow_hidden()
-                .child(self.preview_editor.clone()),
-        )
+    fn render_preview(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .child(self.render_preview_header(window, cx))
+            .child(
+                div()
+                    .h(self.stacked.preview_height)
+                    .overflow_hidden()
+                    .child(self.preview_editor.clone()),
+            )
     }
 
     fn render_split_menu(
@@ -1106,51 +1110,11 @@ impl QuickSearch {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let delegate = &self.picker.read(cx).delegate;
-        let selected_match = delegate.matches.get(delegate.selected_index);
-
-        let preview_header = if let Some(m) = selected_match {
-            let path = &m.path.path;
-            let file_name = path
-                .file_name()
-                .map(|name| name.to_string())
-                .unwrap_or_default();
-            let directory = path
-                .parent()
-                .map(|path| path.as_std_path().to_string_lossy().to_string())
-                .unwrap_or_default();
-
-            let split_menu_handle = delegate.split_popover_menu_handle.clone();
-            let focus_handle = self.focus_handle.clone();
-
-            h_flex()
-                .px_2()
-                .py_1()
-                .gap_2()
-                .border_b_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().editor_background)
-                .justify_between()
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(Label::new(file_name).size(LabelSize::Small))
-                        .child(
-                            Label::new(directory)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                )
-                .child(self.render_split_menu(split_menu_handle, focus_handle, window, cx))
-        } else {
-            h_flex().h(px(26.0))
-        };
-
         v_flex()
             .size_full()
             .border_l_1()
             .border_color(cx.theme().colors().border)
-            .child(preview_header)
+            .child(self.render_preview_header(window, cx))
             .child(
                 div()
                     .flex_1()
