@@ -5775,7 +5775,7 @@ impl RenderOnce for PanelRepoFooter {
                 let project = project;
                 move |window, cx| {
                     let project = project.clone()?;
-                    Some(cx.new(|cx| RepositorySelector::new(project, rems(16.), window, cx)))
+                    Some(cx.new(|cx| RepositorySelector::new(project, rems(20.), window, cx)))
                 }
             })
             .trigger_with_tooltip(
@@ -5783,6 +5783,10 @@ impl RenderOnce for PanelRepoFooter {
                 Tooltip::text("Switch Active Repository"),
             )
             .anchor(Corner::BottomLeft)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-2.0),
+            })
             .into_any_element();
 
         let branch_selector_button = Button::new("branch-selector", truncated_branch_name)

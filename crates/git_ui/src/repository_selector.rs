@@ -1,9 +1,13 @@
-use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity};
+use crate::git_status_icon;
+use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
+use gpui::{
+    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity,
+};
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{Project, git_store::Repository};
 use std::sync::Arc;
-use ui::{ListItem, ListItemSpacing, prelude::*};
+use ui::{ListHeader, ListItem, ListItemSpacing, prelude::*};
 use workspace::{ModalView, Workspace};
 
 pub fn register(workspace: &mut Workspace) {
@@ -218,6 +222,14 @@ impl PickerDelegate for RepositorySelectorDelegate {
             .ok();
     }
 
+    fn render_header(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        Some(ListHeader::new("Repositories").inset(true).into_any_element())
+    }
+
     fn render_match(
         &self,
         ix: usize,
@@ -226,13 +238,42 @@ impl PickerDelegate for RepositorySelectorDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let repo_info = self.filtered_repositories.get(ix)?;
-        let display_name = repo_info.read(cx).display_name();
-        Some(
-            ListItem::new(ix)
-                .inset(true)
-                .spacing(ListItemSpacing::Sparse)
-                .toggle_state(selected)
-                .child(Label::new(display_name)),
-        )
+        let repo = repo_info.read(cx);
+        let display_name = repo.display_name();
+        let summary = repo.status_summary();
+
+        let mut item = ListItem::new(ix)
+            .inset(true)
+            .spacing(ListItemSpacing::Sparse)
+            .toggle_state(selected)
+            .child(Label::new(display_name));
+
+        if summary.count > 0 {
+            let status = if summary.conflict > 0 {
+                FileStatus::Unmerged(UnmergedStatus {
+                    first_head: UnmergedStatusCode::Updated,
+                    second_head: UnmergedStatusCode::Updated,
+                })
+            } else if summary.worktree.deleted > 0 || summary.index.deleted > 0 {
+                FileStatus::Tracked(TrackedStatus {
+                    index_status: StatusCode::Deleted,
+                    worktree_status: StatusCode::Unmodified,
+                })
+            } else if summary.worktree.modified > 0 || summary.index.modified > 0 {
+                FileStatus::Tracked(TrackedStatus {
+                    index_status: StatusCode::Modified,
+                    worktree_status: StatusCode::Unmodified,
+                })
+            } else {
+                // Added or untracked files
+                FileStatus::Tracked(TrackedStatus {
+                    index_status: StatusCode::Added,
+                    worktree_status: StatusCode::Unmodified,
+                })
+            };
+            item = item.end_slot(git_status_icon(status));
+        }
+
+        Some(item)
     }
 }
