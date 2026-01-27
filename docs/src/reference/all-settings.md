@@ -2317,7 +2317,7 @@ Example:
 
 ## Hover Popover Delay
 
-- Description: Time to wait in milliseconds before showing the informational hover box.
+- Description: Time to wait in milliseconds before showing the informational hover box. This delay also applies to auto signature help when `auto_signature_help` is enabled.
 - Setting: `hover_popover_delay`
 - Default: `300`
 
