@@ -168,44 +168,34 @@ fn truncate_prompt_to_budget(
     event_ranges: &mut Vec<Range<usize>>,
     max_tokens: usize,
 ) {
-    let mut remove_from_related_files = true;
-
+    let mut event_index = 0;
     while estimate_tokens(prompt.len()) > max_tokens {
-        let range_to_remove = if remove_from_related_files {
-            related_file_ranges.pop()
+        let removed_range;
+        if let Some(range) = related_file_ranges.pop() {
+            removed_range = range;
+        } else if event_index < event_ranges.len() {
+            removed_range = event_ranges[event_index].clone();
+            event_index += 1;
         } else {
-            event_ranges.pop()
-        };
+            break;
+        }
 
-        let Some(range) = range_to_remove else {
-            if remove_from_related_files && !event_ranges.is_empty() {
-                remove_from_related_files = false;
-                continue;
-            } else if !remove_from_related_files && !related_file_ranges.is_empty() {
-                remove_from_related_files = true;
-                continue;
-            } else {
-                break;
-            }
-        };
-
-        let removed_len = range.end - range.start;
-        prompt.replace_range(range.clone(), "");
+        prompt.replace_range(removed_range.clone(), "");
+        let removed_len = removed_range.end - removed_range.start;
 
         for r in related_file_ranges.iter_mut() {
-            if r.start > range.start {
-                r.start -= removed_len;
-                r.end -= removed_len;
-            }
-        }
-        for r in event_ranges.iter_mut() {
-            if r.start > range.start {
+            if r.start > removed_range.start {
                 r.start -= removed_len;
                 r.end -= removed_len;
             }
         }
 
-        remove_from_related_files = !remove_from_related_files;
+        for r in event_ranges[event_index..].iter_mut() {
+            if r.start > removed_range.start {
+                r.start -= removed_len;
+                r.end -= removed_len;
+            }
+        }
     }
 }
 
