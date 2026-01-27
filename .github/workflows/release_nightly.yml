@@ -29,7 +29,7 @@ jobs:
     timeout-minutes: 60
   run_tests_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: self-32vcpu-windows-2022
+    runs-on: namespace-profile-windows-large
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -58,7 +58,7 @@ jobs:
     timeout-minutes: 60
   clippy_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: self-32vcpu-windows-2022
+    runs-on: namespace-profile-windows-large
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -288,7 +288,7 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
-    runs-on: self-32vcpu-windows-2022
+    runs-on: namespace-profile-windows-large
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -341,7 +341,7 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
-    runs-on: self-32vcpu-windows-2022
+    runs-on: namespace-profile-windows-large
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
