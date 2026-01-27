@@ -338,8 +338,12 @@ pub struct FileHistoryEntry {
 
 #[derive(Debug, Clone)]
 pub struct FileHistory {
+    /// Currently loaded history entries.
     pub entries: Vec<FileHistoryEntry>,
     pub path: RepoPath,
+    /// Optionally keeps track of the total number of commits. When all entries
+    /// are loaded, this should match `entries.len()`.
+    pub count: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -659,6 +663,10 @@ pub trait GitRepository: Send + Sync {
         skip: usize,
         limit: Option<usize>,
     ) -> BoxFuture<'_, Result<FileHistory>>;
+
+    /// Returns the total number of commits in the file history for the provided
+    /// `path`.
+    fn file_history_count(&self, path: RepoPath) -> BoxFuture<'_, Result<usize>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
@@ -1751,7 +1759,13 @@ impl GitRepository for RealGitRepository {
                     commit_delimiter
                 );
 
-                let mut args = vec!["--no-optional-locks", "log", "--follow", &format_string];
+                // TODO!: The `--follow` flag has been removed in the meantime
+                // so we can actually get this to not load duplicate commits and
+                // we can actually test automatically loading more commits in
+                // the file history. When the proper fix has been merged to
+                // `main`, these changes should be reverted, in favor of the
+                // changes introduced in `main`.
+                let mut args = vec!["--no-optional-locks", "log", &format_string];
 
                 let skip_str;
                 let limit_str;
@@ -1809,7 +1823,41 @@ impl GitRepository for RealGitRepository {
                     }
                 }
 
-                Ok(FileHistory { entries, path })
+                Ok(FileHistory {
+                    entries,
+                    path,
+                    count: None,
+                })
+            })
+            .boxed()
+    }
+
+    fn file_history_count(&self, path: RepoPath) -> BoxFuture<'_, Result<usize>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+                let args = vec!["--no-optional-locks", "log", "--follow", "--oneline", "--"];
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(&args)
+                    .arg(path.as_unix_str())
+                    .output()
+                    .await?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    bail!("git log failed: {stderr}");
+                }
+
+                // Since `--oneline` was used, the number of commits is simply
+                // the number of lines returned by the command.
+                let stdout = std::str::from_utf8(&output.stdout)?;
+                let count = stdout.lines().count();
+
+                Ok(count)
             })
             .boxed()
     }

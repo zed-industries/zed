@@ -1188,6 +1188,18 @@ impl GitStore {
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 
+    /// Determines the total number of commits in the history for the provided
+    /// `path`.
+    pub fn file_history_count(
+        &self,
+        repo: &Entity<Repository>,
+        path: RepoPath,
+        cx: &mut App,
+    ) -> Task<Result<usize>> {
+        let rx = repo.update(cx, |repo, _| repo.file_history_count(path));
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+    }
+
     pub fn get_permalink_to_line(
         &self,
         buffer: &Entity<Buffer>,
@@ -4348,7 +4360,22 @@ impl Repository {
                             })
                             .collect(),
                         path: RepoPath::from_proto(&response.path)?,
+                        count: None,
                     })
+                }
+            }
+        })
+    }
+
+    pub fn file_history_count(&mut self, path: RepoPath) -> oneshot::Receiver<Result<usize>> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.file_history_count(path).await
+                }
+                RepositoryState::Remote(RemoteRepositoryState { .. }) => {
+                    // TODO!: Implement `file_history_count` for remote.
+                    Ok(0)
                 }
             }
         })

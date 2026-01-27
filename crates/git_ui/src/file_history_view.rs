@@ -25,10 +25,6 @@ use workspace::{
 
 use crate::commit_view::CommitView;
 
-/// Number of items from the bottom of the list at which to automatically load
-/// more commits.
-const PREFETCH_THRESHOLD: usize = 5;
-
 actions!(git, [ViewCommitFromHistory, LoadMoreHistory]);
 
 pub fn init(cx: &mut App) {
@@ -39,6 +35,9 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+/// Number of items from the bottom of the list at which to automatically load
+/// more commits.
+const PREFETCH_THRESHOLD: usize = 5;
 const PAGE_SIZE: usize = 50;
 
 pub struct FileHistoryView {
@@ -66,10 +65,19 @@ impl FileHistoryView {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let file_history_task = git_store
+        let tasks = git_store
             .update(cx, |git_store, cx| {
                 repo.upgrade().map(|repo| {
-                    git_store.file_history_paginated(&repo, path.clone(), 0, Some(PAGE_SIZE), cx)
+                    (
+                        git_store.file_history_paginated(
+                            &repo,
+                            path.clone(),
+                            0,
+                            Some(PAGE_SIZE),
+                            cx,
+                        ),
+                        git_store.file_history_count(&repo, path.clone(), cx),
+                    )
                 })
             })
             .ok()
@@ -77,7 +85,9 @@ impl FileHistoryView {
 
         window
             .spawn(cx, async move |cx| {
-                let file_history = file_history_task?.await.log_err()?;
+                let (file_history_task, file_history_count_task) = tasks?;
+                let mut file_history = file_history_task.await.log_err()?;
+                file_history.count = Some(file_history_count_task.await.log_err()?);
                 let repo = repo.upgrade()?;
 
                 workspace
@@ -478,6 +488,7 @@ impl Render for FileHistoryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _file_name = self.history.path.file_name().unwrap_or("File");
         let entry_count = self.history.entries.len();
+        let total_count = self.history.count.map_or(0, |count| count);
 
         v_flex()
             .id("file_history_view")
@@ -507,7 +518,7 @@ impl Render for FileHistoryView {
                         h_flex()
                             .gap_1p5()
                             .child(
-                                Label::new(format!("{} commits", entry_count))
+                                Label::new(format!("{} / {} commits", entry_count, total_count))
                                     .size(LabelSize::Small)
                                     .color(Color::Muted)
                                     .when(self.has_more, |this| this.mr_1()),
