@@ -200,7 +200,7 @@ impl SweepAi {
             };
 
             let mut buf: Vec<u8> = Vec::new();
-            let writer = brotli::CompressorWriter::new(&mut buf, 4096, 11, 22);
+            let writer = brotli::CompressorWriter::new(&mut buf, 4096, 1, 22);
             serde_json::to_writer(writer, &request_body)?;
             let body: AsyncBody = buf.into();
 
