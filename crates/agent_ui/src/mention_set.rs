@@ -1036,9 +1036,13 @@ struct ImageHover {
 }
 
 impl Render for ImageHover {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(image) = self.image.clone() {
-            gpui::img(image).max_w_96().max_h_96().into_any_element()
+            div()
+                .p_1p5()
+                .elevation_2(cx)
+                .child(gpui::img(image).h_auto().max_w_96().rounded_sm())
+                .into_any_element()
         } else {
             gpui::Empty.into_any_element()
         }
