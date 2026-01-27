@@ -228,7 +228,11 @@ impl PickerDelegate for RepositorySelectorDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
-        Some(ListHeader::new("Repositories").inset(true).into_any_element())
+        Some(
+            ListHeader::new("Repositories")
+                .inset(true)
+                .into_any_element(),
+        )
     }
 
     fn render_match(
