@@ -2722,7 +2722,7 @@ impl Workspace {
             .flat_map(|k| Keystroke::parse(k).log_err())
             .map(|k| {
                 cx.keyboard_mapper()
-                    .map_key_equivalent(k, true)
+                    .map_key_equivalent(k, false)
                     .inner()
                     .clone()
             })
