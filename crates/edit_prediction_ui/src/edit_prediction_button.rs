@@ -723,7 +723,7 @@ impl EditPredictionButton {
         let fs = self.fs.clone();
         let line_height = window.line_height();
 
-        menu = menu.header("Show Edit Predictions For");
+        menu = menu.header("Toggle Edit Predictions");
 
         let language_state = self.language.as_ref().map(|language| {
             (
@@ -1048,6 +1048,20 @@ impl EditPredictionButton {
                             }
                         }),
                 )
+                .header("GitHub Copilot Usage")
+                .custom_row(|_window, cx| {
+                    h_flex()
+                        .flex_1()
+                        .gap_1p5()
+                        .child(
+                            Label::new("Usage")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(ProgressBar::new("copilot_usage", 30., 100., cx))
+                        .into_any_element()
+                })
+                .separator()
                 .separator()
                 .link(
                     "Go to Copilot Settings",
