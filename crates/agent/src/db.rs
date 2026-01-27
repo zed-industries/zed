@@ -23,7 +23,7 @@ pub type DbMessage = crate::Message;
 pub type DbSummary = crate::legacy_thread::DetailedSummaryState;
 pub type DbLanguageModel = crate::legacy_thread::SerializedLanguageModel;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbThreadMetadata {
     pub id: acp::SessionId,
     #[serde(alias = "summary")]
