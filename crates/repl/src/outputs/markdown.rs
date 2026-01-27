@@ -1,44 +1,22 @@
-use anyhow::Result;
-use gpui::{
-    App, ClipboardItem, Context, Entity, RetainAllImageCache, Task, Window, div, prelude::*,
-};
+use gpui::{App, ClipboardItem, Context, Entity, Window, prelude::*};
 use language::Buffer;
-use markdown_preview::{
-    markdown_elements::ParsedMarkdown, markdown_parser::parse_markdown,
-    markdown_renderer::render_markdown_block,
-};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use ui::v_flex;
 
 use crate::outputs::OutputContent;
 
 pub struct MarkdownView {
     raw_text: String,
-    image_cache: Entity<RetainAllImageCache>,
-    contents: Option<ParsedMarkdown>,
-    parsing_markdown_task: Option<Task<Result<()>>>,
+    markdown: Entity<Markdown>,
 }
 
 impl MarkdownView {
     pub fn from(text: String, cx: &mut Context<Self>) -> Self {
-        let parsed = {
-            let text = text.clone();
-            cx.background_spawn(async move { parse_markdown(&text.clone(), None, None).await })
-        };
-        let task = cx.spawn(async move |markdown_view, cx| {
-            let content = parsed.await;
-
-            markdown_view.update(cx, |markdown, cx| {
-                markdown.parsing_markdown_task.take();
-                markdown.contents = Some(content);
-                cx.notify();
-            })
-        });
+        let markdown = cx.new(|cx| Markdown::new(text.clone().into(), None, None, cx));
 
         Self {
             raw_text: text,
-            image_cache: RetainAllImageCache::new(cx),
-            contents: None,
-            parsing_markdown_task: Some(task),
+            markdown,
         }
     }
 }
@@ -58,7 +36,6 @@ impl OutputContent for MarkdownView {
 
     fn buffer_content(&mut self, _: &mut Window, cx: &mut App) -> Option<Entity<Buffer>> {
         let buffer = cx.new(|cx| {
-            // TODO: Bring in the language registry so we can set the language to markdown
             let mut buffer = Buffer::local(self.raw_text.clone(), cx)
                 .with_language(language::PLAIN_TEXT.clone(), cx);
             buffer.set_capability(language::Capability::ReadOnly, cx);
@@ -69,25 +46,17 @@ impl OutputContent for MarkdownView {
 }
 
 impl Render for MarkdownView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(parsed) = self.contents.as_ref() else {
-            return div().into_any_element();
+    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let style = MarkdownStyle {
+            base_text_style: window.text_style(),
+            ..Default::default()
         };
 
-        let mut markdown_render_context =
-            markdown_preview::markdown_renderer::RenderContext::new(None, window, cx);
-
         v_flex()
-            .image_cache(self.image_cache.clone())
+            .w_full()
             .gap_3()
             .py_4()
-            .children(parsed.children.iter().map(|child| {
-                div().relative().child(
-                    div()
-                        .relative()
-                        .child(render_markdown_block(child, &mut markdown_render_context)),
-                )
-            }))
+            .child(MarkdownElement::new(self.markdown.clone(), style))
             .into_any_element()
     }
 }
