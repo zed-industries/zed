@@ -37,16 +37,22 @@ You will be provided with:
 - If you're unsure some portion of the next edit, you may still predict the surrounding code (such as a function definition, `for` loop, etc) and place the `<|user_cursor|>` within it for the user to fill in.
 - Wrap the edited code in a codeblock with exactly five backticks.
 
-## Example
+## Example 1
 
-### Input
+There is code missing at the cursor location. The related excerpts includes the definition of a relevant type. You should fill in the missing code.
+
+### Related Excerpts
 
 `````
 struct Product {
     name: String,
     price: u32,
 }
+`````
 
+### Current File
+
+`````
 fn calculate_total(products: &[Product]) -> u32 {
 <|editable_region_start|>
     let mut total = 0;
@@ -68,6 +74,30 @@ The user is computing a sum based on a list of products. The only numeric field 
         total += product.price;
     }
     total
+`````
+
+## Example 2
+
+The user appears to be typing a print call, but it's not clear what data they intend to print. You should fill in as much code as is obviously intended, and position the cursor so that the user can fill in the rest.
+
+### Current File
+
+`````
+fn handle_close_button_click(modal_state: &mut ModalState, evt: &Event) {
+    modal_state.close();
+    epr<|user_cursor|>;
+}
+`````
+
+### Output
+
+The user is clearly starting to type `eprintln!()`, however, what they intend to print is not obvious. I should fill in the print call and string literal, with the cursor positioned inside the string literal so the user can print whatever they want
+
+`````
+fn handle_close_button_click(modal_state: &mut ModalState, evt: &Event) {
+    modal_state.close();
+    eprintln!("<|user_cursor|>");
+}
 `````
 
 # 1. User Edits History
