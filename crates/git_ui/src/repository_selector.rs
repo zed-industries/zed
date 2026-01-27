@@ -66,6 +66,7 @@ impl RepositorySelector {
             Picker::uniform_list(delegate, window, cx)
                 .widest_item(widest_item_ix)
                 .max_height(Some(rems(20.).into()))
+                .show_scrollbar(true)
         });
 
         RepositorySelector { picker, width }
