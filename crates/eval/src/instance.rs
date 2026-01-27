@@ -202,7 +202,10 @@ impl ExampleInstance {
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
             cx,
         );
 
@@ -548,7 +551,6 @@ impl ExampleInstance {
             let request = LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
-                mode: None,
                 intent: None,
                 messages: vec![LanguageModelRequestMessage {
                     role: Role::User,
@@ -1265,9 +1267,7 @@ pub fn response_events_to_markdown(
             }
             Ok(
                 LanguageModelCompletionEvent::UsageUpdate(_)
-                | LanguageModelCompletionEvent::ToolUseLimitReached
                 | LanguageModelCompletionEvent::StartMessage { .. }
-                | LanguageModelCompletionEvent::UsageUpdated { .. }
                 | LanguageModelCompletionEvent::Queued { .. }
                 | LanguageModelCompletionEvent::Started
                 | LanguageModelCompletionEvent::ReasoningDetails(_),
@@ -1359,9 +1359,7 @@ impl ThreadDialog {
                 | Ok(LanguageModelCompletionEvent::ReasoningDetails(_))
                 | Ok(LanguageModelCompletionEvent::Stop(_))
                 | Ok(LanguageModelCompletionEvent::Queued { .. })
-                | Ok(LanguageModelCompletionEvent::Started)
-                | Ok(LanguageModelCompletionEvent::UsageUpdated { .. })
-                | Ok(LanguageModelCompletionEvent::ToolUseLimitReached) => {}
+                | Ok(LanguageModelCompletionEvent::Started) => {}
 
                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                     json_parse_error,

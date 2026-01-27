@@ -977,6 +977,7 @@ impl ExtensionImports for WasmState {
                             project::project_settings::ContextServerSettings::Stdio {
                                 enabled: _,
                                 command,
+                                ..
                             } => Ok(serde_json::to_string(&settings::ContextServerSettings {
                                 command: Some(settings::CommandSettings {
                                     path: command.path.to_str().map(|path| path.to_string()),
@@ -988,6 +989,7 @@ impl ExtensionImports for WasmState {
                             project::project_settings::ContextServerSettings::Extension {
                                 enabled: _,
                                 settings,
+                                ..
                             } => Ok(serde_json::to_string(&settings::ContextServerSettings {
                                 command: None,
                                 settings: Some(settings),

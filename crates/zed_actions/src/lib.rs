@@ -104,6 +104,12 @@ pub struct Extensions {
     pub id: Option<String>,
 }
 
+/// Opens the external agent registry.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct AgentRegistry;
+
 /// Decreases the font size in the editor buffer.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
@@ -176,6 +182,19 @@ pub struct ResetAllZoom {
     pub persist: bool,
 }
 
+pub mod editor {
+    use gpui::actions;
+    actions!(
+        editor,
+        [
+            /// Moves cursor up.
+            MoveUp,
+            /// Moves cursor down.
+            MoveDown,
+        ]
+    );
+}
+
 pub mod dev {
     use gpui::actions;
 
@@ -184,6 +203,25 @@ pub mod dev {
         [
             /// Toggles the developer inspector for debugging UI elements.
             ToggleInspector
+        ]
+    );
+}
+
+pub mod remote_debug {
+    use gpui::actions;
+
+    actions!(
+        remote_debug,
+        [
+            /// Simulates a disconnection from the remote server for testing purposes.
+            /// This will trigger the reconnection logic.
+            SimulateDisconnect,
+            /// Simulates a timeout/slow connection to the remote server for testing purposes.
+            /// This will cause heartbeat failures and trigger reconnection.
+            SimulateTimeout,
+            /// Simulates a timeout/slow connection to the remote server for testing purposes.
+            /// This will cause heartbeat failures and attempting a reconnection while having exhausted all attempts.
+            SimulateTimeoutExhausted,
         ]
     );
 }
@@ -315,6 +353,16 @@ pub mod icon_theme_selector {
     }
 }
 
+pub mod search {
+    use gpui::actions;
+    actions!(
+        search,
+        [
+            /// Toggles searching in ignored files.
+            ToggleIncludeIgnored
+        ]
+    );
+}
 pub mod settings_profile_selector {
     use gpui::Action;
     use schemars::JsonSchema;

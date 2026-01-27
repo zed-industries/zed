@@ -100,7 +100,7 @@ jobs:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -146,7 +146,7 @@ jobs:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -225,6 +225,12 @@ jobs:
         name: Zed-aarch64.exe
         path: target/Zed-aarch64.exe
         if-no-files-found: error
+    - name: '@actions/upload-artifact zed-remote-server-windows-aarch64.zip'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-remote-server-windows-aarch64.zip
+        path: target/zed-remote-server-windows-aarch64.zip
+        if-no-files-found: error
     timeout-minutes: 60
   bundle_windows_x86_64:
     if: |-
@@ -262,6 +268,12 @@ jobs:
       with:
         name: Zed-x86_64.exe
         path: target/Zed-x86_64.exe
+        if-no-files-found: error
+    - name: '@actions/upload-artifact zed-remote-server-windows-x86_64.zip'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-remote-server-windows-x86_64.zip
+        path: target/zed-remote-server-windows-x86_64.zip
         if-no-files-found: error
     timeout-minutes: 60
 concurrency:

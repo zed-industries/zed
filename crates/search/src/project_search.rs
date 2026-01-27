@@ -40,7 +40,10 @@ use std::{
     pin::pin,
     sync::Arc,
 };
-use ui::{IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth};
+use ui::{
+    CommonAnimationExt, IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*,
+    utils::SearchInputWidth,
+};
 use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
@@ -642,7 +645,7 @@ impl Item for ProjectSearchView {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -2013,6 +2016,7 @@ impl Render for ProjectSearchBar {
         let theme_colors = cx.theme().colors();
         let project_search = search.entity.read(cx);
         let limit_reached = project_search.limit_reached;
+        let is_search_underway = project_search.pending_search.is_some();
 
         let color_override = match (
             &project_search.pending_search,
@@ -2105,16 +2109,29 @@ impl Render for ProjectSearchBar {
                     .id("matches")
                     .ml_2()
                     .min_w(rems_from_px(40.))
-                    .child(Label::new(match_text).size(LabelSize::Small).color(
-                        if search.active_match_index.is_some() {
-                            Color::Default
-                        } else {
-                            Color::Disabled
-                        },
-                    ))
-                    .when(limit_reached, |el| {
-                        el.tooltip(Tooltip::text(
-                            "Search limits reached.\nTry narrowing your search.",
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .child(
+                                Label::new(match_text)
+                                    .size(LabelSize::Small)
+                                    .when(search.active_match_index.is_some(), |this| {
+                                        this.color(Color::Disabled)
+                                    }),
+                            )
+                            .when(is_search_underway, |this| {
+                                this.child(
+                                    Icon::new(IconName::ArrowCircle)
+                                        .color(Color::Accent)
+                                        .size(IconSize::Small)
+                                        .with_rotate_animation(2)
+                                        .into_any_element(),
+                                )
+                            }),
+                    )
+                    .when(limit_reached, |this| {
+                        this.tooltip(Tooltip::text(
+                            "Search Limits Reached\nTry narrowing your search",
                         ))
                     }),
             );
@@ -2268,11 +2285,11 @@ impl Render for ProjectSearchBar {
             h_flex()
                 .w_full()
                 .gap_2()
+                .child(alignment_element())
                 .child(
                     h_flex()
-                        .gap_2()
                         .w(input_width)
-                        .child(alignment_element())
+                        .gap_2()
                         .child(include)
                         .child(exclude),
                 )
@@ -2626,9 +2643,8 @@ pub mod tests {
                 (dp(2, 32)..dp(2, 35), "active"),
                 (dp(2, 37)..dp(2, 40), "selection"),
                 (dp(2, 37)..dp(2, 40), "match"),
+                (dp(5, 6)..dp(5, 9), "selection"),
                 (dp(5, 6)..dp(5, 9), "match"),
-                // TODO: we should be getting selection highlight here after project search
-                // but for some reason we are not getting it here
             ],
         );
         select_match(&search_view, cx, Direction::Next);

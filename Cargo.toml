@@ -42,6 +42,7 @@ members = [
     "crates/component_preview",
     "crates/context_server",
     "crates/copilot",
+    "crates/copilot_chat",
     "crates/crashes",
     "crates/credentials_provider",
     "crates/dap",
@@ -52,6 +53,7 @@ members = [
     "crates/debugger_ui",
     "crates/deepseek",
     "crates/denoise",
+    "crates/dev_container",
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/edit_prediction",
@@ -77,6 +79,7 @@ members = [
     "crates/fsevent",
     "crates/fuzzy",
     "crates/git",
+    "crates/git_graph",
     "crates/git_hosting_providers",
     "crates/git_ui",
     "crates/go_to_line",
@@ -122,6 +125,7 @@ members = [
     "crates/ollama",
     "crates/onboarding",
     "crates/open_ai",
+    "crates/open_path_prompt",
     "crates/open_router",
     "crates/outline",
     "crates/outline_panel",
@@ -152,6 +156,7 @@ members = [
     "crates/search",
     "crates/session",
     "crates/settings",
+    "crates/settings_content",
     "crates/settings_json",
     "crates/settings_macros",
     "crates/settings_profile_selector",
@@ -183,6 +188,7 @@ members = [
     "crates/theme_importer",
     "crates/theme_selector",
     "crates/time_format",
+    "crates/platform_title_bar",
     "crates/title_bar",
     "crates/toolchain_selector",
     "crates/ui",
@@ -272,6 +278,7 @@ clock = { path = "crates/clock" }
 cloud_api_client = { path = "crates/cloud_api_client" }
 cloud_api_types = { path = "crates/cloud_api_types" }
 cloud_llm_client = { path = "crates/cloud_llm_client" }
+collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections", version = "0.1.0" }
 command_palette = { path = "crates/command_palette" }
@@ -280,6 +287,8 @@ component = { path = "crates/component" }
 component_preview  = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
 copilot = { path = "crates/copilot" }
+copilot_chat = { path = "crates/copilot_chat" }
+copilot_ui = { path = "crates/copilot_ui" }
 crashes = { path = "crates/crashes" }
 credentials_provider = { path = "crates/credentials_provider" }
 crossbeam = "0.8.4"
@@ -291,6 +300,7 @@ debugger_tools = { path = "crates/debugger_tools" }
 debugger_ui = { path = "crates/debugger_ui" }
 deepseek = { path = "crates/deepseek" }
 derive_refineable = { path = "crates/refineable/derive_refineable" }
+dev_container = { path = "crates/dev_container" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 encoding_selector = { path = "crates/encoding_selector" }
@@ -306,6 +316,7 @@ fs = { path = "crates/fs" }
 fsevent = { path = "crates/fsevent" }
 fuzzy = { path = "crates/fuzzy" }
 git = { path = "crates/git" }
+git_graph = { path = "crates/git_graph" }
 git_hosting_providers = { path = "crates/git_hosting_providers" }
 git_ui = { path = "crates/git_ui" }
 go_to_line = { path = "crates/go_to_line" }
@@ -355,6 +366,7 @@ notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
 onboarding = { path = "crates/onboarding" }
 open_ai = { path = "crates/open_ai" }
+open_path_prompt = { path = "crates/open_path_prompt" }
 open_router = { path = "crates/open_router", features = ["schemars"] }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
@@ -384,6 +396,7 @@ scheduler = { path = "crates/scheduler" }
 search = { path = "crates/search" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
+settings_content = { path = "crates/settings_content" }
 settings_json = { path = "crates/settings_json" }
 settings_macros = { path = "crates/settings_macros" }
 settings_ui = { path = "crates/settings_ui" }
@@ -411,6 +424,7 @@ theme = { path = "crates/theme" }
 theme_extension = { path = "crates/theme_extension" }
 theme_selector = { path = "crates/theme_selector" }
 time_format = { path = "crates/time_format" }
+platform_title_bar = { path = "crates/platform_title_bar" }
 title_bar = { path = "crates/title_bar" }
 toolchain_selector = { path = "crates/toolchain_selector" }
 ui = { path = "crates/ui" }
@@ -446,11 +460,11 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 
 agent-client-protocol = { version = "=0.9.3", features = ["unstable"] }
 aho-corasick = "1.1"
-alacritty_terminal = "0.25.1-rc1"
+alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "936aee8761a17affc84ab418ae21306c27c26221" }
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
-ashpd = { version = "0.12", default-features = false, features = ["async-std"] }
+ashpd = { version = "0.12.1", default-features = false, features = ["async-std"] }
 async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"
@@ -514,8 +528,8 @@ fancy-regex = "0.16.0"
 fork = "0.4.0"
 futures = "0.3"
 futures-lite = "1.13"
-gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "09acfdf2bd5c1d6254abefd609c808ff73547b2c" }
-git2 = { version = "0.20.1", default-features = false }
+gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "c9eac0ed361583e1072860d96776fa52775b82ac" }
+git2 = { version = "0.20.1", default-features = false, features = ["vendored-libgit2"] }
 globset = "0.4"
 handlebars = "4.3"
 heck = "0.5"
@@ -587,13 +601,14 @@ partial-json-fixer = "0.5.3"
 parse_int = "0.9"
 pciid-parser = "0.8.0"
 pathdiff = "0.2"
-pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
-pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
-pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
-pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
-pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
-pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
-pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
+percent-encoding = "2.3.2"
+pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
+pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
+pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
+pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
+pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
+pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
+pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
 portable-pty = "0.9.0"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
@@ -675,7 +690,7 @@ toml_edit = { version = "0.22", default-features = false, features = ["display",
 tower-http = "0.4.4"
 tree-sitter = { version = "0.26", features = ["wasm"] }
 tree-sitter-bash = "0.25.1"
-tree-sitter-c = "0.23"
+tree-sitter-c = "0.24.1"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
 tree-sitter-css = "0.23"
 tree-sitter-diff = "0.1.0"
@@ -700,6 +715,7 @@ tracing = "0.1.40"
 unicase = "2.6"
 unicode-script = "0.5.7"
 unicode-segmentation = "1.10"
+unicode-width = "0.2"
 unindent = "0.2.0"
 url = "2.2"
 urlencoding = "2.1.2"
@@ -777,6 +793,7 @@ features = [
 ]
 
 [patch.crates-io]
+async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
 notify = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
@@ -784,8 +801,7 @@ calloop = { git = "https://github.com/zed-industries/calloop" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
-# https://github.com/rust-lang/cargo/issues/16104
-incremental = false
+incremental = true
 codegen-units = 16
 
 # mirror configuration for crates compiled for the build platform

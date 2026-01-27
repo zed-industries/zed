@@ -1,21 +1,22 @@
 use crate::{
-    dev_container::start_dev_container,
     remote_connections::{
         Connection, RemoteConnectionModal, RemoteConnectionPrompt, RemoteSettings, SshConnection,
         SshConnectionHeader, connect, determine_paths_with_positions, open_remote_project,
     },
     ssh_config::parse_ssh_config_hosts,
 };
+use dev_container::start_dev_container;
 use editor::Editor;
-use file_finder::OpenPathDelegate;
-use futures::{FutureExt, channel::oneshot, future::Shared, select};
+
+use futures::{FutureExt, channel::oneshot, future::Shared};
 use gpui::{
     AnyElement, App, ClickEvent, ClipboardItem, Context, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task, WeakEntity, Window,
     canvas,
 };
 use language::Point;
-use log::info;
+use log::{debug, info};
+use open_path_prompt::OpenPathDelegate;
 use paths::{global_ssh_config_file, user_ssh_config_file};
 use picker::Picker;
 use project::{Fs, Project};
@@ -222,13 +223,13 @@ impl ProjectPicker {
     ) -> Entity<Self> {
         let (tx, rx) = oneshot::channel();
         let lister = project::DirectoryLister::Project(project.clone());
-        let delegate = file_finder::OpenPathDelegate::new(tx, lister, false, cx);
+        let delegate = open_path_prompt::OpenPathDelegate::new(tx, lister, false, cx);
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
                 .width(rems(34.))
                 .modal(false);
-            picker.set_query(home_dir.to_string(), window, cx);
+            picker.set_query(&home_dir.to_string(), window, cx);
             picker
         });
 
@@ -470,7 +471,7 @@ impl RemoteEntry {
             Self::Project { connection, .. } => Cow::Borrowed(connection),
             Self::SshConfig { host, .. } => Cow::Owned(
                 SshConnection {
-                    host: host.clone(),
+                    host: host.to_string(),
                     ..SshConnection::default()
                 }
                 .into(),
@@ -1129,7 +1130,7 @@ impl RemoteServerProjects {
             Connection::Ssh(connection) => {
                 if let Some(nickname) = connection.nickname.clone() {
                     let aux_label = SharedString::from(format!("({})", connection.host));
-                    (nickname.into(), Some(aux_label), false)
+                    (nickname, Some(aux_label), false)
                 } else {
                     (connection.host.clone(), None, false)
                 }
@@ -1535,7 +1536,7 @@ impl RemoteServerProjects {
                 .ssh_connections
                 .get_or_insert(Default::default())
                 .push(SshConnection {
-                    host: SharedString::from(connection_options.host.to_string()),
+                    host: connection_options.host.to_string(),
                     username: connection_options.username,
                     port: connection_options.port,
                     projects: BTreeSet::new(),
@@ -1602,7 +1603,7 @@ impl RemoteServerProjects {
         cx.spawn_in(window, async move |entity, cx| {
             let (connection, starting_dir) =
                 match start_dev_container(cx, app_state.node_runtime.clone()).await {
-                    Ok((c, s)) => (c, s),
+                    Ok((c, s)) => (Connection::DevContainer(c), s),
                     Err(e) => {
                         log::error!("Failed to start dev container: {:?}", e);
                         entity
@@ -2340,7 +2341,7 @@ impl RemoteServerProjects {
             .track_focus(&self.focus_handle(cx))
             .child(
                 SshConnectionHeader {
-                    connection_string,
+                    connection_string: connection_string.into(),
                     paths: Default::default(),
                     nickname,
                     is_wsl: false,
@@ -2408,7 +2409,7 @@ impl RemoteServerProjects {
                     ..
                 } = server
                 {
-                    expected_ssh_hosts.remove(&connection.host);
+                    expected_ssh_hosts.remove(connection.host.as_str());
                 }
             }
             should_rebuild = current_ssh_hosts != expected_ssh_hosts;
@@ -2679,57 +2680,65 @@ impl RemoteServerProjects {
 }
 
 fn spawn_ssh_config_watch(fs: Arc<dyn Fs>, cx: &Context<RemoteServerProjects>) -> Task<()> {
-    let mut user_ssh_config_watcher =
-        watch_config_file(cx.background_executor(), fs.clone(), user_ssh_config_file());
-    let mut global_ssh_config_watcher = global_ssh_config_file()
-        .map(|it| watch_config_file(cx.background_executor(), fs, it.to_owned()))
-        .unwrap_or_else(|| futures::channel::mpsc::unbounded().1);
+    enum ConfigSource {
+        User(String),
+        Global(String),
+    }
+
+    let mut streams = Vec::new();
+    let mut tasks = Vec::new();
+
+    // Setup User Watcher
+    let user_path = user_ssh_config_file();
+    info!("SSH: Watching User Config at: {:?}", user_path);
+
+    // We clone 'fs' here because we might need it again for the global watcher.
+    let (user_s, user_t) = watch_config_file(cx.background_executor(), fs.clone(), user_path);
+    streams.push(user_s.map(ConfigSource::User).boxed());
+    tasks.push(user_t);
+
+    // Setup Global Watcher
+    if let Some(gp) = global_ssh_config_file() {
+        info!("SSH: Watching Global Config at: {:?}", gp);
+        let (global_s, global_t) =
+            watch_config_file(cx.background_executor(), fs, gp.to_path_buf());
+        streams.push(global_s.map(ConfigSource::Global).boxed());
+        tasks.push(global_t);
+    } else {
+        debug!("SSH: No Global Config defined.");
+    }
+
+    // Combine into a single stream so that only one is parsed at once.
+    let mut merged_stream = futures::stream::select_all(streams);
 
     cx.spawn(async move |remote_server_projects, cx| {
+        let _tasks = tasks; // Keeps the background watchers alive
         let mut global_hosts = BTreeSet::default();
         let mut user_hosts = BTreeSet::default();
-        let mut running_receivers = 2;
 
-        loop {
-            select! {
-                new_global_file_contents = global_ssh_config_watcher.next().fuse() => {
-                    match new_global_file_contents {
-                        Some(new_global_file_contents) => {
-                            global_hosts = parse_ssh_config_hosts(&new_global_file_contents);
-                            if remote_server_projects.update(cx, |remote_server_projects, cx| {
-                                remote_server_projects.ssh_config_servers = global_hosts.iter().chain(user_hosts.iter()).map(SharedString::from).collect();
-                                cx.notify();
-                            }).is_err() {
-                                return;
-                            }
-                        },
-                        None => {
-                            running_receivers -= 1;
-                            if running_receivers == 0 {
-                                return;
-                            }
-                        }
-                    }
-                },
-                new_user_file_contents = user_ssh_config_watcher.next().fuse() => {
-                    match new_user_file_contents {
-                        Some(new_user_file_contents) => {
-                            user_hosts = parse_ssh_config_hosts(&new_user_file_contents);
-                            if remote_server_projects.update(cx, |remote_server_projects, cx| {
-                                remote_server_projects.ssh_config_servers = global_hosts.iter().chain(user_hosts.iter()).map(SharedString::from).collect();
-                                cx.notify();
-                            }).is_err() {
-                                return;
-                            }
-                        },
-                        None => {
-                            running_receivers -= 1;
-                            if running_receivers == 0 {
-                                return;
-                            }
-                        }
-                    }
-                },
+        while let Some(event) = merged_stream.next().await {
+            match event {
+                ConfigSource::Global(content) => {
+                    global_hosts = parse_ssh_config_hosts(&content);
+                }
+                ConfigSource::User(content) => {
+                    user_hosts = parse_ssh_config_hosts(&content);
+                }
+            }
+
+            // Sync to Model
+            if remote_server_projects
+                .update(cx, |project, cx| {
+                    project.ssh_config_servers = global_hosts
+                        .iter()
+                        .chain(user_hosts.iter())
+                        .map(SharedString::from)
+                        .collect();
+                    cx.notify();
+                })
+                .is_err()
+            {
+                return;
             }
         }
     })

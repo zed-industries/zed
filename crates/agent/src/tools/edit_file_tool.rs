@@ -1,5 +1,6 @@
 use crate::{
-    AgentTool, Templates, Thread, ToolCallEventStream,
+    AgentTool, Templates, Thread, ToolCallEventStream, ToolPermissionDecision,
+    decide_permission_from_settings,
     edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat},
 };
 use acp_thread::Diff;
@@ -143,14 +144,31 @@ impl EditFileTool {
         }
     }
 
+    pub fn with_thread(&self, new_thread: WeakEntity<Thread>) -> Self {
+        Self {
+            project: self.project.clone(),
+            thread: new_thread,
+            language_registry: self.language_registry.clone(),
+            templates: self.templates.clone(),
+        }
+    }
+
     fn authorize(
         &self,
         input: &EditFileToolInput,
         event_stream: &ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
-            return Task::ready(Ok(()));
+        let path_str = input.path.to_string_lossy();
+        let settings = agent_settings::AgentSettings::get_global(cx);
+        let decision = decide_permission_from_settings(Self::name(), &path_str, settings);
+
+        match decision {
+            ToolPermissionDecision::Allow => return Task::ready(Ok(())),
+            ToolPermissionDecision::Deny(reason) => {
+                return Task::ready(Err(anyhow!("{}", reason)));
+            }
+            ToolPermissionDecision::Confirm => {}
         }
 
         // If any path component matches the local settings folder, then this could affect
@@ -160,8 +178,13 @@ impl EditFileTool {
         if path.components().any(|component| {
             component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
         }) {
+            let context = crate::ToolPermissionContext {
+                tool_name: "edit_file".to_string(),
+                input_value: path_str.to_string(),
+            };
             return event_stream.authorize(
                 format!("{} (local settings)", input.display_description),
+                context,
                 cx,
             );
         }
@@ -172,8 +195,13 @@ impl EditFileTool {
         if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
             && canonical_path.starts_with(paths::config_dir())
         {
+            let context = crate::ToolPermissionContext {
+                tool_name: "edit_file".to_string(),
+                input_value: path_str.to_string(),
+            };
             return event_stream.authorize(
                 format!("{} (global settings)", input.display_description),
+                context,
                 cx,
             );
         }
@@ -191,7 +219,11 @@ impl EditFileTool {
         if project_path.is_some() {
             Task::ready(Ok(()))
         } else {
-            event_stream.authorize(&input.display_description, cx)
+            let context = crate::ToolPermissionContext {
+                tool_name: "edit_file".to_string(),
+                input_value: path_str.to_string(),
+            };
+            event_stream.authorize(&input.display_description, context, cx)
         }
     }
 }
@@ -375,7 +407,6 @@ impl AgentTool for EditFileTool {
                 })
                 .await;
 
-
             let (output, mut events) = if matches!(input.mode, EditFileMode::Edit) {
                 edit_agent.edit(
                     buffer.clone(),
@@ -551,6 +582,13 @@ impl AgentTool for EditFileTool {
             )
         }));
         Ok(())
+    }
+
+    fn rebind_thread(
+        &self,
+        new_thread: gpui::WeakEntity<crate::Thread>,
+    ) -> Option<std::sync::Arc<dyn crate::AnyAgentTool>> {
+        Some(self.with_thread(new_thread).erase())
     }
 }
 
