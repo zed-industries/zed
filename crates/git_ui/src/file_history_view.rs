@@ -16,7 +16,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use time::OffsetDateTime;
-use ui::{Avatar, Chip, Divider, ListItem, Tooltip, WithScrollbar, prelude::*};
+use ui::{Avatar, Chip, Divider, ListItem, WithScrollbar, prelude::*};
 use util::ResultExt;
 use workspace::{
     Item, Workspace,
@@ -517,29 +517,20 @@ impl Render for FileHistoryView {
                     .child(
                         h_flex()
                             .gap_1p5()
+                            .when(self.loading_more, |this| {
+                                this.child(
+                                    Icon::new(IconName::ArrowCircle)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(Label::new("Loading").size(LabelSize::Small))
+                                .child(Divider::vertical())
+                            })
                             .child(
                                 Label::new(format!("{} / {} commits", entry_count, total_count))
                                     .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                                    .when(self.has_more, |this| this.mr_1()),
-                            )
-                            .when(self.has_more, |this| {
-                                this.child(Divider::vertical()).child(
-                                    Button::new("load-more", "Load More")
-                                        .disabled(self.loading_more)
-                                        .label_size(LabelSize::Small)
-                                        .icon(IconName::ArrowCircle)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .icon_position(IconPosition::Start)
-                                        .when(self.loading_more, |button| {
-                                            button.tooltip(Tooltip::text("Loading more commits..."))
-                                        })
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.load_more(window, cx);
-                                        })),
-                                )
-                            }),
+                                    .color(Color::Muted),
+                            ),
                     ),
             )
             .child(
