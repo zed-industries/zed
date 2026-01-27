@@ -1,6 +1,6 @@
 use collections::{HashMap, HashSet};
 use futures::StreamExt;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::pin::pin;
 use std::sync::Arc;
@@ -1458,6 +1458,7 @@ pub struct QuickSearchDelegate {
     search_options: SearchOptions,
     search_in_progress: bool,
     pending_initial_query: RefCell<Option<String>>,
+    editor_configured: Cell<bool>,
     panels_with_errors: HashMap<InputPanel, String>,
     split_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
     history_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -1497,6 +1498,7 @@ impl QuickSearchDelegate {
             search_options: SearchOptions::from_settings(&EditorSettings::get_global(cx).search),
             search_in_progress: false,
             pending_initial_query: RefCell::new(initial_query),
+            editor_configured: Cell::new(false),
             panels_with_errors: HashMap::default(),
             split_popover_menu_handle: PopoverMenuHandle::default(),
             history_popover_menu_handle: PopoverMenuHandle::default(),
@@ -1822,7 +1824,10 @@ impl PickerDelegate for QuickSearchDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Div {
         let search_options = self.search_options;
-        editor.set_multiline(Some(4), window, cx);
+        if !self.editor_configured.get() {
+            editor.set_multiline(Some(4), window, cx);
+            self.editor_configured.set(true);
+        }
         let focus_handle = editor.focus_handle(cx);
 
         if let Some(query) = self.pending_initial_query.borrow_mut().take() {
