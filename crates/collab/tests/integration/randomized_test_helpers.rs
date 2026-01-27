@@ -1,9 +1,9 @@
-use crate::{
+use crate::{TestClient, TestServer};
+use async_trait::async_trait;
+use collab::{
     db::{self, NewUserParams, UserId},
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    tests::{TestClient, TestServer},
 };
-use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::{BackgroundExecutor, Task, TestAppContext};
 use parking_lot::Mutex;

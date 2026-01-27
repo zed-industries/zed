@@ -1,5 +1,6 @@
 use crate::PredictionProvider;
 use crate::paths::WORKTREES_DIR;
+use crate::qa::QaResult;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use edit_prediction::example_spec::ExampleSpec;
@@ -40,6 +41,10 @@ pub struct Example {
     /// predictions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub score: Vec<ExampleScore>,
+
+    /// QA evaluation results for each prediction (indexed parallel to `predictions`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub qa: Vec<Option<QaResult>>,
 
     /// The application state used to process this example.
     #[serde(skip)]
@@ -100,6 +105,8 @@ pub struct ExampleScore {
     pub exact_lines_fp: usize,
     #[serde(default)]
     pub exact_lines_fn: usize,
+    #[serde(default)]
+    pub reversal_ratio: f32,
 }
 
 impl Example {
@@ -253,6 +260,7 @@ fn parse_markdown_example(input: &str) -> Result<Example> {
         prompt: None,
         predictions: Vec::new(),
         score: Vec::new(),
+        qa: Vec::new(),
         state: None,
     })
 }

@@ -1346,10 +1346,20 @@ impl Workspace {
                 project::Event::Toast {
                     notification_id,
                     message,
+                    link,
                 } => this.show_notification(
                     NotificationId::named(notification_id.clone()),
                     cx,
-                    |cx| cx.new(|cx| MessageNotification::new(message.clone(), cx)),
+                    |cx| {
+                        let mut notification = MessageNotification::new(message.clone(), cx);
+                        if let Some(link) = link {
+                            notification = notification
+                                .more_info_message(link.label)
+                                .more_info_url(link.url);
+                        }
+
+                        cx.new(|_| notification)
+                    },
                 ),
 
                 project::Event::HideToast { notification_id } => {
@@ -2712,7 +2722,7 @@ impl Workspace {
             .flat_map(|k| Keystroke::parse(k).log_err())
             .map(|k| {
                 cx.keyboard_mapper()
-                    .map_key_equivalent(k, true)
+                    .map_key_equivalent(k, false)
                     .inner()
                     .clone()
             })

@@ -1,6 +1,7 @@
 use super::*;
 use crate::test_both_dbs;
 use language::proto::{self, serialize_version};
+use rpc::ConnectionId;
 use text::{Buffer, ReplicaId};
 
 test_both_dbs!(

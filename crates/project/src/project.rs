@@ -305,6 +305,13 @@ enum ProjectClientState {
     },
 }
 
+/// A link to display in a toast notification, useful to point to documentation.
+#[derive(PartialEq, Debug, Clone)]
+pub struct ToastLink {
+    pub label: &'static str,
+    pub url: &'static str,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
@@ -326,6 +333,8 @@ pub enum Event {
     Toast {
         notification_id: SharedString,
         message: String,
+        /// Optional link to display as a button in the toast.
+        link: Option<ToastLink>,
     },
     HideToast {
         notification_id: SharedString,
@@ -3215,6 +3224,7 @@ impl Project {
             cx.emit(Event::Toast {
                 notification_id: "dap".into(),
                 message: message.clone(),
+                link: None,
             });
         }
     }
@@ -3345,6 +3355,7 @@ impl Project {
             LspStoreEvent::Notification(message) => cx.emit(Event::Toast {
                 notification_id: "lsp".into(),
                 message: message.clone(),
+                link: None,
             }),
             LspStoreEvent::SnippetEdit {
                 buffer_id,
@@ -3395,6 +3406,7 @@ impl Project {
                     let message = format!("Failed to set local settings in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
                         notification_id: format!("local-settings-{path:?}").into(),
+                        link: None,
                         message,
                     });
                 }
@@ -3408,6 +3420,10 @@ impl Project {
                     let message = format!("Failed to set local tasks in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
                         notification_id: format!("local-tasks-{path:?}").into(),
+                        link: Some(ToastLink {
+                            label: "Open Tasks Documentation",
+                            url: "https://zed.dev/docs/tasks",
+                        }),
                         message,
                     });
                 }
@@ -3422,6 +3438,7 @@ impl Project {
                         format!("Failed to set local debug scenarios in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
                         notification_id: format!("local-debug-scenarios-{path:?}").into(),
+                        link: None,
                         message,
                     });
                 }
@@ -4888,6 +4905,7 @@ impl Project {
             cx.emit(Event::Toast {
                 notification_id: envelope.payload.notification_id.into(),
                 message: envelope.payload.message,
+                link: None,
             });
             Ok(())
         })

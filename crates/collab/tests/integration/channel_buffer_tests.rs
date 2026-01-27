@@ -1,10 +1,8 @@
-use crate::{
-    rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    tests::{TestServer, test_server::open_channel_notes},
-};
+use crate::{TestServer, test_server::open_channel_notes};
 use call::ActiveCall;
 use channel::ACKNOWLEDGE_DEBOUNCE_INTERVAL;
 use client::{Collaborator, ParticipantIndex, UserId};
+use collab::rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use editor::{Anchor, Editor, MultiBufferOffset, ToOffset};

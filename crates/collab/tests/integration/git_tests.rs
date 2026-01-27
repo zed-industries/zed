@@ -10,7 +10,7 @@ use util::{path, rel_path::rel_path};
 use workspace::Workspace;
 
 //
-use crate::tests::TestServer;
+use crate::TestServer;
 
 #[gpui::test]
 async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {

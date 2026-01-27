@@ -1,11 +1,11 @@
-use crate::{
-    db::{self, UserId},
-    rpc::RECONNECT_TIMEOUT,
-    tests::{RoomParticipants, TestServer, room_participants},
-};
+use crate::{RoomParticipants, TestServer, room_participants};
 use call::ActiveCall;
 use channel::{ChannelMembership, ChannelStore};
 use client::{ChannelId, User};
+use collab::{
+    db::{self, UserId},
+    rpc::RECONNECT_TIMEOUT,
+};
 use futures::future::try_join_all;
 use gpui::{BackgroundExecutor, Entity, SharedString, TestAppContext};
 use rpc::{
