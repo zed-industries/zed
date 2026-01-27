@@ -10,6 +10,9 @@ use crate::tasks::workflows::{
 
 pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "7cfce605704d41ca247e3f84804bf323f6c6caaf";
 
+// This should follow the set target in crates/extension/src/extension_builder.rs
+const EXTENSION_RUST_TARGET: &str = "wasm32-wasip2";
+
 // This is used by various extensions repos in the zed-extensions org to run automated tests.
 pub(crate) fn extension_tests() -> Workflow {
     let should_check_rust = PathCondition::new("check_rust", r"^(Cargo.lock|Cargo.toml|.*\.rs)$");
@@ -33,10 +36,7 @@ pub(crate) fn extension_tests() -> Workflow {
         .add_env(("CARGO_INCREMENTAL", 0))
         .add_env(("ZED_EXTENSION_CLI_SHA", ZED_EXTENSION_CLI_SHA))
         .add_env(("RUSTUP_TOOLCHAIN", "stable"))
-        .add_env((
-            "CARGO_BUILD_TARGET",
-            extension::extension_builder::RUST_TARGET,
-        ))
+        .add_env(("CARGO_BUILD_TARGET", EXTENSION_RUST_TARGET))
         .map(|workflow| {
             jobs.into_iter()
                 .chain([tests_pass])
@@ -47,10 +47,7 @@ pub(crate) fn extension_tests() -> Workflow {
 }
 
 fn install_rust_target() -> Step<Run> {
-    named::bash(format!(
-        "rustup target add {rust_target}",
-        rust_target = extension::extension_builder::RUST_TARGET
-    ))
+    named::bash(format!("rustup target add {EXTENSION_RUST_TARGET}",))
 }
 
 fn run_clippy() -> Step<Run> {
