@@ -3033,6 +3033,43 @@ fn beam_jump_find_forward(
     found_start.map(|offset| offset.to_display_point(map))
 }
 
+pub(crate) fn beam_jump_global_find_forward_with_wrap(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    cursor_offset: MultiBufferOffset,
+    pattern: &str,
+    smartcase: bool,
+) -> Option<DisplayPoint> {
+    if let Some(point) = beam_jump_find_forward(map, from, pattern, 1, smartcase, None) {
+        return Some(point);
+    }
+
+    let pattern: Vec<char> = pattern.chars().collect();
+    if pattern.is_empty() {
+        return None;
+    }
+
+    let buffer = map.buffer_snapshot();
+    let buffer_end = buffer.len();
+    let range_end = std::cmp::min(cursor_offset, buffer_end);
+
+    let mut offset = MultiBufferOffset(0);
+    while offset < range_end {
+        if let Some((match_end, _)) = match_pattern_at(buffer, offset, &pattern, smartcase) {
+            if match_end <= range_end {
+                return Some(offset.to_display_point(map));
+            }
+        }
+
+        let Some(ch) = buffer.chars_at(offset).next() else {
+            break;
+        };
+        offset += ch.len_utf8();
+    }
+
+    None
+}
+
 fn beam_jump_find_backward(
     map: &DisplaySnapshot,
     from: DisplayPoint,

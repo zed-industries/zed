@@ -1,6 +1,5 @@
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use collections::{HashMap, HashSet};
 use editor::{MultiBufferOffset, MultiBufferSnapshot};
@@ -13,8 +12,6 @@ const BASE_LABEL_CHARS: &[char] = &[
     'x', 'z', 'p', 'q', 'y', 't', 'b',
 ];
 
-pub(crate) const BEAM_JUMP_PENDING_COMMIT_TIMEOUT: Duration = Duration::from_millis(700);
-
 static NEXT_BEAM_JUMP_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,7 +20,7 @@ pub(crate) enum BeamJumpDirection {
     Backward,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct BeamJumpMatch {
     pub(crate) start: MultiBufferOffset,
     pub(crate) end: MultiBufferOffset,
@@ -40,11 +37,6 @@ pub(crate) struct BeamJumpLabels {
     pub(crate) label_pool: Option<Vec<String>>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct BeamJumpPendingCommit {
-    pub(crate) id: u64,
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct BeamJumpState {
     pub(crate) smartcase: bool,
@@ -57,11 +49,11 @@ pub(crate) struct BeamJumpState {
     pub(crate) pattern: String,
     pub(crate) pattern_len: usize,
 
+    // Stores all matching candidates for the current pattern, including overlaps.
+    // For `pattern_len < 2`, this is kept empty and `matches` is the full candidate set.
+    pub(crate) candidates: Vec<BeamJumpMatch>,
     pub(crate) matches: Vec<BeamJumpMatch>,
     pub(crate) labels: Option<BeamJumpLabels>,
-
-    pub(crate) pending_commit: Option<BeamJumpPendingCommit>,
-    pending_commit_next_id: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -97,10 +89,9 @@ impl BeamJumpState {
             session_id: NEXT_BEAM_JUMP_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             pattern: String::new(),
             pattern_len: 0,
+            candidates: Vec::new(),
             matches: Vec::new(),
             labels: None,
-            pending_commit: None,
-            pending_commit_next_id: 0,
         }
     }
 
@@ -109,10 +100,12 @@ impl BeamJumpState {
         ch: char,
         buffer: &MultiBufferSnapshot,
     ) -> BeamJumpAction {
-        let was_pattern_extension = self.pattern_len >= 2;
-
         if self.pattern_len >= 2 && self.matches.len() > 1 {
             if let Some(labels) = &mut self.labels {
+                if !labels.label_buffer.is_empty() && !labels.label_key_set.contains(&ch) {
+                    return BeamJumpAction::Cancel;
+                }
+
                 if labels.label_key_set.contains(&ch) {
                     labels.label_buffer.push(ch);
                     if labels.label_buffer.len() >= labels.label_len {
@@ -152,40 +145,15 @@ impl BeamJumpState {
             return BeamJumpAction::Continue;
         }
 
-        if was_pattern_extension && self.matches.is_empty() {
-            if let Some(jump) = self.auto_global_jump(buffer) {
-                return BeamJumpAction::Jump(jump);
+        if self.matches.len() > 1 {
+            if self.labels.is_none() {
+                self.labels = Some(self.assign_labels(buffer));
             }
-
-            self.clear_pattern();
-            return BeamJumpAction::Cancel;
+        } else {
+            self.labels = None;
         }
 
-        match self.matches.len() {
-            0 => {
-                self.pending_commit = None;
-                self.labels = None;
-                BeamJumpAction::Continue
-            }
-            1 => {
-                self.labels = None;
-
-                let id = self.pending_commit_next_id;
-                self.pending_commit_next_id = self.pending_commit_next_id.wrapping_add(1);
-                self.pending_commit = Some(BeamJumpPendingCommit { id });
-
-                BeamJumpAction::Continue
-            }
-            _ => {
-                self.pending_commit = None;
-
-                if self.labels.is_none() {
-                    self.labels = Some(self.assign_labels(buffer));
-                }
-
-                BeamJumpAction::Continue
-            }
-        }
+        BeamJumpAction::Continue
     }
 
     fn push_pattern_char(&mut self, ch: char, buffer: &MultiBufferSnapshot) {
@@ -194,110 +162,29 @@ impl BeamJumpState {
 
         if self.pattern_len == 1 {
             self.matches = self.scan_first_char(ch, buffer);
+            self.candidates.clear();
             return;
         }
 
-        self.extend_matches(ch, buffer);
-        self.retain_non_overlapping_matches_in_start_order();
+        if self.pattern_len == 2 {
+            self.candidates = std::mem::take(&mut self.matches);
+        }
+
+        let cursor_offset = self.cursor_offset;
+        let view_end = self.view_end;
+        Self::extend_matches(
+            &mut self.candidates,
+            ch,
+            buffer,
+            cursor_offset,
+            view_end,
+            self.smartcase,
+        );
+        self.recompute_canonical_matches_from_candidates();
 
         if self.labels.is_some() {
             self.retain_labels_for_matches();
         }
-    }
-
-    fn clear_pattern(&mut self) {
-        self.pattern.clear();
-        self.pattern_len = 0;
-        self.matches.clear();
-        self.labels = None;
-        self.pending_commit = None;
-    }
-
-    fn auto_global_jump(&self, buffer: &MultiBufferSnapshot) -> Option<BeamJumpJump> {
-        let pattern: Vec<char> = self.pattern.chars().collect();
-        if pattern.is_empty() {
-            return None;
-        }
-
-        if self.has_global_match_after_cursor(buffer, &pattern) {
-            return Some(BeamJumpJump {
-                direction: BeamJumpDirection::Forward,
-                pattern: self.pattern.clone(),
-                smartcase: self.smartcase,
-                count: 1,
-                search_range: None,
-            });
-        }
-
-        let count_before_cursor = self.count_global_matches_before_cursor(buffer, &pattern);
-        if count_before_cursor == 0 {
-            return None;
-        }
-
-        Some(BeamJumpJump {
-            direction: BeamJumpDirection::Backward,
-            pattern: self.pattern.clone(),
-            smartcase: self.smartcase,
-            count: count_before_cursor,
-            search_range: None,
-        })
-    }
-
-    fn has_global_match_after_cursor(
-        &self,
-        buffer: &MultiBufferSnapshot,
-        pattern: &[char],
-    ) -> bool {
-        let buffer_end = buffer.len();
-        let cursor_offset = std::cmp::min(self.cursor_offset, buffer_end);
-        if cursor_offset >= buffer_end {
-            return false;
-        }
-
-        let Some(cursor_char) = buffer.chars_at(cursor_offset).next() else {
-            return false;
-        };
-
-        let mut offset = cursor_offset;
-        offset += cursor_char.len_utf8();
-        while offset < buffer_end {
-            if match_pattern_at(buffer, offset, pattern, self.smartcase).is_some() {
-                return true;
-            }
-
-            let Some(ch) = buffer.chars_at(offset).next() else {
-                break;
-            };
-            offset += ch.len_utf8();
-        }
-
-        false
-    }
-
-    fn count_global_matches_before_cursor(
-        &self,
-        buffer: &MultiBufferSnapshot,
-        pattern: &[char],
-    ) -> usize {
-        let buffer_end = buffer.len();
-        let cursor_offset = std::cmp::min(self.cursor_offset, buffer_end);
-
-        let mut count = 0;
-        let mut offset = MultiBufferOffset(0);
-        while offset < cursor_offset {
-            if let Some(match_end) = match_pattern_at(buffer, offset, pattern, self.smartcase) {
-                if match_end <= cursor_offset {
-                    count += 1;
-                }
-            }
-
-            let Some(ch) = buffer.chars_at(offset).next() else {
-                break;
-            };
-            offset += ch.len_utf8();
-        }
-
-        count
     }
 
     fn scan_first_char(&self, target: char, buffer: &MultiBufferSnapshot) -> Vec<BeamJumpMatch> {
@@ -331,9 +218,16 @@ impl BeamJumpState {
         matches
     }
 
-    fn extend_matches(&mut self, target: char, buffer: &MultiBufferSnapshot) {
-        self.matches.retain_mut(|m| {
-            if m.end >= self.view_end {
+    fn extend_matches(
+        matches: &mut Vec<BeamJumpMatch>,
+        target: char,
+        buffer: &MultiBufferSnapshot,
+        cursor_offset: MultiBufferOffset,
+        view_end: MultiBufferOffset,
+        smartcase: bool,
+    ) {
+        matches.retain_mut(|m| {
+            if m.end >= view_end {
                 return false;
             }
 
@@ -341,18 +235,18 @@ impl BeamJumpState {
                 return false;
             };
 
-            if !is_character_match(target, next_ch, self.smartcase) {
+            if !is_character_match(target, next_ch, smartcase) {
                 return false;
             }
 
             let mut new_end = m.end;
             new_end += next_ch.len_utf8();
 
-            if new_end > self.view_end {
+            if new_end > view_end {
                 return false;
             }
 
-            if m.start < self.cursor_offset && self.cursor_offset < new_end {
+            if m.start < cursor_offset && cursor_offset < new_end {
                 return false;
             }
 
@@ -361,15 +255,17 @@ impl BeamJumpState {
         });
     }
 
-    fn retain_non_overlapping_matches_in_start_order(&mut self) {
+    fn recompute_canonical_matches_from_candidates(&mut self) {
+        self.matches.clear();
+        self.matches.reserve(self.candidates.len());
+
         let mut last_kept_end: Option<MultiBufferOffset> = None;
-        self.matches.retain(|m| {
-            let keep = last_kept_end.map_or(true, |end| m.start >= end);
-            if keep {
+        for m in &self.candidates {
+            if last_kept_end.map_or(true, |end| m.start >= end) {
+                self.matches.push(*m);
                 last_kept_end = Some(m.end);
             }
-            keep
-        });
+        }
     }
 
     fn retain_labels_for_matches(&mut self) {
@@ -494,7 +390,7 @@ impl BeamJumpState {
     fn assign_labels(&self, buffer: &MultiBufferSnapshot) -> BeamJumpLabels {
         let extension_chars = self.collect_extension_chars(buffer);
 
-        // Exclude chars that appear later in any matched word; ';' and ',' are reserved for navigation.
+        // Exclude chars that appear later in any matched word; ';' and ',' are reserved punctuation.
         let safe_units: Vec<char> = BASE_LABEL_CHARS
             .iter()
             .copied()
@@ -564,28 +460,6 @@ impl BeamJumpState {
             std::cmp::Ordering::Equal => None,
         }
     }
-}
-
-fn match_pattern_at(
-    buffer: &MultiBufferSnapshot,
-    start: MultiBufferOffset,
-    pattern: &[char],
-    smartcase: bool,
-) -> Option<MultiBufferOffset> {
-    let mut offset = start;
-    for &target in pattern {
-        let Some(ch) = buffer.chars_at(offset).next() else {
-            return None;
-        };
-
-        if !is_character_match(target, ch, smartcase) {
-            return None;
-        }
-
-        offset += ch.len_utf8();
-    }
-
-    Some(offset)
 }
 
 #[derive(Clone, Copy)]

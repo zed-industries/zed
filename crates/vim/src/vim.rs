@@ -21,10 +21,7 @@ mod surrounds;
 mod visual;
 
 use crate::normal::paste::Paste as VimPaste;
-use beam_jump::{
-    BEAM_JUMP_PENDING_COMMIT_TIMEOUT, BeamJumpAction, BeamJumpDirection, BeamJumpJump,
-    BeamJumpState,
-};
+use beam_jump::{BeamJumpAction, BeamJumpDirection, BeamJumpJump, BeamJumpState};
 use collections::HashMap;
 use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
@@ -54,7 +51,7 @@ pub use settings::{
     ModeContent, Settings, SettingsStore, UseSystemClipboard, update_settings_file,
 };
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
-use std::{mem, ops::Range, sync::Arc};
+use std::{mem, ops::Range, sync::Arc, time::Duration};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
@@ -67,6 +64,8 @@ use crate::{
     normal::{GoToPreviousTab, GoToTab},
     state::ReplayableAction,
 };
+
+const BEAM_JUMP_IDLE_CANCEL_TIMEOUT: Duration = Duration::from_millis(1500);
 
 /// Number is used to manage vim's count. Pushing a digit
 /// multiplies the current value by 10 and adds the digit.
@@ -511,7 +510,9 @@ pub(crate) struct Vim {
 
     operator_stack: Vec<Operator>,
     beam_jump: Option<BeamJumpState>,
-    beam_jump_pending_commit_task: Option<Task<()>>,
+    beam_jump_idle_cancel_task: Option<Task<()>>,
+    beam_jump_idle_cancel_timer_id: Option<u64>,
+    beam_jump_idle_cancel_next_id: u64,
     pub(crate) replacements: Vec<(Range<editor::Anchor>, String)>,
 
     pub(crate) stored_visual_mode: Option<(Mode, Vec<bool>)>,
@@ -567,38 +568,96 @@ impl Vim {
             (initial_vim_mode, Mode::Normal)
         };
 
-        cx.new(|cx| Vim {
-            mode,
-            last_mode,
-            temp_mode: false,
-            exit_temporary_mode: false,
-            operator_stack: Vec::new(),
-            beam_jump: None,
-            beam_jump_pending_commit_task: None,
-            replacements: Vec::new(),
+        cx.new(|cx| {
+            let vim: WeakEntity<Vim> = cx.entity().downgrade();
+            let vim_entity_id = vim.entity_id();
+            let keystroke_interceptor = cx.intercept_keystrokes(move |event, window, cx| {
+                let focused_vim_id = Vim::globals(cx)
+                    .focused_vim
+                    .as_ref()
+                    .map(|vim| vim.entity_id());
+                if focused_vim_id != Some(vim_entity_id) {
+                    return;
+                }
 
-            stored_visual_mode: None,
-            current_tx: None,
-            undo_last_line_tx: None,
-            current_anchor: None,
-            extended_pending_selection_id: None,
-            undo_modes: HashMap::default(),
+                vim.update(cx, |vim, cx| {
+                    vim.intercept_beam_jump_keystroke(event, window, cx);
+                })
+                .log_err();
+            });
 
-            status_label: None,
-            selected_register: None,
-            search: SearchState::default(),
+            Vim {
+                mode,
+                last_mode,
+                temp_mode: false,
+                exit_temporary_mode: false,
+                operator_stack: Vec::new(),
+                beam_jump: None,
+                beam_jump_idle_cancel_task: None,
+                beam_jump_idle_cancel_timer_id: None,
+                beam_jump_idle_cancel_next_id: 0,
+                replacements: Vec::new(),
 
-            last_command: None,
-            running_command: None,
+                stored_visual_mode: None,
+                current_tx: None,
+                undo_last_line_tx: None,
+                current_anchor: None,
+                extended_pending_selection_id: None,
+                undo_modes: HashMap::default(),
 
-            editor: editor.downgrade(),
-            _subscriptions: vec![
-                cx.observe_keystrokes(Self::observe_keystrokes),
-                cx.subscribe_in(&editor, window, |this, _, event, window, cx| {
-                    this.handle_editor_event(event, window, cx)
-                }),
-            ],
+                status_label: None,
+                selected_register: None,
+                search: SearchState::default(),
+
+                last_command: None,
+                running_command: None,
+
+                editor: editor.downgrade(),
+                _subscriptions: vec![
+                    keystroke_interceptor,
+                    cx.observe_keystrokes(Self::observe_keystrokes),
+                    cx.subscribe_in(&editor, window, |this, _, event, window, cx| {
+                        this.handle_editor_event(event, window, cx)
+                    }),
+                ],
+            }
         })
+    }
+
+    fn intercept_beam_jump_keystroke(
+        &mut self,
+        keystroke_event: &KeystrokeEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.beam_jump.is_none() {
+            return;
+        }
+
+        if keystroke_event.keystroke.is_ime_in_progress() {
+            return;
+        }
+
+        match keystroke_event.keystroke.key.as_str() {
+            "backspace" | "tab" => {
+                self.clear_operator(window, cx);
+                cx.stop_propagation();
+            }
+            "enter" => {
+                self.beam_jump_enter(window, cx);
+                cx.stop_propagation();
+            }
+            _ => {
+                if let Some(text) = keystroke_event.keystroke.key_char.as_deref() {
+                    self.beam_jump_input(Arc::<str>::from(text), window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+
+                self.clear_operator(window, cx);
+                cx.stop_propagation();
+            }
+        }
     }
 
     fn register(editor: &mut Editor, window: Option<&mut Window>, cx: &mut Context<Editor>) {
@@ -1060,7 +1119,39 @@ impl Vim {
             self.switch_mode(Mode::Insert, false, window, cx)
         }
 
-        if self.beam_jump.is_some() && keystroke_event.keystroke.key == "backspace" {
+        if self.beam_jump.is_some() {
+            if let Some(action) = keystroke_event.action.as_ref()
+                && action.as_any().downcast_ref::<PushSneak>().is_some()
+            {
+                // Beam Jump is started by the `s` key itself; don't treat the activation key as
+                // pattern input.
+                return;
+            }
+
+            if keystroke_event.keystroke.is_ime_in_progress() {
+                return;
+            }
+
+            match keystroke_event.keystroke.key.as_str() {
+                "backspace" | "tab" => {
+                    self.clear_operator(window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "enter" => {
+                    self.beam_jump_enter(window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                _ => {}
+            }
+
+            if let Some(text) = keystroke_event.keystroke.key_char.as_deref() {
+                self.beam_jump_input(Arc::<str>::from(text), window, cx);
+                cx.stop_propagation();
+                return;
+            }
+
             self.clear_operator(window, cx);
             cx.stop_propagation();
             return;
@@ -1570,7 +1661,8 @@ impl Vim {
     }
 
     fn clear_beam_jump(&mut self, cx: &mut Context<Self>) {
-        self.beam_jump_pending_commit_task = None;
+        self.beam_jump_idle_cancel_task = None;
+        self.beam_jump_idle_cancel_timer_id = None;
 
         if self.beam_jump.is_none() {
             return;
@@ -1585,7 +1677,7 @@ impl Vim {
     fn compute_visible_range(
         buffer: &MultiBufferSnapshot,
         layout: &movement::TextLayoutDetails,
-    ) -> (MultiBufferOffset, MultiBufferOffset) {
+    ) -> Option<(MultiBufferOffset, MultiBufferOffset)> {
         if let Some(visible_rows) = layout.visible_rows {
             let visible_rows = visible_rows.ceil() as u32;
             let visible_start_point = layout.scroll_anchor.anchor.to_point(buffer);
@@ -1594,12 +1686,12 @@ impl Vim {
                 Bias::Left,
             );
 
-            (
+            Some((
                 visible_start_point.to_offset(buffer),
                 visible_end_point.to_offset(buffer),
-            )
+            ))
         } else {
-            (MultiBufferOffset(0), buffer.len())
+            None
         }
     }
 
@@ -1628,7 +1720,8 @@ impl Vim {
             let cursor_offset = cursor.to_offset(&snapshot.display_snapshot, Bias::Left);
 
             let buffer = snapshot.display_snapshot.buffer_snapshot();
-            let (visible_start, visible_end) = Self::compute_visible_range(&buffer, &layout);
+            let (visible_start, visible_end) = Self::compute_visible_range(&buffer, &layout)
+                .unwrap_or((cursor_offset, cursor_offset));
 
             vim.beam_jump = Some(BeamJumpState::new(
                 smartcase,
@@ -1655,55 +1748,11 @@ impl Vim {
                     return BeamJumpAction::Cancel;
                 };
 
-                if state.pattern_len >= 2 {
-                    match ch {
-                        ';' => {
-                            if state.pending_commit.is_some() && state.matches.len() == 1 {
-                                let m = state.matches[0].clone();
-                                let direction = if m.start > state.cursor_offset {
-                                    BeamJumpDirection::Forward
-                                } else {
-                                    BeamJumpDirection::Backward
-                                };
-
-                                return BeamJumpAction::Jump(BeamJumpJump {
-                                    direction,
-                                    pattern: state.pattern.clone(),
-                                    smartcase: state.smartcase,
-                                    count: 1,
-                                    search_range: Some(state.view_start..state.view_end),
-                                });
-                            }
-
-                            return BeamJumpAction::Jump(BeamJumpJump {
-                                direction: BeamJumpDirection::Forward,
-                                pattern: state.pattern.clone(),
-                                smartcase: state.smartcase,
-                                count: 1,
-                                search_range: None,
-                            });
-                        }
-                        ',' => {
-                            return BeamJumpAction::Jump(BeamJumpJump {
-                                direction: BeamJumpDirection::Backward,
-                                pattern: state.pattern.clone(),
-                                smartcase: state.smartcase,
-                                count: 1,
-                                search_range: None,
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-
                 let snapshot = editor.snapshot(window, cx);
                 let buffer = snapshot.display_snapshot.buffer_snapshot();
                 let action = state.on_typed_char(ch, &buffer);
 
                 if matches!(action, BeamJumpAction::Continue) {
-                    let pending_commit = state.pending_commit.is_some()
-                        && state.pattern_len >= 2
-                        && state.matches.len() == 1;
                     let show_labels = state.pattern_len >= 2 && state.matches.len() > 1;
 
                     let highlights = state
@@ -1711,9 +1760,7 @@ impl Vim {
                         .iter()
                         .map(|m| editor::BeamJumpHighlight {
                             range: m.start..m.end,
-                            label: if pending_commit {
-                                Some(SharedString::from(";"))
-                            } else if show_labels {
+                            label: if show_labels {
                                 state
                                     .labels
                                     .as_ref()
@@ -1733,21 +1780,7 @@ impl Vim {
 
         match action {
             BeamJumpAction::Continue => {
-                if let Some((beam_jump_session_id, pending_commit_id)) =
-                    self.beam_jump.as_ref().and_then(|state| {
-                        state
-                            .pending_commit
-                            .as_ref()
-                            .map(|p| (state.session_id, p.id))
-                    })
-                {
-                    self.schedule_beam_jump_pending_commit_timer(
-                        beam_jump_session_id,
-                        pending_commit_id,
-                        window,
-                        cx,
-                    );
-                }
+                self.update_beam_jump_idle_timer(window, cx);
             }
             BeamJumpAction::Cancel => {
                 self.clear_operator(window, cx);
@@ -1758,68 +1791,186 @@ impl Vim {
         }
     }
 
-    fn schedule_beam_jump_pending_commit_timer(
+    fn beam_jump_enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        enum EnterAction {
+            Cancel,
+            ViewportJump(BeamJumpJump),
+            GlobalJump {
+                anchor: Anchor,
+                pattern: Arc<str>,
+                smartcase: bool,
+            },
+        }
+
+        let action = self
+            .update_editor(cx, |vim, editor, cx| {
+                let Some(state) = vim.beam_jump.as_ref() else {
+                    return EnterAction::Cancel;
+                };
+
+                if state.pattern_len < 2 {
+                    return EnterAction::Cancel;
+                }
+
+                match state.matches.len() {
+                    1 => {
+                        let Some(m) = state.matches.first() else {
+                            return EnterAction::Cancel;
+                        };
+
+                        let direction = if m.start > state.cursor_offset {
+                            BeamJumpDirection::Forward
+                        } else {
+                            BeamJumpDirection::Backward
+                        };
+
+                        EnterAction::ViewportJump(BeamJumpJump {
+                            direction,
+                            pattern: state.pattern.clone(),
+                            smartcase: state.smartcase,
+                            count: 1,
+                            search_range: Some(state.view_start..state.view_end),
+                        })
+                    }
+                    count if count > 1 => EnterAction::Cancel,
+                    _ => {
+                        let snapshot = editor.snapshot(window, cx);
+                        let map = &snapshot.display_snapshot;
+                        let cursor = editor
+                            .selections
+                            .newest_anchor()
+                            .head()
+                            .to_display_point(map);
+
+                        let anchor = motion::beam_jump_global_find_forward_with_wrap(
+                            map,
+                            cursor,
+                            state.cursor_offset,
+                            &state.pattern,
+                            state.smartcase,
+                        )
+                        .map(|point| map.display_point_to_anchor(point, Bias::Left));
+
+                        let Some(anchor) = anchor else {
+                            return EnterAction::Cancel;
+                        };
+
+                        EnterAction::GlobalJump {
+                            anchor,
+                            pattern: state.pattern.clone().into(),
+                            smartcase: state.smartcase,
+                        }
+                    }
+                }
+            })
+            .unwrap_or(EnterAction::Cancel);
+
+        match action {
+            EnterAction::Cancel => {
+                self.clear_operator(window, cx);
+            }
+            EnterAction::ViewportJump(jump) => {
+                self.apply_beam_jump_jump(jump, window, cx);
+            }
+            EnterAction::GlobalJump {
+                anchor,
+                pattern,
+                smartcase,
+            } => {
+                self.apply_beam_jump_global_enter_jump(anchor, pattern, smartcase, window, cx);
+            }
+        }
+    }
+
+    fn apply_beam_jump_global_enter_jump(
         &mut self,
-        beam_jump_session_id: u64,
-        pending_commit_id: u64,
+        anchor: Anchor,
+        pattern: Arc<str>,
+        smartcase: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.beam_jump_pending_commit_task = None;
-        self.beam_jump_pending_commit_task = Some(cx.spawn_in(window, async move |this, cx| {
+        Vim::globals(cx).last_find = Some(Motion::BeamJumpFind {
+            pattern,
+            direction: BeamJumpDirection::Forward,
+            smartcase,
+            search_range: None,
+        });
+        Vim::globals(cx).pre_count = Some(1);
+        Vim::globals(cx).post_count = None;
+
+        self.clear_beam_jump(cx);
+        self.motion(
+            Motion::Jump {
+                anchor,
+                line: false,
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn update_beam_jump_idle_timer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(state) = self.beam_jump.as_ref() else {
+            self.beam_jump_idle_cancel_task = None;
+            self.beam_jump_idle_cancel_timer_id = None;
+            return;
+        };
+
+        let should_schedule = state.pattern_len >= 1 && state.matches.is_empty();
+        if !should_schedule {
+            self.beam_jump_idle_cancel_task = None;
+            self.beam_jump_idle_cancel_timer_id = None;
+            return;
+        }
+
+        let idle_timer_id = self.beam_jump_idle_cancel_next_id;
+        self.beam_jump_idle_cancel_next_id = self.beam_jump_idle_cancel_next_id.wrapping_add(1);
+        self.beam_jump_idle_cancel_timer_id = Some(idle_timer_id);
+        self.schedule_beam_jump_idle_cancel_timer(state.session_id, idle_timer_id, window, cx);
+    }
+
+    fn schedule_beam_jump_idle_cancel_timer(
+        &mut self,
+        beam_jump_session_id: u64,
+        idle_timer_id: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.beam_jump_idle_cancel_task = None;
+        self.beam_jump_idle_cancel_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
-                .timer(BEAM_JUMP_PENDING_COMMIT_TIMEOUT)
+                .timer(BEAM_JUMP_IDLE_CANCEL_TIMEOUT)
                 .await;
 
             this.update_in(cx, |vim, window, cx| {
-                vim.commit_beam_jump_pending_commit(
-                    beam_jump_session_id,
-                    pending_commit_id,
-                    window,
-                    cx,
-                );
+                vim.beam_jump_idle_cancel_expired(beam_jump_session_id, idle_timer_id, window, cx);
             })
             .log_err();
         }));
     }
 
-    fn commit_beam_jump_pending_commit(
+    fn beam_jump_idle_cancel_expired(
         &mut self,
         beam_jump_session_id: u64,
-        pending_commit_id: u64,
+        idle_timer_id: u64,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(jump) = self.beam_jump.as_ref().and_then(|state| {
-            if state.session_id != beam_jump_session_id {
-                return None;
-            }
-            if state.pending_commit.as_ref().map(|p| p.id) != Some(pending_commit_id) {
-                return None;
-            }
-            if state.pattern_len < 2 || state.matches.len() != 1 {
-                return None;
-            }
-
-            let m = state.matches[0].clone();
-            let direction = if m.start > state.cursor_offset {
-                BeamJumpDirection::Forward
-            } else {
-                BeamJumpDirection::Backward
-            };
-
-            Some(BeamJumpJump {
-                direction,
-                pattern: state.pattern.clone(),
-                smartcase: state.smartcase,
-                count: 1,
-                search_range: Some(state.view_start..state.view_end),
-            })
-        }) else {
+        let Some(state) = self.beam_jump.as_ref() else {
             return;
         };
+        if state.session_id != beam_jump_session_id {
+            return;
+        }
+        if self.beam_jump_idle_cancel_timer_id != Some(idle_timer_id) {
+            return;
+        }
+        if state.pattern_len < 1 || !state.matches.is_empty() {
+            return;
+        }
 
-        self.apply_beam_jump_jump(jump, window, cx);
+        self.clear_operator(window, cx);
     }
 
     fn apply_beam_jump_jump(
