@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use client::zed_urls;
 use collections::HashMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use fs::Fs;
@@ -525,8 +526,6 @@ impl AgentRegistryPage {
 
 impl Render for AgentRegistryPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let learn_more_url = "https://zed.dev/blog/acp-registry";
-
         v_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -548,20 +547,16 @@ impl Render for AgentRegistryPage {
                                     .child(Headline::new("ACP Registry").size(HeadlineSize::Large))
                                     .child(Chip::new("Beta"))
                                     .hoverable_tooltip({
-                                        let learn_more_url = learn_more_url.to_string();
-                                        let tooltip_fn = Tooltip::element(move |_, _| {
-                                            v_flex()
-                                                .gap_1()
-                                                .child(Label::new(
-                                                    "The ACP Registry is still in testing phase.",
-                                                ))
-                                                .child(ButtonLink::new(
-                                                    "Learn more about it",
-                                                    learn_more_url.as_str(),
-                                                ))
-                                                .into_any_element()
-                                        });
-                                        move |window, cx| tooltip_fn(window, cx)
+                                        let learn_more_url: SharedString =
+                                            zed_urls::acp_registry_blog(cx).into();
+                                        move |_, cx| {
+                                            Tooltip::with_meta(
+                                                "The ACP Registry is still in testing phase.",
+                                                None,
+                                                learn_more_url.clone(),
+                                                cx,
+                                            )
+                                        }
                                     }),
                             )
                             .child(
@@ -571,7 +566,9 @@ impl Render for AgentRegistryPage {
                                     .icon(IconName::ArrowUpRight)
                                     .icon_color(Color::Muted)
                                     .icon_size(IconSize::Small)
-                                    .on_click(move |_, _, cx| cx.open_url(learn_more_url)),
+                                    .on_click(move |_, _, cx| {
+                                        cx.open_url(&zed_urls::acp_registry_blog(cx))
+                                    }),
                             ),
                     )
                     .child(
