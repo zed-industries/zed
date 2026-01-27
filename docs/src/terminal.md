@@ -60,8 +60,8 @@ Control where new terminals start:
 
 | Value                                         | Behavior                                                                                                                      |
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `"current_file_directory"`                    | Uses the directory of the currently open file, falling back to the project directory, then the first project in the workspace |
-| `"current_project_directory"`                 | Uses the project directory of the currently open file (default)                                                               |
+| `"current_file_directory"`                    | Uses the current file's directory, falling back to the project directory, then the first project in the workspace             |
+| `"current_project_directory"`                 | Uses the current file's project directory (default)                                                                           |
 | `"first_project_directory"`                   | Uses the first project in your workspace                                                                                      |
 | `"always_home"`                               | Always starts in your home directory                                                                                          |
 | `{ "always": { "directory": "~/projects" } }` | Always starts in a specific directory                                                                                         |

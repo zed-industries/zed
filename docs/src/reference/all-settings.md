@@ -4109,7 +4109,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 **Options**
 
-1. Use the directory of the currently open file, falling back to the project directory, then the first project in the workspace.
+1. Use the current file's directory, falling back to the project directory, then the first project in the workspace.
 
 ```json [settings]
 {
