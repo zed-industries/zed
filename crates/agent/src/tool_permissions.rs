@@ -570,6 +570,103 @@ mod tests {
         t("rm -rf /").allow(&["^echo\\s"]).is_confirm();
     }
 
+    // shell injection: && in command should NOT be auto-approved just because
+    // the first part matches an allow pattern
+    #[test]
+    fn shell_injection_via_double_ampersand_not_allowed() {
+        // If "ls" is in always_allow, a command like "ls && rm -rf /" should NOT
+        // be auto-approved because it contains a dangerous secondary command.
+        // This test should FAIL with the current implementation (demonstrating the vulnerability)
+        // and PASS once the fix is in place.
+        t("ls && rm -rf /").allow(&["^ls"]).is_confirm();
+    }
+
+    #[test]
+    fn shell_injection_via_semicolon_not_allowed() {
+        // Similarly, "ls; rm -rf /" should not be auto-approved
+        t("ls; rm -rf /").allow(&["^ls"]).is_confirm();
+    }
+
+    #[test]
+    fn shell_injection_via_pipe_not_allowed() {
+        // "ls | xargs rm -rf" should not be auto-approved just because "ls" is allowed
+        t("ls | xargs rm -rf").allow(&["^ls"]).is_confirm();
+    }
+
+    #[test]
+    fn shell_injection_via_backticks_not_allowed() {
+        // "echo `rm -rf /`" should not be auto-approved just because "echo" is allowed
+        t("echo `rm -rf /`").allow(&["^echo\\s"]).is_confirm();
+    }
+
+    #[test]
+    fn shell_injection_via_dollar_parens_not_allowed() {
+        // "echo $(rm -rf /)" should not be auto-approved just because "echo" is allowed
+        t("echo $(rm -rf /)").allow(&["^echo\\s"]).is_confirm();
+    }
+
+    #[test]
+    fn shell_injection_via_or_operator_not_allowed() {
+        // "ls || rm -rf /" should not be auto-approved (OR operator runs second if first fails)
+        t("ls || rm -rf /").allow(&["^ls"]).is_confirm();
+    }
+
+    #[test]
+    fn shell_injection_via_background_operator_not_allowed() {
+        // "ls & rm -rf /" should not be auto-approved (background operator)
+        t("ls & rm -rf /").allow(&["^ls"]).is_confirm();
+    }
+
+    #[test]
+    fn shell_injection_via_newline_not_allowed() {
+        // "ls\nrm -rf /" should not be auto-approved (newline is a command separator)
+        t("ls\nrm -rf /").allow(&["^ls"]).is_confirm();
+    }
+
+    #[test]
+    fn shell_injection_via_process_substitution_input_not_allowed() {
+        // "cat <(rm -rf /)" should not be auto-approved (process substitution)
+        t("cat <(rm -rf /)").allow(&["^cat"]).is_confirm();
+    }
+
+    #[test]
+    fn shell_injection_via_process_substitution_output_not_allowed() {
+        // "ls >(rm -rf /)" should not be auto-approved (process substitution for output)
+        t("ls >(rm -rf /)").allow(&["^ls"]).is_confirm();
+    }
+
+    #[test]
+    fn shell_injection_without_spaces_not_allowed() {
+        // "ls&&rm -rf /" (no spaces around &&) should not be auto-approved
+        t("ls&&rm -rf /").allow(&["^ls"]).is_confirm();
+    }
+
+    #[test]
+    fn shell_injection_semicolon_no_space_not_allowed() {
+        // "ls;rm -rf /" (no space after semicolon) should not be auto-approved
+        t("ls;rm -rf /").allow(&["^ls"]).is_confirm();
+    }
+
+    #[test]
+    fn shell_injection_multiple_chained_operators_not_allowed() {
+        // Multiple chained commands should not be auto-approved
+        t("ls && echo hello && rm -rf /")
+            .allow(&["^ls"])
+            .is_confirm();
+    }
+
+    #[test]
+    fn shell_injection_mixed_operators_not_allowed() {
+        // Mixed operators should not be auto-approved
+        t("ls; echo hello && rm -rf /").allow(&["^ls"]).is_confirm();
+    }
+
+    #[test]
+    fn shell_injection_pipe_stderr_not_allowed() {
+        // "|&" pipes both stdout and stderr (bash-specific)
+        t("ls |& rm -rf /").allow(&["^ls"]).is_confirm();
+    }
+
     // mcp tools
     #[test]
     fn mcp_allow() {
