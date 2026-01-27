@@ -717,10 +717,6 @@ impl GitPanel {
                 &git_store,
                 window,
                 move |this, _git_store, event, window, cx| match event {
-                    GitStoreEvent::ActiveRepositoryChanged(_) => {
-                        this.active_repository = this.project.read(cx).active_repository(cx);
-                        this.schedule_update(window, cx);
-                    }
                     GitStoreEvent::RepositoryUpdated(
                         _,
                         RepositoryEvent::StatusesChanged
@@ -729,7 +725,8 @@ impl GitPanel {
                         true,
                     )
                     | GitStoreEvent::RepositoryAdded
-                    | GitStoreEvent::RepositoryRemoved(_) => {
+                    | GitStoreEvent::RepositoryRemoved(_)
+                    | GitStoreEvent::ActiveRepositoryChanged(_) => {
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::IndexWriteError(error) => {
@@ -3447,6 +3444,7 @@ impl GitPanel {
             .as_ref()
             .and_then(|op| self.entry_by_path(&op.anchor));
 
+        self.active_repository = self.project.read(cx).active_repository(cx);
         self.entries.clear();
         self.entries_indices.clear();
         self.single_staged_entry.take();
@@ -4601,6 +4599,7 @@ impl GitPanel {
     fn render_entries(
         &self,
         has_write_access: bool,
+        repo: Entity<Repository>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -4608,6 +4607,7 @@ impl GitPanel {
             GitPanelViewMode::Tree(state) => (true, state.logical_indices.len()),
             GitPanelViewMode::Flat => (false, self.entries.len()),
         };
+        let repo = repo.downgrade();
 
         v_flex()
             .flex_1()
@@ -4625,6 +4625,11 @@ impl GitPanel {
                             "entries",
                             entry_count,
                             cx.processor(move |this, range: Range<usize>, window, cx| {
+                                let Some(repo) = repo.upgrade() else {
+                                    return Vec::new();
+                                };
+                                let repo = repo.read(cx);
+
                                 let mut items = Vec::with_capacity(range.end - range.start);
 
                                 for ix in range.into_iter().map(|ix| match &this.view_mode {
@@ -4638,6 +4643,7 @@ impl GitPanel {
                                                 entry,
                                                 0,
                                                 has_write_access,
+                                                repo,
                                                 window,
                                                 cx,
                                             ));
@@ -4648,6 +4654,7 @@ impl GitPanel {
                                                 &entry.entry,
                                                 entry.depth,
                                                 has_write_access,
+                                                repo,
                                                 window,
                                                 cx,
                                             ));
@@ -4892,6 +4899,7 @@ impl GitPanel {
         entry: &GitStatusEntry,
         depth: usize,
         has_write_access: bool,
+        repo: &Repository,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -4939,12 +4947,6 @@ impl GitPanel {
         let checkbox_id: ElementId =
             ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
 
-        let active_repo = self
-            .project
-            .read(cx)
-            .active_repository(cx)
-            .expect("active repository must be set");
-        let repo = active_repo.read(cx);
         let stage_status = GitPanel::stage_status_for_entry(entry, &repo);
         let mut is_staged: ToggleState = match stage_status {
             StageStatus::Staged => ToggleState::Selected,
@@ -5484,8 +5486,10 @@ impl Render for GitPanel {
                     .size_full()
                     .children(self.render_panel_header(window, cx))
                     .map(|this| {
-                        if has_entries {
-                            this.child(self.render_entries(has_write_access, window, cx))
+                        if let Some(repo) = self.active_repository.clone()
+                            && has_entries
+                        {
+                            this.child(self.render_entries(has_write_access, repo, window, cx))
                         } else {
                             this.child(self.render_empty_state(cx).into_any_element())
                         }
