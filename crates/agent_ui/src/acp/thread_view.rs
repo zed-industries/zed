@@ -327,6 +327,8 @@ pub struct AcpThreadView {
     agent_server_store: Entity<AgentServerStore>, // keep
     workspace: WeakEntity<Workspace>, // keep
     project: Entity<Project>, // keep
+    thread_store: Option<Entity<ThreadStore>>, // keep
+    prompt_store: Option<Entity<PromptStore>>, // keep
     thread_state: ThreadState, // keep
     /// Tracks the selected granularity index for each tool call's permission dropdown.
     /// The index corresponds to the position in the allow_options list.
@@ -337,7 +339,6 @@ pub struct AcpThreadView {
     history: Entity<AcpThreadHistory>, // keep
     _history_subscription: Subscription, // keep
     hovered_recent_history_item: Option<usize>, // keep
-    entry_view_state: Entity<EntryViewState>,
     message_editor: Entity<MessageEditor>, // keep
     focus_handle: FocusHandle, // keep
     config_options_view: Option<Entity<ConfigOptionsView>>,
@@ -381,7 +382,7 @@ pub struct AcpThreadView {
     resume_thread_metadata: Option<AgentSessionInfo>,
     resumed_without_history: bool,
     _cancel_task: Option<Task<()>>,
-    _subscriptions: [Subscription; 5], // keep
+    _subscriptions: [Subscription; 4], // keep
     show_codex_windows_warning: bool, // keep
     in_flight_prompt: Option<Vec<acp::ContentBlock>>, // keep
     skip_queue_processing_count: usize,
@@ -400,6 +401,7 @@ enum ThreadState {
     Loading(Entity<LoadingView>),
     Ready {
         thread: Entity<AcpThread>,
+        entry_view_state: Entity<EntryViewState>,
         title_editor: Option<Entity<Editor>>,
         mode_selector: Option<Entity<ModeSelector>>,
         model_selector: Option<Entity<AcpModelSelectorPopover>>,
@@ -477,26 +479,10 @@ impl AcpThreadView {
 
         let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
 
-        let entry_view_state = cx.new(|_| {
-            EntryViewState::new(
-                workspace.clone(),
-                project.downgrade(),
-                thread_store.clone(),
-                history.downgrade(),
-                prompt_store.clone(),
-                prompt_capabilities.clone(),
-                available_commands.clone(),
-                cached_user_commands.clone(),
-                cached_user_command_errors.clone(),
-                agent.name(),
-            )
-        });
-
         let subscriptions = [
             cx.observe_global_in::<SettingsStore>(window, Self::agent_ui_font_size_changed),
             cx.observe_global_in::<AgentFontSize>(window, Self::agent_ui_font_size_changed),
             cx.subscribe_in(&message_editor, window, Self::handle_message_editor_event),
-            cx.subscribe_in(&entry_view_state, window, Self::handle_entry_view_event),
             cx.subscribe_in(
                 &agent_server_store,
                 window,
@@ -569,7 +555,8 @@ impl AcpThreadView {
             agent_server_store,
             workspace: workspace.clone(),
             project: project.clone(),
-            entry_view_state,
+            thread_store,
+            prompt_store,
             selected_permission_granularity: HashMap::default(),
             thread_state: Self::initial_state(
                 agent.clone(),
@@ -796,8 +783,23 @@ impl AcpThreadView {
                         this.prompt_capabilities
                             .replace(thread.read(cx).prompt_capabilities());
 
+                        let entry_view_state = cx.new(|_| {
+                            EntryViewState::new(
+                                this.workspace.clone(),
+                                this.project.downgrade(),
+                                this.thread_store.clone(),
+                                this.history.downgrade(),
+                                this.prompt_store.clone(),
+                                this.prompt_capabilities.clone(),
+                                this.available_commands.clone(),
+                                this.cached_user_commands.clone(),
+                                this.cached_user_command_errors.clone(),
+                                this.agent.name(),
+                            )
+                        });
+
                         let count = thread.read(cx).entries().len();
-                        this.entry_view_state.update(cx, |view_state, cx| {
+                        entry_view_state.update(cx, |view_state, cx| {
                             for ix in 0..count {
                                 view_state.sync_entry(ix, &thread, window, cx);
                             }
@@ -877,6 +879,11 @@ impl AcpThreadView {
                         let mut subscriptions = vec![
                             cx.subscribe_in(&thread, window, Self::handle_thread_event),
                             cx.observe(&action_log, |_, _, cx| cx.notify()),
+                            cx.subscribe_in(
+                                &entry_view_state,
+                                window,
+                                Self::handle_entry_view_event,
+                            ),
                         ];
 
                         let title_editor =
@@ -898,6 +905,7 @@ impl AcpThreadView {
 
                         this.thread_state = ThreadState::Ready {
                             thread,
+                            entry_view_state,
                             title_editor,
                             mode_selector,
                             model_selector,
@@ -1071,6 +1079,17 @@ impl AcpThreadView {
     pub fn thread(&self) -> Option<&Entity<AcpThread>> {
         match &self.thread_state {
             ThreadState::Ready { thread, .. } => Some(thread),
+            ThreadState::Unauthenticated { .. }
+            | ThreadState::Loading { .. }
+            | ThreadState::LoadError { .. } => None,
+        }
+    }
+
+    fn entry_view_state(&self) -> Option<&Entity<EntryViewState>> {
+        match &self.thread_state {
+            ThreadState::Ready {
+                entry_view_state, ..
+            } => Some(entry_view_state),
             ThreadState::Unauthenticated { .. }
             | ThreadState::Loading { .. }
             | ThreadState::LoadError { .. } => None,
@@ -1831,8 +1850,8 @@ impl AcpThreadView {
         };
 
         if let Some(index) = self.editing_message.take()
-            && let Some(editor) = self
-                .entry_view_state
+            && let Some(entry_view_state) = self.entry_view_state()
+            && let Some(editor) = entry_view_state
                 .read(cx)
                 .entry(index)
                 .and_then(|e| e.message_editor())
@@ -2033,24 +2052,30 @@ impl AcpThreadView {
             AcpThreadEvent::NewEntry => {
                 let len = thread.read(cx).entries().len();
                 let index = len - 1;
-                self.entry_view_state.update(cx, |view_state, cx| {
-                    view_state.sync_entry(index, thread, window, cx);
-                    self.list_state.splice_focusable(
-                        index..index,
-                        [view_state
-                            .entry(index)
-                            .and_then(|entry| entry.focus_handle(cx))],
-                    );
-                });
+                if let Some(entry_view_state) = self.entry_view_state().cloned() {
+                    entry_view_state.update(cx, |view_state, cx| {
+                        view_state.sync_entry(index, thread, window, cx);
+                        self.list_state.splice_focusable(
+                            index..index,
+                            [view_state
+                                .entry(index)
+                                .and_then(|entry| entry.focus_handle(cx))],
+                        );
+                    });
+                }
             }
             AcpThreadEvent::EntryUpdated(index) => {
-                self.entry_view_state.update(cx, |view_state, cx| {
-                    view_state.sync_entry(*index, thread, window, cx)
-                });
+                if let Some(entry_view_state) = self.entry_view_state().cloned() {
+                    entry_view_state.update(cx, |view_state, cx| {
+                        view_state.sync_entry(*index, thread, window, cx)
+                    });
+                }
             }
             AcpThreadEvent::EntriesRemoved(range) => {
-                self.entry_view_state
-                    .update(cx, |view_state, _cx| view_state.remove(range.clone()));
+                if let Some(entry_view_state) = self.entry_view_state().cloned() {
+                    entry_view_state
+                        .update(cx, |view_state, _cx| view_state.remove(range.clone()));
+                }
                 self.list_state.splice(range.clone(), 0);
             }
             AcpThreadEvent::ToolAuthorizationRequired => {
@@ -2601,8 +2626,10 @@ impl AcpThreadView {
 
         let primary = match &entry {
             AgentThreadEntry::UserMessage(message) => {
-                let Some(editor) = self
-                    .entry_view_state
+                let Some(entry_view_state) = self.entry_view_state() else {
+                    return Empty.into_any_element();
+                };
+                let Some(editor) = entry_view_state
                     .read(cx)
                     .entry(entry_ix)
                     .and_then(|entry| entry.message_editor())
@@ -3055,10 +3082,13 @@ impl AcpThreadView {
         let is_open = self.expanded_thinking_blocks.contains(&key);
 
         let scroll_handle = self
-            .entry_view_state
-            .read(cx)
-            .entry(entry_ix)
-            .and_then(|entry| entry.scroll_handle_for_assistant_message_chunk(chunk_ix));
+            .entry_view_state()
+            .and_then(|entry_view_state| {
+                entry_view_state
+                    .read(cx)
+                    .entry(entry_ix)
+                    .and_then(|entry| entry.scroll_handle_for_assistant_message_chunk(chunk_ix))
+            });
 
         let thinking_content = {
             div()
@@ -3172,10 +3202,13 @@ impl AcpThreadView {
 
         let is_cancelled_edit = is_edit && matches!(tool_call.status, ToolCallStatus::Canceled);
         let has_revealed_diff = tool_call.diffs().next().is_some_and(|diff| {
-            self.entry_view_state
-                .read(cx)
-                .entry(entry_ix)
-                .and_then(|entry| entry.editor_for_diff(diff))
+            self.entry_view_state()
+                .and_then(|entry_view_state| {
+                    entry_view_state
+                        .read(cx)
+                        .entry(entry_ix)
+                        .and_then(|entry| entry.editor_for_diff(diff))
+                })
                 .is_some()
                 && diff.read(cx).has_revealed_range(cx)
         });
@@ -4453,15 +4486,16 @@ impl AcpThreadView {
             ToolCallStatus::InProgress | ToolCallStatus::Pending
         );
 
-        let revealed_diff_editor = if let Some(entry) =
-            self.entry_view_state.read(cx).entry(entry_ix)
-            && let Some(editor) = entry.editor_for_diff(diff)
-            && diff.read(cx).has_revealed_range(cx)
-        {
-            Some(editor)
-        } else {
-            None
-        };
+        let revealed_diff_editor =
+            if let Some(entry_view_state) = self.entry_view_state()
+                && let Some(entry) = entry_view_state.read(cx).entry(entry_ix)
+                && let Some(editor) = entry.editor_for_diff(diff)
+                && diff.read(cx).has_revealed_range(cx)
+            {
+                Some(editor)
+            } else {
+                None
+            };
 
         let show_top_border = !has_failed || revealed_diff_editor.is_some();
 
@@ -4737,11 +4771,12 @@ impl AcpThreadView {
                 })),
             );
 
-        let terminal_view = self
-            .entry_view_state
-            .read(cx)
-            .entry(entry_ix)
-            .and_then(|entry| entry.terminal(terminal));
+        let terminal_view = self.entry_view_state().and_then(|entry_view_state| {
+            entry_view_state
+                .read(cx)
+                .entry(entry_ix)
+                .and_then(|entry| entry.terminal(terminal))
+        });
 
         v_flex()
             .my_1p5()
@@ -7769,9 +7804,11 @@ impl AcpThreadView {
     }
 
     fn agent_ui_font_size_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.entry_view_state.update(cx, |entry_view_state, cx| {
-            entry_view_state.agent_ui_font_size_changed(cx);
-        });
+        if let Some(entry_view_state) = self.entry_view_state().cloned() {
+            entry_view_state.update(cx, |entry_view_state, cx| {
+                entry_view_state.agent_ui_font_size_changed(cx);
+            });
+        }
     }
 
     pub(crate) fn insert_dragged_files(
@@ -8297,8 +8334,8 @@ impl AcpThreadView {
     /// edited or the editor for a new message.
     fn active_editor(&self, cx: &App) -> Entity<MessageEditor> {
         if let Some(index) = self.editing_message
-            && let Some(editor) = self
-                .entry_view_state
+            && let Some(entry_view_state) = self.entry_view_state()
+            && let Some(editor) = entry_view_state
                 .read(cx)
                 .entry(index)
                 .and_then(|e| e.message_editor())
@@ -9632,7 +9669,8 @@ pub(crate) mod tests {
         });
 
         thread_view.read_with(cx, |view, cx| {
-            view.entry_view_state.read_with(cx, |entry_view_state, _| {
+            let entry_view_state = view.entry_view_state().unwrap();
+            entry_view_state.read_with(cx, |entry_view_state, _| {
                 assert!(
                     entry_view_state
                         .entry(0)
@@ -9669,7 +9707,8 @@ pub(crate) mod tests {
         });
 
         thread_view.read_with(cx, |view, cx| {
-            view.entry_view_state.read_with(cx, |entry_view_state, _| {
+            let entry_view_state = view.entry_view_state().unwrap();
+            entry_view_state.read_with(cx, |entry_view_state, _| {
                 assert!(
                     entry_view_state
                         .entry(0)
@@ -9702,7 +9741,8 @@ pub(crate) mod tests {
         });
 
         thread_view.read_with(cx, |view, cx| {
-            view.entry_view_state.read_with(cx, |entry_view_state, _| {
+            let entry_view_state = view.entry_view_state().unwrap();
+            entry_view_state.read_with(cx, |entry_view_state, _| {
                 assert!(
                     entry_view_state
                         .entry(0)
@@ -9809,7 +9849,8 @@ pub(crate) mod tests {
         let user_message_editor = thread_view.read_with(cx, |view, cx| {
             assert_eq!(view.editing_message, None);
 
-            view.entry_view_state
+            view.entry_view_state()
+                .unwrap()
                 .read(cx)
                 .entry(0)
                 .unwrap()
@@ -9900,7 +9941,8 @@ pub(crate) mod tests {
             assert_eq!(view.editing_message, None);
             assert_eq!(view.thread().unwrap().read(cx).entries().len(), 2);
 
-            view.entry_view_state
+            view.entry_view_state()
+                .unwrap()
                 .read(cx)
                 .entry(0)
                 .unwrap()
@@ -9942,7 +9984,8 @@ pub(crate) mod tests {
                 "## Assistant\n\nNew Response\n\n"
             );
 
-            let new_editor = view.entry_view_state.read_with(cx, |state, _cx| {
+            let entry_view_state = view.entry_view_state().unwrap();
+            let new_editor = entry_view_state.read_with(cx, |state, _cx| {
                 assert!(!state.entry(1).unwrap().has_content());
                 state.entry(0).unwrap().message_editor().unwrap().clone()
             });
@@ -9976,7 +10019,8 @@ pub(crate) mod tests {
             assert_eq!(thread.entries().len(), 1);
 
             let editor = view
-                .entry_view_state
+                .entry_view_state()
+                .unwrap()
                 .read(cx)
                 .entry(0)
                 .unwrap()
@@ -10316,7 +10360,8 @@ pub(crate) mod tests {
 
         let user_message_editor = thread_view.read_with(cx, |thread_view, cx| {
             thread_view
-                .entry_view_state
+                .entry_view_state()
+                .unwrap()
                 .read(cx)
                 .entry(0)
                 .expect("Should have at least one entry")
