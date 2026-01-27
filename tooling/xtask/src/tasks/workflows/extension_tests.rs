@@ -69,7 +69,10 @@ fn check_rust() -> NamedJob {
         .add_step(run_clippy())
         .add_step(steps::cargo_install_nextest())
         .add_step(
-            steps::cargo_nextest(runners::Platform::Linux).add_env(("NEXTEST_NO_TESTS", "warn")),
+            steps::cargo_nextest(runners::Platform::Linux)
+                // Set the target to the current platform again
+                .with_target("$(rustc -vV | sed -n 's|host: ||p')")
+                .add_env(("NEXTEST_NO_TESTS", "warn")),
         );
 
     named::job(job)
