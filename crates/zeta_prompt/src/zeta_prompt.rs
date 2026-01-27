@@ -213,39 +213,47 @@ fn format_related_files_within_budget(related_files: &[RelatedFile], max_tokens:
 
     for file in related_files {
         let path_str = file.path.to_string_lossy();
-        let header = format!("<|file_sep|>{}\n", path_str);
-        let header_tokens = estimate_tokens(header.len());
+        let header_len = "<|file_sep|>".len() + path_str.len() + 1;
+        let header_tokens = estimate_tokens(header_len);
 
         if total_tokens + header_tokens > max_tokens {
             break;
         }
 
-        let mut file_section = header.clone();
         let mut file_tokens = header_tokens;
-        let mut excerpts_added = 0;
+        let mut excerpts_to_include = 0;
 
         for excerpt in &file.excerpts {
-            let mut excerpt_str = String::new();
-            excerpt_str.push_str(&excerpt.text);
-            if !excerpt_str.ends_with('\n') {
-                excerpt_str.push('\n');
-            }
-            if excerpt.row_range.end < file.max_row {
-                excerpt_str.push_str("...\n");
-            }
+            let needs_newline = !excerpt.text.ends_with('\n');
+            let needs_ellipsis = excerpt.row_range.end < file.max_row;
+            let excerpt_len = excerpt.text.len()
+                + if needs_newline { "\n".len() } else { "".len() }
+                + if needs_ellipsis {
+                    "...\n".len()
+                } else {
+                    "".len()
+                };
 
-            let excerpt_tokens = estimate_tokens(excerpt_str.len());
+            let excerpt_tokens = estimate_tokens(excerpt_len);
             if total_tokens + file_tokens + excerpt_tokens > max_tokens {
                 break;
             }
             file_tokens += excerpt_tokens;
-            file_section.push_str(&excerpt_str);
-            excerpts_added += 1;
+            excerpts_to_include += 1;
         }
 
-        if excerpts_added > 0 {
+        if excerpts_to_include > 0 {
             total_tokens += file_tokens;
-            result.push_str(&file_section);
+            write!(result, "<|file_sep|>{}\n", path_str).ok();
+            for excerpt in file.excerpts.iter().take(excerpts_to_include) {
+                result.push_str(&excerpt.text);
+                if !result.ends_with('\n') {
+                    result.push('\n');
+                }
+                if excerpt.row_range.end < file.max_row {
+                    result.push_str("...\n");
+                }
+            }
         }
     }
 
