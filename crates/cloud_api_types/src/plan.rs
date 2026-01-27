@@ -1,15 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use crate::Timestamp;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Plan {
-    V2(PlanV2),
-}
+use crate::{KnownOrUnknown, Timestamp};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PlanV2 {
+pub enum Plan {
     #[default]
     ZedFree,
     ZedPro,
@@ -18,7 +13,7 @@ pub enum PlanV2 {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlanInfo {
-    pub plan_v2: PlanV2,
+    pub plan: KnownOrUnknown<Plan, String>,
     pub subscription_period: Option<SubscriptionPeriod>,
     pub usage: cloud_llm_client::CurrentUsage,
     pub trial_started_at: Option<Timestamp>,
@@ -28,7 +23,10 @@ pub struct PlanInfo {
 
 impl PlanInfo {
     pub fn plan(&self) -> Plan {
-        Plan::V2(self.plan_v2)
+        match &self.plan {
+            KnownOrUnknown::Known(plan) => *plan,
+            KnownOrUnknown::Unknown(_) => Plan::ZedFree,
+        }
     }
 }
 
@@ -46,14 +44,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_plan_v2_deserialize_snake_case() {
-        let plan = serde_json::from_value::<PlanV2>(json!("zed_free")).unwrap();
-        assert_eq!(plan, PlanV2::ZedFree);
+    fn test_plan_deserialize_snake_case() {
+        let plan = serde_json::from_value::<Plan>(json!("zed_free")).unwrap();
+        assert_eq!(plan, Plan::ZedFree);
 
-        let plan = serde_json::from_value::<PlanV2>(json!("zed_pro")).unwrap();
-        assert_eq!(plan, PlanV2::ZedPro);
+        let plan = serde_json::from_value::<Plan>(json!("zed_pro")).unwrap();
+        assert_eq!(plan, Plan::ZedPro);
 
-        let plan = serde_json::from_value::<PlanV2>(json!("zed_pro_trial")).unwrap();
-        assert_eq!(plan, PlanV2::ZedProTrial);
+        let plan = serde_json::from_value::<Plan>(json!("zed_pro_trial")).unwrap();
+        assert_eq!(plan, Plan::ZedProTrial);
     }
 }

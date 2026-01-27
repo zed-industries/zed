@@ -9,7 +9,7 @@ use std::{ops::Range, sync::Arc};
 use agent::ContextServerRegistry;
 use anyhow::Result;
 use client::zed_urls;
-use cloud_api_types::{Plan, PlanV2};
+use cloud_api_types::Plan;
 use collections::HashMap;
 use context_server::ContextServerId;
 use editor::{Editor, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
@@ -498,9 +498,9 @@ impl AgentConfiguration {
                 .blend(cx.theme().colors().text_accent.opacity(0.2));
 
             let (plan_name, label_color, bg_color) = match plan {
-                Plan::V2(PlanV2::ZedFree) => ("Free", Color::Default, free_chip_bg),
-                Plan::V2(PlanV2::ZedProTrial) => ("Pro Trial", Color::Accent, pro_chip_bg),
-                Plan::V2(PlanV2::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
+                Plan::ZedFree => ("Free", Color::Default, free_chip_bg),
+                Plan::ZedProTrial => ("Pro Trial", Color::Accent, pro_chip_bg),
+                Plan::ZedPro => ("Pro", Color::Accent, pro_chip_bg),
             };
 
             Chip::new(plan_name.to_string())
