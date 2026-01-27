@@ -139,6 +139,7 @@ pub struct Buffer {
     tree_sitter_data: Arc<TreeSitterData>,
     encoding: &'static Encoding,
     has_bom: bool,
+    reload_with_encoding_txns: HashMap<TransactionId, (&'static Encoding, bool)>,
 }
 
 #[derive(Debug)]
@@ -1146,6 +1147,7 @@ impl Buffer {
             _subscriptions: Vec::new(),
             encoding: encoding_rs::UTF_8,
             has_bom: false,
+            reload_with_encoding_txns: HashMap::default(),
         }
     }
 
@@ -1599,10 +1601,19 @@ impl Buffer {
             this.update(cx, |this, cx| {
                 if this.version() == diff.base_version {
                     this.finalize_last_transaction();
+                    let old_encoding = this.encoding;
+                    let old_has_bom = this.has_bom;
                     this.apply_diff(diff, cx);
                     this.encoding = encoding_used;
                     this.has_bom = has_bom;
-                    tx.send(this.finalize_last_transaction().cloned()).ok();
+                    let transaction = this.finalize_last_transaction().cloned();
+                    if let Some(ref txn) = transaction {
+                        if old_encoding != encoding_used || old_has_bom != has_bom {
+                            this.reload_with_encoding_txns
+                                .insert(txn.id, (old_encoding, old_has_bom));
+                        }
+                    }
+                    tx.send(transaction).ok();
                     this.has_conflict = false;
                     this.did_reload(this.version(), this.line_ending(), new_mtime, cx);
                 } else {
@@ -3082,6 +3093,7 @@ impl Buffer {
         if let Some((transaction_id, operation)) = self.text.undo() {
             self.send_operation(Operation::Buffer(operation), true, cx);
             self.did_edit(&old_version, was_dirty, cx);
+            self.restore_encoding_for_transaction(transaction_id, was_dirty);
             Some(transaction_id)
         } else {
             None
@@ -3141,9 +3153,28 @@ impl Buffer {
         if let Some((transaction_id, operation)) = self.text.redo() {
             self.send_operation(Operation::Buffer(operation), true, cx);
             self.did_edit(&old_version, was_dirty, cx);
+            self.restore_encoding_for_transaction(transaction_id, was_dirty);
             Some(transaction_id)
         } else {
             None
+        }
+    }
+
+    fn restore_encoding_for_transaction(&mut self, transaction_id: TransactionId, was_dirty: bool) {
+        if let Some((old_encoding, old_has_bom)) =
+            self.reload_with_encoding_txns.get(&transaction_id)
+        {
+            let current_encoding = self.encoding;
+            let current_has_bom = self.has_bom;
+            self.encoding = *old_encoding;
+            self.has_bom = *old_has_bom;
+            if !was_dirty {
+                self.saved_version = self.version.clone();
+                self.has_unsaved_edits
+                    .set((self.saved_version.clone(), false));
+            }
+            self.reload_with_encoding_txns
+                .insert(transaction_id, (current_encoding, current_has_bom));
         }
     }
 

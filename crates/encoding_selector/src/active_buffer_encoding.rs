@@ -7,7 +7,7 @@ use gpui::{
     div,
 };
 use project::Project;
-use ui::{Button, ButtonCommon, Clickable, Disableable, LabelSize, Tooltip};
+use ui::{Button, ButtonCommon, Clickable, LabelSize, Tooltip};
 use workspace::{
     StatusBarSettings, StatusItemView, Workspace,
     item::{ItemHandle, Settings},
