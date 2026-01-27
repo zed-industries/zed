@@ -2340,7 +2340,7 @@ impl AgentPanel {
                                     .handler({
                                         move |window, cx| {
                                             window.dispatch_action(
-                                                Box::new(zed_actions::AgentRegistry),
+                                                Box::new(zed_actions::AcpRegistry),
                                                 cx,
                                             )
                                         }
