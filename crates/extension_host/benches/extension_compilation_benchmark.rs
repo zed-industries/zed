@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use extension::{
-    ExtensionCapability, ExtensionFeatures, ExtensionHostProxy, ExtensionLibraryKind,
-    ExtensionManifest, LanguageServerManifestEntry, LibManifestEntry, SchemaVersion,
+    ExtensionCapability, ExtensionHostProxy, ExtensionLibraryKind, ExtensionManifest,
+    LanguageServerManifestEntry, LibManifestEntry, SchemaVersion,
     extension_builder::{CompileExtensionOptions, ExtensionBuilder},
 };
 use extension_host::wasm_host::WasmHost;
@@ -135,7 +135,7 @@ fn manifest() -> ExtensionManifest {
                 args: vec!["hello!".into()],
             },
         )],
-        provided_features: ExtensionFeatures {
+        provides: extension::ExtensionFeatures {
             themes: Default::default(),
             icon_themes: Vec::new(),
             languages: Vec::new(),
