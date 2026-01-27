@@ -701,6 +701,9 @@ pub struct VimSettingsContent {
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_smartcase_find: Option<bool>,
+    /// When enabled, the `:substitute` command replaces all matches in a line
+    /// by default. The 'g' flag then toggles this behavior.,
+    pub gdefault: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
     pub cursor_shape: Option<CursorShapeSettings>,
@@ -976,6 +979,7 @@ pub struct RemoteSettingsContent {
     pub wsl_connections: Option<Vec<WslConnection>>,
     pub dev_container_connections: Option<Vec<DevContainerConnection>>,
     pub read_ssh_config: Option<bool>,
+    pub use_podman: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -985,6 +989,7 @@ pub struct RemoteSettingsContent {
 pub struct DevContainerConnection {
     pub name: String,
     pub container_id: String,
+    pub use_podman: bool,
 }
 
 #[with_fallible_options]

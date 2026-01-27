@@ -1,9 +1,12 @@
+mod known_or_unknown;
+mod plan;
 mod timestamp;
 pub mod websocket_protocol;
 
-use cloud_llm_client::Plan;
 use serde::{Deserialize, Serialize};
 
+pub use crate::known_or_unknown::*;
+pub use crate::plan::*;
 pub use crate::timestamp::Timestamp;
 
 pub const ZED_SYSTEM_ID_HEADER_NAME: &str = "x-zed-system-id";
@@ -24,28 +27,6 @@ pub struct AuthenticatedUser {
     pub name: Option<String>,
     pub is_staff: bool,
     pub accepted_tos_at: Option<Timestamp>,
-}
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct PlanInfo {
-    pub plan_v2: cloud_llm_client::PlanV2,
-    pub subscription_period: Option<SubscriptionPeriod>,
-    pub usage: cloud_llm_client::CurrentUsage,
-    pub trial_started_at: Option<Timestamp>,
-    pub is_account_too_young: bool,
-    pub has_overdue_invoices: bool,
-}
-
-impl PlanInfo {
-    pub fn plan(&self) -> Plan {
-        Plan::V2(self.plan_v2)
-    }
-}
-
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
-pub struct SubscriptionPeriod {
-    pub started_at: Timestamp,
-    pub ended_at: Timestamp,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]

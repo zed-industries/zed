@@ -263,36 +263,57 @@
 )
 
 [
+  "abstract"
   "as"
   "async"
   "await"
-  "class"
-  "const"
   "debugger"
+  "declare"
   "default"
   "delete"
-  "export"
   "extends"
-  "from"
-  "function"
   "get"
-  "import"
+  "implements"
   "in"
+  "infer"
   "instanceof"
   "is"
-  "let"
+  "keyof"
+  "module"
+  "namespace"
   "new"
   "of"
+  "override"
+  "private"
+  "protected"
+  "public"
+  "readonly"
   "satisfies"
   "set"
   "static"
   "target"
   "typeof"
   "using"
-  "var"
   "void"
   "with"
 ] @keyword
+
+[
+  "const"
+  "let"
+  "var"
+  "function"
+  "class"
+  "enum"
+  "interface"
+  "type"
+] @keyword.declaration
+
+[
+  "export"
+  "from"
+  "import"
+] @keyword.import
 
 [
   "break"

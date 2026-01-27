@@ -1,4 +1,5 @@
 use crate::prediction::EditPredictionResult;
+use crate::zeta1::compute_edits;
 use crate::{
     CurrentEditPrediction, DebugEvent, EDIT_PREDICTIONS_MODEL_ID, EditPredictionFinishedDebugEvent,
     EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
@@ -14,14 +15,14 @@ use release_channel::AppVersion;
 use std::env;
 use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::format_zeta_prompt;
-use zeta_prompt::{CURSOR_MARKER, ZetaVersion};
+use zeta_prompt::{CURSOR_MARKER, ZetaVersion, v0120_git_merge_markers};
 
 pub const MAX_CONTEXT_TOKENS: usize = 350;
 
 pub fn max_editable_tokens(version: ZetaVersion) -> usize {
     match version {
         ZetaVersion::V0112MiddleAtEnd | ZetaVersion::V0113Ordered => 150,
-        ZetaVersion::V0114180EditableRegion => 180,
+        ZetaVersion::V0114180EditableRegion | ZetaVersion::V0120GitMergeMarkers => 180,
     }
 }
 
@@ -34,6 +35,7 @@ pub fn request_prediction_with_zeta2(
         related_files,
         events,
         debug_tx,
+        trigger,
         ..
     }: EditPredictionModelInput,
     zeta_version: ZetaVersion,
@@ -110,6 +112,7 @@ pub fn request_prediction_with_zeta2(
                     client,
                     llm_token,
                     app_version,
+                    trigger,
                 )
                 .await?;
 
@@ -147,6 +150,14 @@ pub fn request_prediction_with_zeta2(
                 output_text = output_text.replace(CURSOR_MARKER, "");
             }
 
+            if zeta_version == ZetaVersion::V0120GitMergeMarkers {
+                if let Some(stripped) =
+                    output_text.strip_suffix(v0120_git_merge_markers::END_MARKER)
+                {
+                    output_text = stripped.to_string();
+                }
+            }
+
             let mut old_text = snapshot
                 .text_for_range(editable_offset_range.clone())
                 .collect::<String>();
@@ -158,16 +169,12 @@ pub fn request_prediction_with_zeta2(
                 old_text.push('\n');
             }
 
-            let edits: Vec<_> = language::text_diff(&old_text, &output_text)
-                .into_iter()
-                .map(|(range, text)| {
-                    (
-                        snapshot.anchor_after(editable_offset_range.start + range.start)
-                            ..snapshot.anchor_before(editable_offset_range.start + range.end),
-                        text,
-                    )
-                })
-                .collect();
+            let edits = compute_edits(
+                old_text,
+                &output_text,
+                editable_offset_range.start,
+                &snapshot,
+            );
 
             anyhow::Ok((
                 Some((

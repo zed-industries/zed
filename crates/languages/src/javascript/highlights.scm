@@ -246,20 +246,13 @@
   "as"
   "async"
   "await"
-  "class"
-  "const"
   "debugger"
   "default"
   "delete"
-  "export"
   "extends"
-  "from"
-  "function"
   "get"
-  "import"
   "in"
   "instanceof"
-  "let"
   "new"
   "of"
   "set"
@@ -267,10 +260,23 @@
   "target"
   "typeof"
   "using"
-  "var"
   "void"
   "with"
 ] @keyword
+
+[
+  "const"
+  "let"
+  "var"
+  "function"
+  "class"
+] @keyword.declaration
+
+[
+  "export"
+  "from"
+  "import"
+] @keyword.import
 
 [
   "break"
@@ -322,10 +328,6 @@
 ] @keyword
 
 ; JSX elements
-(jsx_opening_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
-(jsx_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
-(jsx_self_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
-
 (jsx_opening_element
   [
     (identifier) @type
@@ -354,6 +356,9 @@
   ]
 )
 
+(jsx_opening_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
+(jsx_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
+(jsx_self_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
 (jsx_attribute (property_identifier) @attribute.jsx)
 (jsx_opening_element (["<" ">"]) @punctuation.bracket.jsx)
 (jsx_closing_element (["</" ">"]) @punctuation.bracket.jsx)

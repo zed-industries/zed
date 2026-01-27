@@ -347,20 +347,18 @@ pub fn compute_edits(
     text_diff(&old_text, new_text)
         .into_iter()
         .map(|(mut old_range, new_text)| {
-            old_range.start += offset;
-            old_range.end += offset;
+            let old_slice = &old_text[old_range.clone()];
 
-            let prefix_len = common_prefix(
-                snapshot.chars_for_range(old_range.clone()),
-                new_text.chars(),
-            );
-            old_range.start += prefix_len;
-
+            let prefix_len = common_prefix(old_slice.chars(), new_text.chars());
             let suffix_len = common_prefix(
-                snapshot.reversed_chars_for_range(old_range.clone()),
+                old_slice[prefix_len..].chars().rev(),
                 new_text[prefix_len..].chars().rev(),
             );
-            old_range.end = old_range.end.saturating_sub(suffix_len);
+
+            old_range.start += offset;
+            old_range.end += offset;
+            old_range.start += prefix_len;
+            old_range.end -= suffix_len;
 
             let new_text = new_text[prefix_len..new_text.len() - suffix_len].into();
             let range = if old_range.is_empty() {

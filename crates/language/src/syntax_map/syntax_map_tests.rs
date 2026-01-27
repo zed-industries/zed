@@ -1,10 +1,12 @@
 use super::*;
 use crate::{
-    LanguageConfig, LanguageMatcher, buffer_tests::markdown_inline_lang, markdown_lang, rust_lang,
+    LanguageConfig, LanguageMatcher, LanguageQueries, buffer_tests::markdown_inline_lang,
+    markdown_lang, rust_lang,
 };
 use gpui::App;
 use pretty_assertions::assert_eq;
 use rand::rngs::StdRng;
+use std::borrow::Cow;
 use std::{env, ops::Range, sync::Arc};
 use text::{Buffer, BufferId, ReplicaId};
 use tree_sitter::Node;
@@ -797,6 +799,61 @@ fn test_empty_combined_injections_inside_injections(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_comment_triggered_injection_toggle(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+
+    let python = Arc::new(python_lang());
+    let comment = Arc::new(comment_lang());
+    registry.add(python.clone());
+    registry.add(comment);
+    // Note: SQL is an extension language (not built-in as of v0.222.0), so we can use
+    // contains_unknown_injections() to detect when the injection is triggered.
+    // We register a mock "comment" language because Python injects all comments as
+    // language "comment", and we only want SQL to trigger unknown injections.
+
+    // Start with Python code with incomplete #sq comment (not enough to trigger injection)
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "#sq\ncmd = \"SELECT col1, col2 FROM tbl\"".to_string(),
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(python.clone(), &buffer);
+
+    // Should have no unknown injections (#sq doesn't match the injection pattern)
+    assert!(
+        !syntax_map.contains_unknown_injections(),
+        "Expected no unknown injections with incomplete #sq comment"
+    );
+
+    // Complete the comment by adding 'l' to make #sql
+    let sq_end = buffer.as_rope().to_string().find('\n').unwrap();
+    buffer.edit([(sq_end..sq_end, "l")]);
+    syntax_map.interpolate(&buffer);
+    syntax_map.reparse(python.clone(), &buffer);
+
+    // Should now have unknown injections (SQL injection triggered but SQL not registered)
+    assert!(
+        syntax_map.contains_unknown_injections(),
+        "Expected unknown injections after completing #sql comment"
+    );
+
+    // Remove the 'l' to go back to #sq
+    let l_position = buffer.as_rope().to_string().find("l\n").unwrap();
+    buffer.edit([(l_position..l_position + 1, "")]);
+    syntax_map.interpolate(&buffer);
+    syntax_map.reparse(python, &buffer);
+
+    // Should have no unknown injections again - SQL injection should be invalidated
+    assert!(
+        !syntax_map.contains_unknown_injections(),
+        "Expected no unknown injections after removing 'l' from #sql comment"
+    );
+}
+
+#[gpui::test]
 fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     let text = r#"
         <body>
@@ -1337,6 +1394,40 @@ fn heex_lang() -> Language {
         "#,
     )
     .unwrap()
+}
+
+fn python_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Python".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["py".to_string()],
+                ..Default::default()
+            },
+            line_comments: vec!["# ".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_python::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        injections: Some(Cow::from(include_str!(
+            "../../../languages/src/python/injections.scm"
+        ))),
+        ..Default::default()
+    })
+    .expect("Could not parse Python queries")
+}
+
+fn comment_lang() -> Language {
+    // Mock "comment" language to satisfy Python's comment injection.
+    // Uses JSON grammar as a stand-in since we just need it to be registered.
+    Language::new(
+        LanguageConfig {
+            name: "comment".into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_json::LANGUAGE.into()),
+    )
 }
 
 fn range_for_text(buffer: &Buffer, text: &str) -> Range<usize> {

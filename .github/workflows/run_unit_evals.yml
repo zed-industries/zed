@@ -36,6 +36,7 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
+        path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}

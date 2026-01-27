@@ -11,8 +11,6 @@ workspace = true
 [lib]
 path = "src/rules_library.rs"
 
-[features]
-test-support = ["title_bar/test-support"]
 
 [dependencies]
 anyhow.workspace = true
@@ -24,14 +22,15 @@ language_model.workspace = true
 log.workspace = true
 menu.workspace = true
 picker.workspace = true
+platform_title_bar.workspace = true
 prompt_store.workspace = true
 release_channel.workspace = true
 rope.workspace = true
 serde.workspace = true
 settings.workspace = true
 theme.workspace = true
-title_bar.workspace = true
 ui.workspace = true
+ui_input.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
