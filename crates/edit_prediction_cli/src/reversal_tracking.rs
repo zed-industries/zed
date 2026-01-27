@@ -59,9 +59,7 @@ struct HistoryDeletionRange {
     deleted_text: String,
 }
 
-fn compute_history_addition_ranges(
-    history_edits: &[GranularEdit],
-) -> Vec<HistoryAdditionRange> {
+fn compute_history_addition_ranges(history_edits: &[GranularEdit]) -> Vec<HistoryAdditionRange> {
     let mut result = Vec::new();
     let mut offset_delta: isize = 0;
 
@@ -80,9 +78,7 @@ fn compute_history_addition_ranges(
     result
 }
 
-fn compute_history_deletion_ranges(
-    history_edits: &[GranularEdit],
-) -> Vec<HistoryDeletionRange> {
+fn compute_history_deletion_ranges(history_edits: &[GranularEdit]) -> Vec<HistoryDeletionRange> {
     history_edits
         .iter()
         .filter(|edit| !edit.old_text.is_empty())
