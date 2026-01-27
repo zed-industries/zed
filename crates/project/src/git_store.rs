@@ -753,7 +753,8 @@ impl GitStore {
             .spawn(async move |this, cx| {
                 let result: Result<Entity<BufferDiff>> = async {
                     let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
-                    let language_registry = buffer.update(cx, |buffer, _| buffer.language_registry());
+                    let language_registry =
+                        buffer.update(cx, |buffer, _| buffer.language_registry());
                     let content: Option<Arc<str>> = match oid {
                         None => None,
                         Some(oid) => Some(
@@ -815,7 +816,8 @@ impl GitStore {
             })
             .shared();
 
-        self.loading_diffs.insert((buffer_id, diff_kind), task.clone());
+        self.loading_diffs
+            .insert((buffer_id, diff_kind), task.clone());
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
