@@ -1434,8 +1434,8 @@ impl ExtensionsPage {
             .any(|keyword| search_terms.iter().any(|term| keyword.contains(term)));
     }
 
-    fn render_acp_registry_upsell(&self, _cx: &mut Context<Self>) -> impl IntoElement {
-        let registry_url: SharedString = "https://zed.dev/docs/ai/external-agents".into();
+    fn render_acp_registry_upsell(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let registry_url = zed_urls::acp_registry_blog(cx);
 
         let view_regisry = Button::new("view_registry", "View Registry")
             .style(ButtonStyle::Tinted(ui::TintColor::Warning))
@@ -1456,14 +1456,13 @@ impl ExtensionsPage {
             .icon_position(IconPosition::End)
             .icon_color(Color::Muted)
             .on_click({
-                let registry_url = registry_url.clone();
                 move |_event, _window, cx| {
                     telemetry::event!(
                         "ACP Registry Viewed",
                         source = "ACP Registry Upsell",
                         url = registry_url,
                     );
-                    cx.open_url(&zed_urls::acp_registry_blog(cx))
+                    cx.open_url(&registry_url)
                 }
             });
 
