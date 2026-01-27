@@ -1363,6 +1363,23 @@ pub struct Chunk<'a> {
     pub chars: u128,
 }
 
+impl<'a> Chunk<'a> {
+    pub fn to_language_chunk(&self) -> language::Chunk<'a> {
+        language::Chunk {
+            text: self.text,
+            syntax_highlight_id: self.syntax_highlight_id,
+            highlight_style: self.highlight_style,
+            diagnostic_severity: self.diagnostic_severity,
+            is_unnecessary: self.is_unnecessary,
+            underline: self.underline,
+            is_tab: self.is_tab,
+            is_inlay: self.is_inlay,
+            tabs: self.tabs,
+            chars: self.chars,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ChunkRendererId {
     Fold(FoldId),

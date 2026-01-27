@@ -14,7 +14,7 @@ use crate::{
     column_pixels,
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
-        HighlightKey, HighlightedChunk, Highlights, ToDisplayPoint,
+        HighlightKey, HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
         CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, Minimap,
@@ -43,21 +43,21 @@ use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
     DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, FontWeight,
-    GlobalElementId, HighlightStyle, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement,
-    IsZero, KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine,
-    SharedString, Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
-    TextStyleRefinement, UnderlineStyle, WeakEntity, Window, anchored, deferred, div, fill,
-    linear_color_stop, linear_gradient, outline, pattern_slash, point, px, quad, relative, rgba,
-    size, solid_background, transparent_black,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
+    KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
+    MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
+    Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
+    Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
+    TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop,
+    linear_gradient, outline, pattern_slash, point, px, quad, relative, rgba, size,
+    solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
 use markdown::Markdown;
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBuffer,
-    MultiBufferOffset, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset,
+    Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
+    MultiBufferRow, RowInfo,
 };
 
 use edit_prediction_types::EditPredictionGranularity;
@@ -79,7 +79,7 @@ use std::{
     fmt::{self, Write},
     iter, mem,
     ops::{Deref, Range},
-    path::{self, Display, Path},
+    path::{self, Path},
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
