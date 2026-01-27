@@ -18,7 +18,7 @@ pub(crate) fn cargo_nextest(platform: Platform) -> Nextest {
 impl Nextest {
     pub(crate) fn with_target(mut self, target: &str) -> Step<Run> {
         if let Some(nextest_command) = self.0.value.run.as_mut() {
-            nextest_command.push_str(&format!(" --target {target}"));
+            nextest_command.push_str(&format!(r#" --target "{target}""#));
         }
         self.into()
     }
